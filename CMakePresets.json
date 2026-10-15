@@ -175,7 +175,7 @@
         "CMAKE_C_COMPILER_LAUNCHER": "python;${sourceDir}/tools/build/clang_cl_shim.py",
         "CMAKE_CXX_COMPILER_LAUNCHER": "python;${sourceDir}/tools/build/clang_cl_shim.py",
         "VCPKG_TARGET_TRIPLET": "x64-windows",
-        "PS2R_BUILD_RECOMPILER": "OFF",
+        "PS2R_BUILD_RECOMPILER": "ON",
         "PS2R_DIAGNOSTICS": "OFF",
         "CMAKE_BUILD_TYPE": "Debug"
       }
@@ -198,7 +198,7 @@
         "CMAKE_C_COMPILER_LAUNCHER": "python;${sourceDir}/tools/build/clang_cl_shim.py",
         "CMAKE_CXX_COMPILER_LAUNCHER": "python;${sourceDir}/tools/build/clang_cl_shim.py",
         "VCPKG_TARGET_TRIPLET": "x64-windows",
-        "PS2R_BUILD_RECOMPILER": "OFF",
+        "PS2R_BUILD_RECOMPILER": "ON",
         "PS2R_DIAGNOSTICS": "OFF",
         "CMAKE_BUILD_TYPE": "Release"
       }
@@ -206,7 +206,7 @@
     {
       "name": "windows-msvc-dev",
       "displayName": "Windows dev (Ninja, Debug, MSVC cl -- experimental)",
-      "description": "cl.exe instead of clang-cl. The compiler shims (engine/platform/host) build with it, but cl has no -fwrapv: the recompiled TUs' signed-overflow wrap is relied upon, not guaranteed (games/<title>/recomp/CMakeLists.txt warns). Compile-check only; never a release. The compiler launcher tools/build/clang_cl_shim.py spells the tree's GNU-style per-target flags for this front end (-Wall -> /clang:-Wall, -ffp-contract=off -> /clang:..., see the script; ctest PlatformClangClShimContract).",
+      "description": "cl.exe instead of clang-cl. The compiler shims (engine/platform/host) build with it, but cl has no -fwrapv: the recompiled TUs' signed-overflow wrap is relied upon, not guaranteed (games/<title>/recomp/CMakeLists.txt warns). Compile-check only; never a release. The compiler launcher tools/build/clang_cl_shim.py spells the tree's GNU-style per-target flags for this front end (-Wall -> /clang:-Wall, -ffp-contract=off -> /clang:..., see the script; ctest PlatformClangClShimContract). PS2R_BUILD_RECOMPILER stays OFF here: cl cannot compile tools/recompiler_v2/recompiler_tool/recompiler.cpp -- its long `else if (func.base_address == ...)` chain trips C1061 \"blocks nested too deeply\" at line ~5963 (MSVC caps nesting at 128; clang-cl has no such limit, so windows-dev and windows-release build it).",
       "condition": {
         "type": "equals",
         "lhs": "${hostSystemName}",
