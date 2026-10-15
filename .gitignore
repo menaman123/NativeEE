@@ -1,0 +1,135 @@
+# build directories (CMakePresets.json)
+/build/
+/build-*/
+/out/
+
+# generated at build time only
+/generated/
+
+# The title's recompiled code is DERIVED FROM THE GAME and is never committed: the build
+# regenerates it from the user's disc/ELF into <build>/generated/ (cmake/TitleInputs.cmake).
+# tools/regen_from_frozen.sh (the manifest writer) may leave a developer's copy in the tree;
+# these patterns keep every such file out of git wherever a title directory puts it.
+/games/*/recomp/recompiled.h
+/games/*/recomp/recompiled.cpp
+/games/*/recomp/recompiled_shard_*.cpp
+/games/*/iop/*/iop_recompiled.h
+/games/*/iop/*/iop_recompiled.cpp
+recompiled_shard_*.cpp
+iop_recompiled.cpp
+/games/*/recomp/cwd/
+/games/*/recomp/logs/
+
+# play-time capture bundles (TRIAGE_CAPTURE.md 7): runtime-written, never committed
+/games/*/triage/*
+!/games/*/triage/README.md
+
+# harness leg outputs when run inside the tree
+/verify/legs/
+/verify/out/
+/play_sessions/
+
+# python
+__pycache__/
+*.pyc
+
+# editors / OS
+.DS_Store
+*.swp
+.vscode/
+.idea/
+compile_commands.json
+
+# staged release artifacts (build.sh / build.ps1)
+/dist/
+
+# ---------------------------------------------------------------------------------------------
+# GAME-DERIVED DATA: never in the public tree (tools/ci/asset_scan.py --tree . is the gate, run
+# first in .github/workflows/ci.yml). The oracle images the local legs use are PRIVATE fixtures
+# read from $NATIVEEE_PRIVATE_FIXTURES (cmake/Ps2rPrivateFixtures.cmake); a developer who drops
+# them back in place at their original paths gets them picked up -- and ignored here, so they
+# cannot be re-added by accident. Exceptions (`!`) name the few in-tree files that share an
+# extension and are NOT game data.
+# disc images / executables / modules / extracted title assets
+*.iso
+*.cue
+*.img
+*.mdf
+*.mds
+*.nrg
+*.chd
+*.cso
+*.elf
+*.irx
+*.pss
+*.vag
+*.ads
+*.bh
+*.bd
+*.rm2
+*.sm2
+# the title executables (SLUS_123.45 and friends; git matches case-insensitively on macOS, so
+# the digit/dot shape is spelled out -- `SLUS_*` would swallow a games/slus_<serial>_<slug>/ tree)
+SLUS_???.??
+SLES_???.??
+SCUS_???.??
+SCES_???.??
+SLPM_???.??
+SLPS_???.??
+SCPS_???.??
+SLUS_???.??;1
+SLES_???.??;1
+SCUS_???.??;1
+SCES_???.??;1
+SYSTEM.CNF
+IOPRP???.IMG
+/game_files/
+# Extracted disc trees land under game_files/ (TitleProfile::elf_dir names the subdirectory);
+# the whole directory is ignored above, so no per-title pin is needed here.
+# RAM savestates, memory probes, save slots
+*.ps2st
+**/probe/*.ps2st
+/save_states/
+# GS dumps (PCSX2 .gs / .gs.zst, exported .gsf1 frames); under a gsdumps/ directory only the
+# text records (the draw census, INDEX.tsv, PROVENANCE.md) are tracked
+*.gs
+*.gs.zst
+*.gsf1
+*.gsdump
+**/gsdumps/*
+!**/gsdumps/*.txt
+!**/gsdumps/*.tsv
+!**/gsdumps/*.md
+# console / PCSX2 screenshots and every raster capture (the tree carries no raster images;
+# docs/ icons would be allowlisted in tools/ci/asset_scan.py TREE_IMAGE_ALLOWLIST and un-ignored here)
+*.ppm
+*.pgm
+*.pnm
+*.png
+*.tga
+*.bmp
+*.jpg
+*.jpeg
+# raw binary fixtures (VU0 captures, atlas pages, vertex records, texture dumps). The one
+# in-tree .bin is the GS hardware swizzle table set, not game data (tests/oracle/lift_og_tables.py).
+*.bin
+!/tests/oracle/og_tables.bin
+# the title's .data-section word dump (data/README.md); the three post-load patch words stay
+/games/*/data/ram_data_map_v50.txt
+# memory-card images and the title's play-time output
+/memcards/
+/memcards_*/
+**/mc0/
+**/mc1/
+*.ps2
+*.mc2
+*.psu
+*.max
+*.cbs
+*.xps
+*.sps
+/play_sessions/
+/int_work/
+/vutrace_cases*/
+/texture_dumps/
+/textures_dump/

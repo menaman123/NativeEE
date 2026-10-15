@@ -1,0 +1,14 @@
+# tests/ipu/fixtures/pss_census_counts.txt -- per-movie program-stream counts of
+# the two cold-boot intro movies, as reported by tests/ipu/pss_census.py (the
+# title-agnostic copy of OLD tools/pss_census.py). Keys are paths relative to
+# the frozen OLD tree (PS2R_OG_ROOT). Regenerate with, from the repo root:
+#   for f in VIVENDI TTIDENT; do python3 tests/ipu/pss_census.py \
+#     "$PS2R_OG_ROOT/game_files/example_title.rep/FMV/$f.PSS"; done
+# and copy the "PS layer" / "ES" lines' numbers (program_end = program_end(B9),
+# sequence_end = sequence_end(B7)). Generated 2026-09-27 (stage 7D):
+#   VIVENDI.PSS size=7127044:  PS layer: video_pes=1417 audio_pes=320 packs=435 sys=4 program_end(B9)=1 at=['0x6cc000']
+#                              ES: bytes=5771871 sequence_end(B7)=1 total_pictures=203   (sequence#0: 640x480 pics=203 gops=203)
+#   TTIDENT.PSS size=15941636: PS layer: video_pes=3324 audio_pes=567 packs=973 sys=4 program_end(B9)=1 at=['0xf34000']
+#                              ES: bytes=13538118 sequence_end(B7)=1 total_pictures=361  (sequence#0: 512x448 pics=361 gops=25)
+game_files/example_title.rep/FMV/VIVENDI.PSS video_pes=1417 audio_pes=320 packs=435 sys=4 program_end=1 sequence_end=1 total_pictures=203
+game_files/example_title.rep/FMV/TTIDENT.PSS video_pes=3324 audio_pes=567 packs=973 sys=4 program_end=1 sequence_end=1 total_pictures=361

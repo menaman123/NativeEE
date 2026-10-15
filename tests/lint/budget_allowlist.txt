@@ -1,0 +1,86 @@
+# tests/lint/budget_allowlist.txt -- the shared allowlist of the ARCHITECTURE.md section 11 lints
+# (lint_size_budget.py, lint_header_globals.py, lint_session_tags.py).
+#
+# Grammar: one `<relpath>:<kind>:<measured>` per line, a `# YYYY-MM-DD <reason>` comment directly above.
+#   kind = file-lines | func-lines:<Name> | shard-bytes | header-global:<name> | session-tag:<text>
+# An entry silences the FAIL only while the lint's measured value is <= <measured>; an offender that
+# grows fails again, and an entry that no longer silences anything is reported stale. The thresholds
+# of the section 11 table are never read from here. Every entry below is an offender REPORTED to the
+# orchestrator's refactor queue by the stage that added it (PHASE8_IMPL.md P8.36-L) -- not an acceptance.
+
+# 2026-10-08 refactor queue item 1 closed: the composition root's leg runner (one 2,154-line EeBootstrap::Run,
+# file 2,493 lines after the stage-12 union) is split into fourteen phase functions in construction order
+# (app/host/ee_bootstrap_*.cpp, LegState in leg_state.h); every function is under the 300-line hard budget and
+# every file under the 1,000-line soft budget, so the two entries this block carried are gone.
+
+# 2026-10-06 P8.36-L census: the generated EE shard 028 is 4,296,958 bytes (hard 4 MB = 4,000,000 B; the
+# section 11 table's MB is decimal -- review loop 1 closed the MiB/MB ambiguity); the other 33 shards are
+# under the hard budget (10 over the 3 MB soft, WARN only). Refactor queue item 2: re-shard
+# (tools/recompiler_v2 shard split point) -- generated, so the fix is a generator parameter, not an edit.
+games/<title>/recomp/recompiled_shard_028.cpp:shard-bytes:4296958
+
+# 2026-10-06 P8.36-L census: the lane differ's selftest is one 521-line function (lines 1028-1548).
+# Refactor queue item 3 (split into per-lane selftest functions).
+verify/diff_legs.py:func-lines:selftest:521
+
+# ---- lint_session_tags.py (census 2026-10-06, P8.36-L: 39 occurrences in 11 files, 7 classes; 0 new ones allowed) ----
+
+# 2026-10-06 class A: the FROZEN bench_report.json / census-line vocabulary (tests/lint/README.md "Accepted exception",
+# CoreBenchReportFormat pins it byte-for-byte). Data, not narration; renaming breaks the frozen report format.
+engine/core/diag/bench.cpp:session-tag:[R127-BENCH]:1
+engine/core/diag/bench_report.cpp:session-tag:[R127-BENCH]:1
+engine/core/diag/bench_report.cpp:session-tag:[R123-MTVUSYNC]:1
+engine/core/diag/bench_report.cpp:session-tag:[R147-GFXRES]:1
+tests/core/test_bench_report.cpp:session-tag:[R123-MTVUSYNC]:1
+tests/core/test_bench_report.cpp:session-tag:[R147-GFXRES]:2
+
+# 2026-10-06 class B: `[GS-S9RDR]` = the shadow (stencil) composite renderer's log-line prefix, pinned verbatim by the
+# classrdr suite (6F). Refactor queue item 4: rename to a concept prefix (`[GS-SHADOWRDR]`) in the renderer AND the pins
+# in the same stage.
+engine/gs/hle/classrdr/stencil_composite_renderer.cpp:session-tag:[GS-S9RDR]:2
+tests/gs/classrdr/test_classrdr.cpp:session-tag:[GS-S9RDR]:6
+tests/gs/CMakeLists.txt:session-tag:[GS-S9RDR]:1
+
+# 2026-10-06 class C: tools/vif_replay prints the OLD tool's output grammar verbatim (its header comment says so) so the
+# `vif_arms_vs_old.py` diff against OLD's tool is textual. Retired with the OLD comparison.
+tools/vif_replay/vif_replay.cpp:session-tag:[W13R3-E3]:2
+tools/vif_replay/vif_replay.cpp:session-tag:[W10-EEFEED]:3
+tools/vif_replay/vif_replay.cpp:session-tag:[R168-DEFER]:2
+
+# 2026-10-06 class D: FLAG_LEDGER.md flag-family names (OLD's env-flag spellings) that tools/flag_phase_counts.py tallies
+# by regex; the ledger is the frozen source (FlagPhaseCountsReproducible). Data names, not identifiers of ours.
+tools/flag_phase_counts.py:session-tag:s9_shadow:1
+tools/flag_phase_counts.py:session-tag:w10_eefeed:1
+tools/flag_phase_counts.py:session-tag:s8_ctxlatch:1
+tools/flag_phase_counts.py:session-tag:s8_inrt:1
+
+# 2026-10-06 class E: PHASE3_PLAN case labels (T3..T6, B1..B4) printed by the thread-manager test's PASS lines.
+# Refactor queue item 5: print the case NAMES instead.
+tests/ee/test_thread_manager.cpp:session-tag:[T3]:1
+tests/ee/test_thread_manager.cpp:session-tag:[T4]:1
+tests/ee/test_thread_manager.cpp:session-tag:[T5]:1
+tests/ee/test_thread_manager.cpp:session-tag:[T6]:1
+tests/ee/test_thread_manager.cpp:session-tag:[B1]:1
+tests/ee/test_thread_manager.cpp:session-tag:[B2]:1
+tests/ee/test_thread_manager.cpp:session-tag:[B3]:1
+tests/ee/test_thread_manager.cpp:session-tag:[B4]:1
+
+# 2026-10-06 class F: `s57_walk` is a GS-corpus capture NAME (A5_VERIFICATION 2.1: the frozen gs_corpus/*.gsdl files),
+# a data file name, not an identifier of ours.
+tests/gs/CMakeLists.txt:session-tag:s57_walk:2
+
+# 2026-10-06 class G: the `[VU-MODE]` log-line prefix the two line-identity tests strip before diffing, quoted in the
+# registration comment (vocabulary of the binary's log, not history).
+tests/vif/CMakeLists.txt:session-tag:[VU-MODE]:1
+tests/vu/CMakeLists.txt:session-tag:[VU-MODE]:1
+
+# 2026-10-12 CHARTER 2 track A (Bernoulli): the composition root's InstallDispatch phase stood at exactly
+# 400 lines on main 636c797f; the menu extension's install (MenuComposition, 3 lines) and the SessionRuntime
+# unpack (1) take it to 406. Refactor queue item: split the workaround installs (META-ARENA, FmvAbortHold,
+# PadReadinessHook, LoaderSpinLift) into their own phase function; reported, not accepted.
+# 2026-10-12 CHARTER 2 A5 (Bernoulli): the RETAIL_BUGS fixes install (FixesComposition, 3 lines) and its LegState
+# row (1) take it to 410. Same queue item, now pressing from two stages: the phase split is the fix, not this row.
+# 2026-10-13 CHARTER 3 item 3 (Zeno, integrated): the tick census install (TickProfile stack view / bind /
+# frame reader, 19 lines on the owner's branch) is a file-local InstallTickCensus(); its ONE call line takes the
+# phase to 411. Same queue item: the phase split is the fix, not this row.
+app/host/ee_bootstrap_image.cpp:func-lines:EeBootstrap::InstallDispatch:411

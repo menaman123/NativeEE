@@ -1,0 +1,92 @@
+# engine/platform -- the ONE Platform interface, the ONE host header
+# (host/platform.h) and the target folder this build is for. The OS choice is
+# made HERE and in host/platform.h, nowhere else in the tree (ARCH section 16).
+if(APPLE)
+    set(PS2R_HOST_TARGET macos)
+    set(PS2R_HOST_TARGET_SOURCES macos/platform_macos.cpp)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(PS2R_HOST_TARGET linux)
+    set(PS2R_HOST_TARGET_SOURCES linux/platform_linux.cpp)
+elseif(WIN32)
+    set(PS2R_HOST_TARGET windows)
+    set(PS2R_HOST_TARGET_SOURCES windows/platform_windows.cpp)
+else()
+    message(FATAL_ERROR "engine/platform: no host target folder for ${CMAKE_SYSTEM_NAME} (add engine/platform/<target>/)")
+endif()
+message(STATUS "nativeee: host platform target ${PS2R_HOST_TARGET} (${CMAKE_SYSTEM_PROCESSOR})")
+
+# glibc < 2.34 keeps pthread_* in libpthread; the imported Threads::Threads is
+# empty where libc already carries them (macOS, newer glibc).
+find_package(Threads REQUIRED)
+
+# ps2r_host -- the ONE host-OS/compiler shim header (host/platform.h, sections 1-4) and
+# its arm: the only TUs that include <windows.h> or <unistd.h>/<pthread.h>/<mach/*>/
+# <execinfo.h> for the shimmed calls; callers include host/platform.h and nothing of the
+# OS. It sits BELOW ps2r_core (core's fd writers, the triage backtrace and the
+# case-insensitive compares reach the OS through it), so it depends on nothing of the
+# tree but the Platform interface header (platform.cpp: the registry) and, on POSIX, the
+# fiber switcher the coroutine entries delegate to.
+add_library(ps2r_host STATIC platform.cpp)
+if(WIN32)
+    target_sources(ps2r_host PRIVATE host/host_windows.cpp)
+    target_link_libraries(ps2r_host PUBLIC dbghelp psapi)
+else()
+    target_sources(ps2r_host PRIVATE host/host_posix.cpp posix/fiber_posix.cpp)
+endif()
+target_include_directories(ps2r_host PUBLIC ${CMAKE_SOURCE_DIR})
+target_compile_options(ps2r_host PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(ps2r_host PUBLIC Threads::Threads)
+
+# ps2r_platform -- the target folder (the filled-in Platform), the host:: forwarders
+# (host/platform.cpp) and the POSIX signal crash handler (the Windows target has the SEH
+# counterpart still to write: windows/README.md).
+add_library(ps2r_platform STATIC
+    host/platform.cpp
+    ${PS2R_HOST_TARGET_SOURCES})
+if(NOT WIN32)
+    target_sources(ps2r_platform PRIVATE posix/crash_handler.cpp)
+endif()
+target_include_directories(ps2r_platform PUBLIC ${CMAKE_SOURCE_DIR})
+target_compile_options(ps2r_platform PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(ps2r_platform PUBLIC ps2r_core ps2r_host Threads::Threads)
+
+add_subdirectory(sdl)  # Phase 6: window + GL context only (audio/input are Phase 7)
+
+# Phase 7 -- the SDL2 host half (PHASE7_PLAN section 2.3 / 2.4): the AudioPullRing
+# (SPSC PCM ring between the tick-clocked mixer and the device thread), the
+# SdlAudioSink (the ONE 48 kHz stereo float device) and, under sdl/input/, the
+# input mapper + keyboard/mouse + game-controller backends behind InputSystem. Only
+# this target and the SDL-backed tests see SDL symbols; engine headers outside
+# platform/sdl stay SDL-free.
+include(${CMAKE_SOURCE_DIR}/cmake/Sdl2Dependency.cmake)
+
+# Stage 7B: the baked-in default bindings. default_bindings.ini is read at
+# configure time into ${PS2R_GENERATED_DIR}/input_default_bindings.h as a raw
+# string; editing the .ini re-runs configure (CMAKE_CONFIGURE_DEPENDS). The
+# header is consumed by sdl/input/input_mapper.cpp only.
+set(PS2R_INPUT_DEFAULT_BINDINGS_INI "${CMAKE_CURRENT_SOURCE_DIR}/sdl/input/default_bindings.ini")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PS2R_INPUT_DEFAULT_BINDINGS_INI}")
+file(READ "${PS2R_INPUT_DEFAULT_BINDINGS_INI}" _ps2r_input_ini_content)
+file(WRITE "${PS2R_GENERATED_DIR}/input_default_bindings.h"
+"// GENERATED from engine/platform/sdl/input/default_bindings.ini -- DO NOT EDIT.
+#pragma once
+namespace ps2r::platform::sdl {
+inline const char* const kDefaultBindingsIni = R\"PS2INI(${_ps2r_input_ini_content})PS2INI\";
+}  // namespace ps2r::platform::sdl
+")
+unset(_ps2r_input_ini_content)
+
+target_sources(ps2r_platform_sdl PRIVATE   # phase7 half attached to phase6's target (same name on both branches)
+    sdl/audio_pull_ring.cpp
+    sdl/sdl_audio_sink.cpp
+    sdl/input/pad_sample.cpp
+    sdl/input/input_mapper.cpp
+    sdl/input/gamepad_convert.cpp
+    sdl/input/pad_button_map.cpp
+    sdl/input/keyboard_mouse_backend.cpp
+    sdl/input/gamepad_backend.cpp
+    sdl/input/input_system.cpp)
+target_include_directories(ps2r_platform_sdl PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(ps2r_platform_sdl PRIVATE ${PS2R_GENERATED_DIR})
+target_compile_options(ps2r_platform_sdl PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(ps2r_platform_sdl PUBLIC ps2r_platform SDL2::SDL2)

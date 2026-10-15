@@ -1,0 +1,16 @@
+# .dockerignore -- the context of tools/ci/linux.Dockerfile. Build trees and the play
+# recordings stay on the host. The game-derived oracle images (RAM savestates, GS dumps) are
+# not in the tree at all any more (private fixtures: cmake/Ps2rPrivateFixtures.cmake); the
+# patterns below keep a developer's local copies out of the context as well.
+build/
+build-*/
+out/
+.git/
+play_sessions/
+verify/legs/
+verify/out/
+games/*/triage/*
+games/*/verify/baseline/**/probe/*.ps2st
+games/*/verify/baseline/**/gsdumps/
+**/__pycache__/
+.DS_Store

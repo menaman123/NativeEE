@@ -1,0 +1,31 @@
+# tools/ci/linux_packages.txt -- the Ubuntu 24.04 packages of the Linux lanes, ONE list for
+# tools/ci/linux.Dockerfile (the local/offline reproduction) and .github/workflows/ci.yml (the
+# GitHub-hosted ubuntu-24.04 / ubuntu-24.04-arm runners): compilers, CMake + Ninja, Python,
+# SDL2 (the found path of cmake/Sdl2Dependency.cmake), Mesa GL + libglvnd (OpenGL::GL exports
+# the core entry points), FFmpeg (libavcodec/avutil/swscale), Xvfb (a GLX display for the GL
+# tests: llvmpipe), zstd + python3-zstandard (the GS-dump tools), patchelf (build.sh's rpath).
+build-essential
+g++
+gcc
+clang
+cmake
+ninja-build
+python3
+git
+ca-certificates
+pkg-config
+libsdl2-dev
+libgl-dev
+libglvnd-dev
+libegl-dev
+mesa-utils
+libgl1-mesa-dri
+libavcodec-dev
+libavutil-dev
+libswscale-dev
+xvfb
+xauth
+zstd
+python3-zstandard
+python3-numpy
+patchelf

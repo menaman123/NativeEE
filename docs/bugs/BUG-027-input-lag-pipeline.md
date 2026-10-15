@@ -1,0 +1,15 @@
+# BUG-027 — "One-second input lag": the pipeline was healthy — fps collapse stretched a 3-frame pipeline, and zombie processes ate the machine
+
+| Field | Content |
+|---|---|
+| **ID** | BUG-027 |
+| **Title** | [R183-INLAT]/[S29-LAT] Input latency measured end-to-end at ~2-3 present frames (healthy); the felt "seconds" were 100-160 ms/frame fps collapse plus MTVU depth-1 tax — and the multi-GB RAM reports were shutdown-wedged zombie host_app processes |
+| **User-visible symptom** | (1) Physical Start/Y press "takes seconds to register"; (2) ~1 s input lag moving Crash; (3) host_app RAM "exceeding 4 GB" in long sessions. |
+| **Scene / savestate** | Menu at 60 fps (RUN A: T1 key→T2 wire +29 µs→T3 served +3.8 ms→T4 SM edge +39.6 ms); heavy-view slowspot scenes for the collapse case. |
+| **Subsystem** | input (primary), threading |
+| **Root cause** | Instrumented chain (T1 main-thread edge → T2 guest PADMAN buffer stamp → T3 scePadRead serve → T4 state-machine edge) proved every stage healthy: ~880 Hz pump, 60/s game polls, ~2 present frames total at 60 fps. The "seconds" feel = frame time: in heavy views the same shallow 3-frame pipeline rides 100-160 ms frames (fps collapse, a separate slowspot bug) plus the MTVU depth-1 policy tax. The RAM report was NOT a leak: in-session RSS plateaus (932→977 MB); on window close the guest EE main thread never unwound (per-frame parks released on `!g_emulator_running` but RETURNED), `joinAllHostThreads()` wedged forever — every close left a live ~1-1.5 GB one-full-core zombie host_app (3/3 legs). |
+| **PS2 rule violated** | None on the input path. Threading contract violated on shutdown: every guest-thread park must have an unwind edge; a join without a bound is a leak of a whole process. |
+| **Fix + hatch** | P0 bounded shutdown (`PS2_SHUTDOWN_WAIT`, default 10 s; 0 = legacy): frame-boundary unwind — `hle_sceGsSyncV`/`hle_WaitForVblank` throw ThreadExitException for guest worker threads when shutdown policy says so; IOP worker drain (`iop_stubs::StopAllThreads()` notifies every condvar; woken waits throw IopShutdownUnwind). Pure policy logic in `shutdown_policy.h`. Input side: no defect to fix — latency == pipeline depth × frame time is the standing model; fps and MTVU depth are the levers. |
+| **Regression test** | `tests/test_shutdown_policy.cpp` (ctest ShutdownPolicy); INLAT census probes kept (`PS2_INPUT_LAT=1`); zombie check (pgrep after close) in session hygiene. |
+| **Source record** | `Ps2Recomp/docs/loop_state/INPUT_LAG_FINAL.md`, `INPUT_LAG.md`, `INPUTLAG_IMPL.md` ([S29-SHUTDOWN]/[S29-LAT]), `INPUT_DESIGN.md`, `INPUT_IMPL.md` |
+| **Triage tips** | Measure the latency CHAIN before believing "input lag" — stamp the same press at every stage with one clock. Lag proportional to frame time is an fps bug wearing an input costume. "RAM grows over sessions" can be process accumulation, not a leak: `pgrep` the binary before profiling the heap. Every park predicate needs a notify on shutdown — a predicate that releases but never wakes is a wedge. |

@@ -1,0 +1,61 @@
+# engine/vu -- the vector units: register/memory state, the ONE decode, the
+# static span classifier, the flag pipeline, the stall model, XGKICK, the VU
+# float rules, the round-toward-zero guard, the image hash and the frozen
+# Vu1Case record, the SDK libvu0 sin/cos substitution (vu0/), the interpreter
+# and cached tiers and the tier dispatch (tiers/), and the VU1 HLE mechanism
+# (hle/: contract, registry, image analyzer, runtime, kick lowering, builder),
+# and the EE COP2 <-> unit hand-over behind the generated code's VCALLMS /
+# CMSAR1 sites (macro/: VuMacroBridge, which also DEFINES the row-27 seam
+# bodies of engine/ee/recomp_abi/host_app/vu.h -- binaries that link
+# ps2r_title_recomp must link ps2r_vu), and the VU savestate codecs
+# (savestate/: VuMemorySection = VU0C/VU0D/VU1C/VU1D, Vu1RegisterSection = VU1R).
+#
+# Compiled at -O2 -fno-strict-aliasing -fwrapv regardless of the preset: the
+# VU float paths are bit-identity code and the recorded baselines come from an
+# -O2 build. No -ffast-math ever. Contraction is left at the compiler default;
+# the fused multiply-add family is written with std::fmaf explicitly so the
+# setting cannot move a result.
+
+add_library(ps2r_vu STATIC
+    vu_chop_round_guard.cpp
+    vu_float.cpp
+    vu_image_hash.cpp
+    vu1_case.cpp
+    vu_decoder.cpp
+    span_classifier.cpp
+    flag_pipeline.cpp
+    stall_model.cpp
+    xg_kick.cpp
+    vu_unit.cpp
+    vu0/lib_vu0_sin_cos.cpp
+    vu0/vu0_registry.cpp
+    vu0/vu0_trace.cpp
+    tiers/vu_interpreter_tier.cpp
+    tiers/vu_interpreter_tier_upper.cpp
+    tiers/vu_interpreter_tier_lower.cpp
+    tiers/vu_cached_tier.cpp
+    tiers/vu_cached_tier_exec.cpp
+    tiers/vu_tier_dispatch.cpp
+    tiers/mtvu_clock.cpp
+    tiers/runahead_guard.cpp
+    tiers/mtvu_backpressure.cpp
+    tiers/mtvu_worker.cpp
+    tiers/mtvu_sync.cpp
+    hle/vu1_registry.cpp
+    hle/vu1_image_analyzer.cpp
+    hle/kick_lowering.cpp
+    hle/vu1_hle_runtime.cpp
+    hle/gif_packet_builder.cpp
+    macro/vu_macro_bridge.cpp
+    savestate/vu_memory_section.cpp
+    savestate/vu1_register_section.cpp)
+target_include_directories(ps2r_vu PUBLIC ${CMAKE_SOURCE_DIR})
+target_compile_options(ps2r_vu PRIVATE -Wall -Wextra -Werror -O2 -fno-strict-aliasing -fwrapv)
+target_link_libraries(ps2r_vu PUBLIC ps2r_gif ps2r_ee ps2r_core)
+
+# PS2R_SIMD (root option): the NEON lanes (ClampBits4 / MacFlags4, the lazy
+# MAC ring). The scalar bodies are compiled when it is off; the flag algebra
+# property test proves the two representations identical.
+if(PS2R_SIMD)
+    target_compile_definitions(ps2r_vu PUBLIC PS2R_SIMD=1)
+endif()

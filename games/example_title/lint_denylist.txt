@@ -1,0 +1,27 @@
+# games/example_title/lint_denylist.txt -- the tokens LintEnginePurity treats as THIS title's.
+#
+# tests/lint/lint_engine_purity.py enforces that engine/ and verify/ name no game. The generic
+# half of that denylist lives in the lint (disc serial shapes, the recompilers' FUN_/func_
+# naming). The half below is title data: which addresses, strings and program stamps are YOURS.
+#
+# Directives ("#" comments, one per line):
+#   text_lo = 0x...   the title ELF's PT_LOAD p_vaddr
+#   text_hi = 0x...   its memsz end, exclusive -- a hex literal in [lo, hi) is a game address
+#   0x...             a bare hex literal: a VRAM or data base constant
+#   <regex>           anything else: matched case-insensitively (the title's name, its disc
+#                     directories, its VU1 program stamps, its ELF CRC)
+#
+# THE TEMPLATE SETS NOTHING. With every directive absent the address-range check is skipped and
+# only the lint's generic patterns apply -- correct for a title with no recompiled code yet, and
+# weaker than it should be once there is. Fill this in as soon as you know your ELF's PT_LOAD.
+#
+# Example of a filled-in file (values are illustrative, not any real title's):
+#
+#   text_lo = 0x00100000
+#   text_hi = 0x00400000
+#   0x230000            # a frame-buffer base the renderer profile keys on
+#   0x280000            # another
+#   MyGameName          # the title's name in any casing
+#   DATASYS             # a disc directory the loader names
+#   vs_family_\w*       # the VU1 program stamps the library registers
+#   <elf-crc>            # the ELF CRC

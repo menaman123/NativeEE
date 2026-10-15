@@ -1,0 +1,15 @@
+# BUG-015 — Dark rectangular patches on distant surfaces: half-texel UV phase on the T8H fog composite's legacy decode path
+
+| Field | Content |
+|---|---|
+| **ID** | BUG-015 |
+| **Title** | [S103-UVNATIVE] A TBW retag (512→256) permanently declined the fmt=5 GPU serve; the fallback CPU-decode sampler had no half-texel phase handling, and the game's +0.5-texel STQ mapping put every interpolant exactly on a texel boundary |
+| **User-visible symptom** | Left half of frame, distant lower rock platform: darker rectangular patch (~¼ frame wide) with an internal grid of 8/16/64-px GS-block-sized rectangles, plus scattered dark speckle; only in the cavern, only at distance, flickers. |
+| **Scene / savestate** | `save_states/ps2state_slot0_f40391.ps2st`, camera still (fog/distance-darkening composite active). |
+| **Subsystem** | gs-texsrc (primary), gs-targets |
+| **Root cause** | Serve admission census: `hit16=1` then `fall{tbw≈1/frame}` — the fmt=5 indexed serve engages once, then falls on predicate P4 (`tbw == target.render_fbw`) EVERY frame, because the composite reads with TEX0.TBW=512 while the game's own CT24 scene-copy blits into 0x280000 render at FRAME.FBW=256 and retag `target.render_fbw=256`. The declined read takes the legacy path (T8H VRAM decode + CLUT bound as a fresh 576x512 texture). Retail semantics: the T8H view of RT bytes is a NATIVE-pixel aliasing permutation; the game maps STQ so each native pixel's texel interpolant sits EXACTLY on a texel boundary (u = x + 1.0). The legacy normalized-uv sampler has no half-texel phase handling, so boundary rounding picks the wrong texel — block-structured wrong-index patches, worst where Z-compression makes neighbors differ (distance). |
+| **PS2 rule violated** | GS cross-format aliasing (manual, local-memory chapters): T8H-over-CT32 is an exact per-native-pixel byte permutation — a decode-side sampler must reproduce the exact texel phase the GS's fixed-point ST→texel mapping produces, including the game's +0.5 convention. |
+| **Fix + hatch** | `[S103-UVNATIVE]`, hatch `PS2_GL_UVNATIVE` (default ON): requantize UV to native texel centers on the affected sample path so the interpolant can never sit ambiguously on a boundary. (The P4/tbw admission defect is the companion fix thread — view-vs-target geometry belongs to the read, BUG-018.) Post-refactor: `uv_native` transform field of TextureSource (ARCH §4.5). |
+| **Regression test** | ROI patch metric on frame P (4.894→3.648 user env; below the A1 clean bound); corpus byte-identity at hatch=0; DEPTHPATCH table of 8 pre-fix corpus hashes preserved. |
+| **Source record** | `Ps2Recomp/docs/loop_state/CAVERN_DEPTHPATCH_IMPL.md` (§ [DZ5]), `CAVERN_FOG_IMPL.md` ([FG2] chain), `CAVERN_CHECKER_IMPL.md` (aliasing rule) |
+| **Triage tips** | GS-block-sized rectangles (8/16/64 px grid) mean a swizzle/aliasing-layer bug, not shading. First check WHICH serve route the read actually took (admission census) — an artifact often lives on the FALLBACK path while everyone debugs the primary. When texels come out "one off", suspect UV phase at boundaries: log the exact u for one bad pixel and check for x + 1.0 / x + 0.5 patterns. |

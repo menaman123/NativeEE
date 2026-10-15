@@ -1,0 +1,6 @@
+# purity allowlist: <relpath>:<literal> per line, justification comment above each.
+# Reviewed entries only. The lint's address range is the title ELF's whole PT_LOAD
+# [0x00100000, 0x003DAE80) (PHASE3_PLAN 7.1 P3-ELFRANGE), so generic SIZE constants
+# 0x100000 (1 MiB), 0x200000 (2 MiB), 0x300000 (3 MiB) collide with it by construction.
+# Only such size constants may be listed here, never an address. Scan of engine/ and
+# verify/ after the widening (stage 3B): 0 findings, so no entry is needed today.

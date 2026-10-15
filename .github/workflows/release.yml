@@ -1,0 +1,99 @@
+# .github/workflows/release.yml -- on a version tag: the ci.yml matrix (five Release targets,
+# component suite, asset guard, the cross-platform oracles-lane identity check -- a red lane or a
+# divergent lane means no release), then one zip per target + SHA256SUMS + the identity report
+# attached to a GitHub release. The zips are the dist/<platform>/ folders exactly as CI staged
+# and scanned them: the binary (recompiled code + native engine), the bundled runtime libraries,
+# BUILD-ID, the user README, LICENSE, THIRD_PARTY_NOTICES.md -- and no game data (the user
+# supplies their own disc image; README.md "You must own the game").
+#
+#   git tag v0.1.0 && git push origin v0.1.0        (or: Actions -> release -> Run workflow)
+#
+# TITLE LANE: the zips are the title binary, which only a runner holding the title input can
+# build (ci.yml header, NATIVEEE_TITLE_LANES). On the public repository the variable is unset:
+# the ci job still runs the full disc-free matrix on a tag, and the `release` job is skipped
+# instead of failing on the missing artifacts.
+#
+# Local validation: `actionlint .github/workflows/release.yml`.
+name: NativeEE release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  ci:
+    name: matrix + suite + identity
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  release:
+    name: zip + sha256 + GitHub release
+    needs: ci
+    if: vars.NATIVEEE_TITLE_LANES == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: nativeee-*
+          path: artifacts
+      - uses: actions/download-artifact@v4
+        with:
+          name: identity-report
+          path: identity-report
+        continue-on-error: true   # absent when every lane was identical (no report lines to attach)
+
+      - name: Zip each target's folder; SHA256SUMS over the zips
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          mkdir -p release
+          expected="nativeee-macos-arm64 nativeee-macos-x86_64 nativeee-windows-x64 nativeee-linux-x86_64 nativeee-linux-aarch64"
+          for name in $expected; do
+            d="artifacts/$name"
+            test -d "$d" || { echo "missing artifact $name"; exit 1; }
+            # The binary's mode bits do not survive upload-artifact: restore them (not on Windows).
+            if [ -f "$d/nativeee" ]; then chmod +x "$d/nativeee"; fi
+            if [ -d "$d/lib" ]; then chmod +x "$d"/lib/*; fi
+            cat "$d/BUILD-ID"
+            (cd artifacts && mv "$name" "nativeee-${tag}-${name#nativeee-}" && zip -qr -y "../release/nativeee-${tag}-${name#nativeee-}.zip" "nativeee-${tag}-${name#nativeee-}")
+          done
+          (cd release && sha256sum ./*.zip > SHA256SUMS && cat SHA256SUMS)
+          ls -la release
+
+      - name: Release notes
+        shell: bash
+        run: |
+          {
+            echo "nativeee ${GITHUB_REF_NAME} -- a native PS2 host port."
+            echo
+            echo "One folder per platform; unzip, drop your own disc image on the launcher, play."
+            echo "This release contains NO game data: you must own the game (README.md inside the zip)."
+            echo
+            echo "| zip | sha256 |"
+            echo "|---|---|"
+            while read -r sha file; do echo "| ${file#./} | \`$sha\` |"; done < release/SHA256SUMS
+            echo
+            echo "BUILD-ID per target:"
+            for d in artifacts/nativeee-*; do echo "- $(basename "$d"): $(cat "$d/BUILD-ID")"; done
+            echo
+            echo "Cross-platform identity: every target's component-oracles lane (the deterministic math oracles' per-channel SHA-256) was IDENTICAL to the macOS arm64 lane (the \`identity\` job of ci.yml gates this release)."
+          } > release/NOTES.md
+          cat release/NOTES.md
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          body_path: release/NOTES.md
+          files: |
+            release/*.zip
+            release/SHA256SUMS
+            identity-report/*.md
+          fail_on_unmatched_files: false
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}

@@ -1,0 +1,723 @@
+function	library	tr_source	ours	our_handler	callers(game files)	system	priority	hits(leg_on700)
+sceDevVif0Reset	libdev.a	TR:ps2sdk.txt:6	stub	engine/ee/hle/libdev_bindings.cpp:10		renderer/boot	P2-stub	1
+sceDevVif1Reset	libdev.a	TR:ps2sdk.txt:7	stub	engine/ee/hle/libdev_bindings.cpp:11		renderer/boot	P2-stub	1
+sceDevVu0Reset	libdev.a	TR:ps2sdk.txt:8	stub	engine/ee/hle/libdev_bindings.cpp:12		renderer/boot	P2-stub	1
+sceDevVu1Reset	libdev.a	TR:ps2sdk.txt:9	stub	engine/ee/hle/libdev_bindings.cpp:13		renderer/boot	P2-stub	1
+sceGsResetPath	libgraph.a	TR:ps2sdk.txt:10	seam(pass-through: generated body)	symbols.tsv 0x002c1ab0		renderer	done	0
+sceDmaReset	libdma.a	TR:ps2sdk.txt:11	implemented	engine/dmac/hle/libdma_bindings.cpp:34		renderer/dma	done	1
+sceDmaPutEnv	libdma.a	TR:ps2sdk.txt:12	implemented	engine/dmac/hle/libdma_bindings.cpp:35		renderer/dma	done	0
+memclr	libdma.a	TR:ps2sdk.txt:13	implemented	engine/dmac/hle/libdma_bindings.cpp:32		renderer/dma	done	0
+sceSifGetSreg	libkernl.a	TR:ps2sdk.txt:16	trap			kernel	P1-trap	0
+sceSifInitCmd	libkernl.a	TR:ps2sdk.txt:17	implemented	engine/sif/hle/sce_sif.cpp		kernel	done	0
+sceSifExitCmd	libkernl.a	TR:ps2sdk.txt:18	trap			kernel	P1-trap	0
+sceSifAddCmdHandler	libkernl.a	TR:ps2sdk.txt:19	implemented	engine/sif/hle/sce_sif.cpp		kernel	done	0
+sceSifRemoveCmdHandler	libkernl.a	TR:ps2sdk.txt:20	trap			kernel	P1-trap	0
+_sceSifSendCmd	libkernl.a	TR:ps2sdk.txt:21	trap			kernel	P1-trap	0
+sceSifSendCmd	libkernl.a	TR:ps2sdk.txt:22	trap			kernel	P1-trap	0
+isceSifSendCmd	libkernl.a	TR:ps2sdk.txt:23	trap			kernel	P1-trap	0
+SIF0_InterruptHandler	libkernl.a	TR:ps2sdk.txt:24	n/a			kernel	P3-check(not in our manifest: finder miss or PAL-only)	0
+sceSifWriteBackDCache	libkernl.a	TR:ps2sdk.txt:25	implemented	engine/sif/hle/sce_sif.cpp		kernel	done	0
+sceSifInitRpc	libkernl.a	TR:ps2sdk.txt:28	implemented	engine/sif/hle/sce_sif.cpp		kernel	done	6
+sceSifExitRpc	libkernl.a	TR:ps2sdk.txt:29	trap			kernel	P1-trap	0
+_sceRpcGetPacket	libkernl.a	TR:ps2sdk.txt:30	n/a			kernel	P3-check(not in our manifest: finder miss or PAL-only)	0
+_sceRpcFreePacket	libkernl.a	TR:ps2sdk.txt:31	n/a			kernel	P3-check(not in our manifest: finder miss or PAL-only)	0
+_sceRpcGetFPacket	libkernl.a	TR:ps2sdk.txt:32	trap			kernel	P1-trap	0
+_sceRpcGetFPacket2	libkernl.a	TR:ps2sdk.txt:33	trap			kernel	P1-trap	0
+_request_end	libkernl.a	TR:ps2sdk.txt:34	trap			kernel	P1-trap	0
+_alarm_rdata	libkernl.a	TR:ps2sdk.txt:35	trap			kernel	P1-trap	0
+_request_rdata	libkernl.a	TR:ps2sdk.txt:36	trap			kernel	P1-trap	0
+_search_svdata	libkernl.a	TR:ps2sdk.txt:37	trap			kernel	P1-trap	0
+_alarm_bind	libkernl.a	TR:ps2sdk.txt:38	trap			kernel	P1-trap	0
+_request_bind	libkernl.a	TR:ps2sdk.txt:39	trap			kernel	P1-trap	0
+sceSifBindRpc	libkernl.a	TR:ps2sdk.txt:40	implemented	engine/sif/hle/sce_sif.cpp		kernel	done	5
+_request_call	libkernl.a	TR:ps2sdk.txt:41	trap			kernel	P1-trap	0
+sceSifCallRpc	libkernl.a	TR:ps2sdk.txt:42	implemented	engine/sif/hle/sce_sif.cpp		kernel	done	2226
+sceSifCheckStatRpc	libkernl.a	TR:ps2sdk.txt:43	implemented	engine/sif/hle/sce_sif.cpp		kernel	done	2224
+sceSifSetRpcQueue	libkernl.a	TR:ps2sdk.txt:44	implemented	engine/sif/hle/sce_sif.cpp		kernel	done	1
+sceSifRegisterRpc	libkernl.a	TR:ps2sdk.txt:45	implemented	engine/sif/hle/sce_sif.cpp		kernel	done	1
+sceSifGetNextRequest	libkernl.a	TR:ps2sdk.txt:46	implemented	engine/sif/hle/sce_sif.cpp		kernel	done	0
+sceSifExecRequest	libkernl.a	TR:ps2sdk.txt:47	trap			kernel	P1-trap	0
+sceSifRpcLoop	libkernl.a	TR:ps2sdk.txt:48	implemented	engine/sif/hle/sce_sif.cpp		kernel	done	1
+sceSifStopDma	libkernl.a	TR:ps2sdk.txt:51	syscall:107 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+sceSifDmaStat	libkernl.a	TR:ps2sdk.txt:52	syscall:118 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+sceSifSetDma	libkernl.a	TR:ps2sdk.txt:53	syscall:119 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+isceSifSetDma	libkernl.a	TR:ps2sdk.txt:54	syscall:119 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+sceSifSetDChain	libkernl.a	TR:ps2sdk.txt:55	syscall:120 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+isceSifSetDChain	libkernl.a	TR:ps2sdk.txt:56	syscall:120 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+sceSifSetReg	libkernl.a	TR:ps2sdk.txt:57	syscall:121 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+sceSifGetReg	libkernl.a	TR:ps2sdk.txt:58	syscall:122 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+sceSifInitIopHeap	libkernl.a	TR:ps2sdk.txt:61	implemented	engine/sif/hle/sce_sif.cpp		kernel	done	1
+sceSifAllocIopHeap	libkernl.a	TR:ps2sdk.txt:62	implemented	engine/sif/hle/sce_sif.cpp		kernel	done	0
+sceSifFreeSysMemory	libkernl.a	TR:ps2sdk.txt:63	implemented	engine/sif/hle/sce_sif.cpp		kernel	done	0
+sceSifFreeIopHeap	libkernl.a	TR:ps2sdk.txt:64	implemented(engine row; no manifest address -- recompiled body runs)	engine/sif/hle/sce_sif.cpp		kernel	done	0
+_lf_bind	libkernl.a	TR:ps2sdk.txt:67	implemented	engine/sif/hle/sce_sif.cpp		kernel	done	0
+_lf_version	libkernl.a	TR:ps2sdk.txt:68	n/a			kernel	P3-check(not in our manifest: finder miss or PAL-only)	0
+_sceSifLoadModule	libkernl.a	TR:ps2sdk.txt:69	implemented	engine/sif/hle/sce_sif.cpp		kernel	done	0
+sceSifLoadModule	libkernl.a	TR:ps2sdk.txt:70	implemented	engine/sif/hle/sce_sif.cpp		kernel	done	8
+sceSifResetIop	libkernl.a	TR:ps2sdk.txt:73	trap			kernel	P1-trap	0
+sceSifSyncIop	libkernl.a	TR:ps2sdk.txt:74	implemented	engine/sif/hle/sce_sif.cpp		kernel	done	1
+sceSifRebootIop	libkernl.a	TR:ps2sdk.txt:75	implemented	engine/sif/hle/sce_sif.cpp		kernel	done	1
+cmd_sem_init	libcdvd.a	TR:ps2sdk.txt:79	stub	engine/cdvd/hle/libcdvd_bindings.cpp:34		loader/disc	P2-stub	0
+cdvd_exit	libcdvd.a	TR:ps2sdk.txt:80	stub	engine/cdvd/hle/libcdvd_bindings.cpp:35		loader/disc	P2-stub	0
+_sceCd_Poff_Intr	libcdvd.a	TR:ps2sdk.txt:81	stub	engine/cdvd/hle/libcdvd_bindings.cpp:36		loader/disc	P2-stub	0
+PowerOffCB	libcdvd.a	TR:ps2sdk.txt:82	trap			loader/disc	P1-trap	0
+sceCdLayerSearchFile	libcdvd.a	TR:ps2sdk.txt:83	implemented	engine/cdvd/hle/libcdvd_bindings.cpp:33		loader/disc	done	2
+sceCdSearchFile	libcdvd.a	TR:ps2sdk.txt:84	implemented(engine row; no manifest address -- recompiled body runs)	engine/cdvd/hle/libcdvd_bindings.cpp:33		loader/disc	done	0
+_sceCd_ncmd_prechk	libcdvd.a	TR:ps2sdk.txt:85	stub	engine/cdvd/hle/libcdvd_bindings.cpp:35		loader/disc	P2-stub	0
+sceCdSync	libcdvd.a	TR:ps2sdk.txt:86	implemented	engine/cdvd/hle/libcdvd_bindings.cpp:29		loader/disc	done	1412
+sceCdSyncS	libcdvd.a	TR:ps2sdk.txt:87	implemented	engine/cdvd/hle/libcdvd_bindings.cpp:29		loader/disc	done	0
+_sceCd_scmd_prechk	libcdvd.a	TR:ps2sdk.txt:88	stub	engine/cdvd/hle/libcdvd_bindings.cpp:34		loader/disc	P2-stub	0
+sceCdInit	libcdvd.a	TR:ps2sdk.txt:89	implemented	engine/cdvd/hle/libcdvd_bindings.cpp:27		loader/disc	done	2
+sceCdDiskReady_old	libcdvd.a	TR:ps2sdk.txt:90	implemented	engine/cdvd/hle/libcdvd_bindings.cpp:28		loader/disc	done	0
+sceCdDiskReady	libcdvd.a	TR:ps2sdk.txt:91	implemented	engine/cdvd/hle/libcdvd_bindings.cpp:28		loader/disc	done	10
+sceCdGetError	libcdvd.a	TR:ps2sdk.txt:92	implemented	engine/cdvd/hle/libcdvd_bindings.cpp:30		loader/disc	done	1410
+sceCdBreak	libcdvd.a	TR:ps2sdk.txt:93	implemented	engine/cdvd/hle/libcdvd_bindings.cpp:30		loader/disc	done	2
+sceCdMmode	libcdvd.a	TR:ps2sdk.txt:94	implemented	engine/cdvd/hle/libcdvd_bindings.cpp:27		loader/disc	done	2
+sceCdReadClock	libcdvd.a	TR:ps2sdk.txt:95	implemented	engine/cdvd/hle/libcdvd_bindings.cpp:32		loader/disc	done	1
+sceCdStInit	libcdvd.a	TR:ps2sdk.txt:96	implemented	engine/cdvd/hle/libcdvd_bindings.cpp:36		loader/disc	done	2
+sceCdStStart	libcdvd.a	TR:ps2sdk.txt:97	implemented	engine/cdvd/hle/libcdvd_bindings.cpp:38		loader/disc	done	2
+sceCdStSeek	libcdvd.a	TR:ps2sdk.txt:98	implemented	engine/cdvd/hle/libcdvd_bindings.cpp:38		loader/disc	done	2
+sceCdStStop	libcdvd.a	TR:ps2sdk.txt:99	implemented	engine/cdvd/hle/libcdvd_bindings.cpp:39		loader/disc	done	2
+sceCdStRead	libcdvd.a	TR:ps2sdk.txt:100	implemented	engine/cdvd/hle/libcdvd_bindings.cpp:37		loader/disc	done	1410
+sceCdStream	libcdvd.a	TR:ps2sdk.txt:101	implemented	engine/cdvd/hle/libcdvd_bindings.cpp:37		loader/disc	done	0
+scePadInit	libpad.a	TR:ps2sdk.txt:104	n/a			pads	P3-check(not in our manifest: finder miss or PAL-only)	0
+_pad_intr_hdr	libpad.a	TR:ps2sdk.txt:105	implemented	engine/pad/hle/libpad_bindings.cpp:29		pads	done	0
+scePadInit2	libpad.a	TR:ps2sdk.txt:106	implemented	engine/pad/hle/libpad_bindings.cpp:28		pads	done	0
+_send_to_iop	libpad.a	TR:ps2sdk.txt:107	implemented	engine/pad/hle/libpad_bindings.cpp:28		pads	done	0
+scePadPortOpen	libpad.a	TR:ps2sdk.txt:108	implemented	engine/pad/hle/libpad_bindings.cpp:20		pads	done	1
+scePadPortClose	libpad.a	TR:ps2sdk.txt:109	implemented	engine/pad/hle/libpad_bindings.cpp:20		pads	done	0
+scePadGetDmaStr	libpad.a	TR:ps2sdk.txt:110	implemented	engine/pad/hle/libpad_bindings.cpp:21		pads	done	0
+scePadRead	libpad.a	TR:ps2sdk.txt:111	implemented	engine/pad/hle/libpad_bindings.cpp:21		pads	done	1107
+scePadGetState	libpad.a	TR:ps2sdk.txt:112	implemented	engine/pad/hle/libpad_bindings.cpp:22		pads	done	1115
+scePadSetReqState	libpad.a	TR:ps2sdk.txt:113	implemented	engine/pad/hle/libpad_bindings.cpp:22		pads	done	0
+scePadGetReqState	libpad.a	TR:ps2sdk.txt:114	implemented	engine/pad/hle/libpad_bindings.cpp:23		pads	done	4
+scePadInfoAct	libpad.a	TR:ps2sdk.txt:115	implemented	engine/pad/hle/libpad_bindings.cpp:23		pads	done	1
+scePadInfoMode	libpad.a	TR:ps2sdk.txt:116	implemented	engine/pad/hle/libpad_bindings.cpp:24		pads	done	2
+scePadSetMainMode	libpad.a	TR:ps2sdk.txt:117	implemented	engine/pad/hle/libpad_bindings.cpp:24		pads	done	0
+scePadSetActDirect	libpad.a	TR:ps2sdk.txt:118	implemented	engine/pad/hle/libpad_bindings.cpp:25		pads	done	0
+scePadSetActAlign	libpad.a	TR:ps2sdk.txt:119	implemented	engine/pad/hle/libpad_bindings.cpp:25		pads	done	1
+scePadGetButtonMask	libpad.a	TR:ps2sdk.txt:120	implemented	engine/pad/hle/libpad_bindings.cpp:26		pads	done	1
+scePadSetButtonInfo	libpad.a	TR:ps2sdk.txt:121	implemented	engine/pad/hle/libpad_bindings.cpp:26		pads	done	0
+scePadInfoPressMode	libpad.a	TR:ps2sdk.txt:122	n/a			pads	P3-check(not in our manifest: finder miss or PAL-only)	0
+scePadEnterPressMode	libpad.a	TR:ps2sdk.txt:123	implemented	engine/pad/hle/libpad_bindings.cpp:27		pads	done	1
+scePadGetModVersion	libpad.a	TR:ps2sdk.txt:124	implemented	engine/pad/hle/libpad_bindings.cpp:27		pads	done	1
+sceMcInit	libmc.a	TR:ps2sdk.txt:127	seam(pass-through: generated body)	symbols.tsv 0x002c5080		saves	done	0
+sceMcOpen	libmc.a	TR:ps2sdk.txt:128	implemented	engine/mc/hle/libmc_bindings.cpp:25		saves	done	0
+sceMcMkdir	libmc.a	TR:ps2sdk.txt:129	implemented	engine/mc/hle/libmc_bindings.cpp:27		saves	done	0
+sceMcClose	libmc.a	TR:ps2sdk.txt:130	implemented	engine/mc/hle/libmc_bindings.cpp:25		saves	done	0
+sceMcRead	libmc.a	TR:ps2sdk.txt:131	implemented	engine/mc/hle/libmc_bindings.cpp:26		saves	done	0
+sceMcWrite	libmc.a	TR:ps2sdk.txt:132	implemented	engine/mc/hle/libmc_bindings.cpp:26		saves	done	0
+sceMcSync	libmc.a	TR:ps2sdk.txt:133	implemented	engine/mc/hle/libmc_bindings.cpp:24		saves	done	1178
+sceMcGetInfo	libmc.a	TR:ps2sdk.txt:134	implemented	engine/mc/hle/libmc_bindings.cpp:24		saves	done	1171
+sceMcGetDir	libmc.a	TR:ps2sdk.txt:135	implemented	engine/mc/hle/libmc_bindings.cpp:28		saves	done	1
+mceStorePwd	libmc.a	TR:ps2sdk.txt:136	stub	engine/mc/hle/libmc_bindings.cpp:30		saves	P2-stub	0
+sceMcChdir	libmc.a	TR:ps2sdk.txt:137	implemented	engine/mc/hle/libmc_bindings.cpp:27		saves	done	0
+sceMcFormat	libmc.a	TR:ps2sdk.txt:138	implemented	engine/mc/hle/libmc_bindings.cpp:29		saves	done	0
+sceMcDelete	libmc.a	TR:ps2sdk.txt:139	implemented	engine/mc/hle/libmc_bindings.cpp:28		saves	done	0
+_sceFsIobSemaMK	libkernl.a	TR:ps2sdk.txt:142	stub	engine/ee/hle/kernl_file_io.cpp:25		kernel	P2-stub	0
+new_iob	libkernl.a	TR:ps2sdk.txt:143	trap			kernel	P1-trap	0
+sceFsSifCallRpc	libkernl.a	TR:ps2sdk.txt:144	implemented	engine/sif/hle/sce_sif.cpp		kernel	done	0
+get_iob	libkernl.a	TR:ps2sdk.txt:145	park	engine/ee/hle/kernl_file_io.cpp:20		kernel	P1-park(reaching it parks the guest)	0
+_sceFs_Rcv_Intr	libkernl.a	TR:ps2sdk.txt:146	trap			kernel	P1-trap	0
+_sceFsSemInit	libkernl.a	TR:ps2sdk.txt:147	stub	engine/ee/hle/kernl_file_io.cpp:24		kernel	P2-stub	0
+_sceFsWaitS	libkernl.a	TR:ps2sdk.txt:148	stub	engine/ee/hle/kernl_file_io.cpp:23		kernel	P2-stub	0
+FUN_002d39d8	libkernl.a	TR:ps2sdk.txt:149	n/a			kernel	P3-check(not in our manifest: finder miss or PAL-only)	0
+sceFsInit	libkernl.a	TR:ps2sdk.txt:150	stub	engine/ee/hle/kernl_file_io.cpp:21		kernel	P2-stub	0
+_fs_version	libkernl.a	TR:ps2sdk.txt:151	n/a			kernel	P3-check(not in our manifest: finder miss or PAL-only)	0
+sceFsReset	libkernl.a	TR:ps2sdk.txt:152	stub	engine/ee/hle/kernl_file_io.cpp:22		kernel	P2-stub	2
+sceOpen	libkernl.a	TR:ps2sdk.txt:153	park	engine/ee/hle/kernl_file_io.cpp:17		kernel	P1-park(reaching it parks the guest)	0
+sceClose	libkernl.a	TR:ps2sdk.txt:154	park	engine/ee/hle/kernl_file_io.cpp:18		kernel	P1-park(reaching it parks the guest)	0
+sceLseek	libkernl.a	TR:ps2sdk.txt:155	trap			kernel	P1-trap	0
+sceRead	libkernl.a	TR:ps2sdk.txt:156	trap			kernel	P1-trap	0
+sceWrite	libkernl.a	TR:ps2sdk.txt:157	trap			kernel	P1-trap	0
+AddDmacHandler2	libkernl.a	TR:ps2sdk.txt:161	syscall:18 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+AddIntcHandler2	libkernl.a	TR:ps2sdk.txt:162	syscall:16 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+AlarmHandler	libkernl.a	TR:ps2sdk.txt:163	n/a			kernel	P3-check(not in our manifest: finder miss or PAL-only)	0
+AllocTimerCounter	libkernl.a	TR:ps2sdk.txt:164	trap			kernel	P1-trap	0
+ChangeThreadPriority	libkernl.a	TR:ps2sdk.txt:165	syscall:41 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+convertfrombcd	libkernl.a	TR:ps2sdk.txt:166	n/a			kernel	P3-check(not in our manifest: finder miss or PAL-only)	0
+converttobcd	libkernl.a	TR:ps2sdk.txt:167	n/a			kernel	P3-check(not in our manifest: finder miss or PAL-only)	0
+Copy	libkernl.a	TR:ps2sdk.txt:168	n/a			kernel	P3-check(not in our manifest: finder miss or PAL-only)	0
+CreateSema	libkernl.a	TR:ps2sdk.txt:169	syscall:64 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+CreateThread	libkernl.a	TR:ps2sdk.txt:170	syscall:32 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+Deci2Call	libkernl.a	TR:ps2sdk.txt:171	syscall:124 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+DelayThread	libkernl.a	TR:ps2sdk.txt:172	trap			kernel	P1-trap	0
+DeleteSema	libkernl.a	TR:ps2sdk.txt:173	syscall:65 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+_DisableDmac	libkernl.a	TR:ps2sdk.txt:174	syscall:23 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+DisableDmac	libkernl.a	TR:ps2sdk.txt:175	syscall:23 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+_DisableIntc	libkernl.a	TR:ps2sdk.txt:176	syscall:21 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+DisableIntc	libkernl.a	TR:ps2sdk.txt:177	syscall:21 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+_EnableDmac	libkernl.a	TR:ps2sdk.txt:178	syscall:22 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+EnableDmac	libkernl.a	TR:ps2sdk.txt:179	syscall:22 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+_EnableIntc	libkernl.a	TR:ps2sdk.txt:180	syscall:20 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+EnableIntc	libkernl.a	TR:ps2sdk.txt:181	syscall:20 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+EndOfHeap	libkernl.a	TR:ps2sdk.txt:182	syscall:62 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+Exit	libkernl.a	TR:ps2sdk.txt:183	syscall:4 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+FlushCache	libkernl.a	TR:ps2sdk.txt:184	syscall:100 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+GetMemorySize	libkernl.a	TR:ps2sdk.txt:185	syscall:127 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+GetOsdConfigParam	libkernl.a	TR:ps2sdk.txt:186	syscall:75 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+GetOsdConfigParam2	libkernl.a	TR:ps2sdk.txt:187	syscall:75 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+GetRomName	libscf.a	TR:ps2sdk.txt:188	stub	engine/ee/hle/libscf_bindings.cpp:51		system/clock	P2-stub	0
+GetThreadId	libkernl.a	TR:ps2sdk.txt:189	syscall:47 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+GsPutIMR	libkernl.a	TR:ps2sdk.txt:190	syscall:113 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+iAllocTimerCounter	libkernl.a	TR:ps2sdk.txt:191	trap			kernel	P1-trap	0
+iFlushCache	libkernl.a	TR:ps2sdk.txt:192	syscall:104 no-op(logged NotImplemented)	engine/ee/hle/syscall_table.cpp:167		kernel	P2-syscall-noop(check the wrapper's caller)	0
+iGetTimerSystemTime	libkernl.a	TR:ps2sdk.txt:193	park	engine/ee/hle/kernl_sif_rpc.cpp:11		kernel	P1-park(reaching it parks the guest)	0
+InitAlarm	libkernl.a	TR:ps2sdk.txt:194	stub	engine/ee/hle/kernl_boot.cpp:47		kernel	P2-stub	0
+InitExecPS2	libkernl.a	TR:ps2sdk.txt:195	park	engine/ee/hle/kernl_sif_rpc.cpp:11		kernel	P1-park(reaching it parks the guest)	0
+InitThread	libkernl.a	TR:ps2sdk.txt:196	stub	engine/ee/hle/kernl_boot.cpp:46		kernel	P2-stub	0
+InitTimer	libkernl.a	TR:ps2sdk.txt:197	stub	engine/ee/hle/kernl_timer.cpp:18		kernel	P2-stub	0
+InitTLB	libkernl.a	TR:ps2sdk.txt:198	implemented	engine/ee/hle/kernl_boot.cpp:40		kernel	done	0
+InitTLBFunctions	libkernl.a	TR:ps2sdk.txt:199	stub	engine/ee/hle/kernl_boot.cpp:42		kernel	P2-stub	0
+iSetTimerAlarm	libkernl.a	TR:ps2sdk.txt:200	recompiled(inner label FUN_002d6038+0x130: not hookable; enclosing generated body runs)	symbols.tsv sdk_inner_label		kernel	done	0
+iSetTimerHandler	libkernl.a	TR:ps2sdk.txt:201	trap			kernel	P1-trap	0
+iSignalSema	libkernl.a	TR:ps2sdk.txt:202	syscall:67 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+IsT10K	libscf.a	TR:ps2sdk.txt:203	stub	engine/ee/hle/libscf_bindings.cpp:50		system/clock	P2-stub	0
+iStartTimerCounter	libkernl.a	TR:ps2sdk.txt:204	trap			kernel	P1-trap	0
+_iWakeupThread	libkernl.a	TR:ps2sdk.txt:205	syscall:52 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+iWakeupThread	libkernl.a	TR:ps2sdk.txt:206	recompiled(inner label FUN_002cfee0+0xf0: not hookable; enclosing generated body runs; syscall:52 served)	symbols.tsv sdk_inner_label		kernel	done	0
+kCopy	libkernl.a	TR:ps2sdk.txt:207	park	engine/ee/hle/kernl_sif_rpc.cpp:11		kernel	P1-park(reaching it parks the guest)	0
+kputs	libkernl.a	TR:ps2sdk.txt:208	recompiled	engine/ee/hle/sdk_binding_manifest.cpp:69		kernel	done	0
+PatchIsNeeded	libkernl.a	TR:ps2sdk.txt:209	park	engine/ee/hle/kernl_sif_rpc.cpp:11		kernel	P1-park(reaching it parks the guest)	0
+PollSema	libkernl.a	TR:ps2sdk.txt:210	syscall:69 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+ReferThreadStatus	libkernl.a	TR:ps2sdk.txt:211	syscall:48 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+RemoveDmacHandler	libkernl.a	TR:ps2sdk.txt:212	syscall:19 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+RemoveIntcHandler	libkernl.a	TR:ps2sdk.txt:213	syscall:17 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+RotateThreadReadyQueue	libkernl.a	TR:ps2sdk.txt:214	syscall:43 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+sceDeci2ExRecv	libkernl.a	TR:ps2sdk.txt:215	trap			kernel	P1-trap	0
+sceDeci2ExSend	libkernl.a	TR:ps2sdk.txt:216	trap			kernel	P1-trap	0
+sceDeci2Open	libkernl.a	TR:ps2sdk.txt:217	trap			kernel	P1-trap	0
+sceDeci2Poll	libkernl.a	TR:ps2sdk.txt:218	trap			kernel	P1-trap	0
+sceDeci2ReqSend	libkernl.a	TR:ps2sdk.txt:219	trap			kernel	P1-trap	0
+sceTtyHandler	libkernl.a	TR:ps2sdk.txt:220	trap			kernel	P1-trap	0
+sceTtyInit	libkernl.a	TR:ps2sdk.txt:221	trap			kernel	P1-trap	0
+sceTtyWrite	libkernl.a	TR:ps2sdk.txt:222	trap			kernel	P1-trap	0
+SetGsCrt	libkernl.a	TR:ps2sdk.txt:223	syscall:2 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+SetNextComp	libkernl.a	TR:ps2sdk.txt:224	park	engine/ee/hle/kernl_sif_rpc.cpp:11		kernel	P1-park(reaching it parks the guest)	0
+SetOsdConfigParam	libkernl.a	TR:ps2sdk.txt:225	syscall:74 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+SetSyscall	libkernl.a	TR:ps2sdk.txt:226	syscall:116 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+SetT2	libkernl.a	TR:ps2sdk.txt:227	park	engine/ee/hle/kernl_sif_rpc.cpp:11		kernel	P1-park(reaching it parks the guest)	0
+SetT2_COMP	libkernl.a	TR:ps2sdk.txt:228	n/a			kernel	P3-check(not in our manifest: finder miss or PAL-only)	0
+SetT2_COUNT	libkernl.a	TR:ps2sdk.txt:229	n/a			kernel	P3-check(not in our manifest: finder miss or PAL-only)	0
+SetT2_MODE	libkernl.a	TR:ps2sdk.txt:230	n/a			kernel	P3-check(not in our manifest: finder miss or PAL-only)	0
+SetTimerAlarm	libkernl.a	TR:ps2sdk.txt:231	trap			kernel	P1-trap	0
+SetTimerHandler	libkernl.a	TR:ps2sdk.txt:232	trap			kernel	P1-trap	0
+SetVSyncFlag	libkernl.a	TR:ps2sdk.txt:233	syscall:49 no-op(logged NotImplemented)	engine/ee/hle/syscall_table.cpp:167		kernel	P2-syscall-noop(check the wrapper's caller)	0
+SignalSema	libkernl.a	TR:ps2sdk.txt:234	syscall:66 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+SleepThread	libkernl.a	TR:ps2sdk.txt:235	syscall:50 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+StartThread	libkernl.a	TR:ps2sdk.txt:236	implemented	engine/ee/hle/kernl_boot.cpp:45		kernel	done	1
+StartTimerCounter	libkernl.a	TR:ps2sdk.txt:237	n/a			kernel	P3-check(not in our manifest: finder miss or PAL-only)	0
+StartTimerSystemTime	libkernl.a	TR:ps2sdk.txt:238	stub	engine/ee/hle/kernl_timer.cpp:19		kernel	P2-stub	0
+SuspendThread	libkernl.a	TR:ps2sdk.txt:239	syscall:55 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+TimerUSec2BusClock	libkernl.a	TR:ps2sdk.txt:240	n/a			kernel	P3-check(not in our manifest: finder miss or PAL-only)	0
+WaitSema	libkernl.a	TR:ps2sdk.txt:241	syscall:68 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+WakeupThread	libkernl.a	TR:ps2sdk.txt:242	syscall:51 served	engine/ee/hle/syscall_table.cpp		kernel	done	0
+AddIntcHandler2_002CF350	libkernl.a	TR:ps2sdk.txt:246	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002cfae0	libkernl.a	TR:ps2sdk.txt:247	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FID_conflict_SyncDCache	libkernl.a	TR:ps2sdk.txt:248	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FID_conflict_iInvalidDCache	libkernl.a	TR:ps2sdk.txt:249	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+topThread	libkernl.a	TR:ps2sdk.txt:250	trap			kernel	P4-dead(TR: nothing reaches it)	0
+_DelayThreadHandler	libkernl.a	TR:ps2sdk.txt:251	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+QueueInit	libkernl.a	TR:ps2sdk.txt:252	trap			kernel	P4-dead(TR: nothing reaches it)	0
+QueuePeekWriteDone	libkernl.a	TR:ps2sdk.txt:253	trap			kernel	P4-dead(TR: nothing reaches it)	0
+SystemInit	libkernl.a	TR:ps2sdk.txt:254	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+RFU116	libkernl.a	TR:ps2sdk.txt:255	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+RFU091	libkernl.a	TR:ps2sdk.txt:256	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+RFU116_002D55F0	libkernl.a	TR:ps2sdk.txt:257	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+Copy_002D5600	libkernl.a	TR:ps2sdk.txt:258	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+DoSyscall_Handler_5B	libkernl.a	TR:ps2sdk.txt:259	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+cbTimerHandler	libkernl.a	TR:ps2sdk.txt:260	trap			kernel	P4-dead(TR: nothing reaches it)	0
+_InitAlarm	libkernl.a	TR:ps2sdk.txt:261	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+sceSifExecNotifyHandler	libkernl.a	TR:ps2sdk.txt:262	trap			kernel	P4-dead(TR: nothing reaches it)	0
+Copy_002D6818	libkernl.a	TR:ps2sdk.txt:263	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+_GetEntryAddress	libkernl.a	TR:ps2sdk.txt:264	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+_setup	libkernl.a	TR:ps2sdk.txt:265	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+InitTLB_002D6958	libkernl.a	TR:ps2sdk.txt:266	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d6b8c	libkernl.a	TR:ps2sdk.txt:267	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+UnkSyscall_0x82	libkernl.a	TR:ps2sdk.txt:268	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FID_conflict_gcc2_compiled_	libkernl.a	TR:ps2sdk.txt:269	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+InitSystemCallTableAddress	libkernl.a	TR:ps2sdk.txt:270	stub	engine/ee/hle/kernl_boot.cpp:49		kernel	P4-dead(TR: nothing reaches it)	0
+InsertAlarm	libkernl.a	TR:ps2sdk.txt:271	trap			kernel	P4-dead(TR: nothing reaches it)	0
+UnlinkAlarm	libkernl.a	TR:ps2sdk.txt:272	trap			kernel	P4-dead(TR: nothing reaches it)	0
+sceSifInitRebootNotify	libkernl.a	TR:ps2sdk.txt:273	implemented	engine/sif/hle/sce_sif.cpp		kernel	P4-dead(TR: nothing reaches it)	0
+InitTLB32MB	libkernl.a	TR:ps2sdk.txt:274	implemented	engine/ee/hle/kernl_boot.cpp:41		kernel	P4-dead(TR: nothing reaches it)	0
+kprintf	libkernl.a	TR:ps2sdk.txt:275	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+Call_FUN_002D5248	libkernl.a	TR:ps2sdk.txt:276	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+UnkSyscall_0x56	libkernl.a	TR:ps2sdk.txt:277	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+kprintf_char	libkernl.a	TR:ps2sdk.txt:278	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+serialPutchar	libkernl.a	TR:ps2sdk.txt:279	trap			kernel	P4-dead(TR: nothing reaches it)	0
+kputchar	libkernl.a	TR:ps2sdk.txt:280	recompiled	engine/ee/hle/sdk_binding_manifest.cpp:69		kernel	P4-dead(TR: nothing reaches it)	0
+sceScfGetTimeZone	libscf.a	TR:ps2sdk.txt:285	stub	engine/ee/hle/libscf_bindings.cpp:54		system/clock	P2-stub	0
+sceScfGetSummerTime	libscf.a	TR:ps2sdk.txt:286	stub	engine/ee/hle/libscf_bindings.cpp:53		system/clock	P2-stub	0
+tobcd	libscf.a	TR:ps2sdk.txt:287	implemented	engine/ee/hle/libscf_bindings.cpp:48		system/clock	done	0
+frombcd	libscf.a	TR:ps2sdk.txt:288	implemented	engine/ee/hle/libscf_bindings.cpp:49		system/clock	done	0
+FUN_0017d1e8	libkernl.a	TR:ps2sdk.txt:291	n/a			kernel	P3-check(not in our manifest: finder miss or PAL-only)	0
+subdate	libscf.a	TR:ps2sdk.txt:292	recompiled(inner label FUN_002c61c0+0x188: not hookable; enclosing generated body runs)	symbols.tsv sdk_inner_label		system/clock	done	0
+addhour	libscf.a	TR:ps2sdk.txt:293	trap			system/clock	P1-trap	0
+subhour	libscf.a	TR:ps2sdk.txt:294	trap			system/clock	P1-trap	0
+AdjustTime	libscf.a	TR:ps2sdk.txt:295	stub	engine/ee/hle/libscf_bindings.cpp:52		system/clock	P2-stub	0
+sceScfGetLocalTimefromRTC	libscf.a	TR:ps2sdk.txt:296	implemented	engine/ee/hle/libscf_bindings.cpp:55		system/clock	done	1
+sceDevVu0Pause	libdev.a	TR:ps2sdk.txt:300	trap			renderer/boot	P4-dead(TR: nothing reaches it)	0
+sceDevVu0Sync	libdev.a	TR:ps2sdk.txt:301	trap			renderer/boot	P4-dead(TR: nothing reaches it)	0
+sceDevVu1Pause	libdev.a	TR:ps2sdk.txt:302	trap			renderer/boot	P4-dead(TR: nothing reaches it)	0
+sceDevVu1Sync	libdev.a	TR:ps2sdk.txt:303	trap			renderer/boot	P4-dead(TR: nothing reaches it)	0
+func_002C5B48	libkernl.a	TR:ps2sdk.txt:304	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+func_002C5D80	libkernl.a	TR:ps2sdk.txt:305	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+func_002C6188	libkernl.a	TR:ps2sdk.txt:306	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002c85d0	libkernl.a	TR:ps2sdk.txt:307	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002ce1c8	libkernl.a	TR:ps2sdk.txt:308	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002ce270	libkernl.a	TR:ps2sdk.txt:309	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002ce2a8	libkernl.a	TR:ps2sdk.txt:310	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002ce3b0	libkernl.a	TR:ps2sdk.txt:311	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002ce4e8	libkernl.a	TR:ps2sdk.txt:312	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002ce570	libkernl.a	TR:ps2sdk.txt:313	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002ce630	libkernl.a	TR:ps2sdk.txt:314	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002ce668	libkernl.a	TR:ps2sdk.txt:315	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002ce870	libkernl.a	TR:ps2sdk.txt:316	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002ce970	libkernl.a	TR:ps2sdk.txt:317	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002ceac8	libkernl.a	TR:ps2sdk.txt:318	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002ceb30	libkernl.a	TR:ps2sdk.txt:319	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002cecc0	libkernl.a	TR:ps2sdk.txt:320	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002ced88	libkernl.a	TR:ps2sdk.txt:321	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002cef20	libkernl.a	TR:ps2sdk.txt:322	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002cf0a0	libkernl.a	TR:ps2sdk.txt:323	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002cf168	libkernl.a	TR:ps2sdk.txt:324	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FID_conflict_gcc2_compiled__002CFE98	libkernl.a	TR:ps2sdk.txt:325	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FID_conflict_SyncDCache_002CFF40	libkernl.a	TR:ps2sdk.txt:326	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+AreInterruptionsDisabled	libkernl.a	TR:ps2sdk.txt:327	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+StartThread_002D04B8	libkernl.a	TR:ps2sdk.txt:328	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+func_002D1D78	libkernl.a	TR:ps2sdk.txt:329	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+func_002D1D98	libkernl.a	TR:ps2sdk.txt:330	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+func_002D39E8	libkernl.a	TR:ps2sdk.txt:331	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d75d8	libkernl.a	TR:ps2sdk.txt:332	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d9ce8	libkernl.a	TR:ps2sdk.txt:333	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+kFindAddress	libkernl.a	TR:ps2sdk.txt:337 (= 0)	park	engine/ee/hle/kernl_sif_rpc.cpp:11		kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d5428	libkernl.a	TR:ps2sdk.txt:338 (= 0)	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+func_002D5588	libkernl.a	TR:ps2sdk.txt:339 (= 0)	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+kCopy_002D5610	libkernl.a	TR:ps2sdk.txt:340 (= 0)	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d6828	libkernl.a	TR:ps2sdk.txt:341 (= 0)	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d6c00	libkernl.a	TR:ps2sdk.txt:342 (= 0)	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+AddDmacHandler2_002CF380	libkernl.a	TR:ps2sdk.txt:351 (= AddDmacHandler2)	syscall:18 served(via AddDmacHandler2)	engine/ee/hle/syscall_table.cpp		kernel	P4-dead(TR: nothing reaches it)	0
+DisableInterruptions	libkernl.a	TR:ps2sdk.txt:352 (= DIntr)	stub(via DIntr)	engine/ee/hle/kernl_boot.cpp:44		kernel	P4-dead(TR: nothing reaches it)	0
+EnableInterruptions	libkernl.a	TR:ps2sdk.txt:353 (= EIntr)	stub(via EIntr)	engine/ee/hle/kernl_boot.cpp:43		kernel	P4-dead(TR: nothing reaches it)	0
+CopyBytesIntoMemory	libkernl.a	TR:ps2sdk.txt:363 (= memcpy)	wrap(via memcpy)	engine/ee/hle/sdk_binding_manifest.cpp:52		kernel	done	0
+FUN_002c70fc	libkernl.a	TR:ps2sdk.txt:364 (= memmove)	wrap(via memmove)	engine/ee/hle/sdk_binding_manifest.cpp:53		kernel	done	0
+DoConcat	libkernl.a	TR:ps2sdk.txt:365 (= strcat)	n/a			kernel	P3-check(not in our manifest: finder miss or PAL-only)	0
+StringDifference	libkernl.a	TR:ps2sdk.txt:366 (= strcmp)	seam(pass-through: generated body)(via strcmp)	symbols.tsv 0x002c7070		kernel	done	0
+CopyString	libkernl.a	TR:ps2sdk.txt:367 (= strcpy)	seam(pass-through: generated body)(via strcpy)	symbols.tsv 0x002c71bc		kernel	done	0
+GetStringLength	libkernl.a	TR:ps2sdk.txt:368 (= strlen)	wrap(via strlen)	engine/ee/hle/sdk_binding_manifest.cpp:55		kernel	done	0
+StringCopy	libkernl.a	TR:ps2sdk.txt:369 (= strncpy)	seam(pass-through: generated body)(via strncpy)	symbols.tsv 0x002c7418		kernel	done	0
+FormatString	libkernl.a	TR:ps2sdk.txt:370 (= sprintf)	seam(pass-through: generated body)(via sprintf)	symbols.tsv 0x002c75e8		kernel	done	0
+sceSnprintf	libkernl.a	TR:ps2sdk.txt:371 (= snprintf)	recompiled	engine/ee/hle/sdk_binding_manifest.cpp:62		kernel	done	0
+DebugPrint_	libkernl.a	TR:ps2sdk.txt:372 (= printf)	n/a			kernel	P3-check(not in our manifest: finder miss or PAL-only)	0
+FUN_002d7fa0	libkernl.a	TR:ps2sdk.txt:373 (= __muldi3)	n/a			kernel	P3-check(not in our manifest: finder miss or PAL-only)	0
+memset	libc.a	TR:ps2sdk.txt:374	wrap	engine/ee/hle/sdk_binding_manifest.cpp:54		libc	done	8805
+FUN_002c22e0	libkernl.a	TR:ps2sdk.txt:389	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+WaitSemaphore1	libkernl.a	TR:ps2sdk.txt:390	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+SignalSemaphore1	libkernl.a	TR:ps2sdk.txt:391	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002c95a8	libkernl.a	TR:ps2sdk.txt:392	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002c9618	libkernl.a	TR:ps2sdk.txt:393	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002c9690	libkernl.a	TR:ps2sdk.txt:394	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002c9730	libkernl.a	TR:ps2sdk.txt:395	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002c9cc0	libkernl.a	TR:ps2sdk.txt:396	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002c9dc8	libkernl.a	TR:ps2sdk.txt:397	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002c9e98	libkernl.a	TR:ps2sdk.txt:398	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002caee0	libkernl.a	TR:ps2sdk.txt:399	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002cb090	libkernl.a	TR:ps2sdk.txt:400	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002cb198	libkernl.a	TR:ps2sdk.txt:401	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002cced0	libkernl.a	TR:ps2sdk.txt:402	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002ccee8	libkernl.a	TR:ps2sdk.txt:403	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002ccf10	libkernl.a	TR:ps2sdk.txt:404	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002cd000	libkernl.a	TR:ps2sdk.txt:405	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002cd1f0	libkernl.a	TR:ps2sdk.txt:406	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002cd638	libkernl.a	TR:ps2sdk.txt:407	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002cdc68	libkernl.a	TR:ps2sdk.txt:408	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002cde88	libkernl.a	TR:ps2sdk.txt:409	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+write	libkernl.a	TR:ps2sdk.txt:410	park	engine/ee/hle/kernl_file_io.cpp:19		kernel	P4-dead(TR: nothing reaches it)	0
+deci2Putchar	libkernl.a	TR:ps2sdk.txt:411	recompiled	engine/ee/hle/sdk_binding_manifest.cpp:69		kernel	P4-dead(TR: nothing reaches it)	0
+ftoi	libkernl.a	TR:ps2sdk.txt:412	recompiled	engine/ee/hle/sdk_binding_manifest.cpp:62		kernel	P4-dead(TR: nothing reaches it)	0
+printfloat	libkernl.a	TR:ps2sdk.txt:413	recompiled	engine/ee/hle/sdk_binding_manifest.cpp:62		kernel	P4-dead(TR: nothing reaches it)	0
+_sceSnprintf	libkernl.a	TR:ps2sdk.txt:414	recompiled	engine/ee/hle/sdk_binding_manifest.cpp:62		kernel	P4-dead(TR: nothing reaches it)	0
+func_002D1B38	libkernl.a	TR:ps2sdk.txt:415	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+printf_char	libkernl.a	TR:ps2sdk.txt:416	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+_sceSnprintf_pf	libkernl.a	TR:ps2sdk.txt:417	recompiled	engine/ee/hle/sdk_binding_manifest.cpp:62		kernel	P4-dead(TR: nothing reaches it)	0
+InitSemaphores	libkernl.a	TR:ps2sdk.txt:418	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d6df8	libkernl.a	TR:ps2sdk.txt:419	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d6f40	libkernl.a	TR:ps2sdk.txt:420	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d7638	libkernl.a	TR:ps2sdk.txt:421	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d7728	libkernl.a	TR:ps2sdk.txt:422	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d77c0	libkernl.a	TR:ps2sdk.txt:423	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d7908	libkernl.a	TR:ps2sdk.txt:424	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d8018	libkernl.a	TR:ps2sdk.txt:425	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d8038	libkernl.a	TR:ps2sdk.txt:426	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d86d0	libkernl.a	TR:ps2sdk.txt:427	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d86f0	libkernl.a	TR:ps2sdk.txt:428	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d8d88	libkernl.a	TR:ps2sdk.txt:429	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d8eb8	libkernl.a	TR:ps2sdk.txt:430	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d8f58	libkernl.a	TR:ps2sdk.txt:431	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d91b0	libkernl.a	TR:ps2sdk.txt:432	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d9208	libkernl.a	TR:ps2sdk.txt:433	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d9270	libkernl.a	TR:ps2sdk.txt:434	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d92c8	libkernl.a	TR:ps2sdk.txt:435	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d9428	libkernl.a	TR:ps2sdk.txt:436	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d9540	libkernl.a	TR:ps2sdk.txt:437	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d9590	libkernl.a	TR:ps2sdk.txt:438	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d9648	libkernl.a	TR:ps2sdk.txt:439	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d96e0	libkernl.a	TR:ps2sdk.txt:440	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d9780	libkernl.a	TR:ps2sdk.txt:441	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d97b0	libkernl.a	TR:ps2sdk.txt:442	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d9808	libkernl.a	TR:ps2sdk.txt:443	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d9aa8	libkernl.a	TR:ps2sdk.txt:444	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d9bb8	libkernl.a	TR:ps2sdk.txt:445	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d9c78	libkernl.a	TR:ps2sdk.txt:446	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+FUN_002d9ca8	libkernl.a	TR:ps2sdk.txt:447	n/a			kernel	P4-dead(TR: nothing reaches it)	0
+Platform::Audio::Reset	platform	TR:include/platform/audio.h:23	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::PauseAll	platform	TR:include/platform/audio.h:24	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::ResumeAll	platform	TR:include/platform/audio.h:25	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::LendToMovie	platform	TR:include/platform/audio.h:27	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::ReclaimFromMovie	platform	TR:include/platform/audio.h:28	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::CompactSoundMemory	platform	TR:include/platform/audio.h:31	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::SetGroupVolume	platform	TR:include/platform/audio.h:34	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::SetVoiceVolume	platform	TR:include/platform/audio.h:37	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::SetVoicePitch	platform	TR:include/platform/audio.h:38	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::SetVoiceReverb	platform	TR:include/platform/audio.h:39	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::ReleaseVoice	platform	TR:include/platform/audio.h:41	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::IsVoiceFree	platform	TR:include/platform/audio.h:43	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::SetReverb	platform	TR:include/platform/audio.h:45	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::ClearReverb	platform	TR:include/platform/audio.h:46	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::SetReverbVolume	platform	TR:include/platform/audio.h:47	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::ReserveSoundMemory	platform	TR:include/platform/audio.h:50	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::SoundBankLoaded	platform	TR:include/platform/audio.h:52	n/a(no SDK call: pure EE code / hardware registers)		game/readers.cpp	sound	done	0
+Platform::Audio::ReserveSounds	platform	TR:include/platform/audio.h:54	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::ReleaseSound	platform	TR:include/platform/audio.h:55	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::PlaySound	platform	TR:include/platform/audio.h:58	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::PitchOfRate	platform	TR:include/platform/audio.h:62	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::ChannelBufferAddress	platform	TR:include/platform/audio.h:64	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::ReadMusic	platform	TR:include/platform/audio.h:66	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::StreamMusic	platform	TR:include/platform/audio.h:68	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::InterleaveMusic	platform	TR:include/platform/audio.h:72	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::AddMusicChannel	platform	TR:include/platform/audio.h:73	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::SetMusicEnd	platform	TR:include/platform/audio.h:74	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::PrepareMusic	platform	TR:include/platform/audio.h:76	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::IsMusicReady	platform	TR:include/platform/audio.h:77	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::PlayMusic	platform	TR:include/platform/audio.h:78	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::IsMusicPlaying	platform	TR:include/platform/audio.h:79	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Audio::StopMusic	platform	TR:include/platform/audio.h:80	n/a(no SDK call: pure EE code / hardware registers)		game/sound.cpp	sound	done	0
+Platform::Disc::Initialise	platform	TR:include/platform/disc.h:21	implemented	sceCdInit		loader/disc	done	2
+Platform::Disc::SetMedia	platform	TR:include/platform/disc.h:22	implemented	sceCdMmode		loader/disc	done	2
+Platform::Disc::WaitReady	platform	TR:include/platform/disc.h:24	implemented	sceCdDiskReady		loader/disc	done	10
+Platform::Files::Reset	platform	TR:include/platform/files.h:26	implemented	sceFsReset		files(host fs)	done	2
+Platform::Files::Open	platform	TR:include/platform/files.h:28	trap/park:sceOpen	sceOpen	game/stream.cpp	files(host fs)	P1	0
+Platform::Files::Close	platform	TR:include/platform/files.h:29	trap/park:sceClose	sceClose	game/stream.cpp	files(host fs)	P1	0
+Platform::Files::Read	platform	TR:include/platform/files.h:31	trap/park:sceRead	sceRead	game/stream.cpp	files(host fs)	P1	0
+Platform::Files::Write	platform	TR:include/platform/files.h:32	trap/park:sceWrite	sceWrite	game/stream.cpp	files(host fs)	P1	0
+Platform::Files::Seek	platform	TR:include/platform/files.h:34	trap/park:sceLseek	sceLseek	game/stream.cpp	files(host fs)	P1	0
+Platform::Graphics::ResetDevices	platform	TR:include/platform/graphics.h:39	implemented	sceDmaReset		renderer	done	1
+Platform::Graphics::ResetPath	platform	TR:include/platform/graphics.h:41	n/a(no SDK call: pure EE code / hardware registers)			renderer	done	0
+Platform::Graphics::WaitVSync	platform	TR:include/platform/graphics.h:43	implemented	sceGsSyncV	game/pads.cpp	renderer	done	700
+Platform::Graphics::IsPalDisplay	platform	TR:include/platform/graphics.h:45	n/a(no SDK call: pure EE code / hardware registers)		game/camerarig.cpp	renderer	done	0
+Platform::Graphics::WaitIdle	platform	TR:include/platform/graphics.h:47	implemented	FlushCache,sceGsSyncPath	game/context.cpp,game/movie.cpp	renderer	done	0
+Platform::Graphics::StartRenderer	platform	TR:include/platform/graphics.h:53	n/a(no SDK call: pure EE code / hardware registers)		game/renderer.cpp	renderer	done	0
+Platform::Graphics::FinishRendererStart	platform	TR:include/platform/graphics.h:54	n/a(no SDK call: pure EE code / hardware registers)		game/renderer.cpp	renderer	done	0
+Platform::Graphics::MoveDisplay	platform	TR:include/platform/graphics.h:57	n/a(no SDK call: pure EE code / hardware registers)		game/renderer.cpp	renderer	done	0
+Platform::Graphics::StepAnimations	platform	TR:include/platform/graphics.h:59	n/a(no SDK call: pure EE code / hardware registers)		game/renderer.cpp	renderer	done	0
+Platform::Graphics::SetUpRenderTarget	platform	TR:include/platform/graphics.h:63	n/a(no SDK call: pure EE code / hardware registers)		game/renderer.cpp	renderer	done	0
+Platform::Graphics::Present	platform	TR:include/platform/graphics.h:68	implemented	sceGsSyncV	game/renderer.cpp	renderer	done	700
+Platform::Graphics::PresentFromInterrupt	platform	TR:include/platform/graphics.h:70	syscall-noop:iFlushCache	iFlushCache,sceGsSyncPath	game/renderer.cpp	renderer	P1	0
+Platform::Graphics::WaitSent	platform	TR:include/platform/graphics.h:72	implemented	sceGsSyncPath	game/renderer.cpp	renderer	done	0
+Platform::Graphics::ResetBuckets	platform	TR:include/platform/graphics.h:77	n/a(no SDK call: pure EE code / hardware registers)		game/context.cpp,game/movie.cpp	renderer	done	0
+Platform::Graphics::SubmitBuckets	platform	TR:include/platform/graphics.h:78	n/a(no SDK call: pure EE code / hardware registers)		game/renderer.cpp	renderer	done	0
+Platform::Graphics::AllocFrameMemory	platform	TR:include/platform/graphics.h:81	n/a(no SDK call: pure EE code / hardware registers)		game/animation.cpp	renderer	done	0
+Platform::Graphics::FinishFrame	platform	TR:include/platform/graphics.h:83	n/a(no SDK call: pure EE code / hardware registers)		game/renderer.cpp	renderer	done	0
+Platform::Graphics::FinishScene	platform	TR:include/platform/graphics.h:87	n/a(no SDK call: pure EE code / hardware registers)		game/renderer.cpp	renderer	done	0
+Platform::Graphics::StartFrame	platform	TR:include/platform/graphics.h:106	n/a(no SDK call: pure EE code / hardware registers)		game/renderer.cpp	renderer	done	0
+Platform::Graphics::UseHelperPrograms	platform	TR:include/platform/graphics.h:116	n/a(no SDK call: pure EE code / hardware registers)		game/chunkdata.cpp,game/gamecontext.cpp,game/ogi.cpp,game/particles.cpp	renderer	done	0
+Platform::Graphics::MakeFlatMaterial	platform	TR:include/platform/graphics.h:119	n/a(no SDK call: pure EE code / hardware registers)		game/oleg.cpp	renderer	done	0
+Platform::Graphics::FlatMaterial	platform	TR:include/platform/graphics.h:120	n/a(no SDK call: pure EE code / hardware registers)		game/gamecontroller.cpp,game/oleg.cpp	renderer	done	0
+Platform::Graphics::ConstructMaterial	platform	TR:include/platform/graphics.h:125	n/a(no SDK call: pure EE code / hardware registers)		game/oleg.cpp	renderer	done	0
+Platform::Graphics::DestroyMaterial	platform	TR:include/platform/graphics.h:126	n/a(no SDK call: pure EE code / hardware registers)		game/oleg.cpp	renderer	done	0
+Platform::Graphics::MakeParticleMaterial	platform	TR:include/platform/graphics.h:130	n/a(no SDK call: pure EE code / hardware registers)		game/oleg.cpp	renderer	done	0
+Platform::Graphics::MakeDistortionMaterial	platform	TR:include/platform/graphics.h:133	n/a(no SDK call: pure EE code / hardware registers)		game/particles.cpp	renderer	done	0
+Platform::Graphics::ChainParticleBlocks	platform	TR:include/platform/graphics.h:136	n/a(no SDK call: pure EE code / hardware registers)		game/particles.cpp	renderer	done	0
+Platform::Graphics::EndParticleBlock	platform	TR:include/platform/graphics.h:137	n/a(no SDK call: pure EE code / hardware registers)		game/particles.cpp	renderer	done	0
+Platform::Graphics::InitParticleBlock	platform	TR:include/platform/graphics.h:143	n/a(no SDK call: pure EE code / hardware registers)		game/particles.cpp	renderer	done	0
+Platform::Graphics::InitParticleRenderTable	platform	TR:include/platform/graphics.h:144	n/a(no SDK call: pure EE code / hardware registers)		game/particles.cpp	renderer	done	0
+Platform::Graphics::InitParticleGraphics	platform	TR:include/platform/graphics.h:164	n/a(no SDK call: pure EE code / hardware registers)		game/particles.cpp	renderer	done	0
+Platform::Graphics::WriteParticleRenderTable	platform	TR:include/platform/graphics.h:166	n/a(no SDK call: pure EE code / hardware registers)		game/particles.cpp	renderer	done	0
+Platform::Graphics::DrawParticleBlock	platform	TR:include/platform/graphics.h:169	n/a(no SDK call: pure EE code / hardware registers)		game/particles.cpp	renderer	done	0
+Platform::Graphics::DrawDistortionBlock	platform	TR:include/platform/graphics.h:170	n/a(no SDK call: pure EE code / hardware registers)		game/particles.cpp	renderer	done	0
+Platform::Graphics::LoadDecalView	platform	TR:include/platform/graphics.h:176	n/a(no SDK call: pure EE code / hardware registers)		game/decals.cpp	renderer	done	0
+Platform::Graphics::LoadDecalType	platform	TR:include/platform/graphics.h:177	n/a(no SDK call: pure EE code / hardware registers)		game/decals.cpp	renderer	done	0
+Platform::Graphics::DrawDecals	platform	TR:include/platform/graphics.h:179	n/a(no SDK call: pure EE code / hardware registers)		game/gamecontext.cpp	renderer	done	0
+Platform::Graphics::AgeDecal	platform	TR:include/platform/graphics.h:187	n/a(no SDK call: pure EE code / hardware registers)		game/decals.cpp	renderer	done	0
+Platform::Graphics::SetViewFrustum	platform	TR:include/platform/graphics.h:195	n/a(no SDK call: pure EE code / hardware registers)		game/renderer.cpp	renderer	done	0
+Platform::Graphics::LoadChunkPlanes	platform	TR:include/platform/graphics.h:196	n/a(no SDK call: pure EE code / hardware registers)		game/chunkscenery.cpp	renderer	done	0
+Platform::Graphics::LoadPortalPlanes	platform	TR:include/platform/graphics.h:197	n/a(no SDK call: pure EE code / hardware registers)		game/chunkscenery.cpp	renderer	done	0
+Platform::Graphics::LoadCullingView	platform	TR:include/platform/graphics.h:198	n/a(no SDK call: pure EE code / hardware registers)		game/chunkview.cpp	renderer	done	0
+Platform::Graphics::CullLoadLink	platform	TR:include/platform/graphics.h:199	n/a(no SDK call: pure EE code / hardware registers)		game/chunkview.cpp	renderer	done	0
+Platform::Graphics::CullLoadModel	platform	TR:include/platform/graphics.h:200	n/a(no SDK call: pure EE code / hardware registers)		game/chunkview.cpp	renderer	done	0
+Platform::Graphics::CullTestBox	platform	TR:include/platform/graphics.h:201	n/a(no SDK call: pure EE code / hardware registers)		game/chunkview.cpp	renderer	done	0
+Platform::Graphics::CullTestBoxAt	platform	TR:include/platform/graphics.h:202	n/a(no SDK call: pure EE code / hardware registers)		game/chunkview.cpp	renderer	done	0
+Platform::Graphics::CullResult	platform	TR:include/platform/graphics.h:209	n/a(no SDK call: pure EE code / hardware registers)		game/chunkview.cpp	renderer	done	0
+Platform::Graphics::CullMatrices	platform	TR:include/platform/graphics.h:210	n/a(no SDK call: pure EE code / hardware registers)		game/chunkview.cpp	renderer	done	0
+Platform::Graphics::ClipBox	platform	TR:include/platform/graphics.h:213	n/a(no SDK call: pure EE code / hardware registers)		game/chunkview.cpp	renderer	done	0
+Platform::Graphics::ViewPlanes	platform	TR:include/platform/graphics.h:215	n/a(no SDK call: pure EE code / hardware registers)		game/chunkscenery.cpp	renderer	done	0
+Platform::Graphics::ClipBoxAt	platform	TR:include/platform/graphics.h:216	n/a(no SDK call: pure EE code / hardware registers)		game/chunkview.cpp	renderer	done	0
+Platform::Graphics::DrawPlacedModel	platform	TR:include/platform/graphics.h:220	n/a(no SDK call: pure EE code / hardware registers)		game/scenery.cpp	renderer	done	0
+Platform::Graphics::LodModelAt	platform	TR:include/platform/graphics.h:221	n/a(no SDK call: pure EE code / hardware registers)		game/scenery.cpp	renderer	done	0
+Platform::Graphics::LoadParticleView	platform	TR:include/platform/graphics.h:225	n/a(no SDK call: pure EE code / hardware registers)		game/particles.cpp	renderer	done	0
+Platform::Graphics::SetFontPage	platform	TR:include/platform/graphics.h:228	n/a(no SDK call: pure EE code / hardware registers)		game/font.cpp	renderer	done	0
+Platform::Graphics::DrawSprite	platform	TR:include/platform/graphics.h:242	n/a(no SDK call: pure EE code / hardware registers)		game/shapes.cpp	renderer	done	0
+Platform::Graphics::DrawTurnedSprite	platform	TR:include/platform/graphics.h:246	n/a(no SDK call: pure EE code / hardware registers)		game/shapes.cpp	renderer	done	0
+Platform::Graphics::DrawStrip	platform	TR:include/platform/graphics.h:248	n/a(no SDK call: pure EE code / hardware registers)		game/shapes.cpp	renderer	done	0
+Platform::Graphics::DrawRigidModel	platform	TR:include/platform/graphics.h:263	n/a(no SDK call: pure EE code / hardware registers)		game/ogi.cpp	renderer	done	0
+Platform::Graphics::DrawSkin	platform	TR:include/platform/graphics.h:264	n/a(no SDK call: pure EE code / hardware registers)		game/ogi.cpp	renderer	done	0
+Platform::Graphics::DrawBlendSkin	platform	TR:include/platform/graphics.h:265	n/a(no SDK call: pure EE code / hardware registers)		game/ogi.cpp	renderer	done	0
+Platform::Graphics::SetUpShadowPass	platform	TR:include/platform/graphics.h:269	n/a(no SDK call: pure EE code / hardware registers)		game/shadows.cpp	renderer	done	0
+Platform::Graphics::BeginShadows	platform	TR:include/platform/graphics.h:272	n/a(no SDK call: pure EE code / hardware registers)		game/chunkscenery.cpp	renderer	done	0
+Platform::Graphics::EndShadows	platform	TR:include/platform/graphics.h:273	n/a(no SDK call: pure EE code / hardware registers)		game/chunkscenery.cpp	renderer	done	0
+Platform::Graphics::DrawShadowMesh	platform	TR:include/platform/graphics.h:275	n/a(no SDK call: pure EE code / hardware registers)		game/shadows.cpp	renderer	done	0
+Platform::Graphics::BeginScreenModel	platform	TR:include/platform/graphics.h:280	n/a(no SDK call: pure EE code / hardware registers)		game/skidmarks.cpp	renderer	done	0
+Platform::Graphics::SetScreenModelMaterial	platform	TR:include/platform/graphics.h:281	n/a(no SDK call: pure EE code / hardware registers)		game/skidmarks.cpp	renderer	done	0
+Platform::Graphics::SetScreenModelColour	platform	TR:include/platform/graphics.h:282	n/a(no SDK call: pure EE code / hardware registers)		game/skidmarks.cpp	renderer	done	0
+Platform::Graphics::AddScreenModelVertex	platform	TR:include/platform/graphics.h:283	n/a(no SDK call: pure EE code / hardware registers)		game/skidmarks.cpp	renderer	done	0
+Platform::Graphics::EndScreenModel	platform	TR:include/platform/graphics.h:284	n/a(no SDK call: pure EE code / hardware registers)		game/skidmarks.cpp	renderer	done	0
+Platform::Graphics::DeleteScreenModel	platform	TR:include/platform/graphics.h:285	n/a(no SDK call: pure EE code / hardware registers)		game/skidmarks.cpp	renderer	done	0
+Platform::Graphics::DrawScreenModel	platform	TR:include/platform/graphics.h:286	n/a(no SDK call: pure EE code / hardware registers)		game/skidmarks.cpp	renderer	done	0
+Platform::Graphics::MakeSkidMaterial	platform	TR:include/platform/graphics.h:289	n/a(no SDK call: pure EE code / hardware registers)		game/skidmarks.cpp	renderer	done	0
+Platform::Graphics::RestartAnimations	platform	TR:include/platform/graphics.h:292	n/a(no SDK call: pure EE code / hardware registers)		game/ogi.cpp	renderer	done	0
+Platform::Graphics::RestartAnimations	platform	TR:include/platform/graphics.h:293	n/a(no SDK call: pure EE code / hardware registers)		game/ogi.cpp	renderer	done	0
+Platform::Graphics::RestartAnimations	platform	TR:include/platform/graphics.h:294	n/a(no SDK call: pure EE code / hardware registers)		game/ogi.cpp	renderer	done	0
+Platform::Graphics::FirstMaterial	platform	TR:include/platform/graphics.h:296	n/a(no SDK call: pure EE code / hardware registers)		game/oleg.cpp	renderer	done	0
+Platform::Graphics::NewTexture	platform	TR:include/platform/graphics.h:301	n/a(no SDK call: pure EE code / hardware registers)		game/graphicstables.cpp,game/resources.cpp	renderer	done	0
+Platform::Graphics::DeleteTexture	platform	TR:include/platform/graphics.h:302	n/a(no SDK call: pure EE code / hardware registers)		game/graphicstables.cpp	renderer	done	0
+Platform::Graphics::ReadTexture	platform	TR:include/platform/graphics.h:303	n/a(no SDK call: pure EE code / hardware registers)		game/graphicstables.cpp,game/resources.cpp	renderer	done	0
+Platform::Graphics::NewMaterial	platform	TR:include/platform/graphics.h:304	n/a(no SDK call: pure EE code / hardware registers)		game/graphicstables.cpp,game/resources.cpp	renderer	done	0
+Platform::Graphics::DeleteMaterial	platform	TR:include/platform/graphics.h:305	n/a(no SDK call: pure EE code / hardware registers)		game/graphicstables.cpp	renderer	done	0
+Platform::Graphics::ReadMaterial	platform	TR:include/platform/graphics.h:306	n/a(no SDK call: pure EE code / hardware registers)		game/graphicstables.cpp,game/resources.cpp	renderer	done	0
+Platform::Graphics::NewModel	platform	TR:include/platform/graphics.h:307	n/a(no SDK call: pure EE code / hardware registers)		game/graphicstables.cpp	renderer	done	0
+Platform::Graphics::DeleteModel	platform	TR:include/platform/graphics.h:308	n/a(no SDK call: pure EE code / hardware registers)		game/graphicstables.cpp	renderer	done	0
+Platform::Graphics::ReadModel	platform	TR:include/platform/graphics.h:309	n/a(no SDK call: pure EE code / hardware registers)		game/graphicstables.cpp	renderer	done	0
+Platform::Graphics::NewRigidModel	platform	TR:include/platform/graphics.h:310	n/a(no SDK call: pure EE code / hardware registers)		game/graphicstables.cpp	renderer	done	0
+Platform::Graphics::DeleteRigidModel	platform	TR:include/platform/graphics.h:311	n/a(no SDK call: pure EE code / hardware registers)		game/graphicstables.cpp	renderer	done	0
+Platform::Graphics::ReadRigidModel	platform	TR:include/platform/graphics.h:312	n/a(no SDK call: pure EE code / hardware registers)		game/graphicstables.cpp	renderer	done	0
+Platform::Graphics::NewSkin	platform	TR:include/platform/graphics.h:313	n/a(no SDK call: pure EE code / hardware registers)		game/graphicstables.cpp	renderer	done	0
+Platform::Graphics::DeleteSkin	platform	TR:include/platform/graphics.h:314	n/a(no SDK call: pure EE code / hardware registers)		game/graphicstables.cpp	renderer	done	0
+Platform::Graphics::ReadSkin	platform	TR:include/platform/graphics.h:315	n/a(no SDK call: pure EE code / hardware registers)		game/graphicstables.cpp	renderer	done	0
+Platform::Graphics::NewBlendSkin	platform	TR:include/platform/graphics.h:316	n/a(no SDK call: pure EE code / hardware registers)		game/graphicstables.cpp	renderer	done	0
+Platform::Graphics::DeleteBlendSkin	platform	TR:include/platform/graphics.h:317	n/a(no SDK call: pure EE code / hardware registers)		game/graphicstables.cpp	renderer	done	0
+Platform::Graphics::ReadBlendSkin	platform	TR:include/platform/graphics.h:318	n/a(no SDK call: pure EE code / hardware registers)		game/graphicstables.cpp	renderer	done	0
+Platform::Graphics::NewMesh	platform	TR:include/platform/graphics.h:319	n/a(no SDK call: pure EE code / hardware registers)		game/graphicstables.cpp	renderer	done	0
+Platform::Graphics::DeleteMesh	platform	TR:include/platform/graphics.h:320	n/a(no SDK call: pure EE code / hardware registers)		game/graphicstables.cpp	renderer	done	0
+Platform::Graphics::ReadMesh	platform	TR:include/platform/graphics.h:321	n/a(no SDK call: pure EE code / hardware registers)		game/graphicstables.cpp	renderer	done	0
+Platform::Graphics::NewLod	platform	TR:include/platform/graphics.h:322	n/a(no SDK call: pure EE code / hardware registers)		game/graphicstables.cpp	renderer	done	0
+Platform::Graphics::DeleteLod	platform	TR:include/platform/graphics.h:323	n/a(no SDK call: pure EE code / hardware registers)		game/graphicstables.cpp	renderer	done	0
+Platform::Graphics::ReadLod	platform	TR:include/platform/graphics.h:324	n/a(no SDK call: pure EE code / hardware registers)		game/graphicstables.cpp	renderer	done	0
+Platform::Graphics::NewSky	platform	TR:include/platform/graphics.h:325	n/a(no SDK call: pure EE code / hardware registers)		game/graphicstables.cpp	renderer	done	0
+Platform::Graphics::DeleteSky	platform	TR:include/platform/graphics.h:326	n/a(no SDK call: pure EE code / hardware registers)		game/graphicstables.cpp	renderer	done	0
+Platform::Graphics::ReadSky	platform	TR:include/platform/graphics.h:327	n/a(no SDK call: pure EE code / hardware registers)		game/graphicstables.cpp	renderer	done	0
+Platform::Graphics::DrawChunkSky	platform	TR:include/platform/graphics.h:329	n/a(no SDK call: pure EE code / hardware registers)		game/renderer.cpp	renderer	done	0
+Platform::Graphics::LoadParticlePage	platform	TR:include/platform/graphics.h:334	n/a(no SDK call: pure EE code / hardware registers)		game/decals.cpp,game/particles.cpp	renderer	done	0
+Platform::Graphics::ReadParticlePage	platform	TR:include/platform/graphics.h:335	n/a(no SDK call: pure EE code / hardware registers)		game/decals.cpp,game/particles.cpp	renderer	done	0
+Platform::Io::Initialise	platform	TR:include/platform/io.h:9	implemented	sceSifInitRpc		iop/boot	done	6
+Platform::Io::Restart	platform	TR:include/platform/io.h:11	implemented	sceSifRebootIop,sceSifSyncIop		iop/boot	done	2
+Platform::Io::LoadDriver	platform	TR:include/platform/io.h:13	implemented	sceSifLoadModule		iop/boot	done	8
+Platform::Io::InitialiseHeap	platform	TR:include/platform/io.h:16	implemented	sceSifInitIopHeap		iop/boot	done	1
+Platform::Io::AllocateHeap	platform	TR:include/platform/io.h:17	implemented	sceSifAllocIopHeap		iop/boot	done	0
+Platform::Io::FreeHeap	platform	TR:include/platform/io.h:18	implemented	sceSifFreeIopHeap		iop/boot	done	0
+Platform::Math::SinCos	platform	TR:include/platform/math.h:15	n/a(no SDK call: pure EE code / hardware registers)		game/math.cpp,game/oleg.cpp,game/particles2d.cpp,game/rotations.cpp,game/widgeteffects.cpp	math(vu0)	done	0
+Platform::Math::Max	platform	TR:include/platform/math.h:17	n/a(no SDK call: pure EE code / hardware registers)		game/particles.cpp	math(vu0)	done	0
+Platform::Math::Min	platform	TR:include/platform/math.h:18	n/a(no SDK call: pure EE code / hardware registers)			math(vu0)	done	0
+Platform::Math::SlerpRotations	platform	TR:include/platform/math.h:23	n/a(no SDK call: pure EE code / hardware registers)		game/animation.cpp	math(vu0)	done	0
+Platform::Math::EulerRotation	platform	TR:include/platform/math.h:26	n/a(no SDK call: pure EE code / hardware registers)		game/animation.cpp	math(vu0)	done	0
+Platform::Math::TurnRotation	platform	TR:include/platform/math.h:29	n/a(no SDK call: pure EE code / hardware registers)		game/animation.cpp	math(vu0)	done	0
+Platform::Math::Lerp	platform	TR:include/platform/math.h:31	n/a(no SDK call: pure EE code / hardware registers)		game/animation.cpp	math(vu0)	done	0
+Platform::Math::JointMatrix	platform	TR:include/platform/math.h:34	n/a(no SDK call: pure EE code / hardware registers)		game/animation.cpp	math(vu0)	done	0
+Platform::Math::MultiplyByParent	platform	TR:include/platform/math.h:38	n/a(no SDK call: pure EE code / hardware registers)		game/ogi.cpp	math(vu0)	done	0
+Platform::Math::ViewDistance	platform	TR:include/platform/math.h:42	n/a(no SDK call: pure EE code / hardware registers)		game/particles.cpp	math(vu0)	done	0
+Platform::Math::ParticleBlockView	platform	TR:include/platform/math.h:48	n/a(no SDK call: pure EE code / hardware registers)		game/particles.cpp	math(vu0)	done	0
+Platform::Math::DivideBySquareRoot	platform	TR:include/platform/math.h:53	n/a(no SDK call: pure EE code / hardware registers)		game/math.cpp,game/place.cpp,game/rigidbody.cpp	math(vu0)	done	0
+Platform::Math::SetRay	platform	TR:include/platform/math.h:59	n/a(no SDK call: pure EE code / hardware registers)		game/collision.cpp	math(vu0)	done	0
+Platform::Math::StartRayTriangle	platform	TR:include/platform/math.h:60	n/a(no SDK call: pure EE code / hardware registers)		game/collision.cpp	math(vu0)	done	0
+Platform::Math::FinishRayTriangle	platform	TR:include/platform/math.h:61	n/a(no SDK call: pure EE code / hardware registers)		game/collision.cpp	math(vu0)	done	0
+Platform::Math::CosinePolynomial	platform	TR:include/platform/math.h:65	n/a(no SDK call: pure EE code / hardware registers)			math(vu0)	done	0
+Platform::Math::SinCosPolynomial	platform	TR:include/platform/math.h:91	n/a(no SDK call: pure EE code / hardware registers)			math(vu0)	done	0
+Platform::Memory::PoolSpace	platform	TR:include/platform/memory.h:10	n/a(no SDK call: pure EE code / hardware registers)		game/memory.cpp	memory	done	0
+Platform::Memory::AllocatePool	platform	TR:include/platform/memory.h:11	n/a(no SDK call: pure EE code / hardware registers)		game/memory.cpp	memory	done	0
+Platform::Memory::Synchronise	platform	TR:include/platform/memory.h:13	n/a(no SDK call: pure EE code / hardware registers)		game/stream.cpp	memory	done	0
+Platform::Memory::BeforeDeviceWrite	platform	TR:include/platform/memory.h:16	n/a(no SDK call: pure EE code / hardware registers)		game/disk.cpp	memory	done	0
+Platform::Memory::WriteBackCache	platform	TR:include/platform/memory.h:18	implemented	FlushCache		memory	done	0
+Platform::Movie::Construct	platform	TR:include/platform/movie.h:25	n/a(no SDK call: pure EE code / hardware registers)		game/movie.cpp	movie	done	0
+Platform::Movie::BeginPresenting	platform	TR:include/platform/movie.h:29	implemented	DisableIntc,EnableIntc,sceGsSyncVCallback	game/movie.cpp	movie	done	4
+Platform::Movie::Open	platform	TR:include/platform/movie.h:32	n/a(no SDK call: pure EE code / hardware registers)		game/movie.cpp	movie	done	0
+Platform::Movie::StartSound	platform	TR:include/platform/movie.h:34	implemented	sceSdRemote	game/movie.cpp	movie	done	555
+Platform::Movie::Step	platform	TR:include/platform/movie.h:37	n/a(no SDK call: pure EE code / hardware registers)		game/movie.cpp	movie	done	0
+Platform::Movie::WaitFrame	platform	TR:include/platform/movie.h:39	n/a(no SDK call: pure EE code / hardware registers)		game/movie.cpp	movie	done	0
+Platform::Movie::QueuePicture	platform	TR:include/platform/movie.h:41	n/a(no SDK call: pure EE code / hardware registers)		game/movie.cpp	movie	done	0
+Platform::Movie::Draw	platform	TR:include/platform/movie.h:54	n/a(no SDK call: pure EE code / hardware registers)		game/movie.cpp	movie	done	0
+Platform::Movie::Close	platform	TR:include/platform/movie.h:57	missing-row:sceMpegDelete	DisableIntc,sceGsSyncVCallback,sceMpegDelete,sceSdRemote	game/movie.cpp	movie	P1	559
+sceMpegDelete	libmpeg.a	TR:src/platform/ps2 (Movie::Close)	n/a			movie	P1	0
+Platform::Pads::Initialise	platform	TR:include/platform/pads.h:89	missing-row:scePadInit	scePadInit		pads	P3	0
+Platform::Pads::Open	platform	TR:include/platform/pads.h:90	implemented	scePadPortOpen	game/pads.cpp	pads	done	1
+Platform::Pads::Close	platform	TR:include/platform/pads.h:91	implemented	scePadPortClose	game/pads.cpp	pads	done	0
+Platform::Pads::Read	platform	TR:include/platform/pads.h:93	implemented	scePadRead		pads	done	1107
+Platform::Pads::GetState	platform	TR:include/platform/pads.h:94	implemented	scePadGetState		pads	done	1115
+Platform::Pads::GetRequestState	platform	TR:include/platform/pads.h:95	implemented	scePadGetReqState		pads	done	4
+Platform::Pads::InfoMode	platform	TR:include/platform/pads.h:97	implemented	scePadInfoMode		pads	done	2
+Platform::Pads::SetMainMode	platform	TR:include/platform/pads.h:98	implemented	scePadSetMainMode		pads	done	0
+Platform::Pads::InfoActuator	platform	TR:include/platform/pads.h:100	implemented	scePadInfoAct		pads	done	1
+Platform::Pads::SetActuatorAlign	platform	TR:include/platform/pads.h:101	implemented	scePadSetActAlign		pads	done	1
+Platform::Pads::SetActuatorDirect	platform	TR:include/platform/pads.h:102	implemented	scePadSetActDirect	game/pads.cpp	pads	done	0
+Platform::Pads::InfoPressureMode	platform	TR:include/platform/pads.h:104	missing-row:scePadInfoPressMode	scePadInfoPressMode		pads	P3	0
+Platform::Pads::EnterPressureMode	platform	TR:include/platform/pads.h:105	implemented	scePadEnterPressMode		pads	done	1
+Platform::Saves::Initialise	platform	TR:include/platform/saves.h:61	implemented	sceMcInit	game/savedevice.cpp	saves	done	0
+Platform::Saves::Update	platform	TR:include/platform/saves.h:65	n/a(no SDK call: pure EE code / hardware registers)		game/savedevice.cpp	saves	done	0
+Platform::Saves::GetResult	platform	TR:include/platform/saves.h:67	n/a(no SDK call: pure EE code / hardware registers)		game/savedevice.cpp	saves	done	0
+Platform::Saves::Format	platform	TR:include/platform/saves.h:70	implemented	sceMcFormat	game/savedevice.cpp	saves	done	0
+Platform::Saves::CreateSave	platform	TR:include/platform/saves.h:72	n/a(no SDK call: pure EE code / hardware registers)		game/savedevice.cpp	saves	done	0
+Platform::Saves::MeasureSave	platform	TR:include/platform/saves.h:74	n/a(no SDK call: pure EE code / hardware registers)		game/savedevice.cpp	saves	done	0
+Platform::Saves::FindFile	platform	TR:include/platform/saves.h:76	n/a(no SDK call: pure EE code / hardware registers)		game/savedevice.cpp	saves	done	0
+Platform::Saves::Write	platform	TR:include/platform/saves.h:78	implemented	sceMcWrite	game/savedevice.cpp	saves	done	0
+Platform::Saves::Read	platform	TR:include/platform/saves.h:79	implemented	sceMcRead	game/savedevice.cpp	saves	done	0
+Platform::Saves::FileKilobytes	platform	TR:include/platform/saves.h:83	n/a(no SDK call: pure EE code / hardware registers)		game/savedevice.cpp	saves	done	0
+Platform::Saves::SaveBytes	platform	TR:include/platform/saves.h:84	n/a(no SDK call: pure EE code / hardware registers)		game/savedevice.cpp	saves	done	0
+Platform::Sound::InitialiseRemote	platform	TR:include/platform/sound.h:8	implemented	sceSdRemoteInit		sound	done	1
+Platform::Stream::Initialise	platform	TR:include/platform/stream.h:27	implemented	ChangeThreadPriority,GetThreadId	game/filestream.cpp	loader/stream	done	0
+Platform::Stream::Update	platform	TR:include/platform/stream.h:29	n/a(no SDK call: pure EE code / hardware registers)		game/filestream.cpp	loader/stream	done	0
+Platform::Stream::GetState	platform	TR:include/platform/stream.h:30	n/a(no SDK call: pure EE code / hardware registers)		game/filestream.cpp	loader/stream	done	0
+Platform::Stream::AttachBuffer	platform	TR:include/platform/stream.h:34	n/a(no SDK call: pure EE code / hardware registers)		game/filestream.cpp	loader/stream	done	0
+Platform::Stream::DetachBuffer	platform	TR:include/platform/stream.h:35	n/a(no SDK call: pure EE code / hardware registers)		game/filestream.cpp	loader/stream	done	0
+Platform::Stream::FreeBufferMemory	platform	TR:include/platform/stream.h:37	n/a(no SDK call: pure EE code / hardware registers)		game/filestream.cpp	loader/stream	done	0
+Platform::Stream::OpenFile	platform	TR:include/platform/stream.h:40	n/a(no SDK call: pure EE code / hardware registers)		game/filestream.cpp	loader/stream	done	0
+Platform::Stream::FileSize	platform	TR:include/platform/stream.h:41	n/a(no SDK call: pure EE code / hardware registers)		game/filestream.cpp	loader/stream	done	0
+Platform::Stream::CloseFile	platform	TR:include/platform/stream.h:42	n/a(no SDK call: pure EE code / hardware registers)		game/filestream.cpp	loader/stream	done	0
+Platform::Stream::Read	platform	TR:include/platform/stream.h:45	n/a(no SDK call: pure EE code / hardware registers)		game/filestream.cpp,game/stream.cpp	loader/stream	done	0
+Platform::Stream::ReadSoundBank	platform	TR:include/platform/stream.h:47	n/a(no SDK call: pure EE code / hardware registers)		game/filestream.cpp	loader/stream	done	0
+Platform::Stream::IsReading	platform	TR:include/platform/stream.h:48	n/a(no SDK call: pure EE code / hardware registers)		game/filestream.cpp	loader/stream	done	0
+Platform::Stream::Wait	platform	TR:include/platform/stream.h:51	n/a(no SDK call: pure EE code / hardware registers)		game/filestream.cpp	loader/stream	done	0
+Platform::System::Initialise	platform	TR:include/platform/system.h:12	n/a(no SDK call: pure EE code / hardware registers)		main.cpp	system	done	0
+Platform::System::StartServices	platform	TR:include/platform/system.h:14	n/a(no SDK call: pure EE code / hardware registers)		main.cpp	system	done	0
+Platform::System::Language	platform	TR:include/platform/system.h:30	implemented	GetOsdConfigParam	game/gamecontext.cpp	system	done	0
+Platform::System::LocalTime	platform	TR:include/platform/system.h:44	implemented	sceCdReadClock	game/save.cpp	system	done	1
+Platform::Time::Initialise	platform	TR:include/platform/time.h:12	implemented	DisableIntc,EnableIntc	game/clock.cpp	clock	done	0
+Platform::Time::Ticks	platform	TR:include/platform/time.h:14	n/a(no SDK call: pure EE code / hardware registers)		game/clock.cpp	clock	done	0
+_clearOnce	libmpeg.a	(not named by TR: our manifest only)	recompiled	engine/ipu/hle/libmpeg_bindings.cpp:45		movie	done	4
+sceMpegCreate	libmpeg.a	(not named by TR: our manifest only)	wrap	engine/ipu/hle/libmpeg_bindings.cpp:43		movie	done	4
+_clearEach	libmpeg.a	(not named by TR: our manifest only)	recompiled	engine/ipu/hle/libmpeg_bindings.cpp:46		movie	done	4
+_getpic	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_updateRefImage	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_decodeOrSkipFrame	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_decodeOrSkipField	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+sceMpegInit	libmpeg.a	(not named by TR: our manifest only)	implemented	engine/ipu/hle/libmpeg_bindings.cpp:42		movie	done	1
+sceMpegGetPicture	libmpeg.a	(not named by TR: our manifest only)	implemented	engine/ipu/hle/libmpeg_bindings.cpp:55		movie	done	547
+sceMpegGetPictureRAW8	libmpeg.a	(not named by TR: our manifest only)	implemented	engine/ipu/hle/libmpeg_bindings.cpp:56		movie	done	0
+sceMpegReset	libmpeg.a	(not named by TR: our manifest only)	wrap	engine/ipu/hle/libmpeg_bindings.cpp:44		movie	done	4
+sceMpegAddCallback	libmpeg.a	(not named by TR: our manifest only)	recompiled	engine/ipu/hle/libmpeg_bindings.cpp:47		movie	done	6
+_sceMpegDispatchMpegCallback	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_sceMpegDispatchMpegCbNodata	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_decodeOrSkip	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+sceMpegClearRefBuff	libmpeg.a	(not named by TR: our manifest only)	implemented	engine/ipu/hle/libmpeg_bindings.cpp:51		movie	done	4
+_decPicture	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_sceMpegAlalcInit	libmpeg.a	(not named by TR: our manifest only)	implemented	engine/ipu/hle/libmpeg_bindings.cpp:49		movie	done	4
+_sceMpegAlalcAlloc	libmpeg.a	(not named by TR: our manifest only)	implemented	engine/ipu/hle/libmpeg_bindings.cpp:50		movie	done	4
+_cpr8	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_dispRefImage	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_dispRefImageField	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_sceMpegFlush	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_sceMpegOutputFrame	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_doCSC2	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_sceMpegCscStoreRefImage	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_ch3dmaCSC	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_ch4dma	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_system_header	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_pack_header	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_PES_packet	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+sceMpegDemuxPssRing	libmpeg.a	(not named by TR: our manifest only)	implemented	engine/ipu/hle/libmpeg_bindings.cpp:54		movie	done	0
+sceMpegDemuxPss	libmpeg.a	(not named by TR: our manifest only)	implemented	engine/ipu/hle/libmpeg_bindings.cpp:53		movie	done	2500
+sceMpegAddStrCallback	libmpeg.a	(not named by TR: our manifest only)	recompiled	engine/ipu/hle/libmpeg_bindings.cpp:48		movie	done	8
+_sceMpegStopIpuDma	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_sceMpegErrorBdec	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_sceMpegError	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_sceMpegError1	libmpeg.a	(not named by TR: our manifest only)	implemented	engine/ipu/hle/libmpeg_bindings.cpp:52		movie	done	2
+_dualPrimeVector	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_getAllRefs	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_motionComp0	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_getRef0	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_doMC	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_sceMpegPictureData0	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_slice0	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_motionVector	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_motionVectors	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_decMB0	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_sceMpegMbAddressIncrement	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_sceMpegWaitIpuIdle	libmpeg.a	(not named by TR: our manifest only)	recompiled(inner label FUN_002be408+0x178: not hookable; enclosing generated body runs)	symbols.tsv sdk_inner_label		movie	done	0
+_sceMpegWaitIpuIdle64	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_sceMpegNextBit	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_sceMpegPeepBit	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_sceMpegFlushBuf	libmpeg.a	(not named by TR: our manifest only)	recompiled(inner label FUN_002be950+0x90: not hookable; enclosing generated body runs)	symbols.tsv sdk_inner_label		movie	done	0
+_skipMB0	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_copyAddRefImage	libmpeg.a	(not named by TR: our manifest only)	recompiled(inner label FUN_002beab8+0xc0: not hookable; enclosing generated body runs)	symbols.tsv sdk_inner_label		movie	done	0
+_copyRefImage	libmpeg.a	(not named by TR: our manifest only)	recompiled(inner label FUN_002beab8+0x1b0: not hookable; enclosing generated body runs)	symbols.tsv sdk_inner_label		movie	done	0
+dmaRefImage	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_rix_000	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_ri0_000	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_rix_001	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_ri0_001	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_rix_010	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_ri0_010	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_rix_011	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_ri0_011	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_rix_100	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_ri0_100	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_rix_101	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_ri0_101	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_rix_110	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_ri0_110	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_rix_111	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_ri0_111	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+receiveDataFromIPU	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_sceMpegSliceA0	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_initSeq	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_sequenceHeader	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_groupOfPicturesHeader	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_pictureHeader	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_sequenceExtension	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_quantMatrixExtension	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_pictureCodingExtension	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_extensionAndUserData	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_sceMpegNextHeader	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+flushByteBoundary	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_sequenceDisplayExtension	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_copyrightExtension	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+_pictureDisplayExtension	libmpeg.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+setD3_CHCR	libipu.a	(not named by TR: our manifest only)	trap			movie	P2-trap(TR does not name it: likely an internal helper)	0
+sceIpuStopDMA	libipu.a	(not named by TR: our manifest only)	implemented	engine/ipu/hle/libipu_bindings.cpp:51		movie	done	549
+sceIpuRestartDMA	libipu.a	(not named by TR: our manifest only)	implemented	engine/ipu/hle/libipu_bindings.cpp:52		movie	done	547
+sceIpuSync	libipu.a	(not named by TR: our manifest only)	implemented	engine/ipu/hle/libipu_bindings.cpp:50		movie	done	4
+sceIpuInit	libipu.a	(not named by TR: our manifest only)	implemented	engine/ipu/hle/libipu_bindings.cpp:49		movie	done	1
+sceGsResetGraph	libgraph.a	(not named by TR: our manifest only)	implemented	engine/gs/hle/sce/libgraph_bindings.cpp:42		renderer	done	1
+sceGsSyncV	libgraph.a	(not named by TR: our manifest only)	implemented	engine/gs/hle/sce/gs_sync.cpp:34		renderer	done	700
+sceGsSyncVCallback	libgraph.a	(not named by TR: our manifest only)	implemented	engine/gs/hle/sce/libgraph_bindings.cpp:43		renderer	done	4
+sceDmaGetChan	libdma.a	(not named by TR: our manifest only)	implemented	engine/dmac/hle/libdma_bindings.cpp:33		renderer/dma	done	7
+sceSdRemoteInit	libsdr.a	(not named by TR: our manifest only)	implemented	engine/sound/hle/libsdr_bindings.cpp:23		sound	done	1
+sceSdRemote	libsdr.a	(not named by TR: our manifest only)	implemented	engine/sound/hle/libsdr_bindings.cpp:24		sound	done	555
+mceIntrReadFixAlign	libmc.a	(not named by TR: our manifest only)	stub	engine/mc/hle/libmc_bindings.cpp:29		saves	done	0
+mceGetInfoApdx	libmc.a	(not named by TR: our manifest only)	stub	engine/mc/hle/libmc_bindings.cpp:30		saves	done	0
+adddate	libscf.a	(not named by TR: our manifest only)	recompiled(inner label FUN_002c61c0+0xd0: not hookable; enclosing generated body runs)	symbols.tsv sdk_inner_label		system/clock	done	0
+memcpy	libc.a	(not named by TR: our manifest only)	wrap	engine/ee/hle/sdk_binding_manifest.cpp:52		libc	done	29604
+memmove	libc.a	(not named by TR: our manifest only)	wrap	engine/ee/hle/sdk_binding_manifest.cpp:53		libc	done	0
+strlen	libc.a	(not named by TR: our manifest only)	wrap	engine/ee/hle/sdk_binding_manifest.cpp:55		libc	done	191045
+VSync	libkernl.a	(not named by TR: our manifest only)	trap			kernel	P2-trap(TR does not name it: likely an internal helper)	0
+VSync2	libkernl.a	(not named by TR: our manifest only)	trap			kernel	P2-trap(TR does not name it: likely an internal helper)	0
+sbrk	libkernl.a	(not named by TR: our manifest only)	implemented	engine/ee/hle/kernl_sbrk.cpp:12		kernel	done	3
+_sceSDC	libkernl.a	(not named by TR: our manifest only)	trap			kernel	P2-trap(TR does not name it: likely an internal helper)	0
+_sceIDC	libkernl.a	(not named by TR: our manifest only)	stub	engine/ee/hle/kernl_boot.cpp:51		kernel	done	1840
+snprintf_char	libkernl.a	(not named by TR: our manifest only)	recompiled	engine/ee/hle/sdk_binding_manifest.cpp:62		kernel	done	0
+_set_sreg	libkernl.a	(not named by TR: our manifest only)	trap			kernel	P2-trap(TR does not name it: likely an internal helper)	0
+_sceSifCmdIntrHdlr	libkernl.a	(not named by TR: our manifest only)	trap			kernel	P2-trap(TR does not name it: likely an internal helper)	0
+_sceFs_Poff_Intr	libkernl.a	(not named by TR: our manifest only)	trap			kernel	P2-trap(TR does not name it: likely an internal helper)	0
+DIntr	libkernl.a	(not named by TR: our manifest only)	stub	engine/ee/hle/kernl_boot.cpp:44		kernel	done	1650
+EIntr	libkernl.a	(not named by TR: our manifest only)	stub	engine/ee/hle/kernl_boot.cpp:43		kernel	done	1650
+supplement_crt0	libkernl.a	(not named by TR: our manifest only)	stub	engine/ee/hle/kernl_boot.cpp:50		kernel	done	0
+_InitSys	libkernl.a	(not named by TR: our manifest only)	stub	engine/ee/hle/kernl_boot.cpp:48		kernel	done	1
+_kExitTLBHandler	libkernl.a	(not named by TR: our manifest only)	trap			kernel	P2-trap(TR does not name it: likely an internal helper)	0

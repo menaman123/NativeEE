@@ -1,0 +1,13 @@
+# TITLE_INPUTS.sha256 -- the disc files this title's generated code is made from (shasum -a 256 format).
+# The build (cmake/TitleInputs.cmake) extracts each path from the user's disc image (NATIVEEE_DISC)
+# or takes the loose file (NATIVEEE_TITLE_ELF / NATIVEEE_STREAM_IRX) and REFUSES any other bytes.
+# Path = the file's path on the ISO9660 volume (root = the ELF). The ELF hash is the one the
+# launcher checks at first run (TitleProfile::elf_sha256, app/host/disc_verify.cpp).
+#
+# THIS IS THE TEMPLATE TITLE. Both rows below are PLACEHOLDERS and match no real file: the hash is
+# all zeroes and the names are the generic serial shape. Replace them with `shasum -a 256` of YOUR
+# title's ELF and custom IOP module. Until then the build configures and the engine, tools and
+# component tests build -- but any -DNATIVEEE_TITLE_ELF you pass is refused on the hash, which is
+# the intended behaviour: a title that has not recorded its own inputs cannot claim a disc.
+0000000000000000000000000000000000000000000000000000000000000000  SLUS_123.45
+0000000000000000000000000000000000000000000000000000000000000001  DATA/SYS/MODULE.IRX

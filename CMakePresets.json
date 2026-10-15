@@ -1,0 +1,427 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "macos-dev",
+      "displayName": "macOS dev (Ninja, Debug)",
+      "description": "The construction/development configuration on the dev platform. Diagnostics mechanism OFF (Release shape); the harness emitters are always compiled (they are product code armed by Config.harness).",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "PS2R_DIAGNOSTICS": "OFF"
+      }
+    },
+    {
+      "name": "macos-diag",
+      "displayName": "macOS diagnostics build (Ninja, Debug, PS2R_DIAGNOSTICS=ON)",
+      "description": "Same as macos-dev with the core/diag mechanism compiled in (censuses, probe kit, recorders) and PS2R_SIMD=ON (the SIMD==scalar property test exercises the vector path here). Used for divergence escalation, never for equivalence hashes.",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-diag",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "PS2R_DIAGNOSTICS": "ON",
+        "PS2R_SIMD": "ON"
+      }
+    },
+    {
+      "name": "macos-release",
+      "displayName": "macOS release (Ninja, Release)",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "PS2R_DIAGNOSTICS": "OFF"
+      }
+    },
+    {
+      "name": "macos-dist",
+      "displayName": "macOS distribution artifact (Release, self-contained)",
+      "inherits": "macos-release",
+      "description": "The shipped macOS artifact (Charter 2 C1): the macos-release shape with SDL2 built from the pinned release and linked STATICALLY (Homebrew's package is hidden: CMAKE_DISABLE_FIND_PACKAGE_SDL2), FFmpeg's three libraries from tools/ci/ffmpeg_static.sh (static, mpeg1/mpeg2 decoders + swscale only, --disable-gpl --disable-nonfree, found through CMAKE_PREFIX_PATH ahead of Homebrew's --enable-gpl build, which must never be shipped), GL = the system's OpenGL.framework, libc++ = the system's. dist/macos/ then has NO lib/: the binary + texts. ./build.sh on macOS uses this preset; the acceptance lane keeps macos-release with Homebrew's SDL2/FFmpeg.",
+      "binaryDir": "${sourceDir}/build-macos-dist",
+      "cacheVariables": {
+        "PS2R_FETCH_SDL2": "ON",
+        "CMAKE_DISABLE_FIND_PACKAGE_SDL2": "ON",
+        "CMAKE_PREFIX_PATH": "${sourceDir}/build-macos-dist/third_party/ffmpeg"
+      }
+    },
+    {
+      "name": "linux-base",
+      "hidden": true,
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "generator": "Ninja",
+      "cacheVariables": {
+        "PS2R_DIAGNOSTICS": "OFF",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      },
+      "toolchainFile": "${sourceDir}/engine/platform/linux/toolchain.cmake"
+    },
+    {
+      "name": "linux-release",
+      "displayName": "Linux release (Ninja, Release)",
+      "inherits": "linux-base",
+      "description": "Linux x86-64 / aarch64 (glibc, Mesa GL through the core entry points, SDL2 found or -DPS2R_FETCH_SDL2=ON). The compiler is the environment's CC/CXX (GCC 12+ or Clang 15+, both -Werror clean); the -gcc / -clang variants pin one. Release shape, no diagnostics -- the shipped artifact and the hash-identity candidate.",
+      "binaryDir": "${sourceDir}/build-linux-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "linux-dev",
+      "displayName": "Linux dev (Ninja, Debug)",
+      "inherits": "linux-base",
+      "description": "Linux x86-64 / aarch64 (glibc, Mesa GL through the core entry points, SDL2 found or -DPS2R_FETCH_SDL2=ON). The compiler is the environment's CC/CXX (GCC 12+ or Clang 15+, both -Werror clean); the -gcc / -clang variants pin one. Debug shape, diagnostics OFF (the same shape as macos-dev).",
+      "binaryDir": "${sourceDir}/build-linux-dev",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "linux-release-gcc",
+      "displayName": "Linux release, GCC",
+      "inherits": "linux-release",
+      "binaryDir": "${sourceDir}/build-linux-release-gcc",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++"
+      }
+    },
+    {
+      "name": "linux-release-clang",
+      "displayName": "Linux release, Clang",
+      "inherits": "linux-release",
+      "binaryDir": "${sourceDir}/build-linux-release-clang",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "linux-dist",
+      "displayName": "Linux distribution artifact (Clang, Release, self-contained)",
+      "inherits": "linux-release",
+      "description": "The shipped Linux artifact (Charter 2 C1): the linux-release shape with Clang, SDL2 built from the pinned release and linked STATICALLY (the system package is hidden: CMAKE_DISABLE_FIND_PACKAGE_SDL2; the X11/Wayland/PulseAudio/ALSA back ends are dlopen'd at run time as in every SDL2 build from source), FFmpeg's three libraries from tools/ci/ffmpeg_static.sh (static, mpeg2video + swscale only, found through CMAKE_PREFIX_PATH), libstdc++/libgcc static. GL is the platform's libGL.so.1 (OpenGL_GL_PREFERENCE=LEGACY: the one library every Mesa or vendor install ships; the GLVND pair libOpenGL.so.0 + libGLX.so.0 is a separate package on Ubuntu, libopengl0, that libgl1 alone does not bring). ./build.sh on Linux uses this preset; the component lanes keep linux-release-{gcc,clang} with the distribution's SDL2/FFmpeg.",
+      "binaryDir": "${sourceDir}/build-linux-dist",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "PS2R_FETCH_SDL2": "ON",
+        "CMAKE_DISABLE_FIND_PACKAGE_SDL2": "ON",
+        "CMAKE_PREFIX_PATH": "${sourceDir}/build-linux-dist/third_party/ffmpeg",
+        "CMAKE_EXE_LINKER_FLAGS": "-static-libstdc++ -static-libgcc",
+        "OpenGL_GL_PREFERENCE": "LEGACY"
+      }
+    },
+    {
+      "name": "linux-dev-gcc",
+      "displayName": "Linux dev, GCC",
+      "inherits": "linux-dev",
+      "binaryDir": "${sourceDir}/build-linux-dev-gcc",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++"
+      }
+    },
+    {
+      "name": "linux-dev-clang",
+      "displayName": "Linux dev, Clang",
+      "inherits": "linux-dev",
+      "binaryDir": "${sourceDir}/build-linux-dev-clang",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "windows-dev",
+      "displayName": "Windows dev (Ninja, Debug, clang-cl)",
+      "description": "The Windows construction configuration: clang-cl (the clang semantics -fwrapv/-fno-strict-aliasing/-ffp-contract=off reach the recompiled TUs through /clang:), Ninja, SDL2 + FFmpeg from the vcpkg manifest (vcpkg.json; VCPKG_ROOT must point at a vcpkg checkout). The recompiler tool is OFF (its C dependency is regenerated on the dev host; the frozen output is committed). The compiler launcher tools/build/clang_cl_shim.py spells the tree's GNU-style per-target flags for this front end (-Wall -> /clang:-Wall, -ffp-contract=off -> /clang:..., see the script; ctest PlatformClangClShimContract).",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-windows",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang-cl",
+        "CMAKE_CXX_COMPILER": "clang-cl",
+        "CMAKE_C_COMPILER_LAUNCHER": "python;${sourceDir}/tools/build/clang_cl_shim.py",
+        "CMAKE_CXX_COMPILER_LAUNCHER": "python;${sourceDir}/tools/build/clang_cl_shim.py",
+        "VCPKG_TARGET_TRIPLET": "x64-windows",
+        "PS2R_BUILD_RECOMPILER": "OFF",
+        "PS2R_DIAGNOSTICS": "OFF",
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "windows-release",
+      "displayName": "Windows release (Ninja, Release, clang-cl)",
+      "description": "The Windows release configuration (Track B2): same compiler and dependencies as windows-dev, Release. build.ps1 drives it and stages dist/windows/. The compiler launcher tools/build/clang_cl_shim.py spells the tree's GNU-style per-target flags for this front end (-Wall -> /clang:-Wall, -ffp-contract=off -> /clang:..., see the script; ctest PlatformClangClShimContract).",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-windows-release",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang-cl",
+        "CMAKE_CXX_COMPILER": "clang-cl",
+        "CMAKE_C_COMPILER_LAUNCHER": "python;${sourceDir}/tools/build/clang_cl_shim.py",
+        "CMAKE_CXX_COMPILER_LAUNCHER": "python;${sourceDir}/tools/build/clang_cl_shim.py",
+        "VCPKG_TARGET_TRIPLET": "x64-windows",
+        "PS2R_BUILD_RECOMPILER": "OFF",
+        "PS2R_DIAGNOSTICS": "OFF",
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "windows-msvc-dev",
+      "displayName": "Windows dev (Ninja, Debug, MSVC cl -- experimental)",
+      "description": "cl.exe instead of clang-cl. The compiler shims (engine/platform/host) build with it, but cl has no -fwrapv: the recompiled TUs' signed-overflow wrap is relied upon, not guaranteed (games/<title>/recomp/CMakeLists.txt warns). Compile-check only; never a release. The compiler launcher tools/build/clang_cl_shim.py spells the tree's GNU-style per-target flags for this front end (-Wall -> /clang:-Wall, -ffp-contract=off -> /clang:..., see the script; ctest PlatformClangClShimContract).",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-windows-msvc",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "cl",
+        "CMAKE_CXX_COMPILER": "cl",
+        "CMAKE_C_COMPILER_LAUNCHER": "python;${sourceDir}/tools/build/clang_cl_shim.py",
+        "CMAKE_CXX_COMPILER_LAUNCHER": "python;${sourceDir}/tools/build/clang_cl_shim.py",
+        "VCPKG_TARGET_TRIPLET": "x64-windows",
+        "PS2R_BUILD_RECOMPILER": "OFF",
+        "PS2R_DIAGNOSTICS": "OFF",
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "macos-dev",
+      "configurePreset": "macos-dev",
+      "jobs": 4
+    },
+    {
+      "name": "macos-diag",
+      "configurePreset": "macos-diag",
+      "jobs": 4
+    },
+    {
+      "name": "macos-release",
+      "configurePreset": "macos-release",
+      "jobs": 4
+    },
+    {
+      "name": "macos-dist",
+      "configurePreset": "macos-dist",
+      "jobs": 4
+    },
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release"
+    },
+    {
+      "name": "linux-dev",
+      "configurePreset": "linux-dev"
+    },
+    {
+      "name": "linux-release-gcc",
+      "configurePreset": "linux-release-gcc"
+    },
+    {
+      "name": "linux-release-clang",
+      "configurePreset": "linux-release-clang"
+    },
+    {
+      "name": "linux-dist",
+      "configurePreset": "linux-dist"
+    },
+    {
+      "name": "linux-dev-gcc",
+      "configurePreset": "linux-dev-gcc"
+    },
+    {
+      "name": "linux-dev-clang",
+      "configurePreset": "linux-dev-clang"
+    },
+    {
+      "name": "windows-dev",
+      "configurePreset": "windows-dev",
+      "jobs": 4
+    },
+    {
+      "name": "windows-release",
+      "configurePreset": "windows-release",
+      "jobs": 4
+    },
+    {
+      "name": "windows-msvc-dev",
+      "configurePreset": "windows-msvc-dev",
+      "jobs": 4
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "macos-dev",
+      "configurePreset": "macos-dev",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "timeout": 300
+      }
+    },
+    {
+      "name": "macos-diag",
+      "configurePreset": "macos-diag",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "timeout": 300
+      }
+    },
+    {
+      "name": "macos-release",
+      "configurePreset": "macos-release",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "timeout": 300
+      }
+    },
+    {
+      "name": "macos-dist",
+      "configurePreset": "macos-dist",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "timeout": 300
+      }
+    },
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "timeout": 300
+      }
+    },
+    {
+      "name": "linux-dev",
+      "configurePreset": "linux-dev",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "timeout": 300
+      }
+    },
+    {
+      "name": "linux-release-gcc",
+      "configurePreset": "linux-release-gcc",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "timeout": 300
+      }
+    },
+    {
+      "name": "linux-release-clang",
+      "configurePreset": "linux-release-clang",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "timeout": 300
+      }
+    },
+    {
+      "name": "linux-dist",
+      "configurePreset": "linux-dist",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "timeout": 300
+      }
+    },
+    {
+      "name": "linux-dev-gcc",
+      "configurePreset": "linux-dev-gcc",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "timeout": 300
+      }
+    },
+    {
+      "name": "linux-dev-clang",
+      "configurePreset": "linux-dev-clang",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "timeout": 300
+      }
+    },
+    {
+      "name": "windows-dev",
+      "configurePreset": "windows-dev",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "timeout": 300
+      }
+    },
+    {
+      "name": "windows-release",
+      "configurePreset": "windows-release",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "timeout": 300
+      }
+    }
+  ]
+}

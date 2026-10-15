@@ -1,0 +1,308 @@
+# verify/attribution/classes.tsv -- the residual attribution rules.
+# Grammar (tab or | separated):  range | writer-regex | class | row-or-DP | kind | legs
+#   range        0xLO-0xHI (HI exclusive), 0xADDR (one word), SPAD:0xLO-0xHI (scratchpad guest addresses)
+#   writer-regex applied to the writer named by a --watch watch.log line for the word ("" = any / no census needed)
+#   class        the class id (one token)
+#   row-or-DP    the EQUIVALENCE_PLAN §7.1 row id, or DP-<n>, or OPEN-<name>; a ROW/DP rule wider than 64 words
+#                must carry `recorded:<record>` naming the record that names the WHOLE range (else it is demoted
+#                to MIXED by attribute_probe.py -- a region rule without a recorded word is never ROW); a ROW rule
+#                may carry `proof=console:<raw EE image>@<leg>:b<N>` (DT-7: the console image matched to that probe
+#                pair; a word books as `booked_console` on that pair only where console == NEW != OLD, word by word)
+#   kind         ROW (OLD-defect row, attributed) | DP (decided, no row yet) | OPEN (an OPEN decision) |
+#                MIXED (region named; several classes incl. OPEN ones write it -- NOT 100 % attributed)
+#   legs         * or a comma list of leg names (coldboot, artdet_f37152, ...)
+# Directives: `@heap <addr>` / `@pool <addr>` / `@pool-used <addr>` = the title's heap header, record-pool header and
+#   the pool's live-record counter (relocate_compare.py's walk asserts used == counter on both images);
+#   `@reloc-class <reloc class> <ledger class> <row-or-DP> <kind> [legs]` books ONE relocation class to a row/DP -- without a
+#   directive every relocation class is kind OPEN (`OPEN-RELOC-<class>`); the tool never books a class to a row itself; the
+#   optional `legs` token (`*` or a comma list) scopes the booking to the legs whose evidence proved it (P8.26-B).
+@heap 0x31afb8
+@pool 0x31b138
+@pool-used 0x323278
+# The PAGE POOL (slab allocator; P8.13-B): header at 0x31aff8 (+4 descriptors 0xb84be0, +8 class table 0xf58560, +0xc pages
+# 0xb8c560, 972 x 4 KB; +0x1c/+0x24 the free-page stack; +0x30.. 63 class-list heads up to 0x31b124), walked by slab_walk.py.
+@slabpool 0x31aff8 63
+# The scratchpad is the main thread's stack: the crt0 (0x100068-0x100094) fills all 16 KB with 0xa1b2c3d4 before setting
+# $sp = 0x70004000; spad_stack.py reads every thread's saved $sp from THRD on both images (anchors: the boundary thread's
+# 0x70004220 -> offset 0x220 under the 14-bit SPR mirror; live frames [0x220, 0x270) = the FUN_001a0150/FUN_0019fd58/
+# FUN_0017d558 chain). The stack grows DOWN through the mirror: a callee pushing more than 0x220 bytes wraps to the top of
+# the scratchpad (0x70004220 - 0x258 = 0x70003fc8), so the differing words at 0x2b20-0x3ff8 are stale callee frames BELOW
+# the live $sp (P8.13-B review MAJOR 1; P8.14-B), not boot residue.
+@spad-fill 0xa1b2c3d4
+# The title's code (frame-shape evidence: code addresses in the dead words) -- the ELF's .text proper
+# (0x100000-0x2d9a08; .vutext/.data/.vudata/.rodata/.sdata follow to 0x30a0b8 and hold DATA pointers, not code).
+@spad-text 0x100000-0x2d9a08
+# The scratchpad is DUAL-USE (P8.14-B, the recomp read): FUN_002ae318 is a SPAD-stack CONTEXT SWITCH (memcpy 0x70000000 ->
+# save+0x1f0 x 0x4000, $sp saved at +0x41f4 and relocated into the copy by `daddu sp,v1`, callback, memcpy back, $sp restored:
+# 0x2ae400-0x2ae488 and 0x2aea7c-0x2aeaf4) -- while active the live $sp is in RAM (condition C1); FUN_002b6fd8 (the MPEG
+# decoder's context init, called by sceMpegCreate-like FUN_002b70a8 at 0x2b7214) installs the scratchpad as the decoder's
+# work buffers when ctx+0x87c == 0: +0x5a0=0x70000000 +0x5a4=0x70001800 +0x6e0=0x70001b00 +0x6e4=0x70003300 +0x830=0x70003600
+# (ctx+0x87c == 1 -> RAM buffers at ctx+0x880/+0xb80/+0xe80 uncached); the IPU DMA (_ch3dmaCSC FUN_002b9268: 0x700003ff ->
+# IPU_CMD, 0x70000000 -> ch MADR) streams through them while a picture decodes. Condition C3 (no decode in flight): IPU DMA
+# ch3/ch4 CHCR.STR clear on both images AND no saved frame of ANY thread's chain inside the decoder libraries' text, which is
+# the WHOLE libmpeg + libipu band of hle/sdk_bindings.tsv: libmpeg.a 0x2b6fd8 (_clearOnce; sceMpegCreate 0x2b70a8,
+# sceMpegGetPicture 0x2b7c10, _ch3dmaCSC 0x2b9268, _sceMpegPictureData0 0x2bd378, _slice0 0x2bd5b8, _sceMpegWaitIpuIdle
+# 0x2be580, receiveDataFromIPU 0x2bfb98) .. 0x2c0ec0 (_pictureDisplayExtension), then libipu.a 0x2c0fb8 (setD3_CHCR),
+# 0x2c10a8 sceIpuStopDMA, 0x2c1190 sceIpuRestartDMA, 0x2c12e0 sceIpuSync, 0x2c13c0 sceIpuInit -- whose body ends at the
+# next function 0x2c15f8 (an FPU routine, not libipu; the next bound SDK function is libgraph sceGsResetGraph 0x2c1bd8).
+# The decode is synchronous on the calling thread, so a decode interrupted at a boundary leaves that thread's chain in the
+# band or the IPU DMA running; the images carry no IPU section (CTRL busy is unsaved on both trees), so the inner context's
+# state words (+0x87c mode, +0x0 status, +0x820 the _slice0 bank toggle, +0x848/+0x84c slice DMA words) are REPORTED only.
+@spad-decoder-ctx 0x5a0:0x70000000,0x5a4:0x70001800,0x6e0:0x70001b00,0x6e4:0x70003300,0x830:0x70003600
+@spad-decoder-text 0x2b6fd8-0x2c15f8
+# Structural classes are OPEN until a directive books them. The directives below were BOOKED by P8.19-A (DECISIONS_LOG DT-3 MADE,
+# the SESSION-14 row's record-pool scope in EQUIVALENCE_PLAN 7.1); each one cites the proof file that names its class word by word.
+# DT-3 (MADE, P8.19-A): NONSTATE is reported as its own column, never excluded from the total and never "attributed"; a window
+# with NONSTATE words stays BLOCKED for the re-baseline gate until DR-1's rule is met on the OTHER kinds.
+#   proof: int_work/p814b + p815b/p818b ledger JSONs (`spad` block per pair: C1 Y C2 Y C3 Y on all 22 anchor pairs, `thr 2/2;
+#   band hits none; dma []/[]; ctx 2/2 eq Y`; coldboot C1 N -> spad-sp-unproved, NOT booked), DECISIONS_LOG LEDGER P8.14-B (1)/(d), P8.15-B.
+@reloc-class spad-dead-below-sp DEAD-STACK DT-3 NONSTATE
+#   proof: slab_walk.py from both images (free page / free-chunk BODY on both sides by the page pool's own lists; the +0 LINK word
+#   is slab-free-link = allocator STATE and stays OPEN), LEDGER P8.14-B (2)/(d): 880 words over the 24 pairs.
+@reloc-class slab-free-residue SLAB-FREE-RESIDUE DT-3 NONSTATE
+#   proof: relocate_compare.py's pool walk (flags bit 0 FREE == the 16 free-list heads' reachable set, bit 2 PENDING; the record
+#   pool keeps its free link in META, not in the chunk), LEDGER P8.12-B (1), P8.13-B (3): 35,583 words at coldboot b120.
+@reloc-class free-residue POOL-FREE-RESIDUE DT-3 NONSTATE
+# The SESSION-14 row's record-pool scope (EQUIVALENCE_PLAN 7.1 P4-CKPT120-OLD-SESSION14-POPULATE-ALLOCS, extended P8.19-A):
+#   proof: int_work/p818b/ledger/coldboot_b120.json (`reloc.first_divergence`: used record #53 OLD idx 53 0x102cf00 size 0x6080
+#   = OLD [ALLOC-TRACE] seq 67 F:96 vs NEW idx 130 size 0x600; `reloc.words` reloc-content 182822 / reloc-rehandled 111838; 298 of
+#   380 matched records identical under relocation) + int_work/p813b/pool_watch/watch.log aligned against OLD's trace (exactly two
+#   edits: OLD-only 4 x 0x6080 seq 67-70 at F:96; NEW-only 4 extra populate-loop iterations), LEDGER P8.13-B (3), P8.14-B (a).
+#   SCOPED to coldboot (P8.26-B): the proof above is coldboot b120's bump layout (no compaction step had run). On the
+#   coldboot_attract pairs the same classes have ANOTHER cause next to the SESSION-14 records -- the title's heap COMPACTOR
+#   (FUN_00205588, one record memmove per step, called from the per-frame maintenance loop FUN_0017d6b8 at 0x17d8bc behind
+#   the headroom query FUN_00191bd0(obj, 0.678 ms = 390 T0 counts) at 0x17d898, re-queried after EVERY step: 0x17d8c8 -> 0x17d898):
+#   the same 1830 records with the SAME handle idx on 1722 of 1801 matched records (allocation order equal; of the 1108
+#   content-pass `rehandled` records 1029 keep their handle = moved only, 79 carry another handle) sit at other addresses
+#   because NEW's pool is fully compacted (1 free chunk at b1783/b2983/b4063) while OLD's still carries 156 (155 free + 1
+#   pending) / 90 / 14 holes at b1500 / b2700 / b3780 -- OLD's host budget predicate (OLD main.cpp:3586-3640
+#   `now = anchor + s_base_eff + reads*step`: every QUERY of the frame costs 96 counts of the 9600-count field, granted or
+#   denied, any site; s_base_eff = PhaseClassifier (budget_math.h:139-159, ON by default): 0 on frames after 2 with < 48
+#   draws, else 8800 -- the P4-CKPT60-LOADWAIT-ISSUE-SLICE class, never a clock) starves the compactor. MEASURED on OLD
+#   with the log-only PS2_BUDGET_DIAG dump (int_work/p828b/olddiag/, P8.28-B): during the Beach LOAD (dpf=25, ph=1,
+#   base 0, 97 queries/frame) the four 1.0-ms lap sites spend the field (92 granted + 3 denied queries) and the
+#   compactor's query lands at rem 288/384 < 390 -> 26 grants in 301 frames, holes 3 -> 180 over b540..b840 with ~10
+#   records moved (int_work/p828b/oldimg/pool_census_load.out); in the cutscene / title (dpf 67, ph=0, base 8800, 5
+#   queries/frame) the compactor's first query at rem 416 is granted and its re-query at 320 denied -> exactly ONE step
+#   per frame (628/628), ~0.48 record moves per boundary (571 over b1500..b2700, 526 over b2700..b3780). NEW's recompiled
+#   predicate over the slice-frozen T0 answers the same inside a frame, so NEW compacts during the load (1 hole from
+#   b1135; a model too: the console grants ~0.68 ms of real T0 per frame; the layout is timing-dependent on every tree).
+#   Evidence: int_work/p826b/reloc/ + int_work/p827b/{reloc,pool_census.out,census/pool_census.out} (relocate_compare.py
+#   --layout --names; pool_census.py) + int_work/p828b/{olddiag,oldimg}/, DECISIONS_LOG LEDGER P8.26-B, P8.27-B, P8.28-B.
+#   The row P8-ATTRACT-OLD-COMPACTOR-STARVED is FILED (EQUIVALENCE_PLAN 7.1, P8.28-B); its two directives, leg-scoped
+#   (a structural class may carry one directive per leg family: attribute_probe.py takes the first whose scope admits the leg):
+@reloc-class reloc-content POOL-RELOC-CONTENT P8-ATTRACT-OLD-COMPACTOR-STARVED ROW coldboot_attract
+@reloc-class reloc-rehandled POOL-RELOC-REHANDLED P8-ATTRACT-OLD-COMPACTOR-STARVED ROW coldboot_attract
+@reloc-class reloc-content POOL-RELOC-CONTENT P4-CKPT120-OLD-SESSION14-POPULATE-ALLOCS ROW coldboot
+@reloc-class reloc-rehandled POOL-RELOC-REHANDLED P4-CKPT120-OLD-SESSION14-POPULATE-ALLOCS ROW coldboot
+# P8.32-B: the unmatched-record / unpaired-record classes of coldboot b120 -> the FILED row P8-SESSION14-RECORDS-CONSOLE-NEW
+#   (EQUIVALENCE_PLAN 7.1; the SESSION-14 row's console-proved scope extension). Proof (int_work/p832b/dig_rows.out, the three
+#   b120-matched images -- console int_work/p828a/pcsx2_rec159_ee.bin, OLD old_b120.ps2st, NEW the gate's b120 image): the 80 OLD-only
+#   USED records and the 81 NEW-only ones are the SAME allocations relocated (same_addr 0): 77 of 80 differ from their same-size NEW
+#   twin ONLY in their last <= 16 words = the pool's rounding padding the title never writes ([ALLOC-CALLER] raw_size=0x6060
+#   rounded=0x6080), the other 3 (OLD idx 54/55/56) are the SESSION-14 hook's PTC-STUB Decal copies vs hardware's distinct particle
+#   textures (4,345/4,346/4,346 of 6,176 words); the console holds 79 of NEW's 80 twins by whole-object content (the 80th = the
+#   in-flight idx-345 window) and 0 of OLD's. OLD-side cause (quoted in the row): OLD main.cpp:8145-8190 [SESSION-14 FIX] calls
+#   FUN_0025c6f8("Particle") BEFORE FUN_00268440's ELSE branch; hle_heap.cpp:391-620 [SESSION-17 PTC-DATA] synthesizes the four .ptc
+#   views from Decal.ptc's main record; recompiler.cpp:8490-8600 PTC-STUB feeds them when the open fails; OLD trace
+#   int_work/i84b/old_cb_runtime_log.txt:137823-137965 (seq 67-70 = Particle0/1/2 stub views + the real Decal read). DT-7 books a word
+#   ONLY where console == NEW != OLD (NEW's extra populate records / the in-flight window never book where the console differs).
+@reloc-class unmatched-record UNMATCHED-RECORD P8-SESSION14-RECORDS-CONSOLE-NEW ROW coldboot proof=console:int_work/p828a/pcsx2_rec159_ee.bin@coldboot:b120
+@reloc-class unpaired-record UNPAIRED-RECORD P8-SESSION14-RECORDS-CONSOLE-NEW ROW coldboot proof=console:int_work/p828a/pcsx2_rec159_ee.bin@coldboot:b120
+# P8.32-B: the .ptc particle hashmap entries (class 26/108B chunks USED on all three sides at the SAME address) -> the FILED DP-15 row
+#   P4-CKPT120-OLD-PTC-STUB-SLOTS (its consequence words, named by DP-15: "0xbd0bb4-0xbd14e8, 261 words at 120"). Proof
+#   (int_work/p832b/dig_rows.out (2)): over the 74 same-address chunks `per word {'con==new!=old': 261, 'con==old!=new': 0, 'all
+#   equal': 1737, 'neither': 0}`; the stub's hashes at 0xbd0bb8/0xbd0c24/0xbd0c90/0xbd0cfc (OLD f557d8ff/f7ce59c9/fa44da93/3079de93
+#   = recompiler.cpp:8546-8564) where console = NEW hold fa44da93/f7d0ee4c/f7ce59c9/f704bed8. An exact rule (first match) because the
+#   structural walk classes these words slab-genuine (both sides USED, content differs).
+0xbd0bb4-0xbd14e8||PTC-HASHMAP|P4-CKPT120-OLD-PTC-STUB-SLOTS recorded:DP-15/P8.29-B/P8.32-B proof=console:int_work/p828a/pcsx2_rec159_ee.bin@coldboot:b120|ROW|coldboot
+#   NOT booked (OPEN): genuine (content differing in place), every slab-* class but free-residue (OLD's page-pool allocations of F:96 are
+#   unobserved: OLD's trace covers the record pool only -- LEDGER P8.17-B (1), P8.18-B (2)); P8.32-B: classes 27/35's old-only objects
+#   stay OPEN (SESSION-14 cause INFERRED, proposal P8-SESSION14-SLAB-OBJECTS-CONSOLE-NEW); the console==OLD class-22/36/37/48/56 objects
+#   are a NEW gap candidate (LEDGER P8.32-B), never a row.
+#   (superseded P8.32-B) NOT booked (OPEN): unmatched-record / unpaired-record (OLD's 4 x 0x6080 AND NEW's 4 extra populate records, not separable per
+#   word), genuine (content differing in place), every slab-* class but free-residue (OLD's page-pool allocations of F:96 are
+#   unobserved: OLD's trace covers the record pool only -- LEDGER P8.17-B (1), P8.18-B (2)).
+# Order matters: the FIRST matching rule wins; exact words before regions. Evidence for every row: the
+# DECISIONS_LOG / §7.1 entry named in the row column.
+#
+# --- DP-19 (P5-ANCHOR-OLD-ZERO-POLLS): the load-wait poll count + async-file list rotation (I8.8-B art62 table)
+0xbb25b8||POLL-COUNT|P5-ANCHOR-OLD-ZERO-POLLS|ROW|*
+0xbb25c0||POLL-LIST-HEAD|P5-ANCHOR-OLD-ZERO-POLLS|ROW|*
+0xb86d0c||POLL-SLAB-HEAD|P5-ANCHOR-OLD-ZERO-POLLS|ROW|*
+0xb8762c||POLL-SLAB-HEAD|P5-ANCHOR-OLD-ZERO-POLLS|ROW|*
+0xb8a14c||POLL-SLAB-HEAD|P5-ANCHOR-OLD-ZERO-POLLS|ROW|*
+0xc95660-0xc95770||POLL-LIST-NODE|P5-ANCHOR-OLD-ZERO-POLLS recorded:DP-19(writer-table)|ROW|*
+0xcdea54||POLL-LIST-NODE|P5-ANCHOR-OLD-ZERO-POLLS|ROW|*
+0xcdeaf0||POLL-LIST-NODE|P5-ANCHOR-OLD-ZERO-POLLS|ROW|*
+0xcdf38c||POLL-LIST-NODE|P5-ANCHOR-OLD-ZERO-POLLS|ROW|*
+0xcdf3a8||POLL-LIST-NODE|P5-ANCHOR-OLD-ZERO-POLLS|ROW|*
+0xdf3b40||POLL-LIST-NODE|P5-ANCHOR-OLD-ZERO-POLLS|ROW|*
+0xe16640||POLL-MGR-NODE|P5-ANCHOR-OLD-ZERO-POLLS|ROW|*
+0xe168b0||POLL-MGR-NODE|P5-ANCHOR-OLD-ZERO-POLLS|ROW|*
+0xe37c20-0xe37d00||POLL-LIST-NODE|P5-ANCHOR-OLD-ZERO-POLLS|ROW|*
+0x30a08c||LAP-COUNTER|P5-ANCHOR-OLD-ZERO-POLLS|ROW|*
+0xbe0a20||LAP-COUNTER|P5-ANCHOR-OLD-ZERO-POLLS|ROW|*
+0xbe0a28||LAP-COUNTER|P5-ANCHOR-OLD-ZERO-POLLS|ROW|*
+# --- DP-19 (d): the libmc dispatcher OLD hooks
+0x309fc8-0x309fd0||MC-DISPATCHER|P5-ANCHOR-MC-DISPATCHER|ROW|*
+# --- DP-8 (5): STREAM client call/reply counters, reply buffer, slot bytes (lap-count-derived; folded into P5-ANCHOR-OLD-ZERO-POLLS)
+#     DP-8 class 5 records the counters, "the reply buffer 0x3b3000-0x3b449c (38 words)", the reply copy and the slot bytes 0x3b3d00
+0x309b18||STREAM-CALL-COUNTER|P5-ANCHOR-OLD-ZERO-POLLS|ROW|*
+0x309b48||STREAM-CALL-COUNTER|P5-ANCHOR-OLD-ZERO-POLLS|ROW|*
+0x309bd4||STREAM-CALL-COUNTER|P5-ANCHOR-OLD-ZERO-POLLS|ROW|*
+0x3b3000-0x3b44a0||STREAM-REPLY-BUFFER|P5-ANCHOR-OLD-ZERO-POLLS recorded:DP-8(5)|ROW|*
+0x3b3c48-0x3b3c50||STREAM-REPLY-COPY|P5-ANCHOR-OLD-ZERO-POLLS|ROW|*
+0x3b3d00-0x3b3d60||STREAM-SLOT-BYTES|P5-ANCHOR-OLD-ZERO-POLLS|ROW|*
+# --- EE STREAM-client statics, BOOKED writer-gated by P8.19-A (rows extended in EQUIVALENCE_PLAN 7.1): a word books to the row
+#     ONLY where a --watch-word census names the writer (int_work/p812b/census/<leg>_b<N>.watch.log on every anchor pair;
+#     int_work/p813b/stream_census/watch.log on artdet b60 = P8.13-B (4) / P8.14-B (b)); un-censused words fall to the MIXED rules below.
+#     Voice statics 0x2e76e0-0x2e7c48 (incl. the per-handle byte table 0x2e79a8+handle): the STREAM reply processor FUN_001e1f48
+#     (3,355 stores / 60 boundaries) + FUN_001e7dd0 / FUN_001e18e8 / FUN_001e2958 rewrite them from the module's replies; OLD's slots
+#     stay marked where NEW's are released (OLD's dead heartbeat never runs the release pass) -> the DP-20 row.
+0x2e76e0-0x2e7c48	FUN_001e(1f48|18e8|2958|7dd0)	EE-VOICE-STATICS	P5-ANCHORS-OLD-HEARTBEAT-DEAD-AFTER-RESTORE recorded:P8.13-B(4)-stream-census	ROW	*
+#     Per-slot records 0x3b147c-0x3b17e8 (sequence counters 64 apart, lap counters, +-1.0f flags): the client's own request/reply
+#     path FUN_001e5c50 (621 stores) / FUN_001df430 113 / FUN_001e13b0 50 / FUN_001df7a0 33 / FUN_001df020 33 / FUN_001e6130 12 =
+#     DP-8 (5)'s lap-derived counters -> the ZERO-POLLS row.
+0x3b147c-0x3b17e8	FUN_001(e5c50|df430|e13b0|df7a0|df020|e6130)	STREAM-SLOT-RECORDS	P5-ANCHOR-OLD-ZERO-POLLS recorded:P8.13-B(4)-stream-census	ROW	*
+#     (P8.11-B review MAJOR 4 (a) remainder: words of these ranges with NO census writer stay MIXED/OPEN)
+0x2e79a8-0x2e7ab0||EE-VOICE-TABLE|OPEN-STREAM-CLIENT-STATICS (DP-20 candidate; no census writer for the word)|MIXED|*
+0x3b147c-0x3b17e8||STREAM-REPLY-BLOCK|OPEN-STREAM-CLIENT-STATICS (DP-20 candidate; writer census owed)|MIXED|*
+0x3b318c-0x3b3200||STREAM-REPLY-BLOCK|OPEN-STREAM-CLIENT-STATICS (DP-20 candidate; writer census owed)|MIXED|*
+# --- DP-21: the 1-2 ULP float words (OPEN -- operand upstream, EE-side quaternion pipeline)
+0x585410-0x585430||FLOAT-ULP|OPEN-DP-21|OPEN|*
+0xd42368||FLOAT-ULP|OPEN-DP-21|OPEN|*
+0xd42384||FLOAT-ULP|OPEN-DP-21|OPEN|*
+0xd423b4||FLOAT-ULP|OPEN-DP-21|OPEN|*
+0xdcd848||FLOAT-ULP|OPEN-DP-21|OPEN|*
+0xdcd864||FLOAT-ULP|OPEN-DP-21|OPEN|*
+0xcb3a28||FLOAT-ULP|OPEN-DP-21|OPEN|*
+# --- the pad `seq` words (DP-24 MADE by P8.11-A, DECISIONS_LOG:898: the PADS decode derives seq from the restored pad area;
+#     OLD's restart-at-1 is the OLD defect): the 2 words differ by DESIGN (NEW = the console's counter, OLD = 5/63)
+#     row P5-ANCHORS-OLD-PAD-SEQ-RESTART filed by P8.19-A (EQUIVALENCE_PLAN 7.1); proof: int_work/p811a (seq_probe.py: the anchors'
+#     slot counters 1552/50336/58023/691561 vs OLD's 5/63; OLD host_app/pad_input.cpp:829 process static never saved/restored)
+0xbb05d8||PAD-SEQ|P5-ANCHORS-OLD-PAD-SEQ-RESTART|ROW|*
+0xbb0658||PAD-SEQ|P5-ANCHORS-OLD-PAD-SEQ-RESTART|ROW|*
+# --- coldboot: DP-4 (a) P4-CKPT60-OLD-T0-DELIVERY-TICKS (the game's clock state)
+0xb975e8-0xb97680||T0-BUDGET-OBJECT|P4-CKPT60-OLD-T0-DELIVERY-TICKS|ROW|coldboot
+0x323534-0x32353c||T0-TICK-WORDS|P4-CKPT60-OLD-T0-DELIVERY-TICKS|ROW|coldboot
+0x30bb94-0x30bba4||T0-DERIVED|P4-CKPT60-OLD-T0-DELIVERY-TICKS|ROW|coldboot
+#     DP-4 (a) records "0x98e1b0… 0x9902a8 (17 words)" = the 17 words below (cb60: OLD 0x2053 vs NEW 0x27d7 at every one)
+0x98e1b0||T0-DERIVED|P4-CKPT60-OLD-T0-DELIVERY-TICKS|ROW|coldboot
+0x98e2f0||T0-DERIVED|P4-CKPT60-OLD-T0-DELIVERY-TICKS|ROW|coldboot
+0x98e430||T0-DERIVED|P4-CKPT60-OLD-T0-DELIVERY-TICKS|ROW|coldboot
+0x98e598||T0-DERIVED|P4-CKPT60-OLD-T0-DELIVERY-TICKS|ROW|coldboot
+0x98e644||T0-DERIVED|P4-CKPT60-OLD-T0-DELIVERY-TICKS|ROW|coldboot
+0x98e784||T0-DERIVED|P4-CKPT60-OLD-T0-DELIVERY-TICKS|ROW|coldboot
+0x98eba8||T0-DERIVED|P4-CKPT60-OLD-T0-DELIVERY-TICKS|ROW|coldboot
+0x98ee38||T0-DERIVED|P4-CKPT60-OLD-T0-DELIVERY-TICKS|ROW|coldboot
+0x98ef78||T0-DERIVED|P4-CKPT60-OLD-T0-DELIVERY-TICKS|ROW|coldboot
+0x98f880||T0-DERIVED|P4-CKPT60-OLD-T0-DELIVERY-TICKS|ROW|coldboot
+0x98f92c||T0-DERIVED|P4-CKPT60-OLD-T0-DELIVERY-TICKS|ROW|coldboot
+0x98f9d8||T0-DERIVED|P4-CKPT60-OLD-T0-DELIVERY-TICKS|ROW|coldboot
+0x98fa84||T0-DERIVED|P4-CKPT60-OLD-T0-DELIVERY-TICKS|ROW|coldboot
+0x98fc58||T0-DERIVED|P4-CKPT60-OLD-T0-DELIVERY-TICKS|ROW|coldboot
+0x98fee8||T0-DERIVED|P4-CKPT60-OLD-T0-DELIVERY-TICKS|ROW|coldboot
+0x9900cc||T0-DERIVED|P4-CKPT60-OLD-T0-DELIVERY-TICKS|ROW|coldboot
+0x9902a8||T0-DERIVED|P4-CKPT60-OLD-T0-DELIVERY-TICKS|ROW|coldboot
+0x309d04||T0-DELTA-TIME|P4-CKPT60-OLD-T0-DELIVERY-TICKS|ROW|coldboot
+0x309d24||T0-DELTA-TIME|P4-CKPT60-OLD-T0-DELIVERY-TICKS|ROW|coldboot
+0x3097d0-0x3097dc||T0-WRAPS|P4-CKPT60-OLD-T0-DELIVERY-TICKS|ROW|coldboot
+0x30a468||T0-WRAPS|P4-CKPT60-OLD-T0-DELIVERY-TICKS|ROW|coldboot
+# --- coldboot: DP-4 (b) the 7th word of the OLD path residue (outside the 6-word mask)
+0x1efff08||OLD-PATH-RESIDUE-7TH|P4-CKPT60-OLD-PATH-RESIDUE|ROW|coldboot
+# --- coldboot: DP-5 (a) P4-LOADER-WINDOW-ROUTING (ring tail) and the DP-5 (b) second ring (OBSERVATION, not covered)
+#     DP-8 class 4 records the whole ring tail "0x0097c4ac-0x00982340 … 5861 of the region's 5891 words" and the second ring
+0x97c4ac-0x982340||RING-TAIL|P4-LOADER-WINDOW-ROUTING recorded:DP-8(4)|ROW|coldboot
+#     P8.28-A (int_work/p828a/SECTION.md, DP-5 (b) attempt 1): the SECOND-RING region is the Default.rm2 stream ring
+#     (fs 0xbb3560 / cb 0xbab588 {base 0x948540, cap 0x20000}); PCSX2 at the matched moment differs from BOTH sides
+#     (PCSX2 vs OLD 19,475 / vs NEW(off) 18,248 / OLD vs NEW 17,888 words): NEW's gap (the seam fills `size` per window) is
+#     BUG-086, modelled behind `loader.ring_cache` by P8.29-A (PCSX2 vs NEW(on) 4 / 31,870, none the ring's); OLD's side is
+#     OLD's unconditional per-read mirror (hle_heap.cpp:1442-1470 DeliverToCallbackStreamBuffer) -- the row
+#     P8-SECOND-RING-OLD-PER-READ-MIRROR FILED by P8.30-T (EQUIVALENCE_PLAN 7.1) with the console images as its proof.
+#     DT-7 (P8.30-T): the `proof=console:<raw EE image>@<leg>:b<N>` token makes attribute_probe.py check EVERY word of the
+#     rule against the console's word at that pair: booked_console only where console == NEW != OLD (OLD is the deviant
+#     there, proved); where NEW != console the word stays ROW-attributed but is NOT discounted from the decision number.
+#     The proved rule is the RING'S WORDS ONLY: cb 0xbab588 {base 0x948540, cap 0x20000} = [0x948540, 0x968540); the rule
+#     starts at +0xeac (the words below it are identical on both sides). The 41 words 0x968540-0x9685e4 the earlier region
+#     rule reached are NOT the ring's (heap words past its end -- 0x9685d4/0x9685e0 are heap pointers, P8.28-A); the row's
+#     cause (OLD's per-read mirror INTO the ring) does not reach them, so they carry no proof (P8.30-T review loop 1).
+0x9493ec-0x968540||SECOND-RING|P8-SECOND-RING-OLD-PER-READ-MIRROR recorded:P8.28-A/P8.29-A proof=console:int_work/p828a/pcsx2_rec159_ee.bin@coldboot:b120|ROW|coldboot
+0x968540-0x9685e4||SECOND-RING-PAST-END|OPEN-SECOND-RING-PAST-END (heap words past the ring's end; not the ring's, no console proof; cause unnamed)|OPEN|coldboot
+# --- allocator headers: the title heap header's words are the SESSION-14 populate's consequence (DP-8 (2)(b) status I8.10-B:
+#     OLD +6 heap-core calls at F:96 -> counts/cursor/bytes); the record-pool header + counter words are the POOL layout's
+#     consequence, whose cause is OPEN (see the relocation note above); the page-pool descriptors describe slabs that are MIXED
+#     the heap header is 0x31afb8-0x31aff8 (+0 free head .. +0x28 alloc calls; +0x30.. are the page pool's words, P8.13-B)
+0x31afb8-0x31aff8||TITLE-HEAP-HEADER|P4-CKPT120-OLD-SESSION14-POPULATE-ALLOCS|ROW|coldboot
+# --- P8.32-A (DP-31; row P8-META-ARENA-OLD-HOOK FILED, EQUIVALENCE_PLAN 7.1): OLD's hook (OLD main.cpp:3186-3256) routes the record
+#     pool's 0x20-byte descriptors, the 0x18-byte compaction job and the 0xc-byte deferred-op nodes to a host arena at 0x02000000 --
+#     memory the console does not have; the hardware keeps them on page-pool class 7 (pcsx2_rec159_ee.bin: 385 descriptors, 12 class-7
+#     pages; NEW with hle.meta_arena=off: the same, int_work/p832a/desc_walk.out). The row's words: the pool header's free-list heads /
+#     chain head, the handle table (idx -> descriptor pointer) and the seven class-7 pages the console and NEW(off) share before the first
+#     divergent page pop (pages 6,43,44,45,48,55,62 of 0xb8c560; the descriptors interleave with the title's string nodes, so every chunk
+#     position of those pages differs from OLD's). The later class-7 pages are shifted by page 106's pop (console class 56 = the 576 B
+#     tables of objects the hardware builds by record 0x36 and NEW never builds through b240 -- LEDGER P8.32-B (4), a NEW construction-gap
+#     candidate, console==OLD) and are NOT this row's. DT-7 books a word ONLY where console == NEW != OLD, word by word.
+#     INACTIVE at the default hle.meta_arena=on (DP-31 REVERTED, P8.32-A review loop 1): at `on` NEW routes like OLD, so the words these
+#     rules book (68 at coldboot b120: 67 class-7-page words + 1 header word where console == NEW != OLD) are RELOCATION words, not the
+#     routing's -- the row's cause does not apply to them. The nine rules are kept here commented out; the file that scored the `off`
+#     side with them ACTIVE is int_work/p832a/classes_snapshot.tsv (at `off` they book 4,369 words: 4,314 page + 53 handle-table + 2
+#     header). Re-activate (uncomment) the day hle.meta_arena defaults to off. They precede the OPEN record-pool rules below (first match).
+#0x31b138-0x31b190||RECORD-POOL-HEADER|P8-META-ARENA-OLD-HOOK recorded:P8.32-A proof=console:int_work/p828a/pcsx2_rec159_ee.bin@coldboot:b120|ROW|coldboot
+#0x31b190-0x31b700||RECORD-POOL-HANDLE-TABLE|P8-META-ARENA-OLD-HOOK recorded:P8.32-A proof=console:int_work/p828a/pcsx2_rec159_ee.bin@coldboot:b120|ROW|coldboot
+#0xb92560-0xb93560||SLAB-CLASS7-DESCRIPTOR-PAGE|P8-META-ARENA-OLD-HOOK recorded:P8.32-A proof=console:int_work/p828a/pcsx2_rec159_ee.bin@coldboot:b120|ROW|coldboot
+#0xbb7560-0xbb8560||SLAB-CLASS7-DESCRIPTOR-PAGE|P8-META-ARENA-OLD-HOOK recorded:P8.32-A proof=console:int_work/p828a/pcsx2_rec159_ee.bin@coldboot:b120|ROW|coldboot
+#0xbb8560-0xbb9560||SLAB-CLASS7-DESCRIPTOR-PAGE|P8-META-ARENA-OLD-HOOK recorded:P8.32-A proof=console:int_work/p828a/pcsx2_rec159_ee.bin@coldboot:b120|ROW|coldboot
+#0xbb9560-0xbba560||SLAB-CLASS7-DESCRIPTOR-PAGE|P8-META-ARENA-OLD-HOOK recorded:P8.32-A proof=console:int_work/p828a/pcsx2_rec159_ee.bin@coldboot:b120|ROW|coldboot
+#0xbbc560-0xbbd560||SLAB-CLASS7-DESCRIPTOR-PAGE|P8-META-ARENA-OLD-HOOK recorded:P8.32-A proof=console:int_work/p828a/pcsx2_rec159_ee.bin@coldboot:b120|ROW|coldboot
+#0xbc3560-0xbc4560||SLAB-CLASS7-DESCRIPTOR-PAGE|P8-META-ARENA-OLD-HOOK recorded:P8.32-A proof=console:int_work/p828a/pcsx2_rec159_ee.bin@coldboot:b120|ROW|coldboot
+#0xbca560-0xbcb560||SLAB-CLASS7-DESCRIPTOR-PAGE|P8-META-ARENA-OLD-HOOK recorded:P8.32-A proof=console:int_work/p828a/pcsx2_rec159_ee.bin@coldboot:b120|ROW|coldboot
+0x31b138-0x31b190||RECORD-POOL-HEADER|OPEN-RELOC-POOL-CAUSE (pool layout consequence; cause unnamed)|OPEN|coldboot
+0x323278||RECORD-POOL-COUNT|OPEN-RELOC-POOL-CAUSE (pool layout consequence; cause unnamed)|OPEN|coldboot
+#     P8.13-B: the pool's handle table (idx -> META descriptor pointer; every differing word holds 0x200xxxx on both sides) and
+#     the u16 handle map at 0x3207ec-0x320a34 (OLD 0x39 where NEW has 0x35 = handle +4 after OLD's four F:96 0x6080 records)
+0x31b190-0x31b700||RECORD-POOL-HANDLE-TABLE|OPEN-RELOC-POOL-CAUSE (META descriptor pointers; the pool layout's consequence)|OPEN|coldboot
+0x3207e0-0x320a40||RECORD-HANDLE-MAP-SHIFT|OPEN-RELOC-POOL-CAUSE (u16 handles OLD = NEW + 4: the four OLD-only F:96 records)|OPEN|coldboot
+#     coldboot_attract (P8.26-B): the same pool with 1830 used records -- the handle table reaches 0x31b190 + 4 x 1830 and the u16 map
+#     carries the +4 shift; the tick words differ by the trees' boot pumping of the clock (DT-6 status: OLD title entry 999,855 vs NEW
+#     360,847 -- the DP-17 class), all OPEN, named here so the ledger lists them by class rather than UNATTRIBUTED
+0x31b190-0x31d000||RECORD-POOL-HANDLE-TABLE|OPEN-RELOC-POOL-CAUSE (META descriptor pointers; the pool layout's consequence; P8.26-B)|OPEN|coldboot_attract
+0x3207e0-0x320a40||RECORD-HANDLE-MAP-SHIFT|OPEN-RELOC-POOL-CAUSE (u16 handles OLD = NEW + 4: the four OLD-only F:96 records; P8.26-B)|OPEN|coldboot_attract
+0x31b138-0x31b190||RECORD-POOL-HEADER|OPEN-RELOC-POOL-CAUSE (pool layout consequence; P8.26-B)|OPEN|coldboot_attract
+0x323534-0x32353c||T0-TICK-WORDS|OPEN-DP-17 (the clock word's VALUE is tree-specific after the boot: DT-6 status, INT-P825T-CLOCK-VALUE-NOT-A-KEY)|OPEN|coldboot_attract
+0x323280-0x323288||RECORD-POOL-HEADER|OPEN-RELOC-POOL-CAUSE (pool layout consequence)|OPEN|coldboot
+0xb84be0-0xb8c560||PAGE-POOL-DESCRIPTORS|OPEN-SLAB-WALK (the page descriptors of MIXED slabs; INT-P811B-SLAB-WALK)|MIXED|coldboot
+# --- writer-named classes (P8.12-B --watch-word census over the anchors' UNATTRIBUTED words, int_work/p812b/census/):
+#     each rule needs the census to NAME the writer for the word (writer regex); kind MIXED = named region + named writer,
+#     cause not decided (proposals INT-P812B-* in the LEDGER section). The plain region rules below them take the words
+#     the census does not name (no CPU store in the 61-frame window: the difference is inherited from the restore).
+0x31b000-0x31b100|FUN_00204d|PAGE-POOL-ALLOCATOR-STATICS|OPEN-SLAB-WALK (writers FUN_00204df0/FUN_00204dc0 = the page-pool allocator; INT-P811B-SLAB-WALK)|MIXED|*
+0x31b000-0x31b100|FUN_00205[67]|PAGE-POOL-ALLOCATOR-STATICS|OPEN-SLAB-WALK (writers FUN_002057e0/FUN_00205670 = the page-pool allocator; INT-P811B-SLAB-WALK)|MIXED|*
+0xb84be0-0xb8c560|FUN_00204d|PAGE-POOL-DESCRIPTORS|OPEN-SLAB-WALK (writers FUN_00204df0/FUN_00204dc0 = the page-pool allocator; INT-P811B-SLAB-WALK)|MIXED|*
+0xb84be0-0xb8c560|FUN_00205[67]|PAGE-POOL-DESCRIPTORS|OPEN-SLAB-WALK (writers FUN_002057e0/FUN_00205670 = the page-pool allocator; INT-P811B-SLAB-WALK)|MIXED|*
+0x2e76e0-0x2e7c50|FUN_001e[127]|SOUND-CLIENT-STATICS|OPEN-STREAM-CLIENT-STATICS (writers FUN_001e1f48/FUN_001e18e8/FUN_001e2958/FUN_001e7dd0 = the EE sound/STREAM client; INT-P811B-SOUND-STATICS)|MIXED|*
+0x3b1100-0x3b1480|FUN_001e5c50|STREAM-CLIENT-TABLE|OPEN-STREAM-CLIENT-STATICS (writer FUN_001e5c50; INT-P812B-STREAM-CLIENT-TABLE)|MIXED|*
+0x3b1100-0x3b1480|FUN_001df020|STREAM-CLIENT-TABLE|OPEN-STREAM-CLIENT-STATICS (writer FUN_001df020; INT-P812B-STREAM-CLIENT-TABLE)|MIXED|*
+0x3b1fc0-0x3b2800|FUN_001e[12]|STREAM-CLIENT-STATICS|OPEN-STREAM-CLIENT-STATICS (writers FUN_001e2958/FUN_001e18e8 = the EE STREAM client)|MIXED|*
+0x370000-0x373700|FUN_001b|RENDER-PACKET-STATICS|OPEN-RENDER-PACKET-STATICS (writers FUN_001b7088/FUN_001b54c0/FUN_001b96b8 = the title's render/DMA-packet code; INT-P812B-RENDER-STATICS)|MIXED|*
+0x370000-0x373700|FUN_002c66|RENDER-PACKET-STATICS|OPEN-RENDER-PACKET-STATICS (writers FUN_002c6700/FUN_002c6628 = sce libgraph/libdma bodies; INT-P812B-RENDER-STATICS)|MIXED|*
+0x3b0420-0x3b0430|FUN_001c9048|WRITER-FUN_001c9048|OPEN-WRITER-NAMED (INT-P812B-SMALL-WRITERS)|MIXED|*
+0x3bd820-0x3bd830|FUN_0026fb40|WRITER-FUN_0026fb40|OPEN-WRITER-NAMED (INT-P812B-SMALL-WRITERS)|MIXED|*
+0x3bd820-0x3bd830|FUN_0018e808|WRITER-FUN_0018e808|OPEN-WRITER-NAMED (INT-P812B-SMALL-WRITERS)|MIXED|*
+0x3bd870-0x3bd880|FUN_0027ae68|WRITER-FUN_0027ae68|OPEN-WRITER-NAMED (INT-P812B-SMALL-WRITERS)|MIXED|*
+0x3097f4|FUN_00199|WRITER-FUN_00199938|OPEN-WRITER-NAMED (the T0 ISR family FUN_00199938/FUN_001999b0; INT-P812B-SMALL-WRITERS)|MIXED|*
+0x309d6c|FUN_00252080|WRITER-FUN_00252080|OPEN-WRITER-NAMED (INT-P812B-SMALL-WRITERS)|MIXED|*
+0x2e9d98|FUN_002c8230|WRITER-FUN_002c8230|OPEN-WRITER-NAMED (sce body; INT-P812B-SMALL-WRITERS)|MIXED|*
+0x3d6bb0-0x3d6bc4|FUN_001e9f90|WRITER-FUN_001e9f90|OPEN-WRITER-NAMED (INT-P812B-SMALL-WRITERS)|MIXED|*
+0x3b0460-0x3b0470|WordWatch|HOST-WRITER|OPEN-HOST-WRITER (the census names NO recompiled function: an engine/HLE-side store; INT-P812B-HOST-WRITER)|MIXED|*
+0x2e76e0-0x2e7c50||SOUND-CLIENT-STATICS-INHERITED|OPEN-STREAM-CLIENT-STATICS (no CPU store in the 61-frame window; INT-P811B-SOUND-STATICS)|MIXED|*
+0x3b1100-0x3b1480||STREAM-CLIENT-TABLE-INHERITED|OPEN-STREAM-CLIENT-STATICS (no CPU store in the 61-frame window; INT-P812B-STREAM-CLIENT-TABLE)|MIXED|*
+0x31b000-0x31b100||PAGE-POOL-ALLOCATOR-STATICS-INHERITED|OPEN-SLAB-WALK (no CPU store in the window; INT-P811B-SLAB-WALK)|MIXED|*
+0xb84be0-0xb8c560||PAGE-POOL-DESCRIPTORS-INHERITED|OPEN-SLAB-WALK (no CPU store in the window; INT-P811B-SLAB-WALK)|MIXED|*
+# --- regions (MIXED: the region is named, the per-word cause is one of several classes)
+0x3fd1c0-0x93d1c0||BUMP-ARENA-POOL1|P5-ANCHOR-OLD-ZERO-POLLS+OPEN-DP-21|MIXED|*
+0x3dae90-0xb84be0||TITLE-HEAP-OBJECTS|P5-ANCHOR-OLD-ZERO-POLLS+OPEN-DP-21|MIXED|*
+0xb8c560-0xf58560||PAGE-POOL-SLABS|P5-ANCHOR-OLD-ZERO-POLLS+OPEN-DP-21|MIXED|*
+0xf59ac0-0x1ffd800||RECORD-POOL|P5-ANCHOR-OLD-ZERO-POLLS+OPEN-DP-5b|MIXED|*
+SPAD:0x70002000-0x70004000||SPAD-STACK|P4-CKPT0-STATICS-class (stack residue of differing call chains)|MIXED|*
+SPAD:0x70000000-0x70002000||SPAD-DATA|OPEN-DP-21 (the SPAD work records; P8.10-A)|MIXED|*

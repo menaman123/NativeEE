@@ -1,0 +1,21 @@
+# actionlint config -- consumed by the `actionlint` step in ci.yml's guard job
+# (docker run --rm -v "$PWD:/repo" --workdir /repo rhysd/actionlint:latest -color).
+#
+# Why this file exists: actionlint's [runner-label] rule validates `runs-on` against a table of
+# GitHub-hosted labels baked into the image. When GitHub retires a runner image, the label leaves
+# that table and the guard job fails on a lint error alone -- which, because `build` has
+# `needs: guard`, takes the whole build matrix down with it. That is exactly what the retired
+# macos-13 image did to us. Labels listed below are accepted by the rule regardless of the
+# image's table, so a retirement upstream degrades into a real runner error on the lane that
+# actually uses it, instead of a repo-wide lint failure.
+#
+# Trade-off: a label listed here is no longer spell-checked, so this list stays deliberately
+# short -- only labels we pin on purpose AND that sit on a known wind-down path. Everything
+# stable (ubuntu-24.04, ubuntu-24.04-arm, windows-2022) is left to the rule to police.
+self-hosted-runner:
+  labels:
+    # Intel macOS is being wound down in favour of Apple silicon; this is the x86-64 lane's label
+    # (ci.yml's macos-x86_64 target) and the successor to the macos-13 image that already went away.
+    - macos-15-intel
+    # The arm64 lane. Not retired yet, but it is an older numbered image on the same treadmill.
+    - macos-14

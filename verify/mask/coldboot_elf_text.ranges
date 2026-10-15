@@ -1,0 +1,70 @@
+# Accepted-difference mask for the coldboot mem lane (EQUIVALENCE_PLAN §7 / §7.1 rows).
+#
+# Grammar (verify/diff_legs.py --mask-ranges):   0xLO-0xHI  <ROW-ID>  # why
+#   HI exclusive. <ROW-ID> is MANDATORY on every range and must head a §7.1 table row in
+#   docs/design/EQUIVALENCE_PLAN.md or docs/phases/PHASE*_PLAN.md / PHASE*_IMPL.md -- a range
+#   is never added without its accepted-difference row (the row records the decision and the
+#   evidence that the FROZEN ORIGINAL is the wrong side). RAM0 ranges lie in 0x0-0x2000000;
+#   SPAD ranges lie in 0x70000000-0x70004000 and are accepted ONLY inside the boot stack's
+#   dead-word window 0x70003ef0-0x70003f44 -- the 13 words PHASE4_IMPL :942 lists word-inclusive
+#   as 0x70003ef0..0x70003f40 (user decision 2, I5.1-H; META is never maskable).
+#   diff_legs reports the masked byte count per lane on every verdict line.
+#
+# P4-CKPT0-ELF-TEXT-RESIDENCY: the ELF's .text section, 0x00100000-0x002d9a08
+# (PT_LOAD vaddr 0x100000; .vutext follows at 0x2d9a10 and is loaded by BOTH trees).
+# Retail rule: the kernel's ELF loader copies every PT_LOAD byte, text included, so
+# the title can read its own code; NEW keeps it resident (byte-equal to the file),
+# the frozen original left the text pages zero -- the original's deviation, masked.
+0x00100000-0x002d9a10  P4-CKPT0-ELF-TEXT-RESIDENCY  # OLD's zero .text pages (1,939,984 B)
+#
+# P4-LIBGRAPH-SDK-SHAPE: GsGParam at the title's 0x2e7ff0 -- the SDK's packed shorts
+# {interlace, omode, ffmode, revision}; the original wrote three mislabeled u32 words
+# {0, 1, 2} from a wrong argument reading. NEW writes the SDK shape (0x00020001, 0, 0).
+0x002e7ff0-0x002e7ffc  P4-LIBGRAPH-SDK-SHAPE  # GsGParam, 3 words
+#
+# P4-CKPT0-LIBDMA-TABLE: libdma's channel table (sceDmaReset stores the channels'
+# DMAC MMIO register bases 0x10008000..0x1000d400; the title writes them as MMIO).
+# The original stored an invented RAM mirror at 0x01cff000 and 0x40 sentinels there.
+0x00323288-0x003232f8  P4-CKPT0-LIBDMA-TABLE  # channel table, 7 words + tail
+0x01cff000-0x01cff300  P4-CKPT0-LIBDMA-TABLE  # OLD's invented DMAC mirror page
+#
+# P4-CKPT0-MCSERV-VERSION: libmc's client record (0x3c8580/88) and the mcserv fno 0xFE
+# reply's protocol versions (0x3c9b44/48 = 0x210/0x226) are written by libmc 3.0.1's
+# recompiled sceMcInit on retail; the original HLE'd sceMcInit and never wrote them.
+0x003c8580-0x003c8590  P4-CKPT0-MCSERV-VERSION  # libmc client record
+0x003c9b44-0x003c9b4c  P4-CKPT0-MCSERV-VERSION  # mcserv/mcman protocol versions
+#
+# P4-CKPT0-STREAM-REPLY-PATCH: OLD's host code plants 8 PCSX2-snapshot constants into the
+# STREAM.IRX reply buffer (EE 0x3b3000, words 9N+50..62; sif_rpc_handlers.cpp:4632-4671) and
+# the title's FUN_001e1f48 copies them GP-relative; the real module reply is zero there at boot.
+0x00309b38-0x00309b3c  P4-CKPT0-STREAM-REPLY-PATCH  # .sdata copy, word 0
+0x00309b84-0x00309b94  P4-CKPT0-STREAM-REPLY-PATCH  # .sdata copy, words 1-4
+0x00309b9c-0x00309ba4  P4-CKPT0-STREAM-REPLY-PATCH  # .sdata copy, words 5-6
+0x00309bac-0x00309bb4  P4-CKPT0-STREAM-REPLY-PATCH  # .sdata copy, words 7-8
+0x003b30c8-0x003b30d8  P4-CKPT0-STREAM-REPLY-PATCH  # reply buffer, words 50-53
+0x003b30e0-0x003b30e4  P4-CKPT0-STREAM-REPLY-PATCH  # reply buffer, word 56
+0x003b30ec-0x003b30f0  P4-CKPT0-STREAM-REPLY-PATCH  # reply buffer, word 59
+0x003b30f4-0x003b30fc  P4-CKPT0-STREAM-REPLY-PATCH  # reply buffer, words 61-62
+#
+# P4-CKPT0-STATICS: the boot stack's dead words in the scratchpad -- stack residue below the
+# live frame; the call chains differ wherever an HLE row replaces a recompiled frame, so the
+# residue is not guest-visible state. The ONLY SPAD range diff_legs accepts (user decision 2).
+0x70003ef0-0x70003f44  P4-CKPT0-STATICS  # 13 dead-stack words of the boot stack (word-inclusive 0x3ef0..0x3f40), PHASE4_IMPL :942
+#
+# P4-CKPT60-OLD-PATH-RESIDUE: OLD's HLE replacement of the STREAM.IRX file registration
+# (hle_heap.cpp:697-744 StreamRegScratch = g_heap.alloc(272), the HLE heap growing down from
+# 0x1f00000) writes the wire string "cdrom0:\NAME" into guest RAM at 0x1effef0; retail builds
+# it in a transient title-heap string object and never writes there. User decision DP-4 (b-1).
+0x01effef0-0x01efff08  P4-CKPT60-OLD-PATH-RESIDUE  # OLD host scratch string, 6 words
+#
+# NOT masked (nothing else is accepted at checkpoint 0):
+#   the formerly OPEN RAM residuals are CLOSED as NEW-wrong and FIXED (PHASE4_IMPL :1100-1120):
+#   0x0030a138.. x9 (P4-CKPT0-STATICS (2), EE rounding) and the FPU 1-50 ULP regions
+#   (P4-CKPT0-LIBM-ULP) are byte-identical to OLD -- no range exists for them.
+#
+# P4-CKPT120-OLD-PTC-STUB-SLOTS: OLD's recompiler reserves four 256 KB "PTC-STUB" view slots at the
+# top of EE RAM (recompiler.cpp:8509 STUB_BASE 0x01F00000, stride 0x40000) and OLD's host code writes
+# synthesized .ptc particle-stream images there (≈ 0x6168 bytes each). Retail never touches the region
+# (the title heap tops out below 0x1f00000; NEW holds zeros there). Host data, not guest state; the
+# title-side registry words stay unmasked. Decision DP-15 (a), DECISIONS_LOG (MADE 2026-10-02).
+0x01f00000-0x01fc0000  P4-CKPT120-OLD-PTC-STUB-SLOTS  # OLD's four PTC-STUB slots (host-only writer)

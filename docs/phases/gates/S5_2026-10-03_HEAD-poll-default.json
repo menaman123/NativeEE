@@ -1,0 +1,359 @@
+{
+ "battery_dir": "<work>/int_work/gates/s5/battery",
+ "identical_legs": [],
+ "legs_identical": 0,
+ "legs_in_table": 12,
+ "mask": "<repo>/verify/mask/coldboot_elf_text.ranges",
+ "outside_mask_words": 8934538,
+ "pairs": [
+  {
+   "RAM0": 64,
+   "SPAD": 98,
+   "boundary": 2,
+   "leg": "artdet_f37152",
+   "missing": false,
+   "new_vsync_frame": 2,
+   "old_vsync_frame": 37159,
+   "total": 162
+  },
+  {
+   "RAM0": 400,
+   "SPAD": 97,
+   "boundary": 60,
+   "leg": "artdet_f37152",
+   "missing": false,
+   "new_vsync_frame": 60,
+   "old_vsync_frame": 37217,
+   "total": 497
+  },
+  {
+   "RAM0": 125,
+   "SPAD": 89,
+   "boundary": 60,
+   "leg": "coldboot",
+   "missing": false,
+   "new_vsync_frame": 60,
+   "old_vsync_frame": 61,
+   "total": 214
+  },
+  {
+   "RAM0": 432344,
+   "SPAD": 171,
+   "boundary": 120,
+   "leg": "coldboot",
+   "missing": false,
+   "new_vsync_frame": 120,
+   "old_vsync_frame": 121,
+   "total": 432515
+  },
+  {
+   "RAM0": 101,
+   "SPAD": 92,
+   "boundary": 2,
+   "leg": "ps2state_slot0_f36935",
+   "missing": false,
+   "new_vsync_frame": 2,
+   "old_vsync_frame": 36938,
+   "total": 193
+  },
+  {
+   "RAM0": 136,
+   "SPAD": 92,
+   "boundary": 60,
+   "leg": "ps2state_slot0_f36935",
+   "missing": false,
+   "new_vsync_frame": 60,
+   "old_vsync_frame": 36996,
+   "total": 228
+  },
+  {
+   "RAM0": 417,
+   "SPAD": 145,
+   "boundary": 2,
+   "leg": "ps2state_slot0_f39807",
+   "missing": false,
+   "new_vsync_frame": 2,
+   "old_vsync_frame": 39810,
+   "total": 562
+  },
+  {
+   "RAM0": 216,
+   "SPAD": 97,
+   "boundary": 60,
+   "leg": "ps2state_slot0_f39807",
+   "missing": false,
+   "new_vsync_frame": 60,
+   "old_vsync_frame": 39868,
+   "total": 313
+  },
+  {
+   "RAM0": 117,
+   "SPAD": 91,
+   "boundary": 2,
+   "leg": "ps2state_slot0_f40391",
+   "missing": false,
+   "new_vsync_frame": 2,
+   "old_vsync_frame": 40394,
+   "total": 208
+  },
+  {
+   "RAM0": 1842,
+   "SPAD": 191,
+   "boundary": 60,
+   "leg": "ps2state_slot0_f40391",
+   "missing": false,
+   "new_vsync_frame": 60,
+   "old_vsync_frame": 40452,
+   "total": 2033
+  },
+  {
+   "RAM0": 1086,
+   "SPAD": 164,
+   "boundary": 2,
+   "leg": "ps2state_slot0_f44111",
+   "missing": false,
+   "new_vsync_frame": 2,
+   "old_vsync_frame": 44114,
+   "total": 1250
+  },
+  {
+   "RAM0": 2879,
+   "SPAD": 187,
+   "boundary": 60,
+   "leg": "ps2state_slot0_f44111",
+   "missing": false,
+   "new_vsync_frame": 60,
+   "old_vsync_frame": 44172,
+   "total": 3066
+  },
+  {
+   "RAM0": 1132,
+   "SPAD": 95,
+   "boundary": 2,
+   "leg": "ps2state_slot0_f46203_red_crystal",
+   "missing": false,
+   "new_vsync_frame": 2,
+   "old_vsync_frame": 46206,
+   "total": 1227
+  },
+  {
+   "RAM0": 1230,
+   "SPAD": 95,
+   "boundary": 60,
+   "leg": "ps2state_slot0_f46203_red_crystal",
+   "missing": false,
+   "new_vsync_frame": 60,
+   "old_vsync_frame": 46264,
+   "total": 1325
+  },
+  {
+   "RAM0": 1820,
+   "SPAD": 137,
+   "boundary": 2,
+   "leg": "ps2state_slot0_f46949_yellow_crystal",
+   "missing": false,
+   "new_vsync_frame": 2,
+   "old_vsync_frame": 46952,
+   "total": 1957
+  },
+  {
+   "RAM0": 8836,
+   "SPAD": 335,
+   "boundary": 60,
+   "leg": "ps2state_slot0_f46949_yellow_crystal",
+   "missing": false,
+   "new_vsync_frame": 60,
+   "old_vsync_frame": 47010,
+   "total": 9171
+  },
+  {
+   "RAM0": 72101,
+   "SPAD": 3778,
+   "boundary": 2,
+   "leg": "ps2state_slot0_f57292",
+   "missing": false,
+   "new_vsync_frame": 2,
+   "old_vsync_frame": 57295,
+   "total": 75879
+  },
+  {
+   "RAM0": 8388608,
+   "SPAD": 4096,
+   "boundary": 60,
+   "leg": "ps2state_slot0_f57292",
+   "missing": true,
+   "new_vsync_frame": null,
+   "old_vsync_frame": 57353,
+   "total": 8392704
+  },
+  {
+   "RAM0": 84,
+   "SPAD": 93,
+   "boundary": 2,
+   "leg": "ps2state_slot0_f59991",
+   "missing": false,
+   "new_vsync_frame": 2,
+   "old_vsync_frame": 59994,
+   "total": 177
+  },
+  {
+   "RAM0": 1194,
+   "SPAD": 3681,
+   "boundary": 60,
+   "leg": "ps2state_slot0_f59991",
+   "missing": false,
+   "new_vsync_frame": 60,
+   "old_vsync_frame": 60052,
+   "total": 4875
+  },
+  {
+   "RAM0": 4771,
+   "SPAD": 390,
+   "boundary": 2,
+   "leg": "slowspot_f37092_s1789428268",
+   "missing": false,
+   "new_vsync_frame": 2,
+   "old_vsync_frame": 37099,
+   "total": 5161
+  },
+  {
+   "RAM0": 218,
+   "SPAD": 95,
+   "boundary": 60,
+   "leg": "slowspot_f37092_s1789428268",
+   "missing": false,
+   "new_vsync_frame": 60,
+   "old_vsync_frame": 37157,
+   "total": 313
+  },
+  {
+   "RAM0": 115,
+   "SPAD": 89,
+   "boundary": 2,
+   "leg": "slowspot_f40298_s1789693059",
+   "missing": false,
+   "new_vsync_frame": 2,
+   "old_vsync_frame": 40307,
+   "total": 204
+  },
+  {
+   "RAM0": 216,
+   "SPAD": 88,
+   "boundary": 60,
+   "leg": "slowspot_f40298_s1789693059",
+   "missing": false,
+   "new_vsync_frame": 60,
+   "old_vsync_frame": 40365,
+   "total": 304
+  }
+ ],
+ "per_leg": {
+  "artdet_f37152": {
+   "first_divergent": {
+    "audio": 1,
+    "frames": 1,
+    "mem": 0
+   },
+   "reps": "ADMISSIBLE",
+   "row": "META-OK DIVERGENT(frames,audio,mem)"
+  },
+  "coldboot": {
+   "first_divergent": {
+    "audio": 142,
+    "frames": 69,
+    "mem": 0
+   },
+   "reps": "ADMISSIBLE",
+   "row": "META-OK DIVERGENT(frames,audio,mem)"
+  },
+  "ps2state_slot0_f36935": {
+   "first_divergent": {
+    "audio": 0,
+    "frames": 1,
+    "mem": 0
+   },
+   "reps": "ADMISSIBLE",
+   "row": "META-OK DIVERGENT(frames,audio,mem)"
+  },
+  "ps2state_slot0_f39807": {
+   "first_divergent": {
+    "audio": 0,
+    "frames": 1,
+    "mem": 0
+   },
+   "reps": "ADMISSIBLE",
+   "row": "META-OK DIVERGENT(frames,audio,mem)"
+  },
+  "ps2state_slot0_f40391": {
+   "first_divergent": {
+    "audio": 8,
+    "frames": 1,
+    "mem": 0
+   },
+   "reps": "ADMISSIBLE",
+   "row": "META-OK DIVERGENT(frames,audio,mem)"
+  },
+  "ps2state_slot0_f44111": {
+   "first_divergent": {
+    "audio": 1,
+    "frames": 1,
+    "mem": 0
+   },
+   "reps": "ADMISSIBLE",
+   "row": "META-OK DIVERGENT(frames,audio,mem)"
+  },
+  "ps2state_slot0_f46203_red_crystal": {
+   "first_divergent": {
+    "audio": 9,
+    "frames": 1,
+    "mem": 0
+   },
+   "reps": "ADMISSIBLE",
+   "row": "META-OK DIVERGENT(frames,audio,mem)"
+  },
+  "ps2state_slot0_f46949_yellow_crystal": {
+   "first_divergent": {
+    "audio": 1,
+    "frames": 1,
+    "mem": 0
+   },
+   "reps": "ADMISSIBLE",
+   "row": "META-OK DIVERGENT(frames,audio,mem)"
+  },
+  "ps2state_slot0_f57292": {
+   "first_divergent": {},
+   "reps": "RUN-FAIL",
+   "row": "-"
+  },
+  "ps2state_slot0_f59991": {
+   "first_divergent": {},
+   "reps": "RUN-FAIL",
+   "row": "-"
+  },
+  "slowspot_f37092_s1789428268": {
+   "first_divergent": {
+    "audio": 5,
+    "frames": 1,
+    "mem": 0
+   },
+   "reps": "ADMISSIBLE",
+   "row": "META-OK DIVERGENT(frames,audio,mem)"
+  },
+  "slowspot_f40298_s1789693059": {
+   "first_divergent": {
+    "audio": 0,
+    "frames": 1,
+    "mem": 0
+   },
+   "reps": "ADMISSIBLE",
+   "row": "META-OK DIVERGENT(frames,audio,mem)"
+  }
+ },
+ "pins_green": 393,
+ "reps_required": true,
+ "tuple": [
+  0,
+  8934538,
+  393
+ ]
+}

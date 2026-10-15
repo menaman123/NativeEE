@@ -1,0 +1,20 @@
+# verify/bench BASELINE 2026-10-06 18:14:09  binary=<work>/int_work/p836l/bin/nativeee_release  PS2RECOMP-BUILD-ID 2026-10-06 06:34:15  md5=200327428d09a81077e660ed2fb018ef
+# machine: Darwin 25.6.0 arm64 Apple M4 24 GiB cores=10
+# profile: --profile deterministic --headless (run_leg.py --tree new): GL 4.1 backend on a HIDDEN window (video.backend=gl default, --headless hides the window only; every row's run.meta: video=gl gl_renderer=Apple M4), swap interval 0 (no vsync wait), engine.pacing=freerun, engine.mtvu=off, gs_queue inline, video.scale=1, harness lanes on (per-present GL readback + frame hash, audio, mem every 60 frames, drawir/gsops); NOT a soft rasterizer [header line corrected 2026-10-06 P8.36-L review loop 1: it said 'no window, soft video backend'; the 13 rows are untouched]
+# legs: artdet_f37152,coldboot,coldboot_attract,ps2state_slot0_f36935,ps2state_slot0_f39807,ps2state_slot0_f40391,ps2state_slot0_f44111,ps2state_slot0_f46203_red_crystal,ps2state_slot0_f46949_yellow_crystal,ps2state_slot0_f57292,ps2state_slot0_f59991,slowspot_f37092_s1789428268,slowspot_f40298_s1789693059 (dir <repo>/games/<title>/verify/baseline); frame cap 2000
+# columns: see verify/bench/README.md; ms_frame = steady-state ms per present from the progress sampler; one leg at a time
+# note: P8.36-L first baseline, machine ALONE: no sibling stage, pgrep run_leg empty (other_legs 0 every row); uptime load_1m 2.73 at the first poll (< 3.0), per-row load_1m in the table (the 3.3-4.0 rise is the back-to-back legs' own decaying average); the one leg launched above 4.0 was re-run once at 2.58 and that row is the one kept (rule: a bench taken under load is not a baseline)
+leg	frames_req	frames	proc_wall_s	run_wall_ms	ms_frame	ms_frame_total	win_p50	win_p95	load_1m	other_legs	status	note
+artdet_f37152	600	600	23.7	22558	36.11	37.60	35.98	37.76	2.37	0	OK	-
+coldboot	1500	1500	26.9	25849	17.79	17.23	20.16	75.63	2.47	0	OK	-
+coldboot_attract	2000	2000	38.2	38001	19.47	19.00	21.13	33.57	2.87	0	OK	capped from 6000
+ps2state_slot0_f36935	600	600	31.0	30421	49.51	50.70	49.24	54.26	3.33	0	OK	-
+ps2state_slot0_f39807	600	600	29.9	28544	46.42	47.57	46.02	48.44	3.73	0	OK	-
+ps2state_slot0_f40391	600	600	27.9	26575	43.09	44.29	43.18	47.06	3.37	0	OK	-
+ps2state_slot0_f44111	600	600	24.8	24300	39.31	40.50	39.43	40.85	3.99	0	OK	-
+ps2state_slot0_f46203_red_crystal	600	600	24.8	23803	38.41	39.67	38.47	41.27	3.95	0	OK	-
+ps2state_slot0_f46949_yellow_crystal	600	600	29.9	29524	48.04	49.21	48.54	50.59	3.62	0	OK	-
+ps2state_slot0_f57292	600	600	33.0	31908	52.02	53.18	51.86	56.66	3.65	0	OK	-
+ps2state_slot0_f59991	600	600	31.0	30280	49.29	50.47	49.01	50.65	3.46	0	OK	-
+slowspot_f37092_s1789428268	600	600	32.0	31288	50.95	52.15	50.30	54.85	3.06	0	OK	PERF-TARGET slowspot
+slowspot_f40298_s1789693059	600	600	26.8	25429	41.18	42.38	41.42	43.70	2.58	0	OK	PERF-TARGET slowspot; re-run once at 18:23 (load 2.58): pass-5 launch load_1m was 4.29 > 4.0 (gave ms_frame 46.32, p95 73.33)

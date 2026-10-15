@@ -1,0 +1,38 @@
+include(checkpoint_support.cmake)
+
+add_library(ps2r_session_checkpoint STATIC ../host/session_checkpoint.cpp)
+target_link_libraries(ps2r_session_checkpoint PUBLIC ps2r_session_controls)
+target_compile_options(ps2r_session_checkpoint PRIVATE -Wall -Wextra -Werror)
+if(TARGET ps2r_ee)
+    target_link_libraries(ps2r_session_checkpoint PRIVATE ps2r_ee)
+else()
+    # Only existing codec/host-thread support, no generated game, renderer,
+    # hardware execution or app root. Kept here for isolated product tests.
+    ps2r_add_checkpoint_support(ps2r_checkpoint_support)
+    target_link_libraries(ps2r_session_checkpoint PRIVATE ps2r_checkpoint_support)
+endif()
+if(TARGET test_session_controls)
+    target_link_libraries(test_session_controls PRIVATE ps2r_session_checkpoint)
+    target_compile_definitions(test_session_controls PRIVATE PS2R_PRODUCT_CHECKPOINT_TESTS=1)
+    add_test(NAME SessionCheckpoint COMMAND test_session_controls --checkpoint)
+    set_tests_properties(SessionCheckpoint PROPERTIES TIMEOUT 20)
+    add_test(NAME ThreadCapture COMMAND test_session_controls --thread-capture)
+    set_tests_properties(ThreadCapture PROPERTIES TIMEOUT 25)
+    if(PS2R_PRODUCT_GUI)
+        add_test(NAME SessionCheckpointRuntime COMMAND test_session_controls --checkpoint-runtime)
+        set_tests_properties(SessionCheckpointRuntime PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE)
+    endif()
+    if(TARGET ps2r_checkpoint_support)
+        # Existing host-only lifecycle pins; no generated title or app root.
+        add_executable(test_product_thread_manager
+            "${PS2R_PRODUCT_ROOT}/tests/ee/test_thread_manager.cpp"
+            "${PS2R_PRODUCT_ROOT}/engine/ee/hle/alarms.cpp")
+        target_link_libraries(test_product_thread_manager PRIVATE ps2r_checkpoint_support)
+        add_test(NAME ProductThreadLifecycle COMMAND test_product_thread_manager)
+        set_tests_properties(ProductThreadLifecycle PROPERTIES TIMEOUT 25)
+        add_executable(test_product_relaunch "${PS2R_PRODUCT_ROOT}/tests/ee/test_relaunch_order.cpp")
+        target_link_libraries(test_product_relaunch PRIVATE ps2r_checkpoint_support)
+        add_test(NAME ProductRelaunchOrder COMMAND test_product_relaunch)
+        set_tests_properties(ProductRelaunchOrder PROPERTIES TIMEOUT 15)
+    endif()
+endif()

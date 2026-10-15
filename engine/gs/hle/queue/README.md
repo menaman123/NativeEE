@@ -1,0 +1,23 @@
+# `engine/gs/hle/queue/`
+
+**Phase:** 6 (integration-written)  
+**Purpose:** The DrawIR consumer boundary between the GS state machine (`GsState` → `DrawIrSink`) and the per-draw pipeline (`DrawPipeline`).
+
+## Files
+
+| File | Type | What |
+|---|---|---|
+| `draw_ir_thread_queue.{h,cpp}` | `DrawIrThreadQueue : DrawIrSink` | The cross-thread DrawIR ring (plan row 6.3): records are captured at enqueue (a flushed `DrawIr` arrives OWNED through `OnDrawOwned(DrawIr&&)` and moves into the record with its vertices — track 1d; `OnDraw(const&)` copies; a `JobRec`, the frame's VSync `JobRec`) and delivered to the next sink in push order on the queue's OWN consumer thread (`Start(on_thread_start)` — the host binds its GL context there; `Stop()` drains and joins). Two producer-state inputs are captured at the push instead of read at consume time: the upload payload (held back one event, attached from `hooks.upload_pixels` at the producer's NEXT event — the point the in-thread consumer applies it; read back by the consumer through `LastUploadPayload()`) and the frame's CRTC snapshot (`hooks.crtc`, read back through `CurrentFrameCrtc()`). `Policy::Lockstep` (the host's `gs.queue=thread`): every push returns once consumed — the producer/consumer interleaving over the shared `VramImage` is the in-thread one, so the frames lane is byte-identical by construction. `Policy::Pipelined` (`gs.queue=pipelined`): pushes return at once (bounded ring), `Sync()` / `WaitFrame(seq)` are the producer's barriers, and the GS local-memory image is SPLIT (DP-25 option (b)): the pipeline runs on its own `VramImage` (`mirror_target`), the EE keeps `GsState`'s, and every EE-side call on the EE image (`VramMirror` → `VramOpLog`, `ProducerMirror()`) is pushed as a `VramOps` record right before the next record and replayed on the pipeline image on the consumer thread — the in-thread interleaving of EE writes and GPU deposits in stream order without a shared image. Counters: enqueued / consumed / frames / syncs / frame_waits / max_depth / payload_bytes / vram_ops / vram_op_bytes. |
+| `draw_ir_queue_consumer.{h,cpp}` | `DrawIrQueueConsumer : DrawIrSink` | Lowers `OnDraw / OnJob / OnFrame` into `DrawPipeline::{Draw, OnSetWindow, OnSetFrontBuffer, OnInvalidate, OnUpload, OnSyncAll, OnFrameEnd}` in stream order with the record's `src_frame` / `vram_epoch` stamps — the same mapping the corpus replay driver (`tools/gs_replay/replay_driver.cpp` `ReplayJob`) applies to a recording. The upload payload is applied at the next sink event (the transfer engine publishes `LastUploadPixels` after its push). Hooks: `enter` (the host makes its GL context current), `upload_pixels`, `crtc` (the CRTC snapshot at frame end), `window_resized`, `handler_name`. The grab is published under a lock (`LastFrameCopy` for a concurrent reader) and, with `SetFrameHashScale(scale)` set, hashed where it is made (`Frame::hash` = `FrameHasher::HashNativeScale` at that scale) so the wall-locked play boundary takes `LastFrameHeaderCopy()` — the header and the frames-lane hash, no pixel copy (track 1d; pin `DrawIrQueueConsumerFrameHash`). Counters: draws / jobs / frames / uploads / uploads_dropped / resizes / presents / grab_empty. |
+
+## Host composition (`app/host/ee_bootstrap.cpp`)
+
+`gs.queue=inline` (default): counting sink → (recorder) → `DrawIrQueueConsumer` on the EE thread, as before. `gs.queue=thread|pipelined`: counting sink → (recorder) → `DrawIrThreadQueue` → `DrawIrQueueConsumer` on the queue's thread (pinned interactive, named `ps2r-gs`); the consumer's `upload_pixels` / `crtc` hooks read the queue's captured copies; slot 0 (PresentRendezvous) pushes the frame's VSync job then `WaitFrame(FrameSeq())` before the Verify slot reads `LastFrame()`, and applies the consumer's deferred OS-window resize there (`VideoStack::ApplyPendingWindowResize`: SDL/Cocoa window geometry is main-thread only — the consumer applies the device viewport and defers the window call). The census writer `Sync()`s first. Under `pipelined` the host creates the pipeline's `VramImage`, passes it to `VideoStack::Create`, sets the EE image's mirror to the queue's, and routes the EE's two reads of pipeline-side state through a drain: `TransferEngine::SetLocalToLocalSource` (a local→local copy reads the drained pipeline image's bytes, brought into the EE image before the in-place copy) and `GsSections::SetVramSource` (the savestate VRAM section).
+
+## Later (not written)
+
+- `DrawRunMerge` (the RUNDRAW merge action).
+
+## Does not belong here
+
+- Pacing / decimation (`gs/hle/present`), the recorder tap (`core/diag`), title data.

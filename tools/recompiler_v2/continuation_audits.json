@@ -1,0 +1,14 @@
+{
+  "wrappers": {
+    "0x17ce50": {
+      "sha256": "70233e59552060a0e46acf33ca5509b35a2eb83788e241fe6e6443d88af36697",
+      "reason": "Exact generated diagnostic wrapper: forwards ctx/addr once; reads a0/s0 and RAM phase; after return updates private log suppression counters and log stream only. No guest writes or extra game calls. Mid-entry preserves generated body behavior; diagnostic text may differ after restore."
+    }
+  },
+  "prologues": {
+    "0x17d558": {
+      "sha256": "5185303f96cbc494369b27e6ee38339e4d7eb51c88cf95c65f49f98695a71395",
+      "reason": "Exact generated LOGO-EMIT prologue: RAM reads plus private atomic log budget and log stream only; no guest state writes, no game calls. Inert callee-save local initialization follows. Repeat affects diagnostics only."
+    }
+  }
+}

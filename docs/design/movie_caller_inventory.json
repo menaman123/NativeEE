@@ -1,0 +1,3159 @@
+{
+  "schema": "movie-caller-inventory-v2",
+  "scope": "all generated Movie player/decoder entries 0x2ae018..0x2b17b8 plus public MPEG/IPU/SPR/present boundaries",
+  "limits": "literal words are candidates, not proof of reachability; computed indirect callers require source/vtable and runtime census",
+  "elf_sha256": "8d114879fb704d328394771aec6276136bdb4ecf4c5f8de06139b7b42974038f",
+  "asset_inventory_sha256": "fefde44a617f60ff1143790b6e4be795fed688626a7dde878c177d33322b7eec",
+  "vtable": [
+    {
+      "word": "0x003068ec",
+      "entry": "0x002ae318"
+    },
+    {
+      "word": "0x003068f4",
+      "entry": "0x002ae658"
+    },
+    {
+      "word": "0x003068fc",
+      "entry": "0x002af500"
+    },
+    {
+      "word": "0x00306904",
+      "entry": "0x002aea08"
+    },
+    {
+      "word": "0x0030690c",
+      "entry": "0x002aeb30"
+    },
+    {
+      "word": "0x00306914",
+      "entry": "0x002af8f0"
+    },
+    {
+      "word": "0x0030691c",
+      "entry": "0x002af968"
+    },
+    {
+      "word": "0x00306924",
+      "entry": "0x002af9b8"
+    },
+    {
+      "word": "0x0030692c",
+      "entry": "0x002afa00"
+    }
+  ],
+  "wait_frame": {
+    "entry": "0x002af8f0",
+    "tail_body": "0x002af8f4",
+    "live_registration": {
+      "source": "games/<title>/recomp/recompiled.cpp",
+      "body_sha256": "ba8fae1f7f5723c645bf61df85a6ffa145629a84f9c661019f99d482373ed217",
+      "calls": [
+        {
+          "target": "0x002b0fe0",
+          "return": "0x002af940",
+          "limit": 2
+        },
+        {
+          "target": "0x0019fcb8",
+          "return": "0x002af588",
+          "count": 1
+        }
+      ],
+      "note": "NEW dispatch uses this wrapper, not the dormant shard spin/prelude."
+    }
+  },
+  "presentation_registration": {
+    "sdk_entry": "0x002c1e10",
+    "direct_callers": [
+      {
+        "caller": "0x002ae318",
+        "return": "0x002ae350"
+      },
+      {
+        "caller": "0x002ae658",
+        "return": "0x002ae6ac"
+      }
+    ],
+    "callback": "0x002af568",
+    "actual_model_counter": "libgraph_calls.syncvcb",
+    "selection": "hle.movie_stop pairs direct Start with complete Stop and requires owned Step/Wait",
+    "limits": "all NEW direct callers enumerated; computed calls still require the actual model census"
+  },
+  "bodies": [
+    {
+      "entry": "0x0019fcb8",
+      "source": "games/<title>/recomp/recompiled_shard_010.cpp",
+      "body_sha256": "3f67caf5e8be7930c7d1b3a98211c8932d8f976334950a4d1664101c4f264d24",
+      "calls": [
+        {
+          "target": "0x002cf590",
+          "return": "0x0019fcd0"
+        },
+        {
+          "target": "0x001a00d0",
+          "return": "0x0019fcdc"
+        },
+        {
+          "target": "0x00181a70",
+          "return": "0x0019fce4"
+        },
+        {
+          "target": "0x002c1b50",
+          "return": "0x0019fcf0"
+        },
+        {
+          "target": "0x0017ed50",
+          "return": "0x0019fd00"
+        },
+        {
+          "target": "0x001d9f88",
+          "return": "0x0019fd38"
+        }
+      ],
+      "continuations": [
+        "0x19fcd0",
+        "0x19fcdc",
+        "0x19fce4",
+        "0x19fcf0",
+        "0x19fd00",
+        "0x19fd08",
+        "0x19fd1c",
+        "0x19fd30",
+        "0x19fd38"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002af568",
+          "return": "0x002af58c"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x001a00d0",
+      "source": "games/<title>/recomp/recompiled_shard_010.cpp",
+      "body_sha256": "0def121ae06d5945d566ae7f33a1c7c390cc15ce4fc54236ff4595fd72364627",
+      "calls": [
+        {
+          "target": "0x002cf590",
+          "return": "0x001a00e8"
+        },
+        {
+          "target": "0x001818b0",
+          "return": "0x001a00f0"
+        },
+        {
+          "target": "0x0017dbf8",
+          "return": "0x001a00f8"
+        },
+        {
+          "target": "0x002c1b50",
+          "return": "0x001a0104"
+        },
+        {
+          "target": "0x001819e8",
+          "return": "0x001a0120"
+        },
+        {
+          "target": "0x0019aff0",
+          "return": "0x001a0134"
+        }
+      ],
+      "continuations": [
+        "0x1a00e8",
+        "0x1a00f0",
+        "0x1a00f8",
+        "0x1a0104",
+        "0x1a0120",
+        "0x1a012c",
+        "0x1a0134",
+        "0x1a013c",
+        "0x1a0140"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x0019fcb8",
+          "return": "0x0019fcdc"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x001a0150",
+      "source": "games/<title>/recomp/recompiled_shard_010.cpp",
+      "body_sha256": "68bf6666644f9403ff2231e66f707d32a279f136f0e11a76dc8483abeb0b5cb2",
+      "calls": [
+        {
+          "target": "0x002cf560",
+          "return": "0x001a0170"
+        },
+        {
+          "target": "0x001818b0",
+          "return": "0x001a0178"
+        },
+        {
+          "target": "0x0017dbf8",
+          "return": "0x001a0180"
+        },
+        {
+          "target": "0x002c1b50",
+          "return": "0x001a018c"
+        },
+        {
+          "target": "0x002c1d78",
+          "return": "0x001a01a4"
+        },
+        {
+          "target": "0x00181968",
+          "return": "0x001a01b8"
+        },
+        {
+          "target": "0x0019aff0",
+          "return": "0x001a01cc"
+        }
+      ],
+      "continuations": [
+        "0x1a0170",
+        "0x1a0178",
+        "0x1a0180",
+        "0x1a018c",
+        "0x1a01a4",
+        "0x1a01ac",
+        "0x1a01b8",
+        "0x1a01bc",
+        "0x1a01c4",
+        "0x1a01cc",
+        "0x1a01d4",
+        "0x1a01d8"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x0019fd58",
+          "return": "0x0019fd6c"
+        },
+        {
+          "caller": "0x0019fdb0",
+          "return": "0x0019fdc4"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002ae018",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "2412565039baeb7676f371fcc4ef429c6484b48a2e830b170ad782be2b222887",
+      "calls": [
+        {
+          "target": "0x002c4cf0",
+          "return": "0x002ae074"
+        },
+        {
+          "target": "0x002af280",
+          "return": "0x002ae16c"
+        }
+      ],
+      "continuations": [
+        "0x2ae050",
+        "0x2ae058",
+        "0x2ae068",
+        "0x2ae074",
+        "0x2ae0d8",
+        "0x2ae0e8",
+        "0x2ae0f4",
+        "0x2ae134",
+        "0x2ae14c",
+        "0x2ae158",
+        "0x2ae160",
+        "0x2ae16c",
+        "0x2ae1a8"
+      ],
+      "direct_callers": [],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002ae1c8",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "409e58174348105a2048a106e320468d2b45eaccd7208e6d18e961160e97d878",
+      "calls": [
+        {
+          "target": "0x002b0d30",
+          "return": "0x002ae1f8"
+        },
+        {
+          "target": "0x002cf560",
+          "return": "0x002ae20c"
+        },
+        {
+          "target": "0x001818b0",
+          "return": "0x002ae214"
+        },
+        {
+          "target": "0x0017dbf8",
+          "return": "0x002ae21c"
+        },
+        {
+          "target": "0x002c1b50",
+          "return": "0x002ae228"
+        },
+        {
+          "target": "0x0017ff50",
+          "return": "0x002ae234"
+        },
+        {
+          "target": "0x002b1630",
+          "return": "0x002ae250"
+        },
+        {
+          "target": "0x001e01b0",
+          "return": "0x002ae298"
+        },
+        {
+          "target": "0x002d45e0",
+          "return": "0x002ae2b8"
+        }
+      ],
+      "continuations": [
+        "0x2ae1f0",
+        "0x2ae1f8",
+        "0x2ae1fc",
+        "0x2ae20c",
+        "0x2ae214",
+        "0x2ae21c",
+        "0x2ae228",
+        "0x2ae234",
+        "0x2ae250",
+        "0x2ae264",
+        "0x2ae26c",
+        "0x2ae278",
+        "0x2ae280",
+        "0x2ae290",
+        "0x2ae298",
+        "0x2ae2b0",
+        "0x2ae2b8",
+        "0x2ae2c8",
+        "0x2ae2dc",
+        "0x2ae2e0"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002ae318",
+          "return": "0x002ae3a0"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002ae318",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "34d0e39c4a20ec7234851ae154bace3ea65fdd66acc70c3f6475af9f2a8ba73b",
+      "calls": [
+        {
+          "target": "0x002d4dc0",
+          "return": "0x002ae33c"
+        },
+        {
+          "target": "0x002cfc68",
+          "return": "0x002ae344"
+        },
+        {
+          "target": "0x002c1e10",
+          "return": "0x002ae350"
+        },
+        {
+          "target": "0x002cfcd0",
+          "return": "0x002ae358"
+        },
+        {
+          "target": "0x002d4e10",
+          "return": "0x002ae360"
+        },
+        {
+          "target": "0x002ae1c8",
+          "return": "0x002ae3a0"
+        },
+        {
+          "target": "0x002ae860",
+          "return": "0x002ae3b0"
+        },
+        {
+          "target": "0x002b0dc8",
+          "return": "0x002ae3f8"
+        },
+        {
+          "target": "0x002c6ce0",
+          "return": "0x002ae418"
+        },
+        {
+          "target": "0x002d4dc0",
+          "return": "0x002ae420"
+        },
+        {
+          "target": "0x002d4e10",
+          "return": "0x002ae444"
+        },
+        {
+          "target": "0x002b0e50",
+          "return": "0x002ae458"
+        },
+        {
+          "target": "0x002cf560",
+          "return": "0x002ae460"
+        },
+        {
+          "target": "0x002c6ce0",
+          "return": "0x002ae470"
+        },
+        {
+          "target": "0x002d4dc0",
+          "return": "0x002ae478"
+        },
+        {
+          "target": "0x002d4e10",
+          "return": "0x002ae488"
+        },
+        {
+          "target": "0x002d4dc0",
+          "return": "0x002ae4ac"
+        },
+        {
+          "target": "0x002d4e10",
+          "return": "0x002ae4d0"
+        },
+        {
+          "target": "0x002c6ce0",
+          "return": "0x002ae4e8"
+        },
+        {
+          "target": "0x002d4dc0",
+          "return": "0x002ae4f0"
+        },
+        {
+          "target": "0x002d4e10",
+          "return": "0x002ae514"
+        },
+        {
+          "target": "0x002b0e50",
+          "return": "0x002ae528"
+        },
+        {
+          "target": "0x002cf560",
+          "return": "0x002ae530"
+        },
+        {
+          "target": "0x002c6ce0",
+          "return": "0x002ae540"
+        },
+        {
+          "target": "0x002d4dc0",
+          "return": "0x002ae548"
+        },
+        {
+          "target": "0x002d4e10",
+          "return": "0x002ae55c"
+        },
+        {
+          "target": "0x002b0fe0",
+          "return": "0x002ae570"
+        },
+        {
+          "target": "0x002b0ef8",
+          "return": "0x002ae57c"
+        },
+        {
+          "target": "0x002b0f68",
+          "return": "0x002ae584"
+        },
+        {
+          "target": "0x001e60a8",
+          "return": "0x002ae5cc"
+        },
+        {
+          "target": "0x002c4cf0",
+          "return": "0x002ae620"
+        },
+        {
+          "target": "0x002af458",
+          "return": "0x002ae628"
+        }
+      ],
+      "continuations": [
+        "0x2ae33c",
+        "0x2ae344",
+        "0x2ae350",
+        "0x2ae358",
+        "0x2ae360",
+        "0x2ae388",
+        "0x2ae3a0",
+        "0x2ae3a8",
+        "0x2ae3b0",
+        "0x2ae3f8",
+        "0x2ae400",
+        "0x2ae418",
+        "0x2ae420",
+        "0x2ae444",
+        "0x2ae458",
+        "0x2ae460",
+        "0x2ae470",
+        "0x2ae478",
+        "0x2ae488",
+        "0x2ae494",
+        "0x2ae4a4",
+        "0x2ae4ac",
+        "0x2ae4d0",
+        "0x2ae4d4",
+        "0x2ae4e8",
+        "0x2ae4f0",
+        "0x2ae514",
+        "0x2ae528",
+        "0x2ae530",
+        "0x2ae540",
+        "0x2ae548",
+        "0x2ae55c",
+        "0x2ae568",
+        "0x2ae570",
+        "0x2ae57c",
+        "0x2ae584",
+        "0x2ae58c",
+        "0x2ae594",
+        "0x2ae59c",
+        "0x2ae5a4",
+        "0x2ae5bc",
+        "0x2ae5c4",
+        "0x2ae5cc",
+        "0x2ae5e0",
+        "0x2ae620",
+        "0x2ae628",
+        "0x2ae638",
+        "0x2ae63c"
+      ],
+      "direct_callers": [],
+      "literal_address_words": [
+        "0x003068ec"
+      ]
+    },
+    {
+      "entry": "0x002ae658",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "5923f9d866e40c2a8c236a0dfb95d7be9e1621079aee310fd1f104bf84d326dc",
+      "calls": [
+        {
+          "target": "0x002d4dc0",
+          "return": "0x002ae69c"
+        },
+        {
+          "target": "0x002cfc68",
+          "return": "0x002ae6a4"
+        },
+        {
+          "target": "0x002c1e10",
+          "return": "0x002ae6ac"
+        },
+        {
+          "target": "0x002d4e10",
+          "return": "0x002ae6b4"
+        },
+        {
+          "target": "0x002af5d0",
+          "return": "0x002ae6bc"
+        },
+        {
+          "target": "0x002af458",
+          "return": "0x002ae6c8"
+        },
+        {
+          "target": "0x002c4cf0",
+          "return": "0x002ae6e4"
+        },
+        {
+          "target": "0x001e6230",
+          "return": "0x002ae704"
+        },
+        {
+          "target": "0x002d46c8",
+          "return": "0x002ae714"
+        },
+        {
+          "target": "0x002b1000",
+          "return": "0x002ae734"
+        },
+        {
+          "target": "0x0011bf10",
+          "return": "0x002ae740"
+        },
+        {
+          "target": "0x0019f1c8",
+          "return": "0x002ae758"
+        },
+        {
+          "target": "0x0019f1c8",
+          "return": "0x002ae798"
+        },
+        {
+          "target": "0x002cf560",
+          "return": "0x002ae7cc"
+        },
+        {
+          "target": "0x001818b0",
+          "return": "0x002ae7d4"
+        },
+        {
+          "target": "0x0017dbf8",
+          "return": "0x002ae7dc"
+        },
+        {
+          "target": "0x002c1b50",
+          "return": "0x002ae7e8"
+        },
+        {
+          "target": "0x0017ff50",
+          "return": "0x002ae7f4"
+        }
+      ],
+      "continuations": [
+        "0x2ae69c",
+        "0x2ae6a4",
+        "0x2ae6ac",
+        "0x2ae6b4",
+        "0x2ae6bc",
+        "0x2ae6c8",
+        "0x2ae6e4",
+        "0x2ae6f4",
+        "0x2ae6fc",
+        "0x2ae704",
+        "0x2ae70c",
+        "0x2ae714",
+        "0x2ae718",
+        "0x2ae72c",
+        "0x2ae734",
+        "0x2ae740",
+        "0x2ae758",
+        "0x2ae770",
+        "0x2ae788",
+        "0x2ae798",
+        "0x2ae7b0",
+        "0x2ae7c4",
+        "0x2ae7cc",
+        "0x2ae7d4",
+        "0x2ae7dc",
+        "0x2ae7e8",
+        "0x2ae7f4",
+        "0x2ae80c",
+        "0x2ae820",
+        "0x2ae834"
+      ],
+      "direct_callers": [],
+      "literal_address_words": [
+        "0x003068f4"
+      ]
+    },
+    {
+      "entry": "0x002ae860",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "d8f84f1ebfa1806a0d42fbe3a4aad955386d6c58d76821cc04d85f2681247900",
+      "calls": [
+        {
+          "target": "0x00203dc8",
+          "return": "0x002ae888"
+        },
+        {
+          "target": "0x00204060",
+          "return": "0x002ae8a0"
+        },
+        {
+          "target": "0x00204060",
+          "return": "0x002ae8b0"
+        },
+        {
+          "target": "0x00204060",
+          "return": "0x002ae8c8"
+        },
+        {
+          "target": "0x00204060",
+          "return": "0x002ae8dc"
+        },
+        {
+          "target": "0x002c6cb0",
+          "return": "0x002ae8f4"
+        },
+        {
+          "target": "0x002c4610",
+          "return": "0x002ae920"
+        },
+        {
+          "target": "0x002c4358",
+          "return": "0x002ae940"
+        },
+        {
+          "target": "0x002c3a78",
+          "return": "0x002ae964"
+        },
+        {
+          "target": "0x001e01b0",
+          "return": "0x002ae97c"
+        },
+        {
+          "target": "0x002d45e0",
+          "return": "0x002ae998"
+        },
+        {
+          "target": "0x002c4860",
+          "return": "0x002ae9c4"
+        },
+        {
+          "target": "0x002c4358",
+          "return": "0x002ae9d0"
+        },
+        {
+          "target": "0x002c4890",
+          "return": "0x002ae9ec"
+        },
+        {
+          "target": "0x00203ba8",
+          "return": "0x002ae9f4"
+        }
+      ],
+      "continuations": [
+        "0x2ae888",
+        "0x2ae894",
+        "0x2ae8a0",
+        "0x2ae8a4",
+        "0x2ae8b0",
+        "0x2ae8bc",
+        "0x2ae8c8",
+        "0x2ae8cc",
+        "0x2ae8dc",
+        "0x2ae8e8",
+        "0x2ae8f4",
+        "0x2ae914",
+        "0x2ae918",
+        "0x2ae920",
+        "0x2ae930",
+        "0x2ae938",
+        "0x2ae940",
+        "0x2ae950",
+        "0x2ae958",
+        "0x2ae95c",
+        "0x2ae964",
+        "0x2ae96c",
+        "0x2ae97c",
+        "0x2ae98c",
+        "0x2ae998",
+        "0x2ae9a0",
+        "0x2ae9c4",
+        "0x2ae9c8",
+        "0x2ae9d0",
+        "0x2ae9e0",
+        "0x2ae9ec",
+        "0x2ae9f4"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002ae318",
+          "return": "0x002ae3b0"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002aea08",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "1a25008e3ac924e9204c1cd11633b677acdd7f45a07e386292b7cc3bfe318006",
+      "calls": [
+        {
+          "target": "0x002b0f68",
+          "return": "0x002aea1c"
+        },
+        {
+          "target": "0x002d4dc0",
+          "return": "0x002aea48"
+        },
+        {
+          "target": "0x002d4e10",
+          "return": "0x002aea6c"
+        },
+        {
+          "target": "0x002c6ce0",
+          "return": "0x002aea90"
+        },
+        {
+          "target": "0x002d4dc0",
+          "return": "0x002aea98"
+        },
+        {
+          "target": "0x002d4e10",
+          "return": "0x002aeabc"
+        },
+        {
+          "target": "0x002b0e50",
+          "return": "0x002aead0"
+        },
+        {
+          "target": "0x002cf560",
+          "return": "0x002aead8"
+        },
+        {
+          "target": "0x002c6ce0",
+          "return": "0x002aeae8"
+        },
+        {
+          "target": "0x002d4dc0",
+          "return": "0x002aeaf0"
+        },
+        {
+          "target": "0x002d4e10",
+          "return": "0x002aeb00"
+        },
+        {
+          "target": "0x002b0ef8",
+          "return": "0x002aeb10"
+        }
+      ],
+      "continuations": [
+        "0x2aea1c",
+        "0x2aea24",
+        "0x2aea30",
+        "0x2aea40",
+        "0x2aea48",
+        "0x2aea6c",
+        "0x2aea70",
+        "0x2aea7c",
+        "0x2aea90",
+        "0x2aea98",
+        "0x2aeabc",
+        "0x2aead0",
+        "0x2aead8",
+        "0x2aeae8",
+        "0x2aeaf0",
+        "0x2aeb00",
+        "0x2aeb10",
+        "0x2aeb1c",
+        "0x2aeb20"
+      ],
+      "direct_callers": [],
+      "literal_address_words": [
+        "0x00306904"
+      ]
+    },
+    {
+      "entry": "0x002aeb30",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "e75fd3206c0a96d107c71d719dc8e323d887152b75b3b6c67396e4085bf25a4b",
+      "calls": [],
+      "continuations": [
+        "0x2aeb80",
+        "0x2aeb90",
+        "0x2aeb98",
+        "0x2aebac",
+        "0x2aebc4",
+        "0x2aebd4",
+        "0x2aebe8",
+        "0x2aec04",
+        "0x2aec28",
+        "0x2aec3c",
+        "0x2aec58",
+        "0x2aec78",
+        "0x2aec88",
+        "0x2aec90",
+        "0x2aeca4",
+        "0x2aecc0",
+        "0x2aecd0",
+        "0x2aece4",
+        "0x2aed00",
+        "0x2aed24",
+        "0x2aed38",
+        "0x2aed54",
+        "0x2aed74",
+        "0x2aed80",
+        "0x2aedb4",
+        "0x2aef60",
+        "0x2aef68",
+        "0x2aef70",
+        "0x2aefc0",
+        "0x2af05c",
+        "0x2af0b4"
+      ],
+      "direct_callers": [],
+      "literal_address_words": [
+        "0x0030690c"
+      ]
+    },
+    {
+      "entry": "0x002af0d8",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "084536d403b5662887de21e1df0e52e80231b1e2b3eb5b03f0e84d8ef57e8aff",
+      "calls": [
+        {
+          "target": "0x001e5e50",
+          "return": "0x002af16c"
+        },
+        {
+          "target": "0x002b4a78",
+          "return": "0x002af174"
+        }
+      ],
+      "continuations": [
+        "0x2af104",
+        "0x2af12c",
+        "0x2af140",
+        "0x2af148",
+        "0x2af154",
+        "0x2af15c",
+        "0x2af164",
+        "0x2af16c",
+        "0x2af174",
+        "0x2af188",
+        "0x2af190",
+        "0x2af1ac",
+        "0x2af1d8",
+        "0x2af1ec",
+        "0x2af1f4",
+        "0x2af1fc",
+        "0x2af21c",
+        "0x2af234",
+        "0x2af23c",
+        "0x2af250",
+        "0x2af254"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x0017d298",
+          "return": "0x0017d3a4"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002af280",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "e9d44b13cf699c4c8350cde988b7382d94aa4d0e1e5ab0228b55c6ca878ef409",
+      "calls": [
+        {
+          "target": "0x002af3e0",
+          "return": "0x002af310"
+        },
+        {
+          "target": "0x002af3e0",
+          "return": "0x002af324"
+        },
+        {
+          "target": "0x002af3e0",
+          "return": "0x002af354"
+        },
+        {
+          "target": "0x002af3e0",
+          "return": "0x002af368"
+        },
+        {
+          "target": "0x002af3e0",
+          "return": "0x002af380"
+        },
+        {
+          "target": "0x002af3e0",
+          "return": "0x002af398"
+        },
+        {
+          "target": "0x002af3e0",
+          "return": "0x002af3ac"
+        }
+      ],
+      "continuations": [
+        "0x2af2d4",
+        "0x2af2e4",
+        "0x2af2f0",
+        "0x2af2fc",
+        "0x2af310",
+        "0x2af324",
+        "0x2af338",
+        "0x2af344",
+        "0x2af354",
+        "0x2af368",
+        "0x2af378",
+        "0x2af380",
+        "0x2af388",
+        "0x2af398",
+        "0x2af3ac",
+        "0x2af3b0"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002ae018",
+          "return": "0x002ae16c"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002af3e0",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "3cfdbe3738a650f4a8a28fdc35771e3f8f08ef8e6875ca71fd98940b4c465440",
+      "calls": [
+        {
+          "target": "0x002cf6a0",
+          "return": "0x002af418"
+        },
+        {
+          "target": "0x002cf680",
+          "return": "0x002af438"
+        }
+      ],
+      "continuations": [
+        "0x2af3f8",
+        "0x2af410",
+        "0x2af418",
+        "0x2af428",
+        "0x2af430",
+        "0x2af438",
+        "0x2af440",
+        "0x2af444"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002af280",
+          "return": "0x002af310"
+        },
+        {
+          "caller": "0x002af280",
+          "return": "0x002af324"
+        },
+        {
+          "caller": "0x002af280",
+          "return": "0x002af354"
+        },
+        {
+          "caller": "0x002af280",
+          "return": "0x002af368"
+        },
+        {
+          "caller": "0x002af280",
+          "return": "0x002af380"
+        },
+        {
+          "caller": "0x002af280",
+          "return": "0x002af398"
+        },
+        {
+          "caller": "0x002af280",
+          "return": "0x002af3ac"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002af458",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "62e606d0e3e1b9bf2f16d076cc8144ec76306b78098d53905f0fb02622212179",
+      "calls": [
+        {
+          "target": "0x002c4cf0",
+          "return": "0x002af4a0"
+        },
+        {
+          "target": "0x002c4cf0",
+          "return": "0x002af4b4"
+        }
+      ],
+      "continuations": [
+        "0x2af474",
+        "0x2af4a0",
+        "0x2af4b4"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002ae318",
+          "return": "0x002ae628"
+        },
+        {
+          "caller": "0x002ae658",
+          "return": "0x002ae6c8"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002af4c8",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "8a3f644dcda7203e10b043db58cc259c7148bc4a52f004ded26936a5c5b72def",
+      "calls": [],
+      "continuations": [],
+      "direct_callers": [],
+      "literal_address_words": [
+        "0x0030697c"
+      ]
+    },
+    {
+      "entry": "0x002af4d8",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "1305931c75b7a1e4fa9e94cf68e55ba2f9a08898e23ffd5a4a303f624a23148a",
+      "calls": [],
+      "continuations": [],
+      "direct_callers": [],
+      "literal_address_words": [
+        "0x00306984"
+      ]
+    },
+    {
+      "entry": "0x002af500",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "e40070946781b7742f1a6508debde0d2ac482f9528386d3eb2ffb354a1242315",
+      "calls": [
+        {
+          "target": "0x00203ba8",
+          "return": "0x002af520"
+        },
+        {
+          "target": "0x00203ba8",
+          "return": "0x002af534"
+        },
+        {
+          "target": "0x00181590",
+          "return": "0x002af548"
+        }
+      ],
+      "continuations": [
+        "0x2af520",
+        "0x2af534",
+        "0x2af540",
+        "0x2af548",
+        "0x2af54c"
+      ],
+      "direct_callers": [],
+      "literal_address_words": [
+        "0x003068fc"
+      ]
+    },
+    {
+      "entry": "0x002af568",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "354bbfb7275bbfad5599354247fcd14402d7b5767eec55b8dcd61938c4d2f3ef",
+      "calls": [
+        {
+          "target": "0x0019fcb8",
+          "return": "0x002af58c"
+        }
+      ],
+      "continuations": [
+        "0x2af578",
+        "0x2af584",
+        "0x2af58c",
+        "0x2af5a0",
+        "0x2af5a4",
+        "0x2af5a8"
+      ],
+      "direct_callers": [],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002af5d0",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "126fb978e4eeb8462800e4b217342d05af29f8f1ef9742fcc1cdb30e69c26bb6",
+      "calls": [
+        {
+          "target": "0x002c4358",
+          "return": "0x002af5f0"
+        },
+        {
+          "target": "0x002c4900",
+          "return": "0x002af608"
+        },
+        {
+          "target": "0x002c4358",
+          "return": "0x002af610"
+        },
+        {
+          "target": "0x001e6230",
+          "return": "0x002af640"
+        },
+        {
+          "target": "0x002d46c8",
+          "return": "0x002af650"
+        },
+        {
+          "target": "0x002c3bf0",
+          "return": "0x002af668"
+        }
+      ],
+      "continuations": [
+        "0x2af5e8",
+        "0x2af5f0",
+        "0x2af600",
+        "0x2af608",
+        "0x2af610",
+        "0x2af620",
+        "0x2af62c",
+        "0x2af638",
+        "0x2af640",
+        "0x2af648",
+        "0x2af650",
+        "0x2af660",
+        "0x2af668",
+        "0x2af678"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002ae658",
+          "return": "0x002ae6bc"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002af688",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "e26c79f72e5f21fce7e201d7c205a4aa312a043956c65a485e43fd650f7a4aa1",
+      "calls": [
+        {
+          "target": "0x002c48d0",
+          "return": "0x002af69c"
+        }
+      ],
+      "continuations": [
+        "0x2af69c"
+      ],
+      "direct_callers": [],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002af6b0",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "fa6677368a9dbe6c3a8ecf08d8f683576ed5bfd4b70e2d41f03314479f2954fe",
+      "calls": [
+        {
+          "target": "0x002c4938",
+          "return": "0x002af728"
+        },
+        {
+          "target": "0x002c4358",
+          "return": "0x002af740"
+        },
+        {
+          "target": "0x002c4938",
+          "return": "0x002af770"
+        },
+        {
+          "target": "0x002c3bf0",
+          "return": "0x002af788"
+        },
+        {
+          "target": "0x002c4578",
+          "return": "0x002af798"
+        }
+      ],
+      "continuations": [
+        "0x2af6e8",
+        "0x2af6f4",
+        "0x2af6fc",
+        "0x2af700",
+        "0x2af728",
+        "0x2af738",
+        "0x2af740",
+        "0x2af750",
+        "0x2af770",
+        "0x2af774",
+        "0x2af780",
+        "0x2af788",
+        "0x2af790",
+        "0x2af798",
+        "0x2af7a0",
+        "0x2af7ac"
+      ],
+      "direct_callers": [],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002af7d0",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "c5af269ec9038a5fabe4e4dfc4d99a615f2f2e6af774600081b4eef7bfc6a5f1",
+      "calls": [
+        {
+          "target": "0x002afa50",
+          "return": "0x002af7e4"
+        },
+        {
+          "target": "0x002af848",
+          "return": "0x002af834"
+        }
+      ],
+      "continuations": [
+        "0x2af7e4",
+        "0x2af834"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x001007c0",
+          "return": "0x00100bdc"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002af848",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "160457eb41fa0b32b98cb78a016794c36b5a862aca4aa6d0e59eeeee874503ad",
+      "calls": [
+        {
+          "target": "0x00203f88",
+          "return": "0x002af8ac"
+        },
+        {
+          "target": "0x00203f88",
+          "return": "0x002af8c8"
+        },
+        {
+          "target": "0x00203f88",
+          "return": "0x002af8e4"
+        }
+      ],
+      "continuations": [
+        "0x2af868",
+        "0x2af874",
+        "0x2af87c",
+        "0x2af884",
+        "0x2af88c",
+        "0x2af894",
+        "0x2af8ac",
+        "0x2af8b4",
+        "0x2af8c8",
+        "0x2af8d0",
+        "0x2af8e4",
+        "0x2af8e8"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002af7d0",
+          "return": "0x002af834"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002af8f0",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "0c5a6977ce003ec0a79b963a656b50d0bb082f48483febcbd880c81e669b06ce",
+      "calls": [
+        {
+          "target": "0x002af8f4",
+          "tail": true
+        }
+      ],
+      "continuations": [],
+      "direct_callers": [],
+      "literal_address_words": [
+        "0x00306914"
+      ]
+    },
+    {
+      "entry": "0x002af8f4",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "e9cd6f4d6d07730d24d1f60d96b86fbce6afa03bddba7eabf0104a2e45b966d2",
+      "calls": [
+        {
+          "target": "0x002b0fe0",
+          "return": "0x002af93c"
+        }
+      ],
+      "continuations": [
+        "0x2af918",
+        "0x2af920",
+        "0x2af92c",
+        "0x2af934",
+        "0x2af93c",
+        "0x2af948"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002af8f0",
+          "tail": true
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002af968",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "5d33f3e7fc4839820df2cb26fd0e1e28a2fa355cc677f6f56e945a46348fb2df",
+      "calls": [
+        {
+          "target": "0x002b1730",
+          "return": "0x002af990"
+        }
+      ],
+      "continuations": [
+        "0x2af984",
+        "0x2af990",
+        "0x2af9ac"
+      ],
+      "direct_callers": [],
+      "literal_address_words": [
+        "0x0030691c"
+      ]
+    },
+    {
+      "entry": "0x002af9b8",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "2aa4a2848d5ce32dbcee22c0b7ea7b7605c25fd7513dbb497eb011bd8ad548b3",
+      "calls": [
+        {
+          "target": "0x001e6308",
+          "return": "0x002af9d4"
+        },
+        {
+          "target": "0x001e76f8",
+          "return": "0x002af9dc"
+        },
+        {
+          "target": "0x001e70d0",
+          "return": "0x002af9e4"
+        }
+      ],
+      "continuations": [
+        "0x2af9d4",
+        "0x2af9dc",
+        "0x2af9e4"
+      ],
+      "direct_callers": [],
+      "literal_address_words": [
+        "0x00306924"
+      ]
+    },
+    {
+      "entry": "0x002afa00",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "6d05191be19b85dfa852d0c4537a63200f2d2333694ea08e26bdc3addf602f25",
+      "calls": [
+        {
+          "target": "0x001e7740",
+          "return": "0x002afa14"
+        },
+        {
+          "target": "0x001e70d0",
+          "return": "0x002afa1c"
+        },
+        {
+          "target": "0x001e6330",
+          "return": "0x002afa24"
+        }
+      ],
+      "continuations": [
+        "0x2afa14",
+        "0x2afa1c",
+        "0x2afa24"
+      ],
+      "direct_callers": [],
+      "literal_address_words": [
+        "0x0030692c"
+      ]
+    },
+    {
+      "entry": "0x002afa50",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "734c5a6ee14538ad8e2adda8991bc4e1dd4fd5cf4450995691387db2deccad4b",
+      "calls": [
+        {
+          "target": "0x002c6e88",
+          "return": "0x002afa88"
+        }
+      ],
+      "continuations": [
+        "0x2afa88"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002af7d0",
+          "return": "0x002af7e4"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002afac0",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "8f555956f0102d4223b279bebfe6bfaa83d0ccbabafe092b3288f416585781c9",
+      "calls": [
+        {
+          "target": "0x00203ba8",
+          "return": "0x002afaec"
+        },
+        {
+          "target": "0x00181590",
+          "return": "0x002afb00"
+        }
+      ],
+      "continuations": [
+        "0x2afaec",
+        "0x2afaf8",
+        "0x2afb00",
+        "0x2afb04"
+      ],
+      "direct_callers": [],
+      "literal_address_words": [
+        "0x00306954"
+      ]
+    },
+    {
+      "entry": "0x002afb18",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "22a530ae7f26237f7f33d9246608d20b6160073f3ed54f3094b1cd2d3505e6d9",
+      "calls": [
+        {
+          "target": "0x00203f88",
+          "return": "0x002afb64"
+        }
+      ],
+      "continuations": [
+        "0x2afb54",
+        "0x2afb5c",
+        "0x2afb64",
+        "0x2afba8"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x00172b60",
+          "return": "0x00172cb4"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002afbc8",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "a489265edc46eaee61d270148c1df64aac58c69ea92e2908f05ed3f0aadf4246",
+      "calls": [],
+      "continuations": [
+        "0x2afbdc",
+        "0x2afbe4"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x00172b60",
+          "return": "0x00172d28"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002afc00",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "ce25abec99eec5629d50556d38b460b24551bd24f598444722285bab82a2c649",
+      "calls": [
+        {
+          "target": "0x002d4dc0",
+          "return": "0x002afc5c"
+        },
+        {
+          "target": "0x002d4e10",
+          "return": "0x002afcac"
+        },
+        {
+          "target": "0x002cf560",
+          "return": "0x002afcbc"
+        },
+        {
+          "target": "0x002b1640",
+          "return": "0x002afcc8"
+        },
+        {
+          "target": "0x002b1640",
+          "return": "0x002afcdc"
+        },
+        {
+          "target": "0x002b1640",
+          "return": "0x002afd98"
+        },
+        {
+          "target": "0x002b70a8",
+          "return": "0x002afdec"
+        },
+        {
+          "target": "0x002b1120",
+          "return": "0x002afdf4"
+        },
+        {
+          "target": "0x002b0ae0",
+          "return": "0x002afdfc"
+        },
+        {
+          "target": "0x002b1640",
+          "return": "0x002afec8"
+        },
+        {
+          "target": "0x002b70a8",
+          "return": "0x002afee0"
+        },
+        {
+          "target": "0x002b7d48",
+          "return": "0x002aff04"
+        },
+        {
+          "target": "0x002b7d48",
+          "return": "0x002aff1c"
+        },
+        {
+          "target": "0x002b7d48",
+          "return": "0x002aff34"
+        },
+        {
+          "target": "0x002b1120",
+          "return": "0x002aff48"
+        },
+        {
+          "target": "0x002b7cb0",
+          "return": "0x002aff58"
+        },
+        {
+          "target": "0x002b1640",
+          "return": "0x002affe4"
+        },
+        {
+          "target": "0x002b1640",
+          "return": "0x002b0044"
+        },
+        {
+          "target": "0x002b1640",
+          "return": "0x002b0090"
+        },
+        {
+          "target": "0x002b1248",
+          "return": "0x002b00b4"
+        },
+        {
+          "target": "0x002b1640",
+          "return": "0x002b00dc"
+        },
+        {
+          "target": "0x002b1448",
+          "return": "0x002b0100"
+        },
+        {
+          "target": "0x002b1668",
+          "return": "0x002b016c"
+        },
+        {
+          "target": "0x002c10a8",
+          "return": "0x002b01b4"
+        }
+      ],
+      "continuations": [
+        "0x2afc5c",
+        "0x2afcac",
+        "0x2afcb4",
+        "0x2afcbc",
+        "0x2afcc8",
+        "0x2afcd0",
+        "0x2afcdc",
+        "0x2afce4",
+        "0x2afd20",
+        "0x2afd3c",
+        "0x2afd44",
+        "0x2afd50",
+        "0x2afd58",
+        "0x2afd60",
+        "0x2afd68",
+        "0x2afd74",
+        "0x2afd7c",
+        "0x2afd84",
+        "0x2afd88",
+        "0x2afd90",
+        "0x2afd98",
+        "0x2afda0",
+        "0x2afda8",
+        "0x2afdac",
+        "0x2afdb8",
+        "0x2afdc4",
+        "0x2afdcc",
+        "0x2afdd4",
+        "0x2afde0",
+        "0x2afdec",
+        "0x2afdf4",
+        "0x2afdfc",
+        "0x2afe04",
+        "0x2afe0c",
+        "0x2afe14",
+        "0x2afe34",
+        "0x2afe40",
+        "0x2afe48",
+        "0x2afe7c",
+        "0x2afe80",
+        "0x2afe88",
+        "0x2afe90",
+        "0x2afe98",
+        "0x2afea0",
+        "0x2afebc",
+        "0x2afec8",
+        "0x2afed0",
+        "0x2afee0",
+        "0x2afeec",
+        "0x2aff04",
+        "0x2aff1c",
+        "0x2aff20",
+        "0x2aff34",
+        "0x2aff40",
+        "0x2aff48",
+        "0x2aff50",
+        "0x2aff58",
+        "0x2aff60",
+        "0x2aff68",
+        "0x2aff74",
+        "0x2aff80",
+        "0x2aff88",
+        "0x2aff8c",
+        "0x2aff90",
+        "0x2aff94",
+        "0x2aff9c",
+        "0x2affb0",
+        "0x2affbc",
+        "0x2affe4",
+        "0x2affec",
+        "0x2afff0",
+        "0x2b0018",
+        "0x2b0038",
+        "0x2b003c",
+        "0x2b0044",
+        "0x2b0058",
+        "0x2b0064",
+        "0x2b0090",
+        "0x2b00b4",
+        "0x2b00bc",
+        "0x2b00dc",
+        "0x2b0100",
+        "0x2b0104",
+        "0x2b0110",
+        "0x2b0118",
+        "0x2b0140",
+        "0x2b0148",
+        "0x2b016c",
+        "0x2b0178",
+        "0x2b0184",
+        "0x2b018c",
+        "0x2b0194",
+        "0x2b019c",
+        "0x2b01a4",
+        "0x2b01ac",
+        "0x2b01b4",
+        "0x2b01b8"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002b0dc8",
+          "return": "0x002b0e34"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b01e8",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "3f58426ce5de8cf674bea9cbe4aaed62a71da1102c34a57d8f2900365f3fedff",
+      "calls": [
+        {
+          "target": "0x002c1190",
+          "return": "0x002b0244"
+        },
+        {
+          "target": "0x002c12e0",
+          "return": "0x002b0284"
+        },
+        {
+          "target": "0x002c12e0",
+          "return": "0x002b02a0"
+        },
+        {
+          "target": "0x002d4dc0",
+          "return": "0x002b02c4"
+        },
+        {
+          "target": "0x002d4e10",
+          "return": "0x002b02fc"
+        },
+        {
+          "target": "0x002b7d30",
+          "return": "0x002b031c"
+        },
+        {
+          "target": "0x002b7c58",
+          "return": "0x002b034c"
+        },
+        {
+          "target": "0x002c10a8",
+          "return": "0x002b035c"
+        },
+        {
+          "target": "0x002c12e0",
+          "return": "0x002b03ec"
+        },
+        {
+          "target": "0x002b17b8",
+          "return": "0x002b0408"
+        },
+        {
+          "target": "0x002c12e0",
+          "return": "0x002b0414"
+        },
+        {
+          "target": "0x002c1190",
+          "return": "0x002b0424"
+        },
+        {
+          "target": "0x002b7c10",
+          "return": "0x002b044c"
+        },
+        {
+          "target": "0x002b1038",
+          "return": "0x002b04b0"
+        },
+        {
+          "target": "0x002b1038",
+          "return": "0x002b04e8"
+        },
+        {
+          "target": "0x002b16b8",
+          "return": "0x002b0570"
+        },
+        {
+          "target": "0x002b1038",
+          "return": "0x002b0578"
+        },
+        {
+          "target": "0x002b1038",
+          "return": "0x002b05b4"
+        },
+        {
+          "target": "0x002c10a8",
+          "return": "0x002b05d0"
+        },
+        {
+          "target": "0x002c10a8",
+          "return": "0x002b05fc"
+        },
+        {
+          "target": "0x002c12e0",
+          "return": "0x002b0618"
+        },
+        {
+          "target": "0x002c12e0",
+          "return": "0x002b0634"
+        }
+      ],
+      "continuations": [
+        "0x2b0220",
+        "0x2b0228",
+        "0x2b0244",
+        "0x2b025c",
+        "0x2b0268",
+        "0x2b0284",
+        "0x2b02a0",
+        "0x2b02a8",
+        "0x2b02bc",
+        "0x2b02c4",
+        "0x2b02fc",
+        "0x2b0304",
+        "0x2b0314",
+        "0x2b031c",
+        "0x2b0324",
+        "0x2b0340",
+        "0x2b034c",
+        "0x2b0354",
+        "0x2b035c",
+        "0x2b03ec",
+        "0x2b0400",
+        "0x2b0408",
+        "0x2b040c",
+        "0x2b0414",
+        "0x2b041c",
+        "0x2b0424",
+        "0x2b042c",
+        "0x2b044c",
+        "0x2b0454",
+        "0x2b045c",
+        "0x2b0478",
+        "0x2b0484",
+        "0x2b0494",
+        "0x2b04b0",
+        "0x2b04c4",
+        "0x2b04e8",
+        "0x2b04fc",
+        "0x2b0528",
+        "0x2b052c",
+        "0x2b0540",
+        "0x2b0548",
+        "0x2b0558",
+        "0x2b0560",
+        "0x2b0564",
+        "0x2b0570",
+        "0x2b0578",
+        "0x2b058c",
+        "0x2b0598",
+        "0x2b05b4",
+        "0x2b05c8",
+        "0x2b05d0",
+        "0x2b05ec",
+        "0x2b05f4",
+        "0x2b05fc",
+        "0x2b0618",
+        "0x2b0634",
+        "0x2b0638"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002b0e50",
+          "return": "0x002b0e6c"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b0660",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "ceaf8e58b0e499dc00cb713b8812ca518c35f1b8fe5d19080edf1d60e5932da5",
+      "calls": [
+        {
+          "target": "0x002c6ce0",
+          "return": "0x002b073c"
+        },
+        {
+          "target": "0x002c6ce0",
+          "return": "0x002b0768"
+        },
+        {
+          "target": "0x002c6ce0",
+          "return": "0x002b079c"
+        }
+      ],
+      "continuations": [
+        "0x2b0690",
+        "0x2b06a0",
+        "0x2b06b8",
+        "0x2b06c0",
+        "0x2b06d4",
+        "0x2b06dc",
+        "0x2b06e4",
+        "0x2b06f0",
+        "0x2b06f4",
+        "0x2b0700",
+        "0x2b0720",
+        "0x2b073c",
+        "0x2b0768",
+        "0x2b0780",
+        "0x2b079c",
+        "0x2b07b4",
+        "0x2b07b8"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002b0ae0",
+          "return": "0x002b0b80"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b07d8",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "46523e2f71ceb213deca33ed30bc168a6d79c5e3b5ba559e49f37edeef951bf9",
+      "calls": [
+        {
+          "target": "0x002c6ce0",
+          "return": "0x002b084c"
+        },
+        {
+          "target": "0x002c6ce0",
+          "return": "0x002b088c"
+        },
+        {
+          "target": "0x002c6ce0",
+          "return": "0x002b0910"
+        },
+        {
+          "target": "0x002c6ce0",
+          "return": "0x002b0938"
+        },
+        {
+          "target": "0x002c6ce0",
+          "return": "0x002b095c"
+        }
+      ],
+      "continuations": [
+        "0x2b0820",
+        "0x2b0830",
+        "0x2b0840",
+        "0x2b084c",
+        "0x2b0884",
+        "0x2b088c",
+        "0x2b08a8",
+        "0x2b08b0",
+        "0x2b08cc",
+        "0x2b08d8",
+        "0x2b08f8",
+        "0x2b0910",
+        "0x2b0938",
+        "0x2b0940",
+        "0x2b095c",
+        "0x2b0964",
+        "0x2b0978"
+      ],
+      "direct_callers": [],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b0990",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "a0aa2546cc3c9fc4e414f9ec3bbf33631843a904c9d3439c06aae6185b5042e5",
+      "calls": [
+        {
+          "target": "0x002b0ae0",
+          "return": "0x002b0a18"
+        },
+        {
+          "target": "0x002b7ca0",
+          "return": "0x002b0a40"
+        },
+        {
+          "target": "0x002b16b8",
+          "return": "0x002b0a98"
+        }
+      ],
+      "continuations": [
+        "0x2b09b8",
+        "0x2b09d4",
+        "0x2b09dc",
+        "0x2b09e8",
+        "0x2b09fc",
+        "0x2b0a04",
+        "0x2b0a08",
+        "0x2b0a10",
+        "0x2b0a18",
+        "0x2b0a20",
+        "0x2b0a2c",
+        "0x2b0a38",
+        "0x2b0a40",
+        "0x2b0a48",
+        "0x2b0a98",
+        "0x2b0ac0",
+        "0x2b0ac8",
+        "0x2b0acc"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002b1038",
+          "return": "0x002b10e0"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b0ae0",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "beb6f7fc9b1009a10d40b689c2255d4344f284c153624fdf33b5a4b6e284acf5",
+      "calls": [
+        {
+          "target": "0x002b0660",
+          "return": "0x002b0b80"
+        },
+        {
+          "target": "0x002bbe90",
+          "return": "0x002b0c5c"
+        }
+      ],
+      "continuations": [
+        "0x2b0b18",
+        "0x2b0b24",
+        "0x2b0b28",
+        "0x2b0b38",
+        "0x2b0b48",
+        "0x2b0b50",
+        "0x2b0b58",
+        "0x2b0b60",
+        "0x2b0b80",
+        "0x2b0ba8",
+        "0x2b0bb4",
+        "0x2b0bc4",
+        "0x2b0bd4",
+        "0x2b0be4",
+        "0x2b0bf0",
+        "0x2b0c00",
+        "0x2b0c10",
+        "0x2b0c18",
+        "0x2b0c20",
+        "0x2b0c28",
+        "0x2b0c48",
+        "0x2b0c50",
+        "0x2b0c5c",
+        "0x2b0c68",
+        "0x2b0c70",
+        "0x2b0c7c",
+        "0x2b0c88",
+        "0x2b0ca4",
+        "0x2b0cac",
+        "0x2b0ccc",
+        "0x2b0cd4",
+        "0x2b0cec",
+        "0x2b0cf8",
+        "0x2b0cfc",
+        "0x2b0d08"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002afc00",
+          "return": "0x002afdfc"
+        },
+        {
+          "caller": "0x002b0990",
+          "return": "0x002b0a18"
+        },
+        {
+          "caller": "0x002b0fe0",
+          "return": "0x002b0ff0"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b0d30",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "ecdbeefa5cae32c1ac1e64364e689f9b45f9b27e079129cbed2464e210b004a9",
+      "calls": [
+        {
+          "target": "0x002c13c0",
+          "return": "0x002b0d74"
+        },
+        {
+          "target": "0x002b7b50",
+          "return": "0x002b0d7c"
+        },
+        {
+          "target": "0x002b1670",
+          "return": "0x002b0d9c"
+        },
+        {
+          "target": "0x002b1670",
+          "return": "0x002b0dbc"
+        }
+      ],
+      "continuations": [
+        "0x2b0d74",
+        "0x2b0d7c",
+        "0x2b0d9c",
+        "0x2b0dbc"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002ae1c8",
+          "return": "0x002ae1f8"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b0dc8",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "fee94def616c55bf23bd9fee50e1fd8671f156bffd8f16b8b229201f07197a29",
+      "calls": [
+        {
+          "target": "0x002afc00",
+          "return": "0x002b0e34"
+        }
+      ],
+      "continuations": [
+        "0x2b0e34"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002ae318",
+          "return": "0x002ae3f8"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b0e50",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "d0432115fe065260b823e4fcc17dce4157d418b247fe5feda9177039e78984dd",
+      "calls": [
+        {
+          "target": "0x002b01e8",
+          "return": "0x002b0e6c"
+        },
+        {
+          "target": "0x002b15f8",
+          "return": "0x002b0ed4"
+        }
+      ],
+      "continuations": [
+        "0x2b0e6c",
+        "0x2b0e74",
+        "0x2b0e88",
+        "0x2b0e90",
+        "0x2b0ed4",
+        "0x2b0edc",
+        "0x2b0ee0"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002ae318",
+          "return": "0x002ae458"
+        },
+        {
+          "caller": "0x002ae318",
+          "return": "0x002ae528"
+        },
+        {
+          "caller": "0x002aea08",
+          "return": "0x002aead0"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b0ef8",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "2e47e912606fb6f9202a79fda735e007f0cd956b43555f517ebfcade3e2866e1",
+      "calls": [],
+      "continuations": [
+        "0x2b0f14",
+        "0x2b0f2c",
+        "0x2b0f58"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002ae318",
+          "return": "0x002ae57c"
+        },
+        {
+          "caller": "0x002aea08",
+          "return": "0x002aeb10"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b0f68",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "bb454e6858023dab7fc26222849866545f59c729ee1f28d347abfd1dfbc5ee11",
+      "calls": [
+        {
+          "target": "0x002b7d30",
+          "return": "0x002b0fc0"
+        }
+      ],
+      "continuations": [
+        "0x2b0f84",
+        "0x2b0f94",
+        "0x2b0fa0",
+        "0x2b0fa8",
+        "0x2b0fb8",
+        "0x2b0fc0",
+        "0x2b0fc8",
+        "0x2b0fcc"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002ae318",
+          "return": "0x002ae584"
+        },
+        {
+          "caller": "0x002aea08",
+          "return": "0x002aea1c"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b0fe0",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "97397b2faa65c59da10885fce3fdb566308a6df49f4baa4c13a729984bbc8a51",
+      "calls": [
+        {
+          "target": "0x002b0ae0",
+          "return": "0x002b0ff0"
+        }
+      ],
+      "continuations": [
+        "0x2b0ff0"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002ae318",
+          "return": "0x002ae570"
+        },
+        {
+          "caller": "0x002af8f4",
+          "return": "0x002af93c"
+        },
+        {
+          "caller": "0x002b17b8",
+          "return": "0x002b17dc"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b1000",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "37ad88309a2ca6884908bb413d7ca17931da51087190896116552a5cafe8c81b",
+      "calls": [
+        {
+          "target": "0x002b7c00",
+          "return": "0x002b1028"
+        }
+      ],
+      "continuations": [
+        "0x2b1020",
+        "0x2b1028",
+        "0x2b102c"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002ae658",
+          "return": "0x002ae734"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b1038",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "13fcdc170da7dd25eba7fe11dcad0de54e567003f4c91656f66f23fdcf0bcda6",
+      "calls": [
+        {
+          "target": "0x002b0990",
+          "return": "0x002b10e0"
+        }
+      ],
+      "continuations": [
+        "0x2b1064",
+        "0x2b1080",
+        "0x2b1090",
+        "0x2b10a0",
+        "0x2b10b0",
+        "0x2b10b8",
+        "0x2b10c4",
+        "0x2b10d0",
+        "0x2b10e0",
+        "0x2b10e8",
+        "0x2b10f8",
+        "0x2b1104",
+        "0x2b1108"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002b01e8",
+          "return": "0x002b04b0"
+        },
+        {
+          "caller": "0x002b01e8",
+          "return": "0x002b04e8"
+        },
+        {
+          "caller": "0x002b01e8",
+          "return": "0x002b0578"
+        },
+        {
+          "caller": "0x002b01e8",
+          "return": "0x002b05b4"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b1120",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "b6305de09dff81f4f3c731c4238123ca931e9ddb033906fd9576fc0c289f2f9b",
+      "calls": [
+        {
+          "target": "0x002bbeb0",
+          "return": "0x002b1160"
+        },
+        {
+          "target": "0x002bbeb0",
+          "return": "0x002b1184"
+        },
+        {
+          "target": "0x002bbeb0",
+          "return": "0x002b11d0"
+        },
+        {
+          "target": "0x002bbeb0",
+          "return": "0x002b11f8"
+        }
+      ],
+      "continuations": [
+        "0x2b1144",
+        "0x2b1160",
+        "0x2b1168",
+        "0x2b1184",
+        "0x2b118c",
+        "0x2b119c",
+        "0x2b11b0",
+        "0x2b11b8",
+        "0x2b11c8",
+        "0x2b11d0",
+        "0x2b11d8",
+        "0x2b11e0",
+        "0x2b11f8",
+        "0x2b11fc"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002afc00",
+          "return": "0x002afdf4"
+        },
+        {
+          "caller": "0x002afc00",
+          "return": "0x002aff48"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b1208",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "355980dc2e39b94d687383fb119fe8dea764b3e1da94391d47eb9e99374e9840",
+      "calls": [
+        {
+          "target": "0x002b17b8",
+          "return": "0x002b1220"
+        },
+        {
+          "target": "0x002c12e0",
+          "return": "0x002b122c"
+        }
+      ],
+      "continuations": [
+        "0x2b1218",
+        "0x2b1220",
+        "0x2b122c",
+        "0x2b1234"
+      ],
+      "direct_callers": [],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b1240",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "7c523ceddca4b5a69918f2f6fbc756b28d0002274d8e4b8954550cb5b5b9e519",
+      "calls": [],
+      "continuations": [],
+      "direct_callers": [],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b1248",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "2e9130f309487a77914aa9747ddc00604af52ecd006978ad76d86e6a14124b36",
+      "calls": [
+        {
+          "target": "0x002cfbc0",
+          "return": "0x002b12b4"
+        }
+      ],
+      "continuations": [
+        "0x2b12b4",
+        "0x2b1320",
+        "0x2b1328",
+        "0x2b1330",
+        "0x2b1378",
+        "0x2b13fc",
+        "0x2b140c"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002afc00",
+          "return": "0x002b00b4"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b1448",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "8e903868557ecb091ffca5c6d1824aef61d392728dfcbf0c62e3a070ea750d83",
+      "calls": [
+        {
+          "target": "0x002cfbc0",
+          "return": "0x002b14a8"
+        }
+      ],
+      "continuations": [
+        "0x2b1478",
+        "0x2b1480",
+        "0x2b1484",
+        "0x2b14a8",
+        "0x2b1518",
+        "0x2b1550",
+        "0x2b15c8"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002afc00",
+          "return": "0x002b0100"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b15f8",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "51b4314f1ac2206c4741ff39c7d345d4febbc8ebec42981eb8a6d091a377412b",
+      "calls": [],
+      "continuations": [],
+      "direct_callers": [
+        {
+          "caller": "0x002b0e50",
+          "return": "0x002b0ed4"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b1630",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "e419942761e2f450f8e5c3d08510fa07138f222ba20f96647b240aae04d9f92e",
+      "calls": [],
+      "continuations": [],
+      "direct_callers": [
+        {
+          "caller": "0x002ae1c8",
+          "return": "0x002ae250"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b1640",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "294d8d70153c7c357e86466d28d3b1df0d56fafff2c9a9d4eea59941a1f841f7",
+      "calls": [],
+      "continuations": [],
+      "direct_callers": [
+        {
+          "caller": "0x002afc00",
+          "return": "0x002afcc8"
+        },
+        {
+          "caller": "0x002afc00",
+          "return": "0x002afcdc"
+        },
+        {
+          "caller": "0x002afc00",
+          "return": "0x002afd98"
+        },
+        {
+          "caller": "0x002afc00",
+          "return": "0x002afec8"
+        },
+        {
+          "caller": "0x002afc00",
+          "return": "0x002affe4"
+        },
+        {
+          "caller": "0x002afc00",
+          "return": "0x002b0044"
+        },
+        {
+          "caller": "0x002afc00",
+          "return": "0x002b0090"
+        },
+        {
+          "caller": "0x002afc00",
+          "return": "0x002b00dc"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b1668",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "7ed5974de466a2fae57d49960e1033bde8eee8b9e6103670200f39c354d1a523",
+      "calls": [],
+      "continuations": [],
+      "direct_callers": [
+        {
+          "caller": "0x002afc00",
+          "return": "0x002b016c"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b1670",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "51676a4860ac21e9352382e9d23dc8f16faaa84cad7d0fa1d36f688f1dcee4b1",
+      "calls": [],
+      "continuations": [],
+      "direct_callers": [
+        {
+          "caller": "0x002b0d30",
+          "return": "0x002b0d9c"
+        },
+        {
+          "caller": "0x002b0d30",
+          "return": "0x002b0dbc"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b16b8",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "c7a489fb5a740ffe38472e5c1f787dcc59f024773957bd920c288d3272ed1a73",
+      "calls": [],
+      "continuations": [
+        "0x2b16e8",
+        "0x2b16f0"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002b01e8",
+          "return": "0x002b0570"
+        },
+        {
+          "caller": "0x002b0990",
+          "return": "0x002b0a98"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b1730",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "35034abf93fe04ce748eed8083c0a8d5453e4a8f0f062d94e8b97678558261b4",
+      "calls": [],
+      "continuations": [
+        "0x2b1760",
+        "0x2b1768"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002af968",
+          "return": "0x002af990"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b17b8",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "2450f9df8ad9617c152c7aa6de5549920b60640183f585ae911afe131164a2ec",
+      "calls": [
+        {
+          "target": "0x002b0fe0",
+          "return": "0x002b17dc"
+        }
+      ],
+      "continuations": [
+        "0x2b17cc",
+        "0x2b17d4",
+        "0x2b17dc"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002b01e8",
+          "return": "0x002b0408"
+        },
+        {
+          "caller": "0x002b1208",
+          "return": "0x002b1220"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b70a8",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "2f5e6fc7ef4e3a763a15d6807deef084deb7fa0a46ebe8b65b5baf851bdeecf6",
+      "calls": [
+        {
+          "target": "0x002c6e88",
+          "return": "0x002b70d8"
+        },
+        {
+          "target": "0x002bc158",
+          "return": "0x002b7104"
+        },
+        {
+          "target": "0x002b8018",
+          "return": "0x002b7128"
+        },
+        {
+          "target": "0x002b8050",
+          "return": "0x002b71d0"
+        },
+        {
+          "target": "0x002b6fd8",
+          "return": "0x002b721c"
+        },
+        {
+          "target": "0x002b7cb0",
+          "return": "0x002b7224"
+        },
+        {
+          "target": "0x002b7ec8",
+          "return": "0x002b722c"
+        },
+        {
+          "target": "0x002b8030",
+          "return": "0x002b727c"
+        },
+        {
+          "target": "0x002bc1b0",
+          "return": "0x002b72b8"
+        }
+      ],
+      "continuations": [
+        "0x2b70d8",
+        "0x2b70f8",
+        "0x2b7104",
+        "0x2b710c",
+        "0x2b7128",
+        "0x2b71d0",
+        "0x2b721c",
+        "0x2b7224",
+        "0x2b722c",
+        "0x2b727c",
+        "0x2b7290",
+        "0x2b72a0",
+        "0x2b72a8",
+        "0x2b72b0",
+        "0x2b72b8",
+        "0x2b72c0",
+        "0x2b72c4"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002afc00",
+          "return": "0x002afdec"
+        },
+        {
+          "caller": "0x002afc00",
+          "return": "0x002afee0"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b7b50",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "4b20c42fc8767775401f348544b9bb29af3d1297a48c9e2826a2d1f98c9a4994",
+      "calls": [
+        {
+          "target": "0x002d4dc0",
+          "return": "0x002b7b60"
+        },
+        {
+          "target": "0x002d4e10",
+          "return": "0x002b7bd4"
+        },
+        {
+          "target": "0x002c13c0",
+          "return": "0x002b7bf0"
+        }
+      ],
+      "continuations": [
+        "0x2b7b60",
+        "0x2b7bcc",
+        "0x2b7bd4",
+        "0x2b7bd8",
+        "0x2b7bf0"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002b0d30",
+          "return": "0x002b0d7c"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b7c00",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "a422345992b0386f65ad87116bd46d7945f65411a34b9f72a42320e10cf92dd5",
+      "calls": [],
+      "continuations": [],
+      "direct_callers": [
+        {
+          "caller": "0x002b1000",
+          "return": "0x002b1028"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b7c10",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "a60cf240d212b0f3e97419b366a17debc9d1689fdb3626d821078f3ca2ce4483",
+      "calls": [
+        {
+          "target": "0x002b73a8",
+          "return": "0x002b7c4c"
+        }
+      ],
+      "continuations": [
+        "0x2b7c4c"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002b01e8",
+          "return": "0x002b044c"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b7c58",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "128507ed81ef1b4b6a7013be7f95189668794c973e52ea02a74910de085ff038",
+      "calls": [
+        {
+          "target": "0x002b73a8",
+          "return": "0x002b7c90"
+        }
+      ],
+      "continuations": [
+        "0x2b7c90"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002b01e8",
+          "return": "0x002b034c"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b7cb0",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "697a8c08e71086d51c99f5ac779a4f893a50eb9a2ce88e17141ea97a299fd889",
+      "calls": [
+        {
+          "target": "0x002b72e0",
+          "return": "0x002b7cec"
+        }
+      ],
+      "continuations": [
+        "0x2b7cec"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002afc00",
+          "return": "0x002aff58"
+        },
+        {
+          "caller": "0x002b70a8",
+          "return": "0x002b7224"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b80c0",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "1ff8c9b54fc3dd553653d81e8f847c4afeff7ac02ed746d2fc9ab962d101b256",
+      "calls": [
+        {
+          "target": "0x002c10a8",
+          "return": "0x002b80d4"
+        }
+      ],
+      "continuations": [
+        "0x2b80d4"
+      ],
+      "direct_callers": [],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b80e8",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "3e642008f791f75ee62894ac6a7d9d778e310d54c4b8d7cefe197d8aa2d8356a",
+      "calls": [
+        {
+          "target": "0x002c1190",
+          "return": "0x002b80fc"
+        }
+      ],
+      "continuations": [
+        "0x2b80fc"
+      ],
+      "direct_callers": [],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002b8110",
+      "source": "games/<title>/recomp/recompiled_shard_029.cpp",
+      "body_sha256": "9af161866ce3f9ddcea3a33e35c01d6f8711d16c8d45047bc9d9952f8b7fd5ce",
+      "calls": [
+        {
+          "target": "0x002d4dc0",
+          "return": "0x002b8210"
+        },
+        {
+          "target": "0x002d4e10",
+          "return": "0x002b8254"
+        },
+        {
+          "target": "0x002d4dc0",
+          "return": "0x002b828c"
+        },
+        {
+          "target": "0x002d4e10",
+          "return": "0x002b82d0"
+        }
+      ],
+      "continuations": [
+        "0x2b8170",
+        "0x2b817c",
+        "0x2b8184",
+        "0x2b8190",
+        "0x2b81a0",
+        "0x2b81ac",
+        "0x2b81b0",
+        "0x2b81bc",
+        "0x2b81e4",
+        "0x2b81f0",
+        "0x2b81f8",
+        "0x2b8204",
+        "0x2b8208",
+        "0x2b8210",
+        "0x2b824c",
+        "0x2b8254",
+        "0x2b8258",
+        "0x2b8268",
+        "0x2b8284",
+        "0x2b828c",
+        "0x2b82c8",
+        "0x2b82d0",
+        "0x2b82d4",
+        "0x2b82e0",
+        "0x2b82fc",
+        "0x2b8308",
+        "0x2b8324",
+        "0x2b8334",
+        "0x2b833c",
+        "0x2b8344",
+        "0x2b8370"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002b83a0",
+          "return": "0x002b8610"
+        },
+        {
+          "caller": "0x002b8660",
+          "return": "0x002b8a20"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002bed28",
+      "source": "games/<title>/recomp/recompiled_shard_030.cpp",
+      "body_sha256": "da99b91a31f541c4a085772905b272a03e08a6e6b04bb224cf1e73003d2bb053",
+      "calls": [
+        {
+          "target": "0x002d4dc0",
+          "return": "0x002bee24"
+        },
+        {
+          "target": "0x002d4e10",
+          "return": "0x002bee24"
+        }
+      ],
+      "continuations": [
+        "0x2bed4c",
+        "0x2bed84",
+        "0x2bed98",
+        "0x2bee10",
+        "0x2bee18",
+        "0x2bee1c",
+        "0x2bee24",
+        "0x2bee7c",
+        "0x2bee90"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002bca80",
+          "return": "0x002bcbac"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002c10a8",
+      "source": "games/<title>/recomp/recompiled_shard_030.cpp",
+      "body_sha256": "33f6c6e5f85ae3e6bbec248865f2a16cb3208c67b99594b339791cc5f89ef49c",
+      "calls": [
+        {
+          "target": "0x002c1030",
+          "return": "0x002c10c0"
+        },
+        {
+          "target": "0x002c0fb8",
+          "return": "0x002c112c"
+        }
+      ],
+      "continuations": [
+        "0x2c10c0",
+        "0x2c1108",
+        "0x2c1124",
+        "0x2c112c"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002afc00",
+          "return": "0x002b01b4"
+        },
+        {
+          "caller": "0x002b01e8",
+          "return": "0x002b035c"
+        },
+        {
+          "caller": "0x002b01e8",
+          "return": "0x002b05d0"
+        },
+        {
+          "caller": "0x002b01e8",
+          "return": "0x002b05fc"
+        },
+        {
+          "caller": "0x002b80c0",
+          "return": "0x002b80d4"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002c1190",
+      "source": "games/<title>/recomp/recompiled_shard_030.cpp",
+      "body_sha256": "706b6b7cfad1620150a7b1103aecbcf9f5cf18984127b3ead3005ba1d4cc8bff",
+      "calls": [
+        {
+          "target": "0x002c0fb8",
+          "return": "0x002c1214"
+        },
+        {
+          "target": "0x002c1030",
+          "return": "0x002c1214"
+        }
+      ],
+      "continuations": [
+        "0x2c11e4",
+        "0x2c11f0",
+        "0x2c1214",
+        "0x2c1220",
+        "0x2c123c",
+        "0x2c1250",
+        "0x2c126c",
+        "0x2c1274",
+        "0x2c127c",
+        "0x2c12c8",
+        "0x2c12cc"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002b01e8",
+          "return": "0x002b0244"
+        },
+        {
+          "caller": "0x002b01e8",
+          "return": "0x002b0424"
+        },
+        {
+          "caller": "0x002b80e8",
+          "return": "0x002b80fc"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002c12e0",
+      "source": "games/<title>/recomp/recompiled_shard_030.cpp",
+      "body_sha256": "133b162438bc18421faf4fcf4e37e82e4ca7c4ce6b43397ca195737d9c081a7e",
+      "calls": [],
+      "continuations": [
+        "0x2c12e8",
+        "0x2c12f4",
+        "0x2c12fc",
+        "0x2c1308",
+        "0x2c1324",
+        "0x2c132c",
+        "0x2c133c",
+        "0x2c1340"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002b01e8",
+          "return": "0x002b0284"
+        },
+        {
+          "caller": "0x002b01e8",
+          "return": "0x002b02a0"
+        },
+        {
+          "caller": "0x002b01e8",
+          "return": "0x002b03ec"
+        },
+        {
+          "caller": "0x002b01e8",
+          "return": "0x002b0414"
+        },
+        {
+          "caller": "0x002b01e8",
+          "return": "0x002b0618"
+        },
+        {
+          "caller": "0x002b01e8",
+          "return": "0x002b0634"
+        },
+        {
+          "caller": "0x002b1208",
+          "return": "0x002b122c"
+        },
+        {
+          "caller": "0x002b72e0",
+          "return": "0x002b7360"
+        }
+      ],
+      "literal_address_words": []
+    },
+    {
+      "entry": "0x002c13c0",
+      "source": "games/<title>/recomp/recompiled_shard_030.cpp",
+      "body_sha256": "77c1ae921a0174d55256f3a0af9c4cbefadd0ea902960b6e54280ac1ba94a1db",
+      "calls": [
+        {
+          "target": "0x002c1348",
+          "return": "0x002c13d0"
+        }
+      ],
+      "continuations": [
+        "0x2c13d0",
+        "0x2c13e8",
+        "0x2c1404",
+        "0x2c1418",
+        "0x2c1434",
+        "0x2c14a0",
+        "0x2c14bc",
+        "0x2c14d8",
+        "0x2c14f4",
+        "0x2c1530",
+        "0x2c154c",
+        "0x2c1568",
+        "0x2c1584",
+        "0x2c15a0",
+        "0x2c15bc",
+        "0x2c15d0",
+        "0x2c15ec"
+      ],
+      "direct_callers": [
+        {
+          "caller": "0x002b0d30",
+          "return": "0x002b0d74"
+        },
+        {
+          "caller": "0x002b7b50",
+          "return": "0x002b7bf0"
+        }
+      ],
+      "literal_address_words": []
+    }
+  ]
+}

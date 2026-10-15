@@ -1,0 +1,55 @@
+# .github/workflows/linux-gcc.yml -- the GCC lanes of Track B1 (Herschel), carried out of the
+# retired linux.yml stub. NOT in the ci.yml gate: GCC 13 cannot compile the generated
+# games/<title>/recomp/recompiled.cpp today (initialize_recompiled_functions() is one function
+# with 8,807 x 2 lambda-carrying statements; cc1plus exceeds 9.7 GiB and is killed -- CHARTER2_B1.md),
+# so the lane is red by construction on main f8cb78cd. Herschel's port-linux c836a8bd ("Compact init
+# table": --init-parts 32 + `&FUN_` registrations; GCC 13.3 compiles the TU in 23 s / 887 MB RSS,
+# observed in his VM) removes the blocker; after it integrates, this lane joins the ci.yml matrix.
+# Until then: manual + weekly, continue-on-error, so the day it goes green is visible without gating.
+# Game files never in the repository, never in CI: the same source-tree asset scan and asset guard
+# as ci.yml (the oracle images are private fixtures outside the tree; those tests SKIP 77 here).
+name: NativeEE linux-gcc
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 5 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  gcc:
+    name: ${{ matrix.preset }} / ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04,     arch: x86-64,  preset: linux-release-gcc }
+          - { os: ubuntu-24.04-arm, arch: aarch64, preset: linux-release-gcc }
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - name: Asset scan over the source tree
+        run: python3 tools/ci/asset_scan.py --tree .
+      - name: Asset guard (--mode ci)
+        run: python3 tools/ci/asset_guard.py --root . --mode ci
+      - name: Dependencies (the Dockerfile's list)
+        run: |
+          sudo apt-get update
+          # shellcheck disable=SC2046
+          sudo apt-get install -y --no-install-recommends $(grep -v '^#' tools/ci/linux_packages.txt | xargs)
+      - name: Configure + build + component suite (tools/ci/linux_build.sh; -k 0 is not used -- the first failing TU names the blocker)
+        run: bash tools/ci/linux_build.sh ${{ matrix.preset }} 3 2
+      - name: Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.preset }}-${{ matrix.arch }}
+          path: |
+            build-${{ matrix.preset }}/ps2r_configure.log
+            build-${{ matrix.preset }}/ps2r_build.log
+            build-${{ matrix.preset }}/ps2r_ctest.log
+          if-no-files-found: ignore

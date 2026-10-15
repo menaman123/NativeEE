@@ -1,0 +1,14 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "nativeee",
+  "version-string": "0.0.0",
+  "description": "Windows dependency manifest (the windows-* presets read it through the vcpkg toolchain): the two runtime libraries the binary links, nothing else. macOS and Linux take the same two from Homebrew / the distribution.",
+  "dependencies": [
+    "sdl2",
+    {
+      "name": "ffmpeg",
+      "default-features": false,
+      "features": ["avcodec", "swscale"]
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+# tools/ci/asset_guard_pins.tsv -- class C: small binary fixtures allowed exactly as pinned
+# (path<TAB>bytes<TAB>sha256). Regenerate with
+#   python3 tools/ci/asset_guard.py --root . --write-pins <paths...>
+# The game-derived fixtures that used to be pinned here (the title-screen atlas pages / vertex
+# records, tests/vu/fixtures/*.bin) are NOT in the public tree any more: they are private
+# fixtures (cmake/Ps2rPrivateFixtures.cmake, $NATIVEEE_PRIVATE_FIXTURES). The one remaining pin
+# is NOT game data: og_tables.bin holds the PS2 GS hardware block/column swizzle tables (PSMCT32
+# {0,1,4,5,16,17,20,21,...}, columnTable32 {0,1,4,5,8,9,12,13,...}: GS User's Manual / PCSX2
+# GSLocalMemory constants) lifted from the previous project's source by tests/oracle/lift_og_tables.py.
+tests/oracle/og_tables.bin	2772	fbbe095b2b0f0a0b49472daeb6572f0852ed314fc5232dc23851e9e06ad22a91

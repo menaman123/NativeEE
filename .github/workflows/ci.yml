@@ -1,0 +1,322 @@
+# .github/workflows/ci.yml -- the Charter 2 Track B3 matrix: five Release targets x the component
+# suite, per push / PR, and the artifact + identity lanes release.yml consumes (workflow_call).
+#
+#   guard     game files NEVER in the repository, NEVER in CI. The first step is the source-tree
+#             asset scan (tools/ci/asset_scan.py --tree .: names, format magic, byte windows of the
+#             title's ELF, raster images, > 1 MB files, pasted byte arrays -- zero findings or the
+#             workflow fails before anything builds); the asset guard (class A disc / extracted game
+#             files, class B oracle images) runs behind it. The game-derived oracle images (RAM
+#             savestates, GS dumps, console shots, the title's data map, the VU0 captures) live
+#             OUTSIDE the tree as private fixtures ($NATIVEEE_PRIVATE_FIXTURES, cmake/
+#             Ps2rPrivateFixtures.cmake); the tests that need them SKIP 77 here. The harness tools'
+#             selftests and actionlint over these workflows run here too.
+#   build     {macos-14 arm64, macos-15-intel x86-64, windows-2022 x64, ubuntu-24.04 x64,
+#              ubuntu-24.04-arm aarch64} x Release: configure + build through the CMake presets
+#             (0 FAILED / 0 warning: / 0 ld: warning is the gate, as on the dev host), the
+#             component suite `ctest -E '^Root'` (the Root legs need the game files: never here),
+#             the math oracles in --digest mode -> the identity lane, the dist/<dist>/ folder
+#             (build.sh / build.ps1: macos, windows-x86_64) scanned by the asset guard and uploaded.
+#   linux-dist the shipped Linux artifact (Track C1): ./build.sh in the tools/ci/linux.Dockerfile
+#             toolchain image = the static linux-dist preset, dist/linux-<arch>/, scanned, uploaded.
+#   identity  the cross-platform hash-identity check CI can make without the disc: every target's
+#             `oracles` lane (the deterministic math oracles' per-channel SHA-256: inputs, the
+#             model / selected / control arms' outputs, counters, fixtures) must be IDENTICAL to
+#             the macOS arm64 reference lane (verify/component_identity.py -> platform_identity.py).
+#             The padlog-replay identity (frames/audio/drawir/gsops/mem) stays a local gate:
+#             games/<title>/verify/platform_ref/README.md.
+#
+# Local validation: `actionlint .github/workflows/*.yml`. What the Windows lane will print first,
+# and what was pre-empted from macOS (the cross-compile smoke tools/build/win_cross_smoke.py /
+# ctest PlatformWindowsCrossSmoke): docs/design/PLATFORMS.md section 4.
+#
+# TITLE LANES. The shipped binary is the recompiled title plus the engine, so staging dist/ needs
+# a title input (NATIVEEE_TITLE_ELF / NATIVEEE_DISC, cmake/TitleInputs.cmake) that a public runner
+# never has. The `Stage dist/` steps, the `linux-dist` job and release.yml's `release` job are
+# therefore gated on the repository variable NATIVEEE_TITLE_LANES == 'true' (Settings -> Secrets
+# and variables -> Actions -> Variables). The identity lane is a title lane as well: the math
+# oracles that write the --digest channels are generated-body oracles, registered only with a
+# title input. Leave the variable unset on the public repository: guard and the five build lanes
+# (configure / build / component suite) run without any game data. Set it only on a runner whose
+# environment supplies the title input (a self-hosted runner with NATIVEEE_TITLE_ELF exported;
+# the linux-dist container inherits it).
+name: NativeEE CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+# The public tree carries no game bytes (the oracle images are private fixtures outside the
+# repository), so every job uses a plain full checkout; the asset scan in `guard` is what proves
+# it on every run. The private fixtures are never on a runner: NATIVEEE_PRIVATE_FIXTURES is unset
+# here and every test that needs one SKIPs (77).
+jobs:
+  guard:
+    name: asset scan (tree) + asset guard + tool selftests + actionlint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      # THE gate: zero findings over the whole source tree or the workflow fails here, before any
+      # build job starts (the build / linux-dist jobs `needs: guard`).
+      - name: Asset scan over the source tree (names / magic / ELF windows / images / size / arrays)
+        run: python3 tools/ci/asset_scan.py --tree . --report asset_scan_tree.md
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: asset-scan-tree
+          path: asset_scan_tree.md
+          if-no-files-found: ignore
+      - name: Asset guard (--mode ci -- class A or B anywhere in the checkout fails)
+        run: python3 tools/ci/asset_guard.py --root . --mode ci
+      - name: Harness tool selftests
+        run: |
+          python3 tools/ci/asset_scan.py --selftest
+          python3 tools/ci/asset_guard.py --selftest
+          python3 tests/lib/private_fixture_runner.py --selftest
+          python3 tests/lib/private_fixtures.py --selftest
+          python3 tools/build/clang_cl_shim.py --selftest
+          python3 verify/platform_identity.py --selftest
+          python3 verify/component_identity.py --selftest
+      - name: actionlint
+        run: docker run --rm -v "$PWD:/repo" --workdir /repo rhysd/actionlint:latest -color
+
+  build:
+    name: ${{ matrix.target }}
+    needs: guard
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # dist = the folder build.sh / build.ps1 stage under dist/ (macos, windows-x86_64,
+          # linux-<uname -m>); the Linux lanes' shipped artifact is the linux-dist job below.
+          - { os: macos-14,         target: macos-arm64,   preset: macos-release,       platform: macos,   dist: macos,          jobs: 3 }
+          # macos-15-intel is the x86-64 label that succeeded the retired macos-13 image.
+          - { os: macos-15-intel,   target: macos-x86_64,  preset: macos-release,       platform: macos,   dist: macos,          jobs: 3 }
+          - { os: windows-2022,     target: windows-x64,   preset: windows-release,     platform: windows, dist: windows-x86_64, jobs: 3 }
+          - { os: ubuntu-24.04,     target: linux-x86_64,  preset: linux-release-clang, platform: linux,   dist: linux-x86_64,   jobs: 3 }
+          - { os: ubuntu-24.04-arm, target: linux-aarch64, preset: linux-release-clang, platform: linux,   dist: linux-aarch64,  jobs: 3 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 240
+    env:
+      PS2R_DIGESTS: ${{ github.workspace }}/identity/digests
+      PS2R_LANES: ${{ github.workspace }}/identity/lanes
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Asset guard (--mode ci)
+        shell: bash
+        run: python3 tools/ci/asset_guard.py --root . --mode ci
+
+      # --- dependencies per host -------------------------------------------------------------
+      - name: Dependencies (macOS -- Homebrew)
+        if: matrix.platform == 'macos'
+        run: brew install cmake ninja sdl2 ffmpeg
+
+      - name: Dependencies (Linux -- the Dockerfile's list)
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          # shellcheck disable=SC2046
+          sudo apt-get install -y --no-install-recommends $(grep -v '^#' tools/ci/linux_packages.txt | xargs)
+
+      - name: Dependencies (Windows -- vcpkg manifest, MSVC environment, Python for the shim)
+        if: matrix.platform == 'windows'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: vcpkg checkout
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          git clone --depth 1 https://github.com/microsoft/vcpkg.git $env:VCPKG_ROOT
+          & "$env:VCPKG_ROOT/bootstrap-vcpkg.bat" -disableMetrics
+          New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+      - name: vcpkg binary cache (restore)
+        if: matrix.platform == 'windows'
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+      - name: MSVC developer environment (clang-cl, Ninja, the Windows SDK on PATH)
+        if: matrix.platform == 'windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # --- configure + build through the presets ------------------------------------------
+      - name: Configure (cmake --preset ${{ matrix.preset }})
+        shell: bash
+        run: cmake --preset ${{ matrix.preset }} -DPS2R_MATH_ORACLE_DIGEST_DIR="$PS2R_DIGESTS"
+
+      # The vcpkg packages are worth keeping even when the build below fails (the FFmpeg port
+      # alone is most of a cold run); save right after configure, unconditionally.
+      - name: vcpkg binary cache (save)
+        if: matrix.platform == 'windows' && always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+
+      - name: "Build (0 FAILED / 0 warning: / 0 ld: warning)"
+        shell: bash
+        run: |
+          set -o pipefail
+          cmake --build --preset ${{ matrix.preset }} -j ${{ matrix.jobs }} 2>&1 | tee build.log
+          n_warn=$(grep -c 'warning:' build.log || true)
+          n_ldwarn=$(grep -c 'ld: warning' build.log || true)
+          echo "build: warning: $n_warn, ld: warning $n_ldwarn"
+          test "$n_warn" -eq 0 && test "$n_ldwarn" -eq 0
+
+      # --- the component suite (no game files; the Root legs stay local) -------------------
+      - name: Component suite (ctest -E '^Root')
+        shell: bash
+        run: |
+          if [ "${{ matrix.platform }}" = linux ]; then
+            export SDL_VIDEODRIVER=x11 LIBGL_ALWAYS_SOFTWARE=1
+            xvfb-run -a -s "-screen 0 1280x1024x24" \
+              ctest --preset ${{ matrix.preset }} -E '^Root' -j ${{ matrix.jobs }} --timeout 900 --output-on-failure
+          else
+            ctest --preset ${{ matrix.preset }} -E '^Root' -j ${{ matrix.jobs }} --timeout 900 --output-on-failure
+          fi
+
+      # --- the identity lane this target contributes -----------------------------------------
+      #     TITLE LANE: the math oracles that write the --digest channels are generated-body
+      #     oracles (registered only with a title input), so the lane runs only where the runner
+      #     supplies one (header). Without it the component suite above is the whole gate. -------
+      - name: Identity lane (the math oracles' --digest channels -> oracles.ohash)
+        if: vars.NATIVEEE_TITLE_LANES == 'true'
+        shell: bash
+        run: |
+          bin=$(find . -path './build*' -type f \( -name 'nativeee' -o -name 'nativeee.exe' \) | head -1)
+          test -n "$bin"
+          build_id=$("$bin" --version | tr -d '\r')
+          python3 verify/component_identity.py --collect "$PS2R_DIGESTS" --out "$PS2R_LANES" \
+            --build-id "$build_id" --host ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        if: vars.NATIVEEE_TITLE_LANES == 'true'
+        with:
+          name: identity-${{ matrix.target }}
+          path: identity/lanes/
+          if-no-files-found: error
+
+      # --- the artifact: dist/<dist>/, scanned, uploaded (macOS / Windows; the Linux lanes'
+      #     shipped artifact is the linux-dist preset built in the linux-dist job below).
+      #     TITLE LANE: runs only where the runner supplies the title input (header). ----------
+      - name: Stage dist/ (build.sh / build.ps1)
+        if: matrix.platform != 'linux' && vars.NATIVEEE_TITLE_LANES == 'true'
+        shell: bash
+        run: |
+          if [ "${{ matrix.platform }}" = windows ]; then
+            pwsh -File ./build.ps1 -SkipBuild -Dist
+          else
+            ./build.sh --dist-only --preset ${{ matrix.preset }}
+          fi
+      - name: Asset guard over the artifact (--mode artifact)
+        if: matrix.platform != 'linux' && vars.NATIVEEE_TITLE_LANES == 'true'
+        shell: bash
+        run: python3 tools/ci/asset_guard.py --root dist/${{ matrix.dist }} --mode artifact
+      - uses: actions/upload-artifact@v4
+        if: matrix.platform != 'linux' && vars.NATIVEEE_TITLE_LANES == 'true'
+        with:
+          name: nativeee-${{ matrix.target }}
+          path: dist/${{ matrix.dist }}/
+          if-no-files-found: error
+      - name: Build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ matrix.target }}
+          path: build.log
+          if-no-files-found: ignore
+
+  # Track C1 (Herschel): the shipped Linux artifact -- `./build.sh` on a Linux host = the
+  # linux-dist preset (Clang; SDL2 built from the pinned release and linked statically; the
+  # three FFmpeg libraries from tools/ci/ffmpeg_static.sh, static; libstdc++/libgcc static; GL
+  # through the system's libglvnd), staged as dist/linux-<arch>/ + dist/nativeee-linux-<arch>.tar.gz,
+  # both passed through tools/ci/asset_scan.py (names, format magic, byte windows of the title's
+  # ELF) and the folder through the asset guard. The component suite is the build job above;
+  # this job builds and packages (--no-tests) and uploads the nativeee-linux-<arch> artifact
+  # release.yml expects. TITLE LANE: the whole job runs only where the runner supplies the
+  # title input (NATIVEEE_TITLE_LANES, header); the container inherits NATIVEEE_TITLE_ELF /
+  # NATIVEEE_DISC from the runner's environment.
+  linux-dist:
+    name: linux-dist / ${{ matrix.arch }}
+    needs: guard
+    if: vars.NATIVEEE_TITLE_LANES == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04,     arch: x86_64  }
+          - { os: ubuntu-24.04-arm, arch: aarch64 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - name: Asset guard (--mode ci)
+        run: python3 tools/ci/asset_guard.py --root . --mode ci
+      - name: Build the toolchain image
+        run: docker build -f tools/ci/linux.Dockerfile --target toolchain -t nativeee-linux-toolchain .
+      - name: build.sh (linux-dist, no tests) -> dist/
+        run: |
+          docker run --rm -v "$PWD":/src -w /src \
+            -e NATIVEEE_TITLE_ELF -e NATIVEEE_STREAM_IRX -e NATIVEEE_DISC \
+            nativeee-linux-toolchain ./build.sh --no-tests --jobs 3
+      - name: Asset scan report
+        if: always()
+        run: cat build-linux-dist/asset_scan_dist.md build-linux-dist/asset_scan_archive.md 2>/dev/null || true
+      - name: Asset guard over the artifact (--mode artifact)
+        run: python3 tools/ci/asset_guard.py --root dist/linux-${{ matrix.arch }} --mode artifact
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nativeee-linux-${{ matrix.arch }}
+          path: dist/linux-${{ matrix.arch }}/
+          if-no-files-found: error
+
+  identity:
+    name: cross-platform hash identity (oracles lane)
+    needs: build
+    if: vars.NATIVEEE_TITLE_LANES == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: identity-*
+          path: identity
+      - name: Compare every target's oracles lane with the macOS arm64 reference
+        shell: bash
+        run: |
+          ref=identity/identity-macos-arm64
+          test -f "$ref/oracles.ohash"
+          rc=0
+          {
+            echo "## Cross-platform identity (component oracles lane)"
+            echo
+            echo "Reference: macos-arm64 ($(grep '^build_id=' "$ref/run.meta"))"
+            echo
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          for d in identity/identity-*; do
+            t=$(basename "$d" | sed 's/^identity-//')
+            [ "$t" = macos-arm64 ] && continue
+            echo "== $t"
+            if python3 verify/component_identity.py --compare "$ref" "$d" --report "identity/report-$t.md" | tee -a "$GITHUB_STEP_SUMMARY"; then :; else rc=1; fi
+          done
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: identity-report
+          path: identity/report-*.md
+          if-no-files-found: ignore
