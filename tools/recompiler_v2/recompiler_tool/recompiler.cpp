@@ -8131,6 +8131,11 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         }
     }
 
+    // --- the FIRST TITLE's hardcoded stub / diagnostic blocks (retail addresses of one
+    // game; --legacy-title-stubs). Skipped for every other title: their addresses would
+    // land inside that title's own functions (one of them, 0x17c6a0, is a real function
+    // start elsewhere and the stub assignment below would override it).
+    if (m_legacy_title_stubs) {
     // Legacy: explicit stubs for functions we previously hardcoded
     file << "    // Legacy hardcoded stubs (kept as safety)\n";
     {
@@ -8824,6 +8829,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
     file << "            }\n";
     file << "        };\n";
     file << "    }\n";
+    }   // m_legacy_title_stubs
 
     file << "    // Wrap all registered functions with dispatch-level tracing\n";
     file << "    for (auto it = recompiled_functions.begin(); it != recompiled_functions.end(); ++it) {\n";
@@ -23337,6 +23343,11 @@ void Recompiler::translate_instruction(const rabbitizer::InstructionR5900& instr
         case rabbitizer::InstrId::UniqueId::cpu_mul_s:
             file << "    " << get_fpr_name(static_cast<uint8_t>(instr.GetO32_fd())) << ".f = ps2_float_clamp(ps2_float_clamp(" << get_fpr_name(static_cast<uint8_t>(instr.GetO32_fs())) << ".f) * ps2_float_clamp(" << get_fpr_name(static_cast<uint8_t>(instr.GetO32_ft())) << ".f));\n";
             break;
+        case rabbitizer::InstrId::UniqueId::r5900_adda_s:
+            // adda.s fs, ft - FPU accumulator ACC = fs + ft (same clamp rule as add.s;
+            // the madd.s/msub.s family reads ACC). crt0 issues one to settle the pipeline.
+            file << "    ctx.fpuRegs.ACC.f = ps2_float_clamp(ps2_float_clamp(" << get_fpr_name(static_cast<uint8_t>(instr.GetO32_fs())) << ".f) + ps2_float_clamp(" << get_fpr_name(static_cast<uint8_t>(instr.GetO32_ft())) << ".f));\n";
+            break;
         case rabbitizer::InstrId::UniqueId::cpu_div_s:
             // div.s rounds to NEAREST on PCSX2 (dedicated FPUDivFPCR swapped in
             // around the divide, iFPU.cpp) even though EE default is chop/zero.
@@ -23704,6 +23715,162 @@ void Recompiler::translate_instruction(const rabbitizer::InstructionR5900& instr
                 std::string fs = get_vr_name(static_cast<uint8_t>(instr.GetO32_fs()));
                 std::string ft = get_vr_name(static_cast<uint8_t>(instr.GetO32_ft()));
                 emit_vu_masked_write(file, instr, "ctx.vuRegs.ACC", fs + " * " + ft);
+            }
+            break;
+
+
+        // --- broadcast / accumulator forms absent from the Crash instruction mix (added for a
+        // second title; each is the sibling case above with the broadcast lane or the
+        // destination changed -- PCSX2 MACOpDst rules: *A* forms write ACC, the rest write fd).
+
+
+        case rabbitizer::InstrId::UniqueId::r5900_vadda:
+            // vadda.xyzw fs, ft  ->  ACC[mask] = fs + ft
+            file << "    // vadda - vadda.xyzw fs, ft\n";
+            {
+                std::string fs = get_vr_name(static_cast<uint8_t>(instr.GetO32_fs()));
+                std::string ft = get_vr_name(static_cast<uint8_t>(instr.GetO32_ft()));
+                std::string result = fs + " + " + ft;
+                emit_vu_masked_write(file, instr, "ctx.vuRegs.ACC", result);
+            }
+            break;
+
+
+        case rabbitizer::InstrId::UniqueId::r5900_vadday:
+            // vadday.xyzw fs, ft  ->  ACC[mask] = fs + {ft.y, ft.y, ft.y, ft.y}
+            file << "    // vadday - vadday.xyzw fs, ft\n";
+            {
+                std::string fs = get_vr_name(static_cast<uint8_t>(instr.GetO32_fs()));
+                std::string ft = get_vr_name(static_cast<uint8_t>(instr.GetO32_ft()));
+                std::string result = fs + " + " + "VR_reg{" + ft + ".y, " + ft + ".y, " + ft + ".y, " + ft + ".y}";
+                emit_vu_masked_write(file, instr, "ctx.vuRegs.ACC", result);
+            }
+            break;
+
+
+        case rabbitizer::InstrId::UniqueId::r5900_vmaddx:
+            // vmaddx.xyzw fd, fs, ft  ->  fd[mask] = ACC + fs * {ft.x, ...} (ACC not modified)
+            file << "    // vmaddx - vmaddx.xyzw fd, fs, ft\n";
+            {
+                std::string fd = get_vr_name(static_cast<uint8_t>(instr.GetO32_fd()));
+                std::string fs = get_vr_name(static_cast<uint8_t>(instr.GetO32_fs()));
+                std::string ft = get_vr_name(static_cast<uint8_t>(instr.GetO32_ft()));
+                std::string result = "ctx.vuRegs.ACC + (" + fs + " * " + "VR_reg{" + ft + ".x, " + ft + ".x, " + ft + ".x, " + ft + ".x}" + ")";
+                emit_vu_masked_write(file, instr, fd, result);
+            }
+            break;
+
+
+        case rabbitizer::InstrId::UniqueId::r5900_vmaddy:
+            // vmaddy.xyzw fd, fs, ft  ->  fd[mask] = ACC + fs * {ft.y, ...} (ACC not modified)
+            file << "    // vmaddy - vmaddy.xyzw fd, fs, ft\n";
+            {
+                std::string fd = get_vr_name(static_cast<uint8_t>(instr.GetO32_fd()));
+                std::string fs = get_vr_name(static_cast<uint8_t>(instr.GetO32_fs()));
+                std::string ft = get_vr_name(static_cast<uint8_t>(instr.GetO32_ft()));
+                std::string result = "ctx.vuRegs.ACC + (" + fs + " * " + "VR_reg{" + ft + ".y, " + ft + ".y, " + ft + ".y, " + ft + ".y}" + ")";
+                emit_vu_masked_write(file, instr, fd, result);
+            }
+            break;
+
+
+        case rabbitizer::InstrId::UniqueId::r5900_vmaddax:
+            // vmaddax.xyzw fs, ft  ->  ACC[mask] += fs * {ft.x, ft.x, ft.x, ft.x}
+            file << "    // vmaddax - vmaddax.xyzw fs, ft\n";
+            {
+                std::string fs = get_vr_name(static_cast<uint8_t>(instr.GetO32_fs()));
+                std::string ft = get_vr_name(static_cast<uint8_t>(instr.GetO32_ft()));
+                std::string result = "ctx.vuRegs.ACC + (" + fs + " * " + "VR_reg{" + ft + ".x, " + ft + ".x, " + ft + ".x, " + ft + ".x}" + ")";
+                emit_vu_masked_write(file, instr, "ctx.vuRegs.ACC", result);
+            }
+            break;
+
+
+        case rabbitizer::InstrId::UniqueId::r5900_vsuby:
+            // vsuby.xyzw fd, fs, ft  ->  fd[mask] = fs - {ft.y, ft.y, ft.y, ft.y}
+            file << "    // vsuby - vsuby.xyzw fd, fs, ft\n";
+            {
+                std::string fd = get_vr_name(static_cast<uint8_t>(instr.GetO32_fd()));
+                std::string fs = get_vr_name(static_cast<uint8_t>(instr.GetO32_fs()));
+                std::string ft = get_vr_name(static_cast<uint8_t>(instr.GetO32_ft()));
+                std::string result = fs + " - " + "VR_reg{" + ft + ".y, " + ft + ".y, " + ft + ".y, " + ft + ".y}";
+                emit_vu_masked_write(file, instr, fd, result);
+            }
+            break;
+
+
+        case rabbitizer::InstrId::UniqueId::r5900_vsubz:
+            // vsubz.xyzw fd, fs, ft  ->  fd[mask] = fs - {ft.z, ft.z, ft.z, ft.z}
+            file << "    // vsubz - vsubz.xyzw fd, fs, ft\n";
+            {
+                std::string fd = get_vr_name(static_cast<uint8_t>(instr.GetO32_fd()));
+                std::string fs = get_vr_name(static_cast<uint8_t>(instr.GetO32_fs()));
+                std::string ft = get_vr_name(static_cast<uint8_t>(instr.GetO32_ft()));
+                std::string result = fs + " - " + "VR_reg{" + ft + ".z, " + ft + ".z, " + ft + ".z, " + ft + ".z}";
+                emit_vu_masked_write(file, instr, fd, result);
+            }
+            break;
+
+
+        case rabbitizer::InstrId::UniqueId::r5900_vmuly:
+            // vmuly.xyzw fd, fs, ft  ->  fd[mask] = fs * {ft.y, ft.y, ft.y, ft.y}
+            file << "    // vmuly - vmuly.xyzw fd, fs, ft\n";
+            {
+                std::string fd = get_vr_name(static_cast<uint8_t>(instr.GetO32_fd()));
+                std::string fs = get_vr_name(static_cast<uint8_t>(instr.GetO32_fs()));
+                std::string ft = get_vr_name(static_cast<uint8_t>(instr.GetO32_ft()));
+                std::string result = fs + " * " + "VR_reg{" + ft + ".y, " + ft + ".y, " + ft + ".y, " + ft + ".y}";
+                emit_vu_masked_write(file, instr, fd, result);
+            }
+            break;
+
+
+        case rabbitizer::InstrId::UniqueId::r5900_vmulz:
+            // vmulz.xyzw fd, fs, ft  ->  fd[mask] = fs * {ft.z, ft.z, ft.z, ft.z}
+            file << "    // vmulz - vmulz.xyzw fd, fs, ft\n";
+            {
+                std::string fd = get_vr_name(static_cast<uint8_t>(instr.GetO32_fd()));
+                std::string fs = get_vr_name(static_cast<uint8_t>(instr.GetO32_fs()));
+                std::string ft = get_vr_name(static_cast<uint8_t>(instr.GetO32_ft()));
+                std::string result = fs + " * " + "VR_reg{" + ft + ".z, " + ft + ".z, " + ft + ".z, " + ft + ".z}";
+                emit_vu_masked_write(file, instr, fd, result);
+            }
+            break;
+
+
+        case rabbitizer::InstrId::UniqueId::r5900_vmulw:
+            // vmulw.xyzw fd, fs, ft  ->  fd[mask] = fs * {ft.w, ft.w, ft.w, ft.w}
+            file << "    // vmulw - vmulw.xyzw fd, fs, ft\n";
+            {
+                std::string fd = get_vr_name(static_cast<uint8_t>(instr.GetO32_fd()));
+                std::string fs = get_vr_name(static_cast<uint8_t>(instr.GetO32_fs()));
+                std::string ft = get_vr_name(static_cast<uint8_t>(instr.GetO32_ft()));
+                std::string result = fs + " * " + "VR_reg{" + ft + ".w, " + ft + ".w, " + ft + ".w, " + ft + ".w}";
+                emit_vu_masked_write(file, instr, fd, result);
+            }
+            break;
+
+
+        case rabbitizer::InstrId::UniqueId::r5900_vmulay:
+            // vmulay.xyzw fs, ft  ->  ACC[mask] = fs * {ft.y, ft.y, ft.y, ft.y}
+            file << "    // vmulay - vmulay.xyzw fs, ft\n";
+            {
+                std::string fs = get_vr_name(static_cast<uint8_t>(instr.GetO32_fs()));
+                std::string ft = get_vr_name(static_cast<uint8_t>(instr.GetO32_ft()));
+                std::string result = fs + " * " + "VR_reg{" + ft + ".y, " + ft + ".y, " + ft + ".y, " + ft + ".y}";
+                emit_vu_masked_write(file, instr, "ctx.vuRegs.ACC", result);
+            }
+            break;
+
+
+        case rabbitizer::InstrId::UniqueId::r5900_vmulaz:
+            // vmulaz.xyzw fs, ft  ->  ACC[mask] = fs * {ft.z, ft.z, ft.z, ft.z}
+            file << "    // vmulaz - vmulaz.xyzw fs, ft\n";
+            {
+                std::string fs = get_vr_name(static_cast<uint8_t>(instr.GetO32_fs()));
+                std::string ft = get_vr_name(static_cast<uint8_t>(instr.GetO32_ft()));
+                std::string result = fs + " * " + "VR_reg{" + ft + ".z, " + ft + ".z, " + ft + ".z, " + ft + ".z}";
+                emit_vu_masked_write(file, instr, "ctx.vuRegs.ACC", result);
             }
             break;
 
@@ -24365,6 +24532,38 @@ case rabbitizer::InstrId::UniqueId::r5900_pextlb:
             file << "        for (int i = 0; i < 4; ++i) {\n";
             file << "            rd.SL[i] = rs.SL[i] - rt.SL[i];\n";
             file << "        }\n";
+            file << "    }\n";
+            break;
+
+
+        case rabbitizer::InstrId::UniqueId::r5900_padduw:
+            // padduw rd, rs, rt - Parallel Add with Unsigned saturation, Word (4x32):
+            // each lane = min(rs + rt, 0xFFFFFFFF). crt0 zeroes the 128-bit registers
+            // with `padduw $r, $zero, $zero`.
+            file << "    // padduw - Parallel Add Unsigned saturate Word\n";
+            file << "    {\n";
+            file << "        auto rs = " << get_gpr_name(static_cast<uint8_t>(instr.GetO32_rs())) << ";\n";
+            file << "        auto rt = " << get_gpr_name(static_cast<uint8_t>(instr.GetO32_rt())) << ";\n";
+            file << "        auto& rd = " << get_gpr_name(static_cast<uint8_t>(instr.GetO32_rd())) << ";\n";
+            file << "        for (int i = 0; i < 4; ++i) {\n";
+            file << "            uint64_t sum = static_cast<uint64_t>(rs.UL[i]) + static_cast<uint64_t>(rt.UL[i]);\n";
+            file << "            rd.UL[i] = sum > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<uint32_t>(sum);\n";
+            file << "        }\n";
+            file << "    }\n";
+            break;
+
+
+        case rabbitizer::InstrId::UniqueId::r5900_prot3w:
+            // prot3w rd, rt - Parallel Rotate 3 Words left: rd.x = rt.y, rd.y = rt.z,
+            // rd.z = rt.x, rd.w = rt.w (PCSX2 PROT3W). rt is read fully before rd is written.
+            file << "    // prot3w - Parallel Rotate 3 Words left\n";
+            file << "    {\n";
+            file << "        auto rt = " << get_gpr_name(static_cast<uint8_t>(instr.GetO32_rt())) << ";\n";
+            file << "        auto& rd = " << get_gpr_name(static_cast<uint8_t>(instr.GetO32_rd())) << ";\n";
+            file << "        rd.UL[0] = rt.UL[1];\n";
+            file << "        rd.UL[1] = rt.UL[2];\n";
+            file << "        rd.UL[2] = rt.UL[0];\n";
+            file << "        rd.UL[3] = rt.UL[3];\n";
             file << "    }\n";
             break;
 
@@ -25285,16 +25484,18 @@ case rabbitizer::InstrId::UniqueId::r5900_pextlb:
             // cfc1 rt, fs - Copy From FPU Control Register to GPR
             // On PS2, control registers are accessed via the fprc array.
             // Result is 32-bit sign-extended to the full 64-bit rt on R5900.
-            file << "    // cfc1 - Copy from FPU Control Register " << (int)static_cast<uint8_t>(instr.GetO32_fs()) << "\n";
+            file << "    // cfc1 - Copy from FPU Control Register " << std::dec << (int)static_cast<uint8_t>(instr.GetO32_fs()) << "\n";
             file << "    " << get_gpr_name(static_cast<uint8_t>(instr.GetO32_rt())) << ".SD[0] = static_cast<int32_t>(ctx.fpuRegs.fprc[" 
-                 << (int)static_cast<uint8_t>(instr.GetO32_fs()) << "]);\n";
+                 << std::dec << (int)static_cast<uint8_t>(instr.GetO32_fs()) << "]);\n";
             break;
 
 
         case rabbitizer::InstrId::UniqueId::cpu_ctc1:
             // ctc1 rt, fs - Copy To FPU Control Register from GPR
-            file << "    // ctc1 - Copy to FPU Control Register " << (int)static_cast<uint8_t>(instr.GetO32_fs()) << "\n";
-            file << "    ctx.fpuRegs.fprc[" << (int)static_cast<uint8_t>(instr.GetO32_fs()) << "] = " 
+            // The stream may be in std::hex here (an earlier emitter's address print); the
+            // register index must be decimal (`fprc[1f]` does not compile).
+            file << "    // ctc1 - Copy to FPU Control Register " << std::dec << (int)static_cast<uint8_t>(instr.GetO32_fs()) << "\n";
+            file << "    ctx.fpuRegs.fprc[" << std::dec << (int)static_cast<uint8_t>(instr.GetO32_fs()) << "] = " 
                  << get_gpr_name(static_cast<uint8_t>(instr.GetO32_rt())) << ".UL[0];\n";
             break;
         // --- Coprocessor 1 (FPU) Comparisons ---

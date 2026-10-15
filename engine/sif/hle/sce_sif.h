@@ -17,6 +17,10 @@
 //   sceSifSetRpcQueue  -> 0   sceSifGetNextRequest -> 0   sceSifRpcLoop -> SleepThread
 //   sceSifLoadModule / _sceSifLoadModule -> 0 (module id; the IOP modules are
 //                         booted by the composition root), _lf_bind -> 1
+//   sceSifLoadModuleBuffer(iop_addr, arg_len, args) -> the same loader, told
+//                         "buffer@<iop addr>" (+ the args bytes): a module image
+//                         the title pushed into IOP RAM itself (an IRX embedded
+//                         in the ELF), registered as a new row
 //   sceSifInitIopHeap  -> 0   sceSifAllocIopHeap -> allocator(size)
 //   sceSifFreeIopHeap / sceSifFreeSysMemory -> allocator free, 0
 //   sceSifWriteBackDCache -> 0 (no cache to write back)
@@ -111,6 +115,7 @@ public:
     static void RpcLoop(CpuContext& ctx);
     static void AddCmdHandler(CpuContext& ctx);
     static void LoadModule(CpuContext& ctx);
+    static void LoadModuleBuffer(CpuContext& ctx);
     static void LfBind(CpuContext& ctx);
     static void InitIopHeap(CpuContext& ctx);
     static void AllocIopHeap(CpuContext& ctx);

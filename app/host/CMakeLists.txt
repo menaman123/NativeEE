@@ -48,6 +48,9 @@ add_library(ps2r_app_host STATIC
 )
 target_include_directories(ps2r_app_host PUBLIC ${CMAKE_SOURCE_DIR})
 target_compile_options(ps2r_app_host PRIVATE -Wall -Wextra -Werror)
+# iop_arm.h (the play/oracle seam) #errors without this definition. This tree builds only
+# the PLAY shape (no IOP linked); a title that links ps2r_iop_models would override it.
+target_compile_definitions(ps2r_app_host PUBLIC PS2R_IOP_ORACLE=0)
 # Derived from what these sources include: core, ee, platform, vu, gif, title, ipu, dmac,
 # cdvd, vif, render, pad, iop, gs. ps2r_iop PUBLIC-links ps2r_platform which PUBLIC-links
 # ps2r_core, so only the leaves are named (naming a library twice makes ld warn).
@@ -69,12 +72,19 @@ target_compile_options(nativeee PRIVATE -Wall -Wextra -Werror)
 target_compile_definitions(nativeee PRIVATE PS2R_TITLE_ID="${PS2R_TITLE}")
 if(PS2R_TITLE)
     target_compile_definitions(nativeee PRIVATE
-        PS2R_TITLE_DIR="${CMAKE_SOURCE_DIR}/games/${PS2R_TITLE}")
+        PS2R_TITLE_DIR="${PS2R_GAMES_DIR}/${PS2R_TITLE}")
 endif()
 target_link_libraries(nativeee PRIVATE ps2r_app_host)
 # A title module that supplies a play composition links it in here.
 if(TARGET ps2r_title_hle)
     target_link_libraries(nativeee PRIVATE ps2r_title_hle)
+endif()
+# The play composition itself: a title that defines ps2r_title_play (engine/title/title_play.h,
+# `int TitlePlayMain(int, char**)`) is run by main.cpp; without it the binary reports that the
+# title supplies no composition. Same if(TARGET ...) convention as the other title targets.
+if(TARGET ps2r_title_play)
+    target_link_libraries(nativeee PRIVATE ps2r_title_play)
+    target_compile_definitions(nativeee PRIVATE PS2R_TITLE_HAS_PLAY=1)
 endif()
 
 set_source_files_properties(${PS2R_BUILD_ID_CPP} PROPERTIES GENERATED TRUE)

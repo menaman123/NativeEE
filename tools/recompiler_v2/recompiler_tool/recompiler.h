@@ -61,6 +61,12 @@ public:
     // hook classification and the installed callables' behaviour are the same
     // in both forms.
     void set_init_parts(int parts) { m_init_parts = parts; }
+    // The first title's hand-written stub/diagnostic blocks in the init tail (hardcoded
+    // retail addresses: tiny vtable stubs Ghidra missed, the [PARTICLE-DIAG] / [2C75E8-DUMP]
+    // wrappers). Title data, not a mechanism: emitted only when the title's build asks
+    // (--legacy-title-stubs). Default OFF -- a second title must not inherit another
+    // title's addresses (one of them collides with a real function start elsewhere).
+    void set_legacy_title_stubs(bool enabled) { m_legacy_title_stubs = enabled; }
 
     // [RECOMP-P3a] v2 emission mode (RECOMP_P0_DESIGN.md §6-§8). When enabled,
     // unpinned functions take the general emission path with the v2 deltas:
@@ -108,6 +114,7 @@ private:
     std::map<uint32_t, uint32_t> m_addr_to_id;
     bool m_direct_calls = true;
     int m_init_parts = 0;
+    bool m_legacy_title_stubs = false;
     // [W16R1][FIX-E1] Function addrs whose body emission was SKIPPED
     // (HLE-replaced): their FUN_ symbol does not exist, so the raw table
     // emits nullptr for them and the hook-list recompute force-hooks any

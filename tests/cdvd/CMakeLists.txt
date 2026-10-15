@@ -112,7 +112,7 @@ endif()
 # (bound as the root binds it) until the REAL FUN_002adaf0 answers done -- bytes through sifman's SIF
 # DMA, slot byte retired by the client's end-callback (BUG-043; the module's post-DMA poll needs
 # sceSifDmaStat < 0). Skips 77 without the image.
-set(PS2R_TITLE_HLE_DIR "${CMAKE_SOURCE_DIR}/games/${PS2R_TITLE}/hle")
+set(PS2R_TITLE_HLE_DIR "${PS2R_GAMES_DIR}/${PS2R_TITLE}/hle")
 if(TARGET ps2r_title_recomp AND TARGET ps2r_title_stream_irx)
 if(EXISTS "${PS2R_DISC_IMAGE}")
 else()

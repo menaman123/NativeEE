@@ -57,12 +57,14 @@ ps2r_gif_test(test_gif_defer_boundary_order GifDeferBoundaryOrder)
 # RegisterOpStream) must reproduce the op count + hash recorded in
 # fixtures/gsops_seed.txt (126 lines, generated once at stage 5C). SKIP 77 when
 # the frozen corpus is absent.
+if(TARGET vu1_replay)   # the corpus tool is optional in this tree (tools/vu1_replay may define no executable)
 add_test(NAME Vu1GsopsSeed
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/gif/check_gsops_seed.py
             --tool $<TARGET_FILE:vu1_replay>
             --cases ${PS2R_OG_ROOT}/vutrace_cases2
             --seed ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/gsops_seed.txt)
 set_tests_properties(Vu1GsopsSeed PROPERTIES TIMEOUT 600 SKIP_RETURN_CODE 77)
+endif()
 
 # GsStateSink / GsSinkFanout (integration item 6.4): synthetic GIF streams through
 # GifParser(fanout{GsStateSink, RegisterOpStream}) -- A+D writes decoded in the

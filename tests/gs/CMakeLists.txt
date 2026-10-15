@@ -252,6 +252,9 @@ set_tests_properties(Texsrc_TitleAtlasDecode PROPERTIES TIMEOUT 120)
 # CPU-only census / classdiff gates and the bounded GL replay legs (SKIP 77 when the
 # corpus or a GL context is absent).
 set(PS2R_REPLAY_WORK ${CMAKE_CURRENT_BINARY_DIR}/replay_work)
+# The replay tool is optional in this tree (tools/gs_replay defines no executable when its
+# driver sources are absent): the rows that run it are registered only when it exists.
+if(TARGET gs_replay)
 add_test(NAME GsReplayCensus
     COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/replay/gs_replay_census.sh $<TARGET_FILE:gs_replay>
             ${PS2R_GS_CORPUS} load_transition ${PS2R_REPLAY_WORK})
@@ -292,6 +295,7 @@ foreach(cap ${PS2R_GS_CORPUS_CAPS})
         set_tests_properties(GsCorpus_${cap} PROPERTIES DISABLED TRUE)
     endif()
 endforeach()
+endif()   # TARGET gs_replay
 
 # ---------------------------------------------------------------------------
 # Phase 6 (stage 6F"): G10 size budgets + the G11 SKIP stubs for the three invariants whose

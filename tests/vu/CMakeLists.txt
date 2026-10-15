@@ -146,6 +146,7 @@ set_tests_properties(VuCachedVsInterpCorpus PROPERTIES TIMEOUT 600)
 # Vu1ReplaySelftest: the corpus tool's built-in check -- fabricated case
 # round-trip through WriteCase/ReadCase, two interpreter replays identical,
 # interp == cached on it (the COMPARE grammar), the transform ground truth.
+if(TARGET vu1_replay)   # the corpus tool is optional in this tree (tools/vu1_replay may define no executable)
 add_test(NAME Vu1ReplaySelftest COMMAND vu1_replay --selftest)
 set_tests_properties(Vu1ReplaySelftest PROPERTIES TIMEOUT 120)
 
@@ -181,6 +182,7 @@ set_tests_properties(Vu1CollectSweep PROPERTIES LABELS long TIMEOUT 18000 SKIP_R
 if(NOT PS2R_VU1_SWEEP)
   set_tests_properties(Vu1CollectSweep PROPERTIES DISABLED TRUE)
 endif()
+endif()   # TARGET vu1_replay
 
 # ---- VU1 HLE mechanism + library (5D) ----
 # VuGsPacketCodec: GifPacketBuilder -> GsPacketDiff::Decode -> Diff round trip
@@ -227,6 +229,7 @@ target_compile_options(test_kick_lowering PRIVATE -Wall -Wextra -Werror -O2)
 add_test(NAME KickLowering COMMAND test_kick_lowering)
 set_tests_properties(KickLowering PROPERTIES TIMEOUT 120)
 
+if(TARGET vu1_replay)
 # Vu1HleGroupA: the corpus tool's --hle verdict on every group-A case (the
 # fam / ttx / pcs / lit programs) must be PASS; SKIP 77 when the corpus is absent.
 add_test(NAME Vu1HleGroupA
@@ -286,6 +289,7 @@ add_test(NAME Vu1CatalogIdentity
             --cases ${PS2R_OG_ROOT}/vutrace_cases2
             --out ${CMAKE_BINARY_DIR}/tests/vu/catalog_vs_old)
 set_tests_properties(Vu1CatalogIdentity PROPERTIES TIMEOUT 1200 SKIP_RETURN_CODE 77)
+endif()   # TARGET vu1_replay
 
 # Vu1LibraryPurity (G8): the family signature literals, every vs_* stamp and
 # every image / variant hash of the library appear nowhere under engine/ or tools/.
@@ -299,7 +303,7 @@ set_tests_properties(Vu1LibraryPurity PROPERTIES TIMEOUT 120)
 # 8 sorted corpus cases -- the library program under the EXACT tolerance with
 # the interpreter appended as the wildcard reference. The tool exits 2 on an
 # unreadable case, so the rows are registered only when the corpus is present.
-if(EXISTS "${PS2R_OG_ROOT}/vutrace_cases2")
+if(TARGET vu1_replay AND EXISTS "${PS2R_OG_ROOT}/vutrace_cases2")
     foreach(i RANGE 0 7)
         add_test(NAME Vu1HleRef_vu1_case_000${i}_1748
             COMMAND vu1_replay --hle --hle-ref --exact --skip-unregistered
@@ -367,7 +371,7 @@ add_executable(test_vu_vif_gif_sections_anchors test_vu_vif_gif_sections_anchors
 target_link_libraries(test_vu_vif_gif_sections_anchors PRIVATE ps2r_dmac ps2r_gs_ir)
 target_compile_options(test_vu_vif_gif_sections_anchors PRIVATE -Wall -Wextra -Werror -O2)
 add_test(NAME VuVifGifSectionsAnchors COMMAND test_vu_vif_gif_sections_anchors
-    "${CMAKE_SOURCE_DIR}/games/${PS2R_TITLE}/verify/restore_mhash_expected.tsv"
+    "${PS2R_GAMES_DIR}/${PS2R_TITLE}/verify/restore_mhash_expected.tsv"
     "${PS2R_OG_ROOT}/save_states")
 set_tests_properties(VuVifGifSectionsAnchors PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 

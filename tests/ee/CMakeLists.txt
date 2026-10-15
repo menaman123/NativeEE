@@ -29,7 +29,7 @@ set_tests_properties(EeParkSiteDump PROPERTIES TIMEOUT 60)
 # The RAM-image probe needs the frozen ELF (PS2R_OG_ROOT) and the title's .data word dump, a
 # PRIVATE fixture ({PRIVATE_FIXTURES} = $NATIVEEE_PRIVATE_FIXTURES; cmake/Ps2rPrivateFixtures.cmake):
 # SKIP 77 without either. The three post-load patch words stay in the tree.
-set(PS2R_TITLE_DATA "${CMAKE_SOURCE_DIR}/games/${PS2R_TITLE}/data")
+set(PS2R_TITLE_DATA "${PS2R_GAMES_DIR}/${PS2R_TITLE}/data")
 add_executable(test_elf_loader test_elf_loader.cpp)
 target_link_libraries(test_elf_loader PRIVATE ps2r_ee)
 target_compile_options(test_elf_loader PRIVATE -Wall -Wextra -Werror)
@@ -83,7 +83,7 @@ set_tests_properties(ThreadManagerThbase EeRunTokenAndEventQueue RelaunchOrder P
 add_executable(test_syscall_table test_syscall_table.cpp)
 target_link_libraries(test_syscall_table PRIVATE ps2r_title_api ps2r_title_hle ps2r_sif ps2r_ee)
 target_compile_options(test_syscall_table PRIVATE -Wall -Wextra -Werror)
-set(PS2R_TITLE_HLE "${CMAKE_SOURCE_DIR}/games/${PS2R_TITLE}/hle")
+set(PS2R_TITLE_HLE "${PS2R_GAMES_DIR}/${PS2R_TITLE}/hle")
 add_test(NAME SyscallTableCoverage COMMAND test_syscall_table coverage)
 add_test(NAME BootEnvRetailArgv COMMAND test_syscall_table bootenv)
 add_test(NAME LibcHleDiff COMMAND test_syscall_table libc)

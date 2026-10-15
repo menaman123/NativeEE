@@ -15,7 +15,7 @@ target_compile_options(test_mchl_section PRIVATE -Wall -Wextra -Werror)
 add_test(NAME MchlSectionRoundTrip COMMAND test_mchl_section roundtrip)
 add_test(NAME MchlSectionAnchors COMMAND test_mchl_section anchors
     "${PS2R_OG_ROOT}/save_states"
-    "${CMAKE_SOURCE_DIR}/games/${PS2R_TITLE}/verify/restore_mhash_expected.tsv")
+    "${PS2R_GAMES_DIR}/${PS2R_TITLE}/verify/restore_mhash_expected.tsv")
 set_tests_properties(MchlSectionRoundTrip PROPERTIES TIMEOUT 60)
 set_tests_properties(MchlSectionAnchors PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 

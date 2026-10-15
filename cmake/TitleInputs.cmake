@@ -57,7 +57,7 @@ set(PS2R_RECOMP_TEST_ENV "PS2R_RECOMP_DIR=${PS2R_RECOMP_GEN_DIR};PS2R_IOP_RECOMP
 file(MAKE_DIRECTORY "${PS2R_TITLE_INPUTS_DIR}")
 
 # --- the expected hashes -------------------------------------------------------------------
-set(_ps2r_inputs_table "${CMAKE_SOURCE_DIR}/games/${PS2R_TITLE}/TITLE_INPUTS.sha256")
+set(_ps2r_inputs_table "${PS2R_GAMES_DIR}/${PS2R_TITLE}/TITLE_INPUTS.sha256")
 if(NOT EXISTS "${_ps2r_inputs_table}")
     message(FATAL_ERROR "TitleInputs: ${_ps2r_inputs_table} is missing (the title's input hashes)")
 endif()

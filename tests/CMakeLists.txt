@@ -17,15 +17,15 @@ add_test(NAME LintEnginePuritySelftest
 
 # LintSdkBinding* read a title's hle/sdk_bindings.tsv, so they exist only with a title
 # configured. The selftest below is title-neutral and always runs.
-if(PS2R_TITLE AND EXISTS "${CMAKE_SOURCE_DIR}/games/${PS2R_TITLE}/hle/sdk_bindings.tsv")
+if(PS2R_TITLE AND EXISTS "${PS2R_GAMES_DIR}/${PS2R_TITLE}/hle/sdk_bindings.tsv")
     add_test(NAME LintSdkBindingRowCount
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/lint/lint_sdk_bindings.py --check row-count
-                --tsv ${CMAKE_SOURCE_DIR}/games/${PS2R_TITLE}/hle/sdk_bindings.tsv)
+                --tsv ${PS2R_GAMES_DIR}/${PS2R_TITLE}/hle/sdk_bindings.tsv)
     set_tests_properties(LintSdkBindingRowCount PROPERTIES TIMEOUT 60)
     if(TARGET ps2r_title_recomp)
         add_test(NAME LintSdkBindingNoGameAddress
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/lint/lint_sdk_bindings.py --check no-game-address
-                    --tsv ${CMAKE_SOURCE_DIR}/games/${PS2R_TITLE}/hle/sdk_bindings.tsv
+                    --tsv ${PS2R_GAMES_DIR}/${PS2R_TITLE}/hle/sdk_bindings.tsv
                     --tu ${PS2R_RECOMP_GEN_DIR}/recompiled.cpp)
         set_tests_properties(LintSdkBindingNoGameAddress PROPERTIES TIMEOUT 60)
     endif()

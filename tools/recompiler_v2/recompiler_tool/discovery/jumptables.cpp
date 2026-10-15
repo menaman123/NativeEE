@@ -30,7 +30,9 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <functional>
 #include <optional>
+#include <vector>
 
 namespace recomp_v2 {
 
@@ -248,7 +250,7 @@ std::optional<uint32_t> resolve_const_backward(const SectionImage& text,
 
 E2Result engine2_backward(const SectionImage& text,
                           const std::vector<SectionImage>& data,
-                          uint32_t site_pc, uint32_t func_entry,
+                          uint32_t site_pc, uint32_t func_entry, uint32_t func_end,
                           const DiscoveryOptions& opts) {
     E2Result r;
     const Insn jr = decode::decode(text.read_u32(site_pc));
@@ -303,9 +305,10 @@ E2Result engine2_backward(const SectionImage& text,
     // forward to the jr site, stopping if the guard register is redefined
     // (the branch may sit many instructions later — compilers hoist the
     // sltiu above setup loops).
-    auto confirm_guard = [&](uint32_t pc, const Insn& sltiu_in) -> bool {
+    // `start` = the first instruction of the path the guard's result flows along.
+    auto scan_guard_from = [&](uint32_t start, uint32_t pc, const Insn& sltiu_in) -> bool {
         const uint32_t bound = static_cast<uint16_t>(sltiu_in.simm);
-        for (uint32_t bpc = pc + 4; bpc < site_pc && text.contains(bpc); bpc += 4) {
+        for (uint32_t bpc = start; bpc < site_pc && text.contains(bpc); bpc += 4) {
             const Insn br = decode::decode(text.read_u32(bpc));
             if ((br.op == 4 || br.op == 5 || br.op == 20 || br.op == 21) &&
                 ((br.rs == sltiu_in.rt && br.rt == kZero) ||
@@ -338,40 +341,97 @@ E2Result engine2_backward(const SectionImage& text,
         }
         return false;
     };
+    auto confirm_guard = [&](uint32_t pc, const Insn& sltiu_in) -> bool {
+        if (scan_guard_from(pc + 4, pc, sltiu_in)) return true;
+        // The sltiu in the DELAY SLOT of a conditional branch (`bne x,c,L; sltiu g,x,N`):
+        // the guard's consumer (`beqz g, default` at L) is on the TAKEN path, and the
+        // fall-through block between pc+4 and L belongs to the other arm (it may redefine
+        // g freely). Follow the taken path too.
+        if (pc >= func_entry + 4 && text.contains(pc - 4)) {
+            const Insn br = decode::decode(text.read_u32(pc - 4));
+            if (br.kind == Kind::CondBranch || br.kind == Kind::CondBranchLikely) {
+                const uint32_t target = br.branch_target(pc - 4);
+                if (target > pc && target < site_pc && scan_guard_from(target, pc, sltiu_in)) return true;
+            }
+        }
+        return false;
+    };
 
-    bool alias[32] = {};
-    alias[idx_src] = true;
-    uint32_t kill_at[32];
-    for (int i = 0; i < 32; ++i) kill_at[i] = *scale_pc; // nothing killed below scale yet
-    for (uint32_t pc = *scale_pc; pc > func_entry;) {
-        pc -= 4;
+    struct ScanState {
+        bool alias[32] = {};
+        uint32_t kill_at[32] = {};
+    };
+    ScanState init;
+    init.alias[idx_src] = true;
+    for (int i = 0; i < 32; ++i) init.kill_at[i] = *scale_pc; // nothing killed below scale yet
+    // A block that only a branch can enter: its linear predecessor is the delay slot of an
+    // unconditional transfer. The backward scan reaching such a leader has walked off the
+    // path the index value actually travelled, so it continues from every in-function branch
+    // that targets the leader (starting at that branch's delay slot) -- the
+    // `bne x,c,L; sltiu g,x,N; <other arm>; L: beqz g,default; sll ..` idiom, where the guard
+    // sits in the branch's delay slot and the other arm redefines x. Visited leaders are
+    // remembered so a loop cannot recurse forever; the hop depth is bounded.
+    std::vector<uint32_t> hopped_leaders;
+    auto branch_only_leader = [&](uint32_t pc) -> bool {
+        if (pc < func_entry + 8 || !text.contains(pc - 8)) return false;
+        const Insn prev = decode::decode(text.read_u32(pc - 8));
+        return prev.kind == Kind::UncondBranch || prev.kind == Kind::J ||
+               prev.kind == Kind::Jr || prev.kind == Kind::JrRa;
+    };
+    // One instruction of the backward walk: the guard test, the move-chain aliasing and the
+    // kill bookkeeping of the original linear scan. Returns true when the guard was confirmed.
+    auto consume = [&](uint32_t pc, ScanState& st) -> bool {
         const Insn in = decode::decode(text.read_u32(pc));
-        if (in.kind != Kind::Other) continue;
-        if (in.op == 11 && alias[in.rs]) { // sltiu g, live-alias, imm
-            if (confirm_guard(pc, in)) return r;
+        if (in.kind != Kind::Other) return false;
+        if (in.op == 11 && st.alias[in.rs]) { // sltiu g, live-alias, imm
+            if (confirm_guard(pc, in)) return true;
         }
         const int def = decode::gpr_def(in);
-        if (is_move(in) && alias[in.rd]) {
+        if (is_move(in) && st.alias[in.rd]) {
             // The move's source holds the value in (pc, kill_at[rs]] — the
             // kill instruction itself reads its sources first, so an sltiu
             // that both tests and redefines the register still counts.
             const uint8_t src = in.rs;
-            for (uint32_t spc = kill_at[src]; spc > pc; spc -= 4) {
+            for (uint32_t spc = st.kill_at[src]; spc > pc; spc -= 4) {
                 if (!text.contains(spc)) break;
                 const Insn s = decode::decode(text.read_u32(spc));
                 if (s.kind != Kind::Other) continue;
-                if (s.op == 11 && s.rs == src && confirm_guard(spc, s)) return r;
+                if (s.op == 11 && s.rs == src && confirm_guard(spc, s)) return true;
             }
-            alias[src] = true;
-            alias[in.rd] = false;   // above the move, rd no longer holds it
-            if (def > 0) kill_at[def] = pc;
-            continue;
+            st.alias[src] = true;
+            st.alias[in.rd] = false;   // above the move, rd no longer holds it
+            if (def > 0) st.kill_at[def] = pc;
+            return false;
         }
         if (def > 0) {
-            if (alias[def]) alias[def] = false; // non-move redefinition breaks it
-            kill_at[def] = pc;
+            if (st.alias[def]) st.alias[def] = false; // non-move redefinition breaks it
+            st.kill_at[def] = pc;
         }
-    }
+        return false;
+    };
+    std::function<bool(uint32_t, ScanState, int)> scan_back = [&](uint32_t from, ScanState st, int depth) -> bool {
+        for (uint32_t pc = from; pc > func_entry;) {
+            pc -= 4;
+            if (consume(pc, st)) return true;
+            // `pc` has been consumed; if it is a branch-only leader, the value came in by a branch.
+            if (depth < 4 && branch_only_leader(pc) &&
+                std::find(hopped_leaders.begin(), hopped_leaders.end(), pc) == hopped_leaders.end()) {
+                hopped_leaders.push_back(pc);
+                for (uint32_t bpc = func_entry; bpc + 4 < func_end && text.contains(bpc); bpc += 4) {
+                    const Insn br = decode::decode(text.read_u32(bpc));
+                    if (!br.is_branch_like() || br.branch_target(bpc) != pc) continue;
+                    // Continue ABOVE the branch's delay slot: the slot (bpc+4) is the
+                    // first instruction the hopped scan consumes.
+                    if (scan_back(bpc + 8, st, depth + 1)) return true;
+                }
+                // No predecessor path confirmed a guard: fall through to the linear
+                // continuation, exactly the scan this hop was added to (a strict superset
+                // of the original search -- it can only ADD a found guard, never lose one).
+            }
+        }
+        return false;
+    };
+    if (scan_back(*scale_pc, init, 0)) return r;
     r.reason = "no dominating sltiu guard";
     return r;
 }
@@ -406,7 +466,7 @@ TableRecovery recover_jump_table(const SectionImage& text,
     }
 
     const E1Result e1 = engine1_forward(text, site_pc, func_entry);
-    const E2Result e2 = engine2_backward(text, data, site_pc, func_entry, opts);
+    const E2Result e2 = engine2_backward(text, data, site_pc, func_entry, func_end, opts);
 
     // Cross-check (design §7.2): the two engines must agree on whether the
     // site is a table and on the table base. Disagreement = hard error with a
@@ -499,7 +559,7 @@ std::map<uint32_t, std::vector<uint32_t>> scan_code_constructed_pointers(
             }
             if (regs[in.rs].has) {
                 const uint32_t v = regs[in.rs].base + static_cast<int32_t>(in.simm);
-                if ((v & 3u) == 0 && v >= tbase && v + 4 <= tend)
+                if ((v & 3u) == 0 && v >= tbase && v <= tend - 4)   // no u32 wrap for v near 0xFFFFFFFF
                     out[v].push_back(pc);
                 regs[in.rt].has = true;
                 regs[in.rt].base = v;

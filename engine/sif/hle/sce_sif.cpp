@@ -51,6 +51,7 @@ const Row kRegisteredRows[] = {
     {"sceSifSyncIop", &SceSif::SyncIop},
     {"sceSifInitRebootNotify", &SceSif::InitRebootNotify},
     {"sceFsSifCallRpc", &SceSif::FsSifCallRpc},
+    {"sceSifLoadModuleBuffer", &SceSif::LoadModuleBuffer},
 };
 const char* g_row_names[kRowCount];
 
@@ -203,6 +204,25 @@ void SceSif::LoadModule(CpuContext& ctx) {
         path += c;
     }
     RetS(ctx, g_module_loader(path));
+}
+// sceSifLoadModuleBuffer(void* iop_addr, int arg_len, const char* args): the image
+// already sits in IOP RAM (the title pushed it with sceSifSetDma), so the loader
+// is named "buffer@<iop addr>" followed, when arg_len > 0, by a space and the
+// args bytes (NUL-separated in the SDK; copied as-is up to arg_len, max 256).
+void SceSif::LoadModuleBuffer(CpuContext& ctx) {
+    if (!g_module_loader) { Ret(ctx, 0); return; }
+    char head[32];
+    std::snprintf(head, sizeof(head), "buffer@0x%08x", A(ctx, 0));
+    std::string name = head;
+    const uint32_t arg_len = A(ctx, 1), args = A(ctx, 2);
+    if (arg_len > 0 && args != 0) {
+        name += ' ';
+        for (uint32_t n = 0; n < arg_len && n < 256; ++n) {
+            const char c = static_cast<char>(memory::read<uint8_t>(args + n));
+            name += c ? c : ' ';
+        }
+    }
+    RetS(ctx, g_module_loader(name));
 }
 void SceSif::SetModuleLoader(ModuleLoader fn) { g_module_loader = std::move(fn); }
 void SceSif::LfBind(CpuContext& ctx) { Ret(ctx, 1); }

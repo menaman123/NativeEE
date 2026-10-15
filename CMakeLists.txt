@@ -38,30 +38,36 @@ set(PS2R_OG_ROOT "$ENV{PS2R_OLD_ROOT}" CACHE PATH
 set(PS2R_TITLE "" CACHE STRING
     "Title module linked by app/host (a directory name under games/). Empty = auto-discover: the
      one title in games/ is taken; with none the title lanes are skipped; with several, name one.")
+# Where the title modules live. The default is this tree's games/; a port that keeps the engine
+# as a submodule points this at its own games/ directory (the title directory contract is the
+# same: games/<serial>_<slug>/hle/CMakeLists.txt marks a title).
+set(PS2R_GAMES_DIR "${CMAKE_SOURCE_DIR}/games" CACHE PATH
+    "Directory holding the title modules (<dir>/<serial>_<slug>/); default: this tree's games/")
+file(REAL_PATH "${PS2R_GAMES_DIR}" PS2R_GAMES_DIR EXPAND_TILDE)
 # --- title discovery -------------------------------------------------------------------------
 # No serial is hardcoded anywhere in the build. A title directory is one with hle/CMakeLists.txt.
 if(NOT PS2R_TITLE)
-    file(GLOB _ps2r_title_candidates RELATIVE "${CMAKE_SOURCE_DIR}/games" "${CMAKE_SOURCE_DIR}/games/*")
+    file(GLOB _ps2r_title_candidates RELATIVE "${PS2R_GAMES_DIR}" "${PS2R_GAMES_DIR}/*")
     set(_ps2r_titles "")
     foreach(_cand IN LISTS _ps2r_title_candidates)
-        if(EXISTS "${CMAKE_SOURCE_DIR}/games/${_cand}/hle/CMakeLists.txt")
+        if(EXISTS "${PS2R_GAMES_DIR}/${_cand}/hle/CMakeLists.txt")
             list(APPEND _ps2r_titles "${_cand}")
         endif()
     endforeach()
     list(LENGTH _ps2r_titles _ps2r_title_count)
     if(_ps2r_title_count EQUAL 1)
         set(PS2R_TITLE "${_ps2r_titles}")
-        message(STATUS "nativeee: title auto-discovered: ${PS2R_TITLE}")
+        message(STATUS "nativeee: title auto-discovered: ${PS2R_TITLE} (in ${PS2R_GAMES_DIR})")
     elseif(_ps2r_title_count EQUAL 0)
-        message(STATUS "nativeee: no title in games/ -- engine, tools and component tests only; "
+        message(STATUS "nativeee: no title in ${PS2R_GAMES_DIR} -- engine, tools and component tests only; "
                        "every title target and its tests are skipped")
     else()
-        message(FATAL_ERROR "nativeee: ${_ps2r_title_count} titles in games/ (${_ps2r_titles}); "
+        message(FATAL_ERROR "nativeee: ${_ps2r_title_count} titles in ${PS2R_GAMES_DIR} (${_ps2r_titles}); "
                             "name one with -DPS2R_TITLE=<directory>")
     endif()
-elseif(NOT EXISTS "${CMAKE_SOURCE_DIR}/games/${PS2R_TITLE}/hle/CMakeLists.txt")
+elseif(NOT EXISTS "${PS2R_GAMES_DIR}/${PS2R_TITLE}/hle/CMakeLists.txt")
     message(FATAL_ERROR "nativeee: -DPS2R_TITLE=${PS2R_TITLE} names no title: "
-                        "games/${PS2R_TITLE}/hle/CMakeLists.txt does not exist")
+                        "${PS2R_GAMES_DIR}/${PS2R_TITLE}/hle/CMakeLists.txt does not exist")
 endif()
 # The private game-derived fixture contract ($NATIVEEE_PRIVATE_FIXTURES; tests SKIP 77 without it).
 include(${CMAKE_SOURCE_DIR}/cmake/Ps2rPrivateFixtures.cmake)
@@ -148,12 +154,16 @@ endif()
 # user's ELF (PHASE3_PLAN 3.3; the directory returns early, with a STATUS line, without one) ---
 # Skipped entirely when no title is configured (PS2R_TITLE empty): the targets below never
 # exist, and every consumer already gates on if(TARGET ps2r_title_*).
+# The binary-dir argument is required when PS2R_GAMES_DIR is outside this tree; it keeps the
+# in-tree layout (<build>/games/<title>/...) in both cases.
 if(PS2R_TITLE)
-    add_subdirectory(games/${PS2R_TITLE}/recomp)
-    add_subdirectory(games/${PS2R_TITLE}/hle)     # Phase 3C2: the TitleProfile definition + sdk_bindings.tsv
-    add_subdirectory(games/${PS2R_TITLE}/iop/stream_irx)   # Phase 4B': the recompiled IOP module + its stub surface
-    add_subdirectory(games/${PS2R_TITLE}/vu1_library)   # Phase 5: the VU1 HLE program library (title data)
-    add_subdirectory(games/${PS2R_TITLE}/renderer_profile)  # Phase 6
+    set(_ps2r_title_src "${PS2R_GAMES_DIR}/${PS2R_TITLE}")
+    set(_ps2r_title_bin "${CMAKE_BINARY_DIR}/games/${PS2R_TITLE}")
+    add_subdirectory(${_ps2r_title_src}/recomp ${_ps2r_title_bin}/recomp)
+    add_subdirectory(${_ps2r_title_src}/hle ${_ps2r_title_bin}/hle)     # Phase 3C2: the TitleProfile definition + sdk_bindings.tsv
+    add_subdirectory(${_ps2r_title_src}/iop/stream_irx ${_ps2r_title_bin}/iop/stream_irx)   # Phase 4B': the recompiled IOP module + its stub surface
+    add_subdirectory(${_ps2r_title_src}/vu1_library ${_ps2r_title_bin}/vu1_library)   # Phase 5: the VU1 HLE program library (title data)
+    add_subdirectory(${_ps2r_title_src}/renderer_profile ${_ps2r_title_bin}/renderer_profile)  # Phase 6
 endif()
 
 # --- the host binary -----------------------------------------------------------

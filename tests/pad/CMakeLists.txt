@@ -35,6 +35,6 @@ target_compile_options(test_pads_section PRIVATE -Wall -Wextra -Werror)
 add_test(NAME PadsSectionRoundTrip COMMAND test_pads_section roundtrip)
 add_test(NAME PadsSectionAnchors COMMAND test_pads_section anchors
     "${PS2R_OG_ROOT}/save_states"
-    "${CMAKE_SOURCE_DIR}/games/${PS2R_TITLE}/verify/restore_mhash_expected.tsv")
+    "${PS2R_GAMES_DIR}/${PS2R_TITLE}/verify/restore_mhash_expected.tsv")
 set_tests_properties(PadsSectionRoundTrip PROPERTIES TIMEOUT 60)
 set_tests_properties(PadsSectionAnchors PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
