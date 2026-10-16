@@ -21,6 +21,10 @@ SessionWindow::~SessionWindow() {
     if (window_) SDL_DestroyWindow(window_);
 }
 
+void SessionWindow::SetTitle(const std::string& title) {
+    if (window_) SDL_SetWindowTitle(window_, title.c_str());
+}
+
 bool SessionWindow::Open(std::string& error) {
     // The composition root has initialized SDL video and requested GL 4.1.
     window_ = SDL_CreateWindow("the title", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,

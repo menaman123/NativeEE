@@ -16,6 +16,7 @@
 
 struct TitleProfile {
     std::string serial;
+    std::string display_name;   // the title as the launcher / window name it ("" = the serial)
     uint32_t crc = 0;
     std::string elf_path;     // path on the disc image
     std::string elf_dir;      // game_files/ subdirectory holding the ELF copy

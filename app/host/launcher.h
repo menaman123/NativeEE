@@ -84,6 +84,8 @@ private:
     void DetectControllers();
     void OpenDataFolder();
     std::string DiscPath() const;
+    // The title as the screen names it: TitleProfile::display_name, else its serial.
+    std::string TitleName() const;
 
     Config& cfg_;
     const TitleProfile& title_;

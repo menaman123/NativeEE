@@ -109,6 +109,13 @@ SessionGui::EventResult SessionGui::ProcessEvent(const SDL_Event& event) {
         // A press for another window of ours (the renderer's hidden one) is not
         // menu text; the pad mapper still sees it.
         if (event.key.windowID != window_id_ && event.key.windowID != 0) return CaptureResult(false);
+        // Escape with the menu CLOSED is the window close (the same Close request the
+        // window manager's close button submits): a clean shutdown from the keyboard.
+        // With the menu open it stays ImGui's (closes a popup / cancels an edit).
+        if (key == SDLK_ESCAPE && event.type == SDL_KEYDOWN && event.key.repeat == 0 && !controls_.MenuOpen()) {
+            controls_.Submit(SessionControls::Action::Close);
+            return CaptureResult(true);
+        }
     }
     // Closed menus do not accumulate an unbounded backend input queue. On
     // reopening, the main thread provides fresh events and a fresh UI frame.

@@ -74,6 +74,8 @@ public:
     // Main thread, any time: video.vsync / video.fps_cap readers for the
     // presenter. fps_cap <= 0 presents on every pump (vsync, when on, paces).
     void ConfigurePresentation(bool vsync, int fps_cap);
+    // Main thread, after Open: the window's title bar names the title (TitleProfile::display_name).
+    void SetWindowTitle(const std::string& title) { window_.SetTitle(title); }
     // The session's display shape (video.aspect; Charter 2 A1): the window's
     // drawable size feeds `auto`, and the picture is fit at the ratio in force.
     void SetAspect(std::shared_ptr<gs::AspectSelection> aspect);

@@ -34,6 +34,8 @@ public:
     bool Initialize(SDL_Window* window, void* gl_context, std::string& error);
     // Main thread only. Does not poll SDL; root forwards each event once.
     // Root must also suppress cached keyboard/mouse sampling while captured.
+    // The keys it takes: F1/F5/F8/F9/F10 (SessionControls::HandleFunctionKey),
+    // and Escape with the menu closed = the Close request (the window close).
     EventResult ProcessEvent(const SDL_Event& event);
     // Main thread, no GL calls. False means no overlay; game presentation
     // still runs. Closed menu with no pending/recent notice: no ImGui frame or

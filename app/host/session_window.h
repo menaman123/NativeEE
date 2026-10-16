@@ -39,6 +39,8 @@ public:
     void DrawableSize(int& width, int& height) const;
     // The SDL window id the GUI matches key events against (0 before Open).
     uint32_t WindowId() const;
+    // Main thread, after Open: the window's title bar text (the title's name).
+    void SetTitle(const std::string& title);
 
 private:
     // The frame's draw without the swap (Draw and DumpPresented share it).
