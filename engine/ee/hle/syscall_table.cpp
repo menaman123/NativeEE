@@ -8,6 +8,7 @@
 #include "engine/ee/hle/kernl_boot.h"
 #include "engine/ee/hle/semaphores.h"
 #include "engine/ee/hle/thread_manager.h"
+#include "engine/ee/mem/main_memory.h"
 #include "engine/ee/recomp_abi/host_app/memory.h"
 
 namespace {
@@ -72,7 +73,7 @@ inline void RetU(CpuContext& ctx, uint32_t v) { ctx.cpuRegs.GPR.r[2].UL[0] = v; 
 
 bool LooksLikeGuestPtr(uint32_t v) {
     if (v == 0) return true;
-    const uint32_t norm = v & 0x1FFFFFFFu;
+    const uint32_t norm = MainMemory::Phys(v);
     return norm < BootEnv::kRamTop && norm >= 0x10000u;
 }
 }  // namespace

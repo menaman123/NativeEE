@@ -1,6 +1,6 @@
 #pragma once
 // Guest memory access for the recompiled code. The fast path serves plain
-// main-RAM accesses inline: phys = addr & 0x1FFFFFFF, and when phys + width
+// main-RAM accesses inline: phys = MainMemory::Phys(addr), and when phys + width
 // fits inside the 32 MB the bytes are copied directly. Everything else --
 // scratchpad, MMIO registers, hardware windows, registered extra regions,
 // unmapped addresses -- takes the slow path through MmioRouter / AddressMap.

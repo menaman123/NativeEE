@@ -1,8 +1,6 @@
 #include "engine/dmac/dmac_spr_transfer.h"
 
 #include <algorithm>
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
 
 #include "engine/core/log/log.h"
@@ -208,10 +206,8 @@ DmacSprResult DmacSprTransfer::DestinationChain(DmacChannelRegs& regs, DmacTrans
         regs.sadr = (regs.sadr + 16u) & kSadrMask;  // the tag quadword is consumed from the stream
         regs.madr = address & kMadrMask;
         regs.qwc = word & 0xFFFFu;
-        static const bool dmac_trace = std::getenv("NATIVEEE_DMAC_TRACE") != nullptr;  // TEMP-TRACE
-        if (dmac_trace)
-            std::fprintf(stderr, "dmac-sprfrom: tag@spr0x%04x id=%u qwc=%u -> 0x%08x\n", (regs.sadr - 16u) & kSadrMask, id,
-                         regs.qwc, regs.madr);
+        PS2R_LOG(DMAC, Narrate, "dmac-sprfrom: tag@spr0x%04x id=%u qwc=%u -> 0x%08x", (regs.sadr - 16u) & kSadrMask, id,
+                 regs.qwc, regs.madr);
         // CNTS (id 0) also latches D_STADR for stall control; the register's
         // writes are dropped in this DMAC, so the copy is the whole effect.
         const auto result = Copy(false, regs, count);

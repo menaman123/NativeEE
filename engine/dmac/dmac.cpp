@@ -1,10 +1,9 @@
 #include "engine/dmac/dmac.h"
 
 #include <algorithm>
-#include <cstdio>
-#include <cstdlib>
 #include <utility>
 
+#include "engine/core/log/log.h"
 #include "engine/core/savestate/payload_reader.h"
 #include "engine/core/savestate/savestate_format.h"
 #include "engine/ee/sched/ee_run_token.h"
@@ -257,9 +256,8 @@ void Dmac::StartChannel(int ch) {
                     const size_t room = ipu_input_room_() / 16;
                     if (room < qwords) qwords = static_cast<uint32_t>(room);
                 }
-                if (std::getenv("NATIVEEE_DMAC_TRACE"))
-                    std::fprintf(stderr, "dmac-ipu: toIPU chcr=0x%08x madr=0x%08x qwc=%u feed=%u\n", regs.chcr, regs.madr,
-                                 regs.qwc, qwords);  // TEMP-TRACE
+                PS2R_LOG(DMAC, Narrate, "dmac-ipu: toIPU chcr=0x%08x madr=0x%08x qwc=%u feed=%u", regs.chcr, regs.madr,
+                         regs.qwc, qwords);
                 if (qwords > 0) {
                     const size_t bytes = static_cast<size_t>(qwords) * 16;
                     if (uint8_t* src = walker_.Translate(regs.madr, bytes)) {

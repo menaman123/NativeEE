@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "engine/ee/hle/sdk_binding_manifest.h"
+#include "engine/ee/mem/main_memory.h"
 #include "engine/ee/recomp_abi/host_app/memory.h"
 #include "engine/mc/hle/mc_command_model.h"
 #include "engine/mc/hle/mc_host_store.h"
@@ -35,7 +36,7 @@ const char* g_row_names[kRowCount];
 uint32_t A(const CpuContext& ctx, int i) { return ctx.cpuRegs.GPR.r[4 + i].UL[0]; }
 uint32_t Sp(const CpuContext& ctx) { return ctx.cpuRegs.GPR.r[29].UL[0]; }
 void Ret(CpuContext& ctx, int32_t v) { ctx.cpuRegs.GPR.r[2].SD[0] = v; }
-bool ValidEeAddress(uint32_t a) { return a != 0 && (a & 0x1FFFFFFFu) < 0x02000000u; }
+bool ValidEeAddress(uint32_t a) { return a != 0 && MainMemory::Phys(a) < MainMemory::kSize; }
 
 std::string ReadGuestString(uint32_t addr, size_t max) {
     std::string s;

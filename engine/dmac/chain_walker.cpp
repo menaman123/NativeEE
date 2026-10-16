@@ -1,10 +1,9 @@
 #include "engine/dmac/chain_walker.h"
-#include <cstdio>
-#include <cstdlib>
 
 #include <cstring>
 #include <utility>
 
+#include "engine/core/log/log.h"
 #include "engine/ee/mem/main_memory.h"
 #include "engine/ee/mem/scratchpad.h"
 #include "engine/gif/gif_arbiter.h"
@@ -149,10 +148,8 @@ DmacVifWalkResult ChainWalker::WalkVifChain(int ch, DmacChannelRegs& regs) {
         const uint32_t addr = TagAddr(lo);
         const bool spr = TagSpr(lo);
         res.last_id = id;
-        static const bool dmac_trace = std::getenv("NATIVEEE_DMAC_TRACE") != nullptr;  // TEMP-TRACE
-        if (dmac_trace)
-            std::fprintf(stderr, "dmac-vif%d: tag@0x%08x%s lo=0x%016llx id=%u qwc=%u addr=0x%08x spr=%d irq=%d\n", v, tadr,
-                         from_spr ? "(spr)" : "", (unsigned long long)lo, id, qwc, addr, spr ? 1 : 0, irq ? 1 : 0);
+        PS2R_LOG(DMAC, Narrate, "dmac-vif%d: tag@0x%08x%s lo=0x%016llx id=%u qwc=%u addr=0x%08x spr=%d irq=%d", v, tadr,
+                 from_spr ? "(spr)" : "", (unsigned long long)lo, id, qwc, addr, spr ? 1 : 0, irq ? 1 : 0);
 
         // CHCR.TAG mirrors the tag's upper half.
         regs.chcr = (regs.chcr & 0xFFFFu) | (static_cast<uint32_t>(lo) & kTagMask);
@@ -294,7 +291,8 @@ bool ChainWalker::WalkGifChain(DmacChannelRegs& regs) {
         regs.chcr = (regs.chcr & 0xFFFFu) | (static_cast<uint32_t>(lo) & kTagMask);
         const uint32_t bytes = qwc * 16;
         uint32_t data_addr = 0;
-        if (std::getenv("NATIVEEE_DMAC_TRACE")) std::fprintf(stderr, "dmac-gif: tag@0x%08x lo=0x%016llx id=%u qwc=%u addr=0x%08x irq=%d\n", cur, (unsigned long long)lo, id, qwc, addr, irq);  // TEMP-TRACE
+        PS2R_LOG(DMAC, Narrate, "dmac-gif: tag@0x%08x lo=0x%016llx id=%u qwc=%u addr=0x%08x irq=%d", cur,
+                 (unsigned long long)lo, id, qwc, addr, irq ? 1 : 0);
         switch (id) {
             case DmacTagId::kRefe:
                 data_addr = addr;

@@ -1,6 +1,7 @@
 // PadmanModule implementation; the face is described in the header.
 #include "engine/pad/hle/padman_module.h"
 
+#include "engine/ee/mem/main_memory.h"
 #include "engine/pad/hle/pad_protocol.h"
 
 void PadmanModule::Call(const RpcRouter::CallRequest& req) {
@@ -18,7 +19,7 @@ void PadmanModule::Call(const RpcRouter::CallRequest& req) {
             if (req.send && read_) {
                 const uint32_t port = read_(req.send + 4);
                 const uint32_t area = read_(req.send + 12);
-                if (port < static_cast<uint32_t>(PadProtocol::kPorts) && area != 0 && (area & 0x1FFFFFFFu) < 0x02000000u)
+                if (port < static_cast<uint32_t>(PadProtocol::kPorts) && area != 0 && MainMemory::Phys(area) < MainMemory::kSize)
                     protocol_.RegisterArea(static_cast<int>(port), area, now_ ? now_() : 0);
             }
             break;

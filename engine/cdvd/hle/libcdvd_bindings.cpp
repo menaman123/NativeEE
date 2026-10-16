@@ -8,6 +8,7 @@
 #include "engine/cdvd/read_engine.h"
 #include "engine/cdvd/stream_reader.h"
 #include "engine/ee/hle/sdk_binding_manifest.h"
+#include "engine/ee/mem/main_memory.h"
 #include "engine/ee/mem/scratchpad.h"
 #include "engine/ee/recomp_abi/host_app/memory.h"
 #include "engine/ee/timing/derived_clocks.h"
@@ -45,7 +46,7 @@ uint32_t A(const CpuContext& ctx, int i) { return ctx.cpuRegs.GPR.r[4 + i].UL[0]
 void Ret(CpuContext& ctx, int32_t v) { ctx.cpuRegs.GPR.r[2].SD[0] = v; }
 // Sector-block destinations (sceCdRead / sceCdStRead / sceCdStream buffers)
 // are copied as one host block and must lie in main RAM.
-bool ValidEeAddress(uint32_t a) { return a != 0 && (a & 0x1FFFFFFFu) < 0x02000000u; }
+bool ValidEeAddress(uint32_t a) { return a != 0 && MainMemory::Phys(a) < MainMemory::kSize; }
 // Record pointers (sceCdlFILE, sceCdCLOCK, the sceCdStRead error word) are
 // written word by word through the guest address map: the EE library fills
 // them itself from the SIF reply, so any EE-mapped address is legal --
