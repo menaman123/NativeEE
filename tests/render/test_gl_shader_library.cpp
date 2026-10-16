@@ -22,16 +22,25 @@ static int g_checks = 0, g_fail = 0;
 #define CHECK(c, msg) do { g_checks++; if (!(c)) { g_fail++; std::printf("FAIL %s:%d %s\n", __FILE__, __LINE__, msg); } } while (0)
 
 // FNV-1a64 of the exact texts (/tmp/p6/gen_shader_sources.py over the OLD captures).
-static const uint64_t kVertHash = 0x4fd2767450e43bb7ull;
+// The vertex text is the OLD baseline (0x4fd2767450e43bb7) plus the `v_z` output
+// (the PS2 z, screen-linear) the fragment program turns into gl_FragDepth =
+// z * 2^-32: the clip-space z keeps the OLD mapping (clipping only), the window
+// depth is exact for small z (GS Z tests of z < 64 against a 0-cleared Z buffer).
+static const uint64_t kVertHash = 0xa12a8c2a25c17ff7ull;
 // The fragment text is the OLD baseline arm (0x3ffd78421c147ece) plus TWO
 // additive branches: the u_idx_fmt == 7 serve (the depth-byte palette lookup the
 // owned colour filter asks for: clut[(Z >> u_idx_self) & 0xFF] of the bound
 // Depth32f texel under this fragment; screen_renderer.cpp; 0xb5b8e150faca35c5)
 // and the A2 texture-filtering enhancement's `u_tex_lod_hw` (the mip arm samples
 // with texture()'s hardware LOD instead of textureLod's retail formula when the
-// executor set it -- 0 on every draw under the title's own choice). Every other
-// arm's text is unchanged; re-pin only together with a reviewed shader change.
-static const uint64_t kFragHash = 0x3d5f929280797bd3ull;
+// executor set it -- 0 on every draw under the title's own choice); then
+// (0x3d5f929280797bd3) the exact window depth: `gl_FragDepth = v_z * 2^-32` written
+// first in main (before any discard) and the colour-authored Z compare reading that
+// value instead of gl_FragCoord.z; then (0x1c4e1e3d11fc8ad9) the exact 32-bit FBMSK
+// merge (`u_fbmsk32_en` / `u_fbmsk32`: a sub-byte channel mask on a 32-bit frame merged
+// per bit against the Cd copy, after the fbmsk16 merge). Every other arm's text is
+// unchanged; re-pin only together with a reviewed shader change.
+static const uint64_t kFragHash = 0x9aa9c998af376fe4ull;
 static const uint64_t kScanoutVertHash = 0x8823cded4f383d15ull;
 static const uint64_t kScanoutFragHash = 0x5d955137d32b0c78ull;
 // The stencil-composite sources (OLD s9_composite_native.inc:53-215 k_s9_* texts).

@@ -81,10 +81,11 @@ bool GlShaderLibrary::Build(GlUniformCache& uniforms) {
 // PS2 vertex program (their sampler units bound once), the constant quad pair.
 bool GlShaderLibrary::BuildStencilPrograms() {
     struct Prog { const char* vs; const char* fs; uint32_t* out; };
-    const Prog progs[3] = {
+    const Prog progs[4] = {
         {VertexSource(), GlShaderSources::StencilStripFragment(), &strip_program_},
         {VertexSource(), GlShaderSources::StencilInvertFragment(), &invert_program_},
         {GlShaderSources::ConstVertex(), GlShaderSources::ConstFragment(), &const_program_},
+        {VertexSource(), GlShaderSources::HalfwordShuffleFragment(), &halfword_program_},
     };
     for (const Prog& p : progs) {
         GLuint vs = CompileShader(GL_VERTEX_SHADER, p.vs);
@@ -112,6 +113,17 @@ bool GlShaderLibrary::BuildStencilPrograms() {
     const GLint rt_i = glGetUniformLocation(invert_program_, "u_rt_texture");
     if (rt_i >= 0) glUniform1i(rt_i, 1);
     sloc_.const_color = glGetUniformLocation(const_program_, "u_color");
+    sloc_.hw_screen = glGetUniformLocation(halfword_program_, "u_screen_size");
+    sloc_.hw_dest_hi = glGetUniformLocation(halfword_program_, "u_dest_hi");
+    sloc_.hw_mask16 = glGetUniformLocation(halfword_program_, "u_mask16");
+    sloc_.hw_ta0 = glGetUniformLocation(halfword_program_, "u_ta0");
+    sloc_.hw_ta1 = glGetUniformLocation(halfword_program_, "u_ta1");
+    sloc_.hw_aem = glGetUniformLocation(halfword_program_, "u_aem");
+    glUseProgram(halfword_program_);
+    const GLint src_h = glGetUniformLocation(halfword_program_, "u_texture");
+    const GLint rt_h = glGetUniformLocation(halfword_program_, "u_rt_texture");
+    if (src_h >= 0) glUniform1i(src_h, 0);
+    if (rt_h >= 0) glUniform1i(rt_h, 1);
     glUseProgram(0);
     return true;
 }
@@ -122,6 +134,7 @@ void GlShaderLibrary::Destroy() {
     if (strip_program_) { glDeleteProgram(strip_program_); strip_program_ = 0; }
     if (invert_program_) { glDeleteProgram(invert_program_); invert_program_ = 0; }
     if (const_program_) { glDeleteProgram(const_program_); const_program_ = 0; }
+    if (halfword_program_) { glDeleteProgram(halfword_program_); halfword_program_ = 0; }
     sloc_ = GlStencilLocations{};
     loc_ = GlUniformLocations{};
     scanout_tex_loc_ = -1;
@@ -162,6 +175,8 @@ void GlShaderLibrary::LookupLocations() {
     loc_.flip_v = L("u_flip_v");
     loc_.fbmsk16_en = L("u_fbmsk16_en");
     loc_.fbmsk16 = L("u_fbmsk16");
+    loc_.fbmsk32_en = L("u_fbmsk32_en");
+    loc_.fbmsk32 = L("u_fbmsk32");
     loc_.depth_fmt = L("u_depth_fmt");
     loc_.depth_zoff = L("u_depth_zoff");
     loc_.idx_fmt = L("u_idx_fmt");
@@ -207,6 +222,7 @@ void GlShaderLibrary::PrimeUniforms(GlUniformCache& uniforms) {
     uniforms.Set1i(loc_.clut_raw, 0);
     uniforms.Set1i(loc_.uv_mode, 0);
     uniforms.Set1i(loc_.tex_lod_hw, 0);
+    uniforms.Set1i(loc_.fbmsk32_en, 0);
     uniforms.Set2f(loc_.uv_scale, 1.0f, 1.0f);
     glUseProgram(0);
 }

@@ -321,10 +321,14 @@ bool TextureResolver::MatchTarget(const DrawIr& ir, const Context& ctx, RenderTa
             t.EnsureAlt16(be_);
             t.RefreshAlt16FromMain(be_);
             ServeColor(ir, ctx, t, t.views.alt16, true, out);
+            out->owner.alt16_serve = true;
+            out->owner.alt16_main = t.views.color;
             return true;
         }
         if (t.views.alt16_has_content && t.views.HasAlt16()) {
             ServeColor(ir, ctx, t, t.views.alt16, true, out);
+            out->owner.alt16_serve = true;
+            out->owner.alt16_main = t.views.HasColor() ? t.views.color : render::SurfaceId{};
             return true;
         }
     }

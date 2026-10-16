@@ -3,7 +3,9 @@
 //
 // GS selectors (GS User's Manual ALPHA_1/2): A, B, D in {0 Cs, 1 Cd, 2 zero}; C in
 // {0 As, 1 Ad, 2 FIX}. The table maps every combination GL can express exactly on
-// a UNORM8 target; the two full-subtractive forms 2001 / 2021 ((0-Cs)*C+Cd) use
+// a UNORM8 target: A = B makes the product term zero for any C, so Cv = D (Cs, Cd
+// or 0 -- the "Cd" form is a game's write-nothing-but-alpha / Z-only-through-blend
+// idiom); the two full-subtractive forms 2001 / 2021 ((0-Cs)*C+Cd) use
 // GL_FUNC_REVERSE_SUBTRACT (Dst*dstFactor - Src*srcFactor). Anything else is
 // `matched = false` with the standard alpha blend as the legacy approximation. The
 // alpha channel is always source-replace at the call site (ONE, ZERO).

@@ -20,6 +20,7 @@ public:
     static const char* StencilInvertFragment();
     static const char* ConstVertex();
     static const char* ConstFragment();
+    static const char* HalfwordShuffleFragment();
 };
 
 }  // namespace render

@@ -47,6 +47,9 @@ uniform int u_uv_mode;
 noperspective out vec3 v_texcoord;
 out vec4 v_color;
 out float v_fog;
+// The PS2 z itself, screen-linear: the fragment shader writes gl_FragDepth =
+// v_z * 2^-32 (see below) so the window depth is EXACT for small z.
+noperspective out float v_z;
 
 void main() {
     // PS2 screen-space coords to NDC: x in [0, width] -> [-1, 1]
@@ -66,8 +69,16 @@ void main() {
     // PCSX2 grounding: tfx_vgs.glsl:43,:86 gl_Position.z = z*exp2(-32)
     // with glClipControl(GL_ZERO_TO_ONE) (GSDeviceOGL.cpp:629,:785) —
     // macOS GL4.1 lacks clip control, hence the 128-step floor here.
+    // That floor is the clip-space representation only: -1 + z/2^31 rounds to
+    // -1.0 for every z < 64 (float32 ULP at 1.0 is 2^-23), so a GS Z test of
+    // such a z against a Z buffer cleared to 0 (GREATER: passes on the console,
+    // e.g. a letterbox bar at z = 16 after a Z-only clear) fails here. The
+    // fragment shader therefore writes gl_FragDepth = v_z * 2^-32 (a power-of-two
+    // scale: exact for every float z; the SAME window value d = z / 2^32 the
+    // depth-view readers decode), keeping this clip z only for clipping.
     float z_ndc = a_position.z / 2147483648.0 - 1.0;
     gl_Position = vec4(ndc, z_ndc, 1.0);
+    v_z = a_position.z;
     // [R169-GLRUN] P2.1 raw-attribute UV transform (see uniform docs above).
     vec3 tc = a_texcoord;
     if (u_uv_mode == 1)      tc = vec3(a_texcoord.xy * 0.0625, 1.0);
@@ -89,6 +100,7 @@ const char* const kPs2FragSrc = R"GLSL(
 noperspective in vec3 v_texcoord;
 in vec4 v_color;
 in float v_fog;
+noperspective in float v_z;
 
 uniform sampler2D u_texture;    // Texture sampler (binding 0)
 uniform sampler2D u_rt_texture; // Render target copy for shader-side blending (binding 1)
@@ -159,6 +171,11 @@ uniform vec3 u_fogcol;       // Fog distant color (RGB, 0-1 range)
 // a 1 bit means PRESERVE the destination bit (GS convention).
 uniform int u_fbmsk16_en;
 uniform int u_fbmsk16;
+// The 32-bit twin: FRAME.FBMSK with a byte that is neither 0x00 nor 0xFF on a
+// 32-bit frame (a sub-byte channel write, e.g. 0xFFFF80FF = G[6:0] only) merges
+// bit-exactly against the destination copy; glColorMask can only widen it.
+uniform int u_fbmsk32_en;
+uniform int u_fbmsk32;
 
 // [R163-ZTEX2] Depth-attachment sampling mode. 0 = normal color fetch.
 // Nonzero = u_texture is a GL_DEPTH_COMPONENT32F depth attachment being
@@ -293,6 +310,11 @@ vec2 S83NativeCenter(vec2 rt) {
 #endif
 
 void main() {
+    // The window depth: d = PS2 z / 2^32 exactly (the vertex shader's clip z keeps
+    // the 128-unit floor of the NDC representation; see kPs2VertSrc). Written on
+    // every path, before any discard.
+    float frag_z = v_z * exp2(-32.0);
+    gl_FragDepth = frag_z;
     // --- PS2 SCANMSK (Scanline Mask for Interlaced Rendering) ---
     // Per GS spec: prohibits drawing to even or odd Y rows of the framebuffer.
     // MSK=0: normal (no mask), MSK=2: even Y prohibited, MSK=3: odd Y prohibited.
@@ -818,9 +840,9 @@ void main() {
         float dstz = (zb.a * 16777216.0 + zb.b * 65536.0 +
                       zb.g * 256.0 + zb.r) / 4294967296.0;
         if (u_zsrc_en == 3) {
-            if (gl_FragCoord.z <= dstz) discard;   // GREATER fails
+            if (frag_z <= dstz) discard;           // GREATER fails
         } else {
-            if (gl_FragCoord.z < dstz) discard;    // GEQUAL fails
+            if (frag_z < dstz) discard;            // GEQUAL fails
         }
     }
 
@@ -1020,6 +1042,20 @@ void main() {
         result.a = ((merged & 0x8000) != 0) ? 1.0 : 0.0;
     }
 
+    // --- Exact-bit FBMSK merge for 32-bit frames ---
+    // GS FBMSK semantics per bit over the stored RGBA8 word (a 1 bit PRESERVES the
+    // destination bit); all four channels are GL-writable for this draw and the
+    // merge runs here over the destination copy, in the stored convention.
+    if (u_fbmsk32_en != 0) {
+        ivec4 s32 = ivec4(result * 255.0 + 0.5);
+        vec4 dst32 = texelFetch(u_rt_texture, ivec2(gl_FragCoord.xy), 0);
+        ivec4 d32 = ivec4(dst32 * 255.0 + 0.5);
+        ivec4 m32 = ivec4(u_fbmsk32 & 0xFF, (u_fbmsk32 >> 8) & 0xFF, (u_fbmsk32 >> 16) & 0xFF,
+                          (u_fbmsk32 >> 24) & 0xFF);
+        ivec4 merged32 = (s32 & ~m32) | (d32 & m32);
+        result = vec4(merged32) / 255.0;
+    }
+
     frag_color = result;
 }
 )GLSL";
@@ -1190,6 +1226,52 @@ void main() {
     frag_color = result;
 }
 )";
+// The half-word shuffle pass (HalfwordShuffle::Op executed over the 32-bit image):
+// per 32-bit pixel, dest half := CT16-frame-write(TEXA-expand(src other half)) merged
+// under FBMSK16 with the dest half; the other half untouched. unit 0 = the source
+// image (the sibling target, or the destination copy for a self read), unit 1 = the
+// destination copy. Both are the same physical grid as the bound attachment.
+const char* const kHalfwordShuffleFragSrc = R"(
+#version 410 core
+
+uniform sampler2D u_texture;    // source 32-bit image (unit 0)
+uniform sampler2D u_rt_texture; // destination copy (unit 1)
+uniform int u_dest_hi;          // 1: write the high half-word (bytes B, A); 0: the low (R, G)
+uniform int u_mask16;           // FBMSK folded to 5551: 1 keeps the destination bit
+uniform int u_ta0;              // TEXA.TA0 / TA1 / AEM for the source half-word's A bit
+uniform int u_ta1;
+uniform int u_aem;
+
+out vec4 frag_color;
+
+int Word(vec4 c) {
+    ivec4 b = ivec4(c * 255.0 + 0.5);
+    return b.r | (b.g << 8) | (b.b << 16) | (b.a << 24);
+}
+
+void main() {
+    ivec2 p = ivec2(gl_FragCoord.xy);
+    ivec2 sdim = textureSize(u_texture, 0);
+    ivec2 ddim = textureSize(u_rt_texture, 0);
+    ivec2 sp = clamp(p * sdim / max(ddim, ivec2(1)), ivec2(0), sdim - ivec2(1));
+    int dst = Word(texelFetch(u_rt_texture, p, 0));
+    int src = Word(texelFetch(u_texture, sp, 0));
+    int src_half = (u_dest_hi != 0) ? (src & 0xFFFF) : ((src >> 16) & 0xFFFF);
+    // CT16 texel -> RGBA by TEXA (5-bit fields << 3 exact), DECAL, -> CT16 frame
+    // write (>> 3 per field, A bit = alpha >= 0x80): the colour bits survive
+    // unchanged; the A bit follows TA1 (bit set) or TA0 / AEM (bit clear).
+    int abit = (src_half >> 15) & 1;
+    int rgb15 = src_half & 0x7FFF;
+    int alpha = (abit != 0) ? u_ta1 : ((u_aem != 0 && rgb15 == 0) ? 0 : u_ta0);
+    int out_half = rgb15 | ((alpha >= 0x80) ? 0x8000 : 0);
+    int dst_half = (u_dest_hi != 0) ? ((dst >> 16) & 0xFFFF) : (dst & 0xFFFF);
+    int new_half = (out_half & ~u_mask16) | (dst_half & u_mask16);
+    int word = (u_dest_hi != 0) ? ((dst & 0xFFFF) | (new_half << 16))
+                                : ((dst & int(0xFFFF0000u)) | new_half);
+    frag_color = vec4(float(word & 0xFF), float((word >> 8) & 0xFF), float((word >> 16) & 0xFF),
+                      float((word >> 24) & 0xFF)) / 255.0;
+}
+)";
 // Constant-colour NDC triangle for the stencil-masked quads.
 const char* const kConstVertSrc = R"(
 #version 410 core
@@ -1214,6 +1296,7 @@ const char* GlShaderSources::StencilStripFragment() { return kStencilStripFragSr
 const char* GlShaderSources::StencilInvertFragment() { return kStencilInvertFragSrc; }
 const char* GlShaderSources::ConstVertex() { return kConstVertSrc; }
 const char* GlShaderSources::ConstFragment() { return kConstFragSrc; }
+const char* GlShaderSources::HalfwordShuffleFragment() { return kHalfwordShuffleFragSrc; }
 
 }  // namespace render
 }  // namespace ps2r

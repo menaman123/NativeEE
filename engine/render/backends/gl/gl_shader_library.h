@@ -30,6 +30,7 @@ struct GlUniformLocations {
     int tex_size = -1, uv_scale = -1, uv_mode = -1;
     int sw_blend = -1, rt_sampler = -1, flip_v = -1;
     int fbmsk16_en = -1, fbmsk16 = -1;
+    int fbmsk32_en = -1, fbmsk32 = -1;
     int depth_fmt = -1, depth_zoff = -1;
     int idx_fmt = -1, idx_self = -1, draw_scale = -1, uv_native = -1;
     int clut_sampler = -1, idx_tex2_sampler = -1;
@@ -44,6 +45,7 @@ struct GlStencilLocations {
     int strip_screen = -1, strip_zsrc_en = -1, strip_datm = -1, strip_zsrc_num = -1, strip_zsrc_den = -1;
     int invert_screen = -1, invert_fix = -1;
     int const_color = -1;
+    int hw_screen = -1, hw_dest_hi = -1, hw_mask16 = -1, hw_ta0 = -1, hw_ta1 = -1, hw_aem = -1;
 };
 
 class GlShaderLibrary {
@@ -60,6 +62,7 @@ public:
     uint32_t StencilStripProgram() const { return strip_program_; }
     uint32_t StencilInvertProgram() const { return invert_program_; }
     uint32_t ConstProgram() const { return const_program_; }
+    uint32_t HalfwordShuffleProgram() const { return halfword_program_; }
     const GlStencilLocations& StencilLocations() const { return sloc_; }
 
     static const char* VertexSource();
@@ -80,6 +83,7 @@ private:
     uint32_t strip_program_ = 0;
     uint32_t invert_program_ = 0;
     uint32_t const_program_ = 0;
+    uint32_t halfword_program_ = 0;
     GlStencilLocations sloc_;
     int scanout_tex_loc_ = -1;
     GlUniformLocations loc_;

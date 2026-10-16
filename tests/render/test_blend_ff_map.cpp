@@ -41,6 +41,18 @@ int main() {
         std::snprintf(msg, sizeof(msg), "table arm %d%d%d%d", row.a, row.b, row.c, row.d);
         CHECK(BlendFfMap::Equal(got, row.want), msg);
     }
+    // A = B: the product term is zero for every C, so the result is D exactly --
+    // Cs (ONE, ZERO), Cd (ZERO, ONE: the frame colour untouched, alpha source-replaced
+    // at the call site) or zero (ZERO, ZERO); never the alpha-blend fallback.
+    for (int ab = 0; ab < 3; ab++)
+        for (int c = 0; c < 3; c++) {
+            const FfBlendMap cs = BlendFfMap::Map(ab, ab, c, 0);
+            const FfBlendMap cd = BlendFfMap::Map(ab, ab, c, 1);
+            const FfBlendMap zero = BlendFfMap::Map(ab, ab, c, 2);
+            CHECK(BlendFfMap::Equal(cs, Exp(false, r::kGlFuncAdd, r::kGlOne, r::kGlZero)), "A=B, D=Cs is source replace");
+            CHECK(BlendFfMap::Equal(cd, Exp(false, r::kGlFuncAdd, r::kGlZero, r::kGlOne)), "A=B, D=Cd keeps the frame colour");
+            CHECK(BlendFfMap::Equal(zero, Exp(false, r::kGlFuncAdd, r::kGlZero, r::kGlZero)), "A=B, D=0 writes zero");
+        }
     // Every other combo of the 3x3x3x3 space is the approximation fallback.
     int matched = 0, fallback = 0;
     for (int a = 0; a < 3; a++)
@@ -48,7 +60,7 @@ int main() {
             for (int c = 0; c < 3; c++)
                 for (int d = 0; d < 3; d++) {
                     const FfBlendMap m = BlendFfMap::Map(a, b, c, d);
-                    bool in_table = false;
+                    bool in_table = (a == b);
                     for (const Row& row : rows)
                         if (row.a == a && row.b == b && row.c == c && row.d == d) in_table = true;
                     if (in_table) { matched++; CHECK(m.matched, "table arm reports matched"); continue; }
@@ -58,7 +70,7 @@ int main() {
                           m.dst_rgb == r::kGlOneMinusSrcAlpha && !m.uses_fix,
                           "fallback is the standard alpha blend");
                 }
-    CHECK(matched == 14 && fallback == 81 - 14, "14 exact arms, 67 fallbacks");
+    CHECK(matched == 14 + 27 && fallback == 81 - 14 - 27, "14 table arms + 27 A=B arms, 40 fallbacks");
     // Invariant 34: the full-subtractive portal core (0-Cs)*As+Cd is REVERSE_SUBTRACT,
     // never the fallback that paints out = Cs.
     const FfBlendMap portal = BlendFfMap::Map(2, 0, 0, 1);

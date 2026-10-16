@@ -3,9 +3,11 @@
 // triangle through GlDrawExecutor with a hand-built DrawIr covers the expected
 // pixels (and only those) and the DrawResult carries the fused bbox and route
 // flags; a PSMCT24 + ZMSK draw leaves colour and depth writable for a raw clear
-// (post-draw mask reset); an RGBA8 surface created after an R8 release keeps all
-// four channels (the pool holds RGBA8 storage only). Exit 77 (SKIP) without a
-// context.
+// (post-draw mask reset); the TEST register's static alpha-test arm (ATST NEVER with
+// AFAIL ZB_ONLY / FB_ONLY / KEEP: the Z-clear idiom leaves the colour untouched); the
+// ALPHA A = B identity (Cv = D); the exact window depth (z = 16 passes GREATER over a
+// 0-cleared Z buffer); an RGBA8 surface created after an R8 release keeps all four
+// channels (the pool holds RGBA8 storage only). Exit 77 (SKIP) without a context.
 #include "engine/platform/host/platform.h"
 #include PS2R_GL_HEADER
 #include <SDL.h>
@@ -185,6 +187,69 @@ int main() {
     CHECK(fb[0] == 0 && fb[2] == 0 && fb[3] == 0x77, "alpha writable again after the CT24 draw");
     dev.Readback(depth, render::Rect{8, 8, 1, 1}, zb.data(), 4);
     CHECK(zb[0] == 0.5f, "depth writable again after the ZMSK draw");
+
+    // The TEST register's static alpha-test arm (GS User's Manual: ATST NEVER fails
+    // every pixel, AFAIL names what is still updated). The GS Z-clear idiom -- a
+    // frame-covering untextured draw with ATE=1 ATST=NEVER AFAIL=ZB_ONLY, ZTST ALWAYS,
+    // blend off -- writes the Z buffer and leaves the frame buffer untouched.
+    dev.Clear(color, depth, 0x44332211u, 0.0f, render::kClearColor | render::kClearDepth);
+    ir.raster.frame.psm = 0x00;
+    ir.raster.zbuf.zmsk = false;
+    ir.raster.test.ate = true; ir.raster.test.atst = 0; ir.raster.test.afail = 2;
+    ir.raster.test.zte = true; ir.raster.test.ztst = 1;
+    for (auto& v : ir.verts) { v.r = 255; v.g = 255; v.b = 255; v.z = 0.f; }
+    ir.verts = {V(0.f, 0.f), V(64.f, 0.f), V(0.f, 64.f), V(64.f, 0.f), V(64.f, 64.f), V(0.f, 64.f)};
+    for (auto& v : ir.verts) { v.r = 255; v.g = 255; v.b = 255; v.z = 0.f; }
+    ir.vertex_count = 6;
+    const render::DrawResult rz = dev.Draw(ir, ts, p);
+    CHECK(rz.drew, "Z-only clear draw executed");
+    dev.Readback(color, render::Rect{8, 8, 1, 1}, fb.data(), 4);
+    CHECK(fb[0] == 0x11 && fb[1] == 0x22 && fb[2] == 0x33 && fb[3] == 0x44, "ATST NEVER + AFAIL ZB_ONLY leaves the colour untouched");
+    // ... and FB_ONLY the reverse: colour written, depth not.
+    dev.Clear(color, depth, 0x44332211u, 0.25f, render::kClearColor | render::kClearDepth);
+    ir.raster.test.afail = 1;
+    for (auto& v : ir.verts) v.z = 1000.f;
+    dev.Draw(ir, ts, p);
+    dev.Readback(color, render::Rect{8, 8, 1, 1}, fb.data(), 4);
+    dev.Readback(depth, render::Rect{8, 8, 1, 1}, zb.data(), 4);
+    CHECK(fb[0] == 255 && fb[1] == 255 && zb[0] == 0.25f, "ATST NEVER + AFAIL FB_ONLY writes colour, not depth");
+    // ... and KEEP neither (the draw is dropped).
+    ir.raster.test.afail = 0;
+    const render::DrawResult rk = dev.Draw(ir, ts, p);
+    CHECK(!rk.drew, "ATST NEVER + AFAIL KEEP is no draw");
+    ir.raster.test.ate = false;
+
+    // ALPHA with A = B: the product term is zero, Cv = D. (2,2,2,1) = Cd keeps the
+    // frame colour whatever the vertex colour (alpha is source-replaced).
+    dev.Clear(color, depth, 0x44332211u, 0.0f, render::kClearColor | render::kClearDepth);
+    ir.alpha_blend = true;
+    ir.raster.alpha = {2, 2, 2, 1, 0};
+    for (auto& v : ir.verts) { v.r = 0; v.g = 0x20; v.b = 0; v.a = 0x80; }
+    dev.Draw(ir, ts, p);
+    dev.Readback(color, render::Rect{8, 8, 1, 1}, fb.data(), 4);
+    CHECK(fb[0] == 0x11 && fb[1] == 0x22 && fb[2] == 0x33, "ALPHA 2221 (Cv = Cd) keeps the frame colour");
+    ir.alpha_blend = false;
+    ir.raster.alpha = {};
+
+    // The window depth is exact for small z: after a Z buffer cleared to 0 (the
+    // GS far plane) a draw at z = 16 with ZTST GREATER passes, as on the console
+    // (the NDC representation alone would round 16 / 2^31 - 1 to -1.0 and fail).
+    dev.Clear(color, depth, 0x44332211u, 0.0f, render::kClearColor | render::kClearDepth);
+    ir.raster.test.zte = true; ir.raster.test.ztst = 3;
+    for (auto& v : ir.verts) { v.r = 0; v.g = 0; v.b = 0; v.a = 0x80; v.z = 16.f; }
+    dev.Draw(ir, ts, p);
+    dev.Readback(color, render::Rect{8, 8, 1, 1}, fb.data(), 4);
+    dev.Readback(depth, render::Rect{8, 8, 1, 1}, zb.data(), 4);
+    CHECK(fb[0] == 0 && fb[1] == 0 && fb[2] == 0, "z = 16 GREATER a 0-cleared Z passes (black written)");
+    CHECK(zb[0] == 16.0f / 4294967296.0f, "window depth is exactly z / 2^32");
+    // ... and the same z against itself fails GREATER (exact compare, no drift).
+    for (auto& v : ir.verts) { v.r = 255; }
+    dev.Draw(ir, ts, p);
+    dev.Readback(color, render::Rect{8, 8, 1, 1}, fb.data(), 4);
+    CHECK(fb[0] == 0, "z = 16 GREATER z = 16 fails");
+    ir.raster.test.ztst = 1;
+    ir.verts = {V(0.f, 0.f), V(64.f, 0.f), V(0.f, 64.f)};
+    ir.vertex_count = 3;
 
     // Pool hygiene: R8 storage is never pooled, so an RGBA8 surface of the same size
     // created after an R8 release keeps all four channels.

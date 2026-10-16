@@ -9,6 +9,8 @@
 add_library(ps2r_gs_ir STATIC
     gsdl_format.cpp
     draw_ir.cpp
+    alpha_fail_mask.cpp
+    halfword_shuffle.cpp
     direct_ops.cpp
     draw_ir_lift.cpp
     draw_ir_verifier.cpp

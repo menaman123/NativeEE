@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "engine/gs/format/texa_expand.h"
+#include "engine/gs/hle/ir/halfword_shuffle.h"
 
 namespace ps2r {
 namespace gs {
@@ -38,10 +39,8 @@ void ExtendCdDirty(render::CdCopyState& cd, int x0, int y0, int x1, int y1) {
 }  // namespace
 
 uint16_t RenderTarget::Fbmsk16From32(uint32_t m) {
-    // Fold the 8-bit channel masks onto the 5551 fields: a channel field is
-    // masked when its high bits are; alpha keeps bit 15 from bit 31.
-    return static_cast<uint16_t>(((m >> 3) & 0x1F) | ((m >> 6) & 0x3E0) | ((m >> 9) & 0x7C00) |
-                                 ((m >> 16) & 0x8000));
+    // One definition of the RGBA8 -> 5551 fold, in the ir library.
+    return HalfwordShuffle::Fbmsk16From32(m);
 }
 
 uint32_t RenderTarget::FrameBitsPerPixel(uint32_t psm) {
@@ -232,9 +231,13 @@ void RenderTarget::AfterDraw(const DrawIr& ir, const render::DrawResult& res,
             }
         }
         c.has_content = true;
-        identity.render_psm = fpsm;
-        identity.render_fbw = ir.raster.frame.fbw;
-        if (Is32BitClass(fpsm)) identity.has_32bit_content = true;
+        // The half-word copy wrote the 32-bit image through a 16-bit FRAME: the
+        // target's tags stay those of the 32-bit content it still holds.
+        if (!res.halfword_shuffle) {
+            identity.render_psm = fpsm;
+            identity.render_fbw = ir.raster.frame.fbw;
+            if (Is32BitClass(fpsm)) identity.has_32bit_content = true;
+        }
     }
     c.last_draw_frame = frame_count;
     c.last_draw_gfx_epoch = gfx_epoch;
@@ -251,12 +254,12 @@ void RenderTarget::AfterDraw(const DrawIr& ir, const render::DrawResult& res,
             if (wr.w > 0 && wr.h > 0) c.z_drawn_since_sync.Union(wr.x, wr.y, wr.x + wr.w, wr.y + wr.h);
         }
     }
-    const uint32_t bpp = FrameBitsPerPixel(fpsm);
+    const uint32_t bpp = res.halfword_shuffle ? 32u : FrameBitsPerPixel(fpsm);
     if (bpp >= 24) identity.was_32bit = true;
     if (bpp == 16) identity.was_16bit = true;
     // MASKED-SYNC: the 5551 bits the 16-bit draw left untouched; 0 for a full
-    // write or any other FRAME format.
-    c.sync_keep_mask16 = Is16BitColor(fpsm) ? uint16_t(res.fbmsk16) : uint16_t(0);
+    // write, the half-word copy (a 32-bit image write) or any other FRAME format.
+    c.sync_keep_mask16 = (Is16BitColor(fpsm) && !res.halfword_shuffle) ? uint16_t(res.fbmsk16) : uint16_t(0);
     // Per-view author counter: every committed draw authors exactly one view; a
     // 16-bit fog-lane draw (Z16 texture read, index-lane keep mask) records
     // itself as that view's lane author.

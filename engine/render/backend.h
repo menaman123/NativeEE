@@ -150,6 +150,8 @@ struct DrawResult {
     uint32_t fbmsk16 = 0;            // FRAME.FBMSK folded to the 5551 layout
     bool cd_copy_performed = false;
     Rect cd_copy_rect;               // logical rect copied (w == 0 => whole target)
+    bool halfword_shuffle = false;   // the 16-bit column pass ran as a half-word copy over the
+                                     // 32-bit image (the target keeps its 32-bit tags)
     Rect write_rect;                 // bbox_all ∩ scissor ∩ target, logical, half-open
 };
 

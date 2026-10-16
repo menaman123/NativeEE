@@ -14,7 +14,10 @@ FfBlendMap BlendFfMap::Map(uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
     auto is = [&](uint8_t A, uint8_t B, uint8_t C, uint8_t D) {
         return a == A && b == B && c == C && d == D;
     };
-    if (is(0, 1, 0, 1)) {            // (Cs-Cd)*As+Cd = Cs*As + Cd*(1-As)
+    if (a == b) {                    // (X-X)*C = 0 whatever C: Cv = D exactly
+        m.src_rgb = (d == 0) ? kGlOne : kGlZero;    // D = Cs
+        m.dst_rgb = (d == 1) ? kGlOne : kGlZero;    // D = Cd; D = 2 -> zero
+    } else if (is(0, 1, 0, 1)) {     // (Cs-Cd)*As+Cd = Cs*As + Cd*(1-As)
         m.src_rgb = kGlSrcAlpha;
         m.dst_rgb = kGlOneMinusSrcAlpha;
     } else if (is(0, 2, 0, 1)) {     // (Cs-0)*As+Cd

@@ -57,6 +57,20 @@ ps2r_gs_ir_test(test_gsdl_format)
 ps2r_gs_ir_test(test_gsdl_reader)
 ps2r_gs_ir_test(test_draw_ir)
 
+# AlphaFailMask: the TEST register's static alpha-test arm as a whole-draw write mask
+# (ATST NEVER + AFAIL ZB_ONLY = the Z-clear idiom leaves the frame buffer untouched).
+ps2r_gs_ir_test(test_alpha_fail_mask)
+add_test(NAME GsAlphaFailMask COMMAND test_alpha_fail_mask)
+set_tests_properties(GsAlphaFailMask PROPERTIES TIMEOUT 60)
+
+# HalfwordShuffle: Detect accepts exactly the 16-bit sprite column pass over a 32-bit
+# buffer (both parities, self / sibling source, DECAL / identity MODULATE, the uniform
+# alpha-test arms) and rejects every gate alone (blend term, shape, DATE, per-pixel Z,
+# scissor, FBA, TCC = 0, DTHE); Fbmsk16From32 folds RGBA8 onto 5551.
+ps2r_gs_ir_test(test_halfword_shuffle)
+add_test(NAME GsHalfwordShuffle COMMAND test_halfword_shuffle)
+set_tests_properties(GsHalfwordShuffle PROPERTIES TIMEOUT 60)
+
 # G1: every .gsdl struct size / field offset (compile-time and run-time), the hash
 # primitives, and the FileHeader decode of a real capture's first 4 KiB.
 add_test(NAME GsdlFormatOffsets COMMAND test_gsdl_format ${PS2R_GS_CORPUS}/boot_menu.gsdl)
