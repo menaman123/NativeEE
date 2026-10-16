@@ -366,8 +366,10 @@ void Dmac::ChaseVif1Tail() { deferred_.ChaseVif1Tail(ch_[kVif1]); }
 void Dmac::ObserveAtKernelWait() {
     // The flush drains the arbiter itself (the walk's PATH2 lands before the
     // queued PATH3); with nothing parked only the PATH3 backlog is delivered.
-    if (deferred_.Active()) deferred_.FlushDeferredVif1(ch_[kVif1], DmacDeferredVif1::FlushReason::KernelWait);
-    else if (arbiter_.hasPending()) arbiter_.drain();
+    // Parked or not, the wait ends the END-slot append race (the tail records go).
+    const bool parked = deferred_.Active();
+    deferred_.FlushDeferredVif1(ch_[kVif1], DmacDeferredVif1::FlushReason::KernelWait);
+    if (!parked && arbiter_.hasPending()) arbiter_.drain();
 }
 
 // ---- savestate ----------------------------------------------------------------

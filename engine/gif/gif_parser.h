@@ -54,6 +54,9 @@ public:
     // executed. All zero = the parser never ran.
     uint64_t Receives(GifPath path) const { return receives_[static_cast<unsigned>(path) & 3]; }
     uint64_t ReceivedBytes(GifPath path) const { return received_bytes_[static_cast<unsigned>(path) & 3]; }
+    // The path of the delivery being parsed (or last parsed): a sink callback
+    // (a FINISH / SIGNAL observer) reads it to attribute the event to its path.
+    GifPath ActivePath() const { return active_path_; }
 
 private:
     void ProcessBuffer();

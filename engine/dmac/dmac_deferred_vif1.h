@@ -12,6 +12,14 @@
 // the DMA runs), or the frame sync. END slots with QWC 0 are re-read at the
 // frame sync and a sane rewrite resumes the walk from that slot.
 //
+// The blocking kernel wait is also where the race ENDS: the kernel reschedules
+// the EE (microseconds) while the chain (microseconds) runs to its END, so a
+// rewrite of that END slot after the wait is the game building a NEW list in the
+// buffer (a double-buffered display list rebuilt after its FINISH arrived), not
+// an append the DMA could still read. A KernelWait flush therefore records no
+// tail and drops the records of earlier walks; only a chain flushed by a
+// register access, a GIF kick or the frame sync keeps its END slot chaseable.
+//
 // The walk itself is the owner's (the DMAC runs it over the channel registers
 // and completes the channel); it is bound through the runner hook.
 #include <cstddef>
@@ -51,7 +59,8 @@ public:
     void Clear();
 
     // Restore the parked registers into `vif1`, run the walk, clear STR, drain
-    // the arbiter. No effect when nothing is parked.
+    // the arbiter. No effect when nothing is parked -- except that a KernelWait
+    // drops every tail record (header: the race is over once the EE blocked).
     void FlushDeferredVif1(DmacChannelRegs& vif1, FlushReason reason);
     // Frame sync: flush, then re-read every recorded END slot and resume the
     // chain from each slot whose tag was rewritten to a sane non-terminator.

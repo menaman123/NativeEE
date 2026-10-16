@@ -28,21 +28,25 @@ void DmacDeferredVif1::Clear() {
 }
 
 void DmacDeferredVif1::FlushDeferredVif1(DmacChannelRegs& vif1, FlushReason reason) {
-    static_cast<void>(reason);
-    if (!active_) return;
-    active_ = false;
-    // The kick-time registers come back (STR set, mode / TTE / ASP as kicked)
-    // so the walk sees exactly what the game wrote; SADR is not part of a kick.
-    vif1.chcr = snapshot_.chcr;
-    vif1.madr = snapshot_.madr;
-    vif1.qwc = snapshot_.qwc;
-    vif1.tadr = snapshot_.tadr;
-    vif1.asr0 = snapshot_.asr0;
-    vif1.asr1 = snapshot_.asr1;
-    if (run_) run_(run_user_);
-    vif1.chcr &= ~DmacChcr::kStr;
-    // The walk's PATH2 (and any queued PATH3) packets reach the GS now.
-    if (arbiter_.hasPending()) arbiter_.drain();
+    // A blocking kernel wait runs the DMA to completion while the EE sleeps: the
+    // walk it flushes and every earlier walk are past the append race (header).
+    const bool completes = reason == FlushReason::KernelWait;
+    if (active_) {
+        active_ = false;
+        // The kick-time registers come back (STR set, mode / TTE / ASP as kicked)
+        // so the walk sees exactly what the game wrote; SADR is not part of a kick.
+        vif1.chcr = snapshot_.chcr;
+        vif1.madr = snapshot_.madr;
+        vif1.qwc = snapshot_.qwc;
+        vif1.tadr = snapshot_.tadr;
+        vif1.asr0 = snapshot_.asr0;
+        vif1.asr1 = snapshot_.asr1;
+        if (run_) run_(run_user_);
+        vif1.chcr &= ~DmacChcr::kStr;
+        // The walk's PATH2 (and any queued PATH3) packets reach the GS now.
+        if (arbiter_.hasPending()) arbiter_.drain();
+    }
+    if (completes) tails_.clear();
 }
 
 bool DmacDeferredVif1::IsSaneRewrite(uint64_t now_lo, uint64_t recorded_lo) {

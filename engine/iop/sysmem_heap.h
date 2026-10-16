@@ -10,9 +10,13 @@
 //   [..., kCeiling)                  heap continues above the band; kCeiling leaves
 //                                    the callback scratch stacks at the top of RAM
 //                                    (which grow down) 2 KiB of guard.
-// Blocks are 16-byte rounded; Free coalesces byte-adjacent neighbours and
-// reclaims a free tail; QueryMaxFree is the largest single allocatable block
-// (the real QueryMaxFreeMemSize contract). Savestate contract: only heap_ptr
+// Blocks are rounded to the kernel's allocation unit of 256 bytes (SYSMEM manages
+// its arena in 256-byte blocks; AllocSysMemory rounds the request up and
+// QueryBlockSize / QueryMaxFreeMemSize answer in those units) -- a module that
+// writes a few words past its request (Sly 2's spiop fills a 0x48-byte handler
+// node into a 0x38-byte block) stays inside its own block, as on the console.
+// Free coalesces byte-adjacent neighbours and reclaims a free tail; QueryMaxFree
+// is the largest single allocatable block (the real QueryMaxFreeMemSize contract). Savestate contract: only heap_ptr
 // is serialized; the maps are transient (a restored heap starts with an empty
 // free list, and an unknown Free is a no-op).
 #pragma once
@@ -24,6 +28,7 @@ namespace ps2r::iop {
 
 class SysmemHeap {
 public:
+    static constexpr uint32_t kBlockUnit   = 0x100;   // SYSMEM's allocation granularity
     static constexpr uint32_t kArenaSize   = 2u * 1024u * 1024u;
     static constexpr uint32_t kCeiling     = kArenaSize - 0x800;
     static constexpr uint32_t kFloor       = 0x28000;

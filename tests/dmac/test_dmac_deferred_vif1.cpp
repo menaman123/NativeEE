@@ -2,8 +2,9 @@
 // kick -- park, the game appending to the live chain before the flush, the
 // observation-point matrix (and the non-points), kick order under a re-kick,
 // the kick-time snapshot, the END-slot tail chase (resume / reject table,
-// batch consumption, dedup, termination on a self-loop) and the frame-sync
-// flush inside ChaseVif1Tail.
+// batch consumption, dedup, termination on a self-loop), the frame-sync
+// flush inside ChaseVif1Tail, and the blocking kernel wait that ends the
+// append race (no tail recorded, earlier records dropped).
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -475,6 +476,58 @@ void TestFrameSyncFlush() {
 
 }  // namespace
 
+// The blocking kernel wait completes the chain for good: the EE slept while the
+// DMA ran to END, so the END slot the game rewrites afterwards is a NEW list
+// (Sly 2 rebuilds its double-buffered display list in place once its FINISH
+// arrived; the old chase resumed into that half-built list and misparsed the
+// next kick). A KernelWait flush records no tail; records of earlier walks go.
+void TestKernelWaitEndsAppendRace() {
+    // Kicked, flushed at the kernel wait: no record, and a sane rewrite + chase does not resume.
+    Rig rig;
+    const uint32_t slot = PutSimpleChain(rig, 0x4000, 1, 0x1100);
+    KickVif1(rig, 0x4000);
+    rig.dmac.ObserveAtKernelWait();
+    CHECK(QwIs(rig.vu1, 1, 0x1100) && !rig.dmac.HasDeferredVif1());
+    CHECK(rig.dmac.deferred().TailCount() == 0);
+    PutTag(rig, slot, 2, DmacTagId::kCnt);
+    PutUnpack(rig, slot + 0x10, 2, 0x2200);
+    PutTag(rig, slot + 0x30, 0, DmacTagId::kEnd);
+    const uint32_t tadr = rig.dmac.channel(1).tadr;
+    rig.dmac.ChaseVif1Tail();
+    CHECK(QwZero(rig.vu1, 2) && rig.dmac.channel(1).tadr == tadr);
+    // The game's next kick of the rebuilt list walks it from ITS start, cleanly.
+    KickVif1(rig, 0x4000);
+    rig.dmac.ObserveAtKernelWait();
+    CHECK(QwIs(rig.vu1, 2, 0x2200) && rig.dmac.channel(1).tadr == slot + 0x40);
+
+    // A record made by a register-read flush is dropped by a later kernel wait
+    // (nothing parked): the rewrite after the wait is not an append either.
+    Rig b;
+    const uint32_t slot_b = PutSimpleChain(b, 0x4000, 1, 0x1100);
+    KickVif1(b, 0x4000);
+    b.dmac.Read(DmacAddr::kVif1, 4);
+    CHECK(b.dmac.deferred().TailCount() == 1);
+    b.dmac.ObserveAtKernelWait();
+    CHECK(b.dmac.deferred().TailCount() == 0);
+    PutTag(b, slot_b, 2, DmacTagId::kCnt);
+    PutUnpack(b, slot_b + 0x10, 2, 0x2200);
+    PutTag(b, slot_b + 0x30, 0, DmacTagId::kEnd);
+    b.dmac.ChaseVif1Tail();
+    CHECK(QwZero(b.vu1, 2));
+
+    // The other observation points keep the chase (the pinned Crash model): a
+    // CHCR-read flush followed by a frame-sync chase of the rewritten slot resumes.
+    Rig c;
+    const uint32_t slot_c = PutSimpleChain(c, 0x4000, 1, 0x1100);
+    KickVif1(c, 0x4000);
+    c.dmac.Read(DmacAddr::kVif1, 4);
+    PutTag(c, slot_c, 2, DmacTagId::kCnt);
+    PutUnpack(c, slot_c + 0x10, 2, 0x2200);
+    PutTag(c, slot_c + 0x30, 0, DmacTagId::kEnd);
+    c.dmac.ChaseVif1Tail();
+    CHECK(QwIs(c.vu1, 2, 0x2200));
+}
+
 int main() {
     TestParkAndAppend();
     TestObservationPoints();
@@ -484,6 +537,7 @@ int main() {
     TestTailChase();
     TestChaseTerminates();
     TestFrameSyncFlush();
+    TestKernelWaitEndsAppendRace();
     if (g_fail) {
         std::printf("DmacDeferredVif1: FAIL (%d)\n", g_fail);
         return 1;

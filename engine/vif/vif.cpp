@@ -123,6 +123,9 @@ uint32_t Vif::BytesNeeded(int vif, uint32_t cmd, uint32_t num, bool* use_mask) c
 void Vif::SubmitDirect(int vif) {
     VifUnitState& u = u_[vif];
     if (!u.direct_buffer.empty()) {
+        // Both feeds (the word latch and the whole-span parser) hand PATH2 its packet here.
+        PS2R_LOG(VIF, Narrate, "vif%d: direct%s -> path2 payload=%zu", vif, u.pending_directhl ? "hl" : "",
+                 u.direct_buffer.size());
         arbiter_.submit(GifPath::Path2, u.direct_buffer.data(), u.direct_buffer.size(),
                         u.pending_directhl);
         u.direct_buffer.clear();

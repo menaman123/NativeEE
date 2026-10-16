@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 
+#include "engine/core/log/log.h"
 #include "engine/gif/gif_register_dispatch.h"
 
 #if defined(PS2R_SIMD) && defined(__aarch64__) && defined(__ARM_NEON)
@@ -52,6 +53,8 @@ void GifParser::ReceiveData(GifPath path, const uint8_t* data, size_t size) {
         tail_.clear();
     }
     active_path_ = path;
+    PS2R_LOG(GIF, Narrate, "gif: path%d receive %zu bytes (tail=%zu in_transfer=%d loop=%u m3r=%d)", static_cast<int>(path),
+             size, tail_.size(), t.in_transfer ? 1 : 0, t.loop, regs_.Path3Masked() ? 1 : 0);
     if (tail_.empty() && !regs_.Path3Masked()) {
         const size_t consumed = ParseSpan(data, size);
         if (consumed < size) tail_.assign(data + consumed, data + size);

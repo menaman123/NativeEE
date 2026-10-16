@@ -19,8 +19,8 @@ void SysmemHeap::RestoreHeapPtr(uint32_t heap_ptr) {
 }
 
 uint32_t SysmemHeap::Alloc(uint32_t size) {
-    size = (size + 15) & ~15u;
-    if (size == 0) size = 16;
+    size = (size + (kBlockUnit - 1)) & ~(kBlockUnit - 1);
+    if (size == 0) size = kBlockUnit;
 
     // First fit from the free list.
     for (auto it = free_blocks_.begin(); it != free_blocks_.end(); ++it) {
