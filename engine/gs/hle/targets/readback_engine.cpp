@@ -169,7 +169,7 @@ uint32_t ReadbackEngine::EncodeColorRows(RenderTarget& t, VramImage& vram, uint6
             uint8_t* o = linear_.data() + (static_cast<size_t>(y) * rw + x) * bpp;
             if (bpp == 4) {
                 o[0] = r; o[1] = g; o[2] = b;
-                o[3] = PixelConvert::ScaleAlphaGpuToPs2(a);   // 255 -> 128, else a / 2
+                o[3] = a;   // the stored GS alpha byte (the stored-alpha convention)
             } else {
                 const uint16_t px = static_cast<uint16_t>(((r >> 3) & 0x1F) | (((g >> 3) & 0x1F) << 5) |
                                                           (((b >> 3) & 0x1F) << 10) | ((a > 127 ? 1 : 0) << 15));

@@ -25,8 +25,12 @@ static int g_checks = 0, g_fail = 0;
 // The vertex text is the OLD baseline (0x4fd2767450e43bb7) plus the `v_z` output
 // (the PS2 z, screen-linear) the fragment program turns into gl_FragDepth =
 // z * 2^-32: the clip-space z keeps the OLD mapping (clipping only), the window
-// depth is exact for small z (GS Z tests of z < 64 against a 0-cleared Z buffer).
-static const uint64_t kVertHash = 0xa12a8c2a25c17ff7ull;
+// depth is exact for small z (GS Z tests of z < 64 against a 0-cleared Z buffer);
+// then (0xa12a8c2a25c17ff7) the GS coverage rule: the primitive translated by
+// +0.5 - 1/256 px so the GS integer sample point (i, j) meets the GL sample point
+// (i + 0.5, j + 0.5) with the inclusive-low / exclusive-high edge rule (a sprite
+// -0.5..223.5 covers rows 0..223; pinned by test_gl_raster_rule).
+static const uint64_t kVertHash = 0x36951d472cb1a88cull;
 // The fragment text is the OLD baseline arm (0x3ffd78421c147ece) plus TWO
 // additive branches: the u_idx_fmt == 7 serve (the depth-byte palette lookup the
 // owned colour filter asks for: clut[(Z >> u_idx_self) & 0xFF] of the bound
@@ -38,15 +42,22 @@ static const uint64_t kVertHash = 0xa12a8c2a25c17ff7ull;
 // first in main (before any discard) and the colour-authored Z compare reading that
 // value instead of gl_FragCoord.z; then (0x1c4e1e3d11fc8ad9) the exact 32-bit FBMSK
 // merge (`u_fbmsk32_en` / `u_fbmsk32`: a sub-byte channel mask on a 32-bit frame merged
-// per bit against the Cd copy, after the fbmsk16 merge). Every other arm's text is
-// unchanged; re-pin only together with a reviewed shader change.
-static const uint64_t kFragHash = 0x9aa9c998af376fe4ull;
+// per bit against the Cd copy, after the fbmsk16 merge); then (0x9aa9c998af376fe4)
+// the ONE stored-alpha convention: the stored alpha is the GS byte everywhere
+// (the sampled-texel inverse halving, the PSMT8H index halving and the final x2
+// "GL convention" rescale are gone; the Z32N serve passes the byte), and the fixed-
+// function blend factor min(2 As, 255) / 255 travels on the dual-source output
+// `frag_factor` (index 1; pinned by test_gl_alpha_convention). Every other arm's
+// text is unchanged; re-pin only together with a reviewed shader change.
+static const uint64_t kFragHash = 0xf2f8f81b48c9a6f8ull;
 static const uint64_t kScanoutVertHash = 0x8823cded4f383d15ull;
 static const uint64_t kScanoutFragHash = 0x5d955137d32b0c78ull;
 // The stencil-composite sources (OLD s9_composite_native.inc:53-215 k_s9_* texts).
 static const uint64_t kStencilClearHash = 0xaf25eec16f07cca3ull;
 static const uint64_t kStencilStripHash = 0x8fcb62c7a48824b9ull;
-static const uint64_t kStencilInvertHash = 0xda3087d8b47270ccull;
+// The invert text (0xda3087d8b47270cc) with its fmt=4 index = the stored alpha byte
+// (the stored-alpha convention; the x2 inverse is gone).
+static const uint64_t kStencilInvertHash = 0x1896ffdf42544bccull;
 static const uint64_t kConstVertHash = 0xa8293c48adbb37b0ull;
 static const uint64_t kConstFragHash = 0xb5e42c4bdc02e060ull;
 

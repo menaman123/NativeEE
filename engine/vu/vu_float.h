@@ -19,8 +19,14 @@
 
 #include "engine/ee/cpu/cpu_state.h"
 
+// The VU lane kernels are NEON under PS2R_SIMD on AArch64 (the project's
+// opt-in; every NEON kernel is the scalar kernel's twin, proven by the
+// side-by-side tests and the capture corpus) and scalar otherwise.
 #if defined(PS2R_SIMD) && PS2R_SIMD && defined(__aarch64__)
 #include <arm_neon.h>
+#define PS2R_VU_NEON 1
+#else
+#define PS2R_VU_NEON 0
 #endif
 
 class VuFloat {
@@ -41,11 +47,33 @@ public:
 
     // Clamp: NaN/Inf -> +/-MAX_FLOAT, denormal -> +/-0, else unchanged.
     static uint32_t ClampBits1(uint32_t bits);
+    // True when ClampBits1 is the identity for sure (exponent neither 0 nor
+    // all-ones); a true zero also clamps to itself but is not claimed here.
+    static bool IsNormalExp(uint32_t bits);
     static float ClampFloat(float v);
     // ACC is re-clamped in place before every upper instruction.
     static void ClampStoreACC(VR_reg& acc);
     // dst lanes selected by `mask` take the clamped result bits.
     static void WriteMaskClamp(VR_reg& dst, const uint32_t result_bits[4], uint8_t mask);
+    // The four lanes clamped (an FMAC source copy).
+    static VR_reg ClampVec(const VR_reg& v);
+
+    // Four-lane arithmetic, each lane the scalar IEEE operation under the
+    // caller's rounding mode: a+b, a-b, a*b, fma(a,b,c) and fma(-a,b,c)
+    // (single rounding, the MADD/MSUB family), and the broadcast of one lane.
+    static VR_reg Add4(const VR_reg& a, const VR_reg& b);
+    static VR_reg Sub4(const VR_reg& a, const VR_reg& b);
+    static VR_reg Mul4(const VR_reg& a, const VR_reg& b);
+    static VR_reg Fma4(const VR_reg& a, const VR_reg& b, const VR_reg& c);
+    static VR_reg Fms4(const VR_reg& a, const VR_reg& b, const VR_reg& c);
+    static VR_reg Splat4(float v);
+    // MAX / MINI over four raw lanes (FpMax / FpMin per lane) written to the
+    // dest lanes `mask` selects; a VF00 destination is left alone.
+    static void ApplyMinMax4(VR_reg& dest, const VR_reg& fs_raw, const VR_reg& ft_raw, uint8_t mask, bool protect_vf0,
+                             bool is_max);
+    // FTOIn: raw lanes * scale then FtoiSat; ITOFn: raw integer lanes -> float / scale.
+    static VR_reg Ftoi4Scaled(const VR_reg& src, float scale);
+    static VR_reg Itof4Scaled(const VR_reg& src, float scale);
 
     // MAC flag nibble bits for one lane (`field`: x=3, y=2, z=1, w=0) from the
     // raw result bits, and the 16-bit pack over the lanes `mask` selects.
@@ -80,7 +108,7 @@ public:
     // compares as the largest denormal).
     static uint32_t ClipNf(uint32_t xb, uint32_t yb, uint32_t zb, uint32_t wb);
 
-#if defined(PS2R_SIMD) && PS2R_SIMD && defined(__aarch64__)
+#if PS2R_VU_NEON
     static uint32x4_t ClampBits4(uint32x4_t bits);
     static uint16_t MacFlags4(uint32x4_t bits, uint8_t mask);
 #endif

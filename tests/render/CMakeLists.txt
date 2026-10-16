@@ -13,6 +13,9 @@ ps2r_render_test(test_vertex_convert)
 ps2r_render_test(test_gl_shader_library)
 ps2r_render_test(test_gl_state_cache)
 ps2r_render_test(test_gl_device_smoke)
+ps2r_render_test(test_gl_raster_rule)
+ps2r_render_test(test_gl_alpha_convention)
+target_link_libraries(test_gl_alpha_convention PRIVATE ps2r_gs_hle_texsrc ps2r_gs_format)
 ps2r_render_test(test_gl_present)
 ps2r_render_test(test_blend_equation_pin)
 ps2r_render_test(test_s9_stencil_smoke)
@@ -58,6 +61,14 @@ set_tests_properties(Render_StateCacheEquivalence PROPERTIES TIMEOUT 120 SKIP_RE
 # Device smoke: surface create / clear / readback, one untextured triangle through the executor.
 add_test(NAME Render_DeviceSmoke COMMAND test_gl_device_smoke)
 set_tests_properties(Render_DeviceSmoke PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+
+# The GS pixel coverage rule (integer sample point, x0 <= i < x1) through the executor.
+add_test(NAME Render_RasterRule COMMAND test_gl_raster_rule)
+set_tests_properties(Render_RasterRule PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+
+# The ONE alpha convention: TEXA'd CT16 texels, the dual-source As factor, the stored byte.
+add_test(NAME Render_AlphaConvention COMMAND test_gl_alpha_convention)
+set_tests_properties(Render_AlphaConvention PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 
 # Window-pixel pins: logical content crop, orientation, allocation scale and
 # failure before clear/swap. Includes the unchanged full-image present mapping.

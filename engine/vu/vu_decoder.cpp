@@ -225,8 +225,10 @@ void VuDecoder::ClassifyFastKinds(VuDecodedSlot& s) {
         switch (s.u_fd) {
             case 0x02: uk = VUK_U_MADDA_BC; break;
             case 0x03: uk = VUK_U_MSUBA_BC; break;
-            case 0x04: if (bc2 == 0) uk = VUK_U_ITOF0; break;
-            case 0x05: if (bc2 == 0) uk = VUK_U_FTOI0; else if (bc2 == 1) uk = VUK_U_FTOI4; break;
+            case 0x00: uk = VUK_U_ADDA_BC; break;
+            case 0x01: uk = VUK_U_SUBA_BC; break;
+            case 0x04: uk = (bc2 == 0) ? VUK_U_ITOF0 : VUK_U_ITOF_N; break;
+            case 0x05: uk = (bc2 == 0) ? VUK_U_FTOI0 : (bc2 == 1) ? VUK_U_FTOI4 : VUK_U_FTOI_N; break;
             case 0x06: uk = VUK_U_MULA_BC; break;
             case 0x07: if (bc2 == 3) uk = VUK_U_CLIP; break;
             case 0x0A: if (bc2 == 1) uk = VUK_U_MADDA; else if (bc2 == 2) uk = VUK_U_MULA; break;
@@ -252,6 +254,7 @@ void VuDecoder::ClassifyFastKinds(VuDecodedSlot& s) {
             case 0x2B: uk = VUK_U_MAX; break;
             case 0x2C: uk = VUK_U_SUB; break;
             case 0x2D: uk = VUK_U_MSUB; break;
+            case 0x2F: uk = VUK_U_MINI; break;
             default: break;
         }
     }
@@ -276,6 +279,17 @@ void VuDecoder::ClassifyFastKinds(VuDecodedSlot& s) {
         case 0x05: lk = VUK_L_ISW; break;
         case 0x08: lk = VUK_L_IADDIU; break;
         case 0x09: lk = VUK_L_ISUBIU; break;
+        case 0x10: lk = VUK_L_FCEQ; break;
+        case 0x11: lk = VUK_L_FCSET; break;
+        case 0x12: lk = VUK_L_FCAND; break;
+        case 0x13: lk = VUK_L_FCOR; break;
+        case 0x14: lk = VUK_L_FSEQ; break;
+        case 0x15: lk = VUK_L_FSSET; break;
+        case 0x16: lk = VUK_L_FSAND; break;
+        case 0x17: lk = VUK_L_FSOR; break;
+        case 0x18: lk = VUK_L_FMEQ; break;
+        case 0x1A: lk = VUK_L_FMAND; break;
+        case 0x1B: lk = VUK_L_FMOR; break;
         case 0x1C: lk = VUK_L_FCGET; break;
         case 0x20: lk = VUK_L_B; break;
         case 0x21: lk = VUK_L_BAL; break;
@@ -283,6 +297,10 @@ void VuDecoder::ClassifyFastKinds(VuDecodedSlot& s) {
         case 0x25: lk = VUK_L_JALR; break;
         case 0x28: lk = VUK_L_IBEQ; break;
         case 0x29: lk = VUK_L_IBNE; break;
+        case 0x2C: lk = VUK_L_IBLTZ; break;
+        case 0x2D: lk = VUK_L_IBGTZ; break;
+        case 0x2E: lk = VUK_L_IBLEZ; break;
+        case 0x2F: lk = VUK_L_IBGEZ; break;
         case 0x40: {
             const uint32_t fn = LFn(l);
             const uint32_t f2 = LFunct2(l);
@@ -297,12 +315,15 @@ void VuDecoder::ClassifyFastKinds(VuDecodedSlot& s) {
                     else if (f2 == 0x0D) lk = VUK_L_LQI;
                     else if (f2 == 0x0E) lk = VUK_L_DIV;
                     else if (f2 == 0x0F) lk = VUK_L_MTIR;
+                    else if (f2 == 0x1A) lk = VUK_L_XTOP;
+                    else if (f2 == 0x1B) lk = VUK_L_XGKICK;
                     break;
                 case 0x3D:
                     if (f2 == 0x0C) lk = (s.l_ft == 0) ? VUK_L_NOP : VUK_L_MR32;
                     else if (f2 == 0x0D) lk = VUK_L_SQI;
                     else if (f2 == 0x0F) lk = VUK_L_MFIR;
                     else if (f2 == 0x10) lk = VUK_L_RGET;
+                    else if (f2 == 0x1A) lk = VUK_L_XITOP;
                     break;
                 case 0x3E:
                     if (f2 == 0x10) lk = VUK_L_RINIT;
@@ -457,5 +478,10 @@ bool VuDecoder::VuSlotCanTouchHardwired(const VuDecodedSlot& s) {
 }
 
 bool VuDecoder::IsBranchKind(uint8_t k) {
-    return k == VUK_L_IBEQ || k == VUK_L_IBNE || k == VUK_L_B || k == VUK_L_BAL || k == VUK_L_JR || k == VUK_L_JALR;
+    return k == VUK_L_IBEQ || k == VUK_L_IBNE || k == VUK_L_B || k == VUK_L_BAL || k == VUK_L_JR || k == VUK_L_JALR ||
+           k == VUK_L_IBLTZ || k == VUK_L_IBGTZ || k == VUK_L_IBLEZ || k == VUK_L_IBGEZ;
+}
+
+bool VuDecoder::IsRunTerminalLowerKind(uint8_t k) {
+    return IsBranchKind(k) || k == VUK_L_XTOP || k == VUK_L_XITOP || k == VUK_L_XGKICK;
 }

@@ -10,6 +10,13 @@
 // `matched = false` with the standard alpha blend as the legacy approximation. The
 // alpha channel is always source-replace at the call site (ONE, ZERO).
 //
+// The stored-alpha convention: the As factor is the fragment program's SECOND output (dual-source
+// blending, GL_SRC1_ALPHA / GL_ONE_MINUS_SRC1_ALPHA): frag_factor.a = min(2 As, 255)
+// / 255 is the GS As / 0x80 ratio, while the first output's alpha is the stored GS
+// byte. Ad (C = 1) has no fixed-function form in that convention (GL_DST_ALPHA would
+// read the byte, not the ratio): it stays an unmatched approximation here, exact on
+// the shader-side blend route.
+//
 // With COLCLAMP=0 the GS masks each blend result channel to its low 8 bits instead
 // of saturating; fixed-function blending cannot wrap, so blended COLCLAMP=0 draws are
 // routed to the shader-side blend (RouteWrapBlend), whose per-channel reference is
@@ -25,8 +32,8 @@ namespace render {
 // a GL header in the off-GL unit test).
 constexpr uint32_t kGlZero = 0;
 constexpr uint32_t kGlOne = 1;
-constexpr uint32_t kGlSrcAlpha = 0x0302;
-constexpr uint32_t kGlOneMinusSrcAlpha = 0x0303;
+constexpr uint32_t kGlSrc1Alpha = 0x88F9;           // GL_SRC1_ALPHA (dual-source index 1)
+constexpr uint32_t kGlOneMinusSrc1Alpha = 0x88FB;   // GL_ONE_MINUS_SRC1_ALPHA
 constexpr uint32_t kGlConstantAlpha = 0x8003;
 constexpr uint32_t kGlOneMinusConstantAlpha = 0x8004;
 constexpr uint32_t kGlFuncAdd = 0x8006;

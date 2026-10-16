@@ -69,6 +69,9 @@ private:
     // The two words of one bundle in issue order (the interpreter's hazards).
     void ExecBundle(VuUnit& unit, const VuDecodedSlot& s, uint32_t pc, bool& branch_taken, uint32_t& branch_target);
     void ExecUpperFast(VuUnit& unit, const VuDecodedSlot& s);
+    // The two FMAC families of the upper word (fd-writing results; the ACC accumulators).
+    static void ExecUpperFmac(VuUnit& unit, const VuDecodedSlot& s);
+    static void ExecUpperAcc(VuUnit& unit, const VuDecodedSlot& s);
     void ExecLowerFast(VuUnit& unit, const VuDecodedSlot& s, uint32_t pc, bool& branch_taken, uint32_t& branch_target);
     void DrainAll(VuUnit& unit);
 

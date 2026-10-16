@@ -67,7 +67,7 @@ static void TestLayout() {
     CHECK(offsetof(VuDecodedSlot, l_imm15u) == 54);
     CHECK(offsetof(VuDecodedSlot, touch_hw) == 56);
     CHECK(offsetof(VuDecodedSlot, run_len) == 58);
-    CHECK(VUK_U_COUNT == 28 && VUK_L_COUNT == 30);
+    CHECK(VUK_U_COUNT == 33 && VUK_L_COUNT == 48);  // appended kinds keep every earlier number
     CHECK(VUK_U_ITOF0 == 27 && VUK_L_WAITQ == 29 && VUK_U_NOP == 1 && VUK_L_NOP == 1);
 }
 
@@ -115,7 +115,7 @@ static void TestUpperFamilies() {
     CHECK(Slot(kLNop, Up(0x2B, 1, 2, 3, 0xF)).upper_kind == VUK_U_MAX);
     CHECK(Slot(kLNop, Up(0x2C, 1, 2, 3, 0xF)).upper_kind == VUK_U_SUB);
     CHECK(Slot(kLNop, Up(0x2D, 1, 2, 3, 0xF)).upper_kind == VUK_U_MSUB);
-    CHECK(Slot(kLNop, Up(0x2F, 1, 2, 3, 0xF)).upper_kind == VUK_U_GENERIC);  // MINI
+    CHECK(Slot(kLNop, Up(0x2F, 1, 2, 3, 0xF)).upper_kind == VUK_U_MINI);
     VuDecodedSlot v = Slot(kLNop, Up(0x28, 7, 1, 2, 0x9));
     CHECK(HasRead(v, 1, 0x9) && HasRead(v, 2, 0x9) && HasWrite(v, 7, 0x9));
     // OPMSUB always touches xyz regardless of dest
@@ -137,10 +137,15 @@ static void TestSpecial2() {
     VuDecodedSlot f0 = Slot(kLNop, Up(0x3C, 0x05, 9, 7, 0xE));
     CHECK(f0.upper_kind == VUK_U_FTOI0 && HasRead(f0, 9, 0xE) && HasWrite(f0, 7, 0xE) && f0.upper_vf_write == 7);
     CHECK(Slot(kLNop, Up(0x3D, 0x05, 9, 7, 0xE)).upper_kind == VUK_U_FTOI4);
-    CHECK(Slot(kLNop, Up(0x3E, 0x05, 9, 7, 0xE)).upper_kind == VUK_U_GENERIC);  // FTOI12
+    CHECK(Slot(kLNop, Up(0x3E, 0x05, 9, 7, 0xE)).upper_kind == VUK_U_FTOI_N);  // FTOI12 (u_bc 2 = the scale)
+    CHECK(Slot(kLNop, Up(0x3F, 0x05, 9, 7, 0xE)).upper_kind == VUK_U_FTOI_N && Slot(kLNop, Up(0x3F, 0x05, 9, 7, 0xE)).u_bc == 3);  // FTOI15
     CHECK(Slot(kLNop, Up(0x3E, 0x05, 9, 7, 0xE)).upper_vf_write == 7);
     CHECK(Slot(kLNop, Up(0x3C, 0x04, 9, 7, 0xE)).upper_kind == VUK_U_ITOF0);
-    CHECK(Slot(kLNop, Up(0x3D, 0x04, 9, 7, 0xE)).upper_kind == VUK_U_GENERIC);  // ITOF4
+    CHECK(Slot(kLNop, Up(0x3D, 0x04, 9, 7, 0xE)).upper_kind == VUK_U_ITOF_N);  // ITOF4 (u_bc 1)
+    CHECK(Slot(kLNop, Up(0x3E, 0x04, 9, 7, 0xE)).upper_kind == VUK_U_ITOF_N);  // ITOF12
+    // ADDAx / SUBAy (special2 ops 0x00 / 0x01) have fast forms; the vector ADDA (op 0x0A, func 0x3C) stays generic
+    CHECK(Slot(kLNop, Up(0x3C, 0x00, 1, 2, 0xF)).upper_kind == VUK_U_ADDA_BC);
+    CHECK(Slot(kLNop, Up(0x3D, 0x01, 1, 2, 0xF)).upper_kind == VUK_U_SUBA_BC);
     // CLIPw.xyz vf1, vf2 (func 0x3F op 0x07): reads fs.xyz, ft.w; writes nothing
     VuDecodedSlot c = Slot(kLNop, Up(0x3F, 0x07, 1, 2, 0xE));
     CHECK(c.upper_kind == VUK_U_CLIP && HasRead(c, 1, 0xE) && HasRead(c, 2, 0x1) && c.n_wr == 0 && c.upper_vf_write == -1);
@@ -192,14 +197,16 @@ static void TestLowerFamilies() {
     CHECK(Slot(Lo(0x09, 4, 0, 0x0, 0x10), kUNop).lower_kind == VUK_L_ISUBIU);
     // Flag ops
     CHECK(Slot(Lo(0x1C, 1, 0, 0, 0), kUNop).lower_kind == VUK_L_FCGET);
-    CHECK(Slot(Lo(0x11, 0, 0, 0, 0), kUNop).lower_kind == VUK_L_GENERIC);  // FCSET
+    CHECK(Slot(Lo(0x11, 0, 0, 0, 0), kUNop).lower_kind == VUK_L_FCSET);
+    CHECK(Slot(Lo(0x12, 0, 0, 0, 0), kUNop).lower_kind == VUK_L_FCAND && Slot(Lo(0x13, 0, 0, 0, 0), kUNop).lower_kind == VUK_L_FCOR);
+    CHECK(Slot(Lo(0x16, 3, 0, 0, 0x55), kUNop).lower_kind == VUK_L_FSAND && Slot(Lo(0x1A, 3, 2, 0, 0), kUNop).lower_kind == VUK_L_FMAND);
     // Branches
     VuDecodedSlot ibne = Slot(Lo(0x29, 2, 1, 0, 5), kUNop);
     CHECK(ibne.lower_kind == VUK_L_IBNE && ibne.ialu_branch_rd == 0x6 && VuDecoder::IsBranchKind(ibne.lower_kind));
     CHECK(Slot(Lo(0x28, 2, 1, 0, 5), kUNop).lower_kind == VUK_L_IBEQ);
     VuDecodedSlot ibgez = Slot(Lo(0x2F, 0, 3, 0, 5), kUNop);
-    CHECK(ibgez.lower_kind == VUK_L_GENERIC && ibgez.ialu_branch_rd == 0x8 && !VuDecoder::IsBranchKind(ibgez.lower_kind));
-    CHECK(Slot(Lo(0x2C, 0, 3, 0, 5), kUNop).ialu_branch_rd == 0x8);
+    CHECK(ibgez.lower_kind == VUK_L_IBGEZ && ibgez.ialu_branch_rd == 0x8 && VuDecoder::IsBranchKind(ibgez.lower_kind));
+    CHECK(Slot(Lo(0x2C, 0, 3, 0, 5), kUNop).ialu_branch_rd == 0x8 && Slot(Lo(0x2C, 0, 3, 0, 5), kUNop).lower_kind == VUK_L_IBLTZ);
     CHECK(Slot(Lo(0x20, 0, 0, 0, 5), kUNop).lower_kind == VUK_L_B);
     CHECK(Slot(Lo(0x21, 7, 0, 0, 5), kUNop).lower_kind == VUK_L_BAL);
     VuDecodedSlot jr = Slot(Lo(0x24, 0, 9, 0, 0), kUNop);
@@ -208,6 +215,11 @@ static void TestLowerFamilies() {
     CHECK(VuDecoder::IsBranchKind(VUK_L_B) && VuDecoder::IsBranchKind(VUK_L_BAL) && VuDecoder::IsBranchKind(VUK_L_JR) &&
           VuDecoder::IsBranchKind(VUK_L_JALR) && VuDecoder::IsBranchKind(VUK_L_IBEQ));
     CHECK(!VuDecoder::IsBranchKind(VUK_L_GENERIC) && !VuDecoder::IsBranchKind(VUK_L_NOP) && !VuDecoder::IsBranchKind(VUK_L_LQ));
+    // Run terminals: every branch, XTOP / XITOP / XGKICK; the flag readers are not
+    CHECK(VuDecoder::IsRunTerminalLowerKind(VUK_L_IBLTZ) && VuDecoder::IsRunTerminalLowerKind(VUK_L_XTOP) &&
+          VuDecoder::IsRunTerminalLowerKind(VUK_L_XITOP) && VuDecoder::IsRunTerminalLowerKind(VUK_L_XGKICK));
+    CHECK(!VuDecoder::IsRunTerminalLowerKind(VUK_L_FSAND) && !VuDecoder::IsRunTerminalLowerKind(VUK_L_FCAND) &&
+          !VuDecoder::IsRunTerminalLowerKind(VUK_L_LQ) && !VuDecoder::IsBranchKind(VUK_L_XTOP));
 }
 
 static void TestLowerGroup40() {
@@ -275,11 +287,12 @@ static void TestLowerGroup40() {
     CHECK(!Slot(Lo40(0, 5, 0x0, 0x1F, 0x3E), kUNop).efu_pipe_op);  // unassigned
     VuDecodedSlot eexp = Slot(Lo40(0, 5, 0x0, 0x1F, 0x3F), kUNop);
     CHECK(eexp.efu_pipe_op && HasRead(eexp, 5, 0x8));
-    // XGKICK vi3 (funct2 0x1B t3 0) and XTOP (0x1A t3 1): generic, no VF sets, no pipe
+    // XGKICK vi3 (funct2 0x1B t3 0) and XITOP (0x1A t3 1): fast kinds, no VF sets, no pipe
     VuDecodedSlot xgk = Slot(Lo40(0, 3, 0, 0x1B, 0x3C), kUNop);
-    CHECK(xgk.lower_kind == VUK_L_GENERIC && xgk.n_rd == 0 && xgk.n_wr == 0 && !xgk.efu_pipe_op);
+    CHECK(xgk.lower_kind == VUK_L_XGKICK && xgk.n_rd == 0 && xgk.n_wr == 0 && !xgk.efu_pipe_op);
     VuDecodedSlot xtop = Slot(Lo40(4, 0, 0, 0x1A, 0x3D), kUNop);
-    CHECK(xtop.lower_kind == VUK_L_GENERIC && xtop.ialu_wr_vi == -1);
+    CHECK(xtop.lower_kind == VUK_L_XITOP && xtop.ialu_wr_vi == -1);
+    CHECK(Slot(Lo40(4, 0, 0, 0x1A, 0x3C), kUNop).lower_kind == VUK_L_XTOP);
 }
 
 static void TestIBitAndHazards() {
@@ -399,7 +412,7 @@ static void TestSpanClassifier() {
     c.push_back(Slot(0, kUNop | kIBit));                              // no lower, no rd, no wr -> 10
     c.push_back(Slot(Lo(0x04, 2, 3, 0x8, 1), Up(0x28, 3, 1, 2, 0xF)));  // ILW + rd + 1 wr -> 11
     c.push_back(Slot(Lo(0x04, 2, 3, 0x8, 1), kUNop));                 // ILW, no rd, no wr -> 14
-    c.push_back(Slot(Lo(0x29, 2, 1, 0, 5), kUNop));                   // branch reads -> 0
+    c.push_back(Slot(Lo(0x29, 2, 1, 0, 5), kUNop));                   // branch reads, no rd, no wr -> 15
     c.push_back(Slot(LoDiv(1, 3, 2, 0, 0x3C), kUNop));                // FDIV -> 0
     c.push_back(Slot(Lo(0x00, 5, 3, 0xF, 4), Up(0x28, 3, 1, 2, 0xF)));  // lower LQ: rd, 2 wr -> 2
     c.push_back(Slot(Lo(0x00, 5, 3, 0xF, 4), kUNop));                 // lower, no rd, 1 wr -> 4
@@ -407,8 +420,16 @@ static void TestSpanClassifier() {
     c.push_back(Slot(Lo(0x00, 5, 3, 0xF, 4), Up(0x28, 3, 1, 2, 0xF) | kIBit));  // no lower, 1 wr, rd -> 7 (I-bit hides the LQ)
     SpanClassifier::ComputeStallClasses(c.data(), c.size());
     CHECK(c[0].stall_class == 7 && c[1].stall_class == 8 && c[2].stall_class == 9 && c[3].stall_class == 10);
-    CHECK(c[4].stall_class == 11 && c[5].stall_class == 14 && c[6].stall_class == 0 && c[7].stall_class == 0);
+    CHECK(c[4].stall_class == 11 && c[5].stall_class == 14 && c[6].stall_class == 15 && c[7].stall_class == 0);
     CHECK(c[8].stall_class == 2 && c[9].stall_class == 4 && c[10].stall_class == 5 && c[11].stall_class == 7);
+    // Branch bundles: 16 with VF reads, 17 with one VF write, 18 with both; two writes stay dynamic
+    std::vector<VuDecodedSlot> b;
+    b.push_back(Slot(Lo(0x29, 2, 1, 0, 5), Up(0x3C, 0x06, 1, 2, 0xF)));   // IBNE + MULAx (rd, no wr) -> 16
+    b.push_back(Slot(Lo(0x29, 2, 1, 0, 5), Up(0x3C, 0x05, 0, 7, 0xF)));   // IBNE + FTOI0 vf7, vf0 (wr, no rd) -> 17
+    b.push_back(Slot(Lo(0x29, 2, 1, 0, 5), Up(0x28, 3, 1, 2, 0xF)));      // IBNE + ADD (rd, wr) -> 18
+    b.push_back(Slot(Lo(0x2C, 0, 3, 0, 5), kUNop));                       // IBLTZ -> 15
+    SpanClassifier::ComputeStallClasses(b.data(), b.size());
+    CHECK(b[0].stall_class == 16 && b[1].stall_class == 17 && b[2].stall_class == 18 && b[3].stall_class == 15);
 
     // run_len cap and the fold read-window of 3
     std::vector<VuDecodedSlot> w;

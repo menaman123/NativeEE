@@ -9,7 +9,9 @@ tier dispatch (`VuTierDispatch`, mode + HLE-library consult) and the MTVU worker
   (ONE class; the upper/lower instruction bodies are TU-private halves). Rules and kept divergences are in the header
   comment and in `engine/vu/README.md` "Interpreter notes".
 - `vu_cached_tier.h/.cpp` + `vu_cached_tier_exec.cpp` — `VuCachedTier` (ONE class; the fast instruction bodies are a
-  TU-private half) with the `VuCachedProgram` POD (the table entry) declared in its header.
+  TU-private half: `ExecUpperFast` dispatching to `ExecUpperFmac` / `ExecUpperAcc` over the `VuFloat` lane kernels,
+  `ExecLowerFast`; NOP words are short-circuited in `ExecBundle`) with the `VuCachedProgram` POD (the table entry)
+  declared in its header.
 - `vu_tier_dispatch.h/.cpp` — `VuTierDispatch` (the Execute ladder) with `VuSettings` / `VuTierMode` and the two hook slots.
 - `mtvu_settings.h` — `MtvuSettings {enabled=true, depth_frames=2}` (types-only; mirrors the Config keys `engine.mtvu` /
   `engine.mtvu_depth`, copied by the composition root; deterministic profile `{false, 2}`).

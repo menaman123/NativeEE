@@ -5,7 +5,7 @@ void SpanClassifier::ComputeRunLenTouchHw(VuDecodedSlot* slots, size_t n) {
     for (size_t k = n; k-- > 0;) {
         VuDecodedSlot& s = slots[k];
         s.touch_hw = VuDecoder::VuSlotCanTouchHardwired(s) ? 1 : 0;
-        const bool terminal_lower = !s.i_bit && (s.lower_kind == VUK_L_GENERIC || VuDecoder::IsBranchKind(s.lower_kind));
+        const bool terminal_lower = !s.i_bit && (s.lower_kind == VUK_L_GENERIC || VuDecoder::IsRunTerminalLowerKind(s.lower_kind));
         const bool terminal = s.e_bit || s.is_nop_pair || terminal_lower || s.upper_kind == VUK_U_GENERIC;
         if (terminal || k + 1 >= n) {
             s.run_len = 1;
@@ -23,7 +23,10 @@ void SpanClassifier::ComputeStallClasses(VuDecodedSlot* slots, size_t n) {
         const bool rd = s.n_rd != 0;
         const bool ialu = s.ialu_wr_vi >= 0;
         uint8_t cls = 0;
-        if (s.ialu_branch_rd == 0 && !s.efu_pipe_op && !s.fdiv_pipe_op) {
+        if (s.ialu_branch_rd != 0 && lower && !ialu && !s.efu_pipe_op && !s.fdiv_pipe_op && s.n_wr <= 1) {
+            // A branch bundle (the lower reads VIs): classes 15-18 add the IALU branch stall.
+            cls = static_cast<uint8_t>(15 + (rd ? 1 : 0) + (s.n_wr == 1 ? 2 : 0));
+        } else if (s.ialu_branch_rd == 0 && !s.efu_pipe_op && !s.fdiv_pipe_op) {
             if (lower && !ialu) {
                 if (rd) cls = (s.n_wr == 1) ? 1 : (s.n_wr == 2) ? 2 : 3;
                 else cls = (s.n_wr == 1) ? 4 : (s.n_wr == 2) ? 5 : 6;

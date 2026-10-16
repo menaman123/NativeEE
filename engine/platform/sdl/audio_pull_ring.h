@@ -20,12 +20,23 @@
 //     re-pushes the previous quantum once (`relatches`; the stream's lead is
 //     rebuilt by one quantum, as the device would re-read a held buffer),
 //     then the new audio. The lead is bounded the other way: a Push that
-//     leaves more than kTrimFrames in the ring (a late game thread catching
-//     up in a burst) discards the OLDEST frames down to kLeadFrames
+//     leaves more than TrimFrames() in the ring (a late game thread catching
+//     up in a burst) discards the OLDEST frames down to the standing lead
 //     (`trimmed`: the late audio the pad already stood in for), so latency
 //     never grows across stalls and the overflow drop never triggers.
-//     Prime() pushes kLeadQuanta of silence once so an ordinary late tick is
-//     absorbed without any pad.
+//     Prime() pushes the standing lead of silence once so an ordinary late
+//     tick is absorbed without any pad.
+//   * Adaptive lead: the standing lead starts at kLeadQuanta and GROWS by
+//     one quantum each time a pad had to stand in (the producer's cadence is
+//     longer than the lead -- a game thread running below 60 Hz delivers its
+//     quanta in bursts every 60-90 ms), up to kMaxLeadQuanta; the trim bound
+//     follows it (lead + kTrimSlackQuanta). A lead that covers the cadence makes
+//     pads, re-latches and trims stop: the device hears every produced frame
+//     once, continuously, at a latency of one cadence. After kDecayPushes
+//     pushes without a pad the lead target steps back down by one (no frame is
+//     cut for it: only the trim bound moves, so a 60 Hz producer that hitched
+//     once returns to the short lead at its next burst). LeadQuanta() /
+//     TrimFrames() read the live values.
 //   * Positions are monotonic 64-bit frame counts published with release /
 //     acquire atomics. The write position is owned by the producer; the read
 //     position advances by compare-exchange from BOTH sides (the consumer
@@ -43,7 +54,7 @@ class AudioPullRing {
 public:
     static constexpr int kChannels       = 2;
     static constexpr int kQuantumFrames  = 800;                            // one vsync at 48 kHz
-    static constexpr int kCapacityQuanta = 8;                              // ~133 ms of audio
+    static constexpr int kCapacityQuanta = 12;                             // 200 ms of audio
     static constexpr int kCapacityFrames = kQuantumFrames * kCapacityQuanta;
 
     AudioPullRing();
@@ -61,14 +72,25 @@ public:
     void Pull(float* out, int frames);
 
     // Rule 4 (see above). Set before the device starts; default off (zero-fill).
-    static constexpr int kLeadQuanta = 3;                                  // the standing lead (50 ms)
-    static constexpr int kLeadFrames = kQuantumFrames * kLeadQuanta;
-    static constexpr int kTrimFrames = kLeadFrames + 2 * kQuantumFrames;   // trim a push that leaves more than this
+    static constexpr int kLeadQuanta = 3;                                  // the initial / minimum lead (50 ms)
+    static constexpr int kMaxLeadQuanta = kCapacityQuanta - 2;             // the lead never fills the ring (167 ms)
+    static constexpr int kTrimSlackQuanta = 2;                             // trim a push that leaves more than lead + this
+    static constexpr int kDecayPushes = 600;                               // pushes without a pad before the lead steps down
     void SetPadWithTail(bool on) { pad_with_tail_.store(on, std::memory_order_release); }
     bool PadWithTail() const { return pad_with_tail_.load(std::memory_order_acquire); }
     // Producer side, once before the stream (and after a restore's discard):
-    // kLeadQuanta quanta of silence as the ring's standing lead (counted as pushed).
+    // the standing lead of silence (counted as pushed).
     void Prime();
+    // The live standing lead (quanta) and the trim bound (frames) it implies.
+    int LeadQuanta() const { return lead_quanta_.load(std::memory_order_relaxed); }
+    int TrimFrames() const { return (LeadQuanta() + kTrimSlackQuanta) * kQuantumFrames; }
+
+    // Consumer-side tap: called from Pull() on the device thread with the
+    // FINAL frames handed to the device (ring audio, pad or silence alike) -- the
+    // stream a listener hears, for a host's WAV capture. Set before the device
+    // starts, cleared after it stops; nothing it does flows back into the ring.
+    using PullTap = void (*)(void* ctx, const float* interleaved, int frames);
+    void SetPullTap(PullTap fn, void* ctx);
 
     // Frames readable at the moment of the call (a valid bound for either side).
     int Available() const;
@@ -87,12 +109,13 @@ public:
     uint64_t overruns() const;
     uint64_t padded() const;      // frames filled from the previous tail at a pull (pad mode)
     uint64_t relatches() const;   // previous quanta re-pushed to rebuild the lead (pad mode)
-    uint64_t trimmed() const;     // late frames discarded above kTrimFrames (pad mode)
+    uint64_t trimmed() const;     // late frames discarded above TrimFrames() (pad mode)
 
 private:
     void CopyIn(const float* src, int frames, uint64_t write_pos);
     void CopyOut(float* dst, int frames, uint64_t read_pos) const;
     void PadFromTail(float* dst, int frames, uint64_t write_pos);
+    void PullInto(float* out, int frames);   // Pull() without the tap
     void PushRaw(const float* interleaved, int frames);
     void TrimToLead(uint64_t write_pos);
 
@@ -110,6 +133,10 @@ private:
     std::atomic<uint64_t> padded_{0};
     std::atomic<uint64_t> relatches_{0};
     std::atomic<uint64_t> trimmed_{0};
+    std::atomic<int>      lead_quanta_{kLeadQuanta};   // producer-owned value, read by anyone
+    int                   pushes_since_pad_ = 0;      // producer-owned: the lead's decay clock
+    PullTap               tap_fn_ = nullptr;   // consumer-side capture tap (set before the device runs)
+    void*                 tap_ctx_ = nullptr;
     uint64_t              pad_phase_ = 0;  // consumer-owned: position inside the repeated tail
     float                 last_quantum_[kQuantumFrames * kChannels] = {};   // producer-owned: the previous push
     int                   last_quantum_frames_ = 0;

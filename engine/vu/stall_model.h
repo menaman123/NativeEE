@@ -29,8 +29,9 @@ public:
     static constexpr int kIaluDepth = 4;
 
     // Static stall-class bits (the span classifier's class table decomposes
-    // into these): which steps a bundle can need.
-    enum : uint8_t { kRd = 1, kWr1 = 2, kWr2 = 4, kIaluWr = 8, kLower = 16 };
+    // into these): which steps a bundle can need. kBranch = the IALU branch
+    // stall (classes 15-18: a branch bundle with 0/1 VF write, with/without reads).
+    enum : uint8_t { kRd = 1, kWr1 = 2, kWr2 = 4, kIaluWr = 8, kLower = 16, kBranch = 64 };
 
     struct FmacWb {
         uint64_t retire;
@@ -73,8 +74,8 @@ public:
     uint64_t fmac_min_retire() const { return fmac_wb_min_retire_; }
 
 private:
-    // M's kLower/kRd/kWr1/kWr2/kIaluWr select the compiled steps; kDynamic
-    // adds the run-time guards and the branch / EFU / FDIV waits.
+    // M's kLower/kRd/kWr1/kWr2/kIaluWr/kBranch select the compiled steps;
+    // kDynamic adds the run-time guards and the branch / EFU / FDIV waits.
     static constexpr uint8_t kDynamic = 32;
     template <uint8_t M>
     void ApplyBody(const VuDecodedSlot& s, VUregs& regs, FlagPipeline& pipes);

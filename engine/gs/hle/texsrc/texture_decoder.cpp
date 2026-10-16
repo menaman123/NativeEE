@@ -31,16 +31,7 @@ TexaExpand::Texa ViewTexa(const TexReadView& v) {
     return t;
 }
 
-void ScaleAlpha(std::vector<uint32_t>* out) {
-    for (uint32_t& p : *out) p = TextureDecoder::GpuAlpha(p);
-}
-
 }  // namespace
-
-uint32_t TextureDecoder::GpuAlpha(uint32_t rgba) {
-    const uint8_t a = PixelConvert::ScaleAlphaPs2ToGpu(PixelConvert::A(rgba));
-    return (rgba & 0x00FFFFFFu) | (static_cast<uint32_t>(a) << 24);
-}
 
 bool TextureDecoder::ReadPalette(const uint8_t* vram, const TexReadView& v, ClutHealCache* heal,
                                  const VramLayout* layout, uint32_t* out) {
@@ -68,7 +59,6 @@ void TextureDecoder::DecodeLevel(const uint8_t* vram, const TexReadView& v, uint
     uint32_t palette[256];
     const bool indexed = ReadPalette(vram, v, heal, layout, palette);
     BlockDecode::Decode(vram, t, ViewTexa(v), indexed ? palette : nullptr, out->data());
-    ScaleAlpha(out);
 }
 
 void TextureDecoder::Decode(const uint8_t* vram, const TexReadView& v, ClutHealCache* heal,
@@ -91,7 +81,6 @@ void TextureDecoder::DecodeRect(const uint8_t* vram, const TexReadView& v, int x
     r.w = static_cast<uint32_t>(w);
     r.h = static_cast<uint32_t>(h);
     BlockDecode::Decode(vram, t, r, ViewTexa(v), indexed ? palette : nullptr, out->data());
-    ScaleAlpha(out);
 }
 
 bool TextureDecoder::DecodeScanoutBuffer(const uint8_t* vram, uint32_t fbp_bytes, uint32_t fbw_px,

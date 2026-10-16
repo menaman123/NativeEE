@@ -42,7 +42,8 @@ void AudioPullRing::CopyOut(float* dst, int frames, uint64_t read_pos) const {
 
 void AudioPullRing::Prime() {
     std::vector<float> silence(static_cast<size_t>(kQuantumFrames) * kChannels, 0.0f);
-    for (int q = 0; q < kLeadQuanta; ++q) Push(silence.data(), kQuantumFrames);
+    const int lead = LeadQuanta();
+    for (int q = 0; q < lead; ++q) Push(silence.data(), kQuantumFrames);
 }
 
 // Pad mode, consumer side: the previous quantum's tail, cyclic and phase-continuous.
@@ -57,15 +58,18 @@ void AudioPullRing::PadFromTail(float* dst, int frames, uint64_t write_pos) {
     }
 }
 
-// Pad mode, producer side after a push: a late burst that left more than
-// kTrimFrames in the ring is cut back to the standing lead -- the OLDEST frames
-// go (the late audio the pad already stood in for); latency never grows.
+// Pad mode, producer side after a push: a late burst that left more than the
+// trim bound in the ring is cut back to the standing lead -- the OLDEST frames
+// go (the late audio the pad already stood in for); latency never grows past
+// the lead.
 void AudioPullRing::TrimToLead(uint64_t write_pos) {
+    const uint64_t lead_frames = static_cast<uint64_t>(LeadQuanta()) * kQuantumFrames;
+    const uint64_t trim_frames = lead_frames + static_cast<uint64_t>(kTrimSlackQuanta) * kQuantumFrames;
     uint64_t r = read_.load(std::memory_order_acquire);
     for (;;) {
         const uint64_t content = write_pos - r;
-        if (content <= static_cast<uint64_t>(kTrimFrames)) return;
-        const uint64_t new_read = write_pos - static_cast<uint64_t>(kLeadFrames);
+        if (content <= trim_frames) return;
+        const uint64_t new_read = write_pos - lead_frames;
         if (read_.compare_exchange_weak(r, new_read, std::memory_order_acq_rel, std::memory_order_acquire)) {
             trimmed_.fetch_add(new_read - r, std::memory_order_relaxed);
             return;
@@ -81,6 +85,15 @@ void AudioPullRing::Push(const float* interleaved, int frames) {
         if (relatch_.exchange(false, std::memory_order_acq_rel) && last_quantum_frames_ > 0) {
             PushRaw(last_quantum_, last_quantum_frames_);
             relatches_.fetch_add(1, std::memory_order_relaxed);
+            // The lead was shorter than the producer's cadence: keep the re-pushed
+            // quantum as standing lead from now on.
+            const int lead = LeadQuanta();
+            if (lead < kMaxLeadQuanta) lead_quanta_.store(lead + 1, std::memory_order_relaxed);
+            pushes_since_pad_ = 0;
+        } else if (++pushes_since_pad_ >= kDecayPushes) {
+            pushes_since_pad_ = 0;
+            const int lead = LeadQuanta();
+            if (lead > kLeadQuanta) lead_quanta_.store(lead - 1, std::memory_order_relaxed);
         }
         const int keep = std::min(frames, kQuantumFrames);
         std::memcpy(last_quantum_, interleaved + static_cast<size_t>(frames - keep) * kChannels,
@@ -133,6 +146,11 @@ void AudioPullRing::PushRaw(const float* interleaved, int frames) {
 
 void AudioPullRing::Pull(float* out, int frames) {
     if (frames <= 0) return;
+    PullInto(out, frames);
+    if (tap_fn_) tap_fn_(tap_ctx_, out, frames);
+}
+
+void AudioPullRing::PullInto(float* out, int frames) {
     pulled_.fetch_add(static_cast<uint64_t>(frames), std::memory_order_relaxed);
 
     int got = 0;
@@ -171,6 +189,11 @@ void AudioPullRing::Pull(float* out, int frames) {
                     static_cast<size_t>(missing) * kChannels * sizeof(float));
         underruns_.fetch_add(1, std::memory_order_relaxed);
     }
+}
+
+void AudioPullRing::SetPullTap(PullTap fn, void* ctx) {
+    tap_fn_ = fn;
+    tap_ctx_ = ctx;
 }
 
 int AudioPullRing::Available() const {

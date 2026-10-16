@@ -54,7 +54,18 @@ noperspective out float v_z;
 void main() {
     // PS2 screen-space coords to NDC: x in [0, width] -> [-1, 1]
     // Y: [0, height] -> [-1, 1] (PS2 top at GL bottom, scanout flips for display)
-    vec2 ndc = (a_position.xy / u_screen_size) * 2.0 - 1.0;
+    // The GS coverage rule (GS User's Manual 3.4 "Drawing Primitive"): pixel (i, j)
+    // is sampled at the INTEGER point (i, j) of the XYOFFSET-relative primitive
+    // space and drawn when x0 <= i < x1, y0 <= j < y1 -- a sprite -0.5..223.5
+    // covers rows 0..223, and 1:1 UVs are authored as x + 0.5 for the same reason.
+    // GL samples at (i + 0.5, j + 0.5): translate the primitive by +0.5 px so the
+    // two sample grids coincide, minus 1/256 px so an edge on the 12.4 grid never
+    // lands exactly on a GL sample point (that tie is the driver's rule; this one
+    // is the GS's inclusive-low / exclusive-high). The interpolants are then read
+    // at (i + 1/256, j + 1/256): a texel coordinate exactly on a boundary falls
+    // INSIDE the GS texel, never before it. PCSX2 GSRendererHW ox2 / tfx_vgs -0.05.
+    vec2 gs_px = a_position.xy + vec2(0.49609375);
+    vec2 ndc = (gs_px / u_screen_size) * 2.0 - 1.0;
     // [R112-Z-PRECISION] Z mapping: z_ndc = z/2^31 - 1  =>  window
     // d = 0.5*z_ndc + 0.5 = z/2^32 (Sterbenz-exact viewport transform,
     // default glDepthRange [0,1]). The old mapping (z/(2^32-1), NDC z in
@@ -290,7 +301,14 @@ uniform int u_zsrc_num;
 uniform int u_zsrc_den;
 uniform int u_clut_raw;
 
-out vec4 frag_color;
+// The stored-alpha convention (ONE for the pipeline): every texel, CLUT entry and colour attachment
+// stores the GS alpha byte as the GS does (0..0xFF, 0x80 = 1.0 only where the GS
+// applies it: the blend factor As and the alpha test's AREF compare in stored
+// units). GL fixed-function blending reads its As factor from the second (dual-
+// source, index 1) output: frag_factor.a = min(2 * As, 255) / 255, the GS
+// As / 0x80 ratio; frag_color.a stays the stored byte.
+layout(location = 0, index = 0) out vec4 frag_color;
+layout(location = 0, index = 1) out vec4 frag_factor;
 
 #ifdef S83_IDXSCALE
 // [S83-IDXSCALE] Requantize an interpolated GS texel coordinate to the
@@ -377,12 +395,8 @@ void main() {
             // [R163-ZTEX2] CLASS Z32N: native PSMZ32 read of a Z32 depth
             // attachment. Legacy chain: SyncZToVRAM Z32 encode (raw 4 bytes
             // of trunc(clamp(d)*2^32)) -> DecodePSMZ32 (raw bytes as RGBA)
-            // -> dispatcher ScaleAlphaPS2ToGPU once -> upload. Identity
-            // footprint: uses the shared uv verbatim (like fmt 2). The
-            // shared tex.a rescale below rounds the alpha trip back:
-            // a8 < 128 -> 2*a8 -> floor(/2) = a8; a8 >= 128 -> 255 -> 128
-            // -- byte-identical to the legacy uploaded texel's
-            // post-rescale value.
+            // -> upload. Identity footprint: uses the shared uv verbatim
+            // (like fmt 2). The alpha byte is the stored one (the stored-alpha convention).
             float df = texture(u_texture, uv).r;
             uint z = (df >= 1.0) ? 0xFFFFFFFFu
                                  : uint(max(df, 0.0) * exp2(32.0));
@@ -391,7 +405,7 @@ void main() {
                        float((z >> 16u) & 0xFFu),
                        0.0);
             uint a8 = (z >> 24u) & 0xFFu;
-            tex.a = (a8 >= 128u) ? 255.0 : float(a8 << 1u);  // ScaleAlphaPS2ToGPU
+            tex.a = float(a8);
         } else if (u_depth_fmt == 3) {
             // [R163-ZTEX2] CLASS Z16V: PSMZ16 view of a Z32 depth
             // attachment. For every Z16 reader texel (x,y) the legacy chain
@@ -456,15 +470,11 @@ void main() {
             // CT32 word at the SAME (x,y) (DecodePSMT8H walks
             // GetAddressPSMCT32(x,y) and reads vram[addr+3]). Legacy chain
             // transcription:
-            //   SyncRTToVRAM CT32 encode: ps2_a = (a_gpu >= 255) ? 128 :
-            //     a_gpu/2; gs_vram[addr+3] = ps2_a
-            //   DecodePSMT8H: idx = ps2_a; texel = eff_clut[idx] with RAW
-            //     PS2 alpha (ReadCLUT32 outputs raw alpha)
-            //   dispatcher ScaleAlphaPS2ToGPU once
-            // The CLUT texture is uploaded PRE-FOLDED (CSM1) and PRE-SCALED
-            // (ScaleAlphaPS2ToGPU) on the CPU, so the lookup result == the
-            // legacy uploaded texel byte-for-byte; the shared tex.a rescale
-            // line below then applies identically.
+            //   SyncRTToVRAM CT32 encode: gs_vram[addr+3] = a (the stored
+            //     alpha byte, the stored-alpha convention)
+            //   DecodePSMT8H: idx = that byte; texel = eff_clut[idx] with
+            //     the CLUT's own alpha byte
+            // The CLUT texture is uploaded PRE-FOLDED (CSM1), both rows raw.
             // NOTE (A.2/W4): RAW reader texel space (v_texcoord * inv_q),
             // never the shared normalized `uv`; u_tex_size = TARGET dims.
             // texelFetch flip rule: same u_flip_v convention as the fmt=3
@@ -495,11 +505,7 @@ void main() {
             vec4 src = (u_idx_self != 0)
                      ? texelFetch(u_rt_texture, tc, 0)
                      : texelFetch(u_texture,   tc, 0);
-            uint a_gpu = uint(floor(src.a * 255.0 + 0.5));
-            uint idx = (a_gpu >= 255u) ? 128u : (a_gpu >> 1u);  // inverse scale
-            // floor(+0.5) = the legacy uploaded-texel read (floor(norm*255
-            // +0.5)); identity for the exact unorm round-trip and byte-
-            // identical to legacy either way.
+            uint idx = uint(floor(src.a * 255.0 + 0.5));   // the stored alpha byte
             tex = floor(texelFetch(u_clut, ivec2(int(idx), u_clut_raw), 0) * 255.0 + 0.5);
         } else if (u_idx_fmt == 5) {
             // [R164-IDXTEX] CLASS IDX-B: PSMT8H read over CT16-rendered
@@ -673,21 +679,10 @@ void main() {
             tex = floor(tex_norm * 255.0 + 0.5);
         }
 
-        // Sampled textures carry GPU-convention alpha: the decoder applies
-        // ScaleAlphaPS2ToGPU (ps2>=128 ? 255 : ps2*2) once per texel, and RT
-        // color attachments store the post-rescale alpha written below. The
-        // TFX / alpha-test / FBA math in this shader is PS2-space (0x80 =
-        // opaque), and the final u_sw_blend==0 rescale converts to GL space
-        // exactly once. Without this inverse the alpha is scaled TWICE and
-        // the GL blend factor is 2x the GS value — mid-alpha (0x40-0x7f)
-        // translucent layers (iceberg shell) saturate fully opaque (R97/R99).
-        // [S9-CLUTRAW] Row-1 CLUT texels (idx arms with u_clut_raw=1) carry
-        // the RAW PS2 alpha already — the inverse would halve it and the
-        // prescale round-trip caps >=128 at 128, destroying the inverted-Z
-        // hi byte the blob-shadow slab test needs. Skip it for that class.
-        if (u_idx_fmt == 0 || u_clut_raw == 0) {
-            tex.a = (tex.a >= 255.0) ? 128.0 : floor(tex.a * 0.5);
-        }
+        // The stored-alpha convention: sampled textures, CLUT rows and colour attachments all
+        // carry the stored GS alpha byte (the decoder applies TEXA and nothing
+        // else); tex.a is already in the units the TFX / alpha-test / FBA math
+        // below uses (0x80 = 1.0 where the GS says so).
 
         // PS2 TFX texture functions operate in integer space.
         // Multiply: (A * B) >> 7  which is trunc(A * B / 128.0)
@@ -931,6 +926,11 @@ void main() {
     // Alpha is always clamped regardless of COLCLAMP setting
     result.a = clamp(result.a, 0.0, 1.0);
 
+    // The GL fixed-function blend factor (the stored-alpha convention): the GS scales As by 1/0x80
+    // (0x80 = 1.0, saturating), taken from the pixel's alpha BEFORE FBA (FBA
+    // alters the stored byte, not the blend input). Written to index 1 below.
+    float as_factor = clamp(result.a * (255.0 / 128.0), 0.0, 1.0);
+
     // PS2 FBA (Force Bit Alpha): bitwise OR bit 7 into the output alpha.
     // Per GS spec: A_out = A_in | (FBA << 7)
     // Applied AFTER blending — modifies the pixel written to the framebuffer,
@@ -943,37 +943,19 @@ void main() {
         result.a = float(min(a_int, 255)) / 255.0;
     }
 
-    // --- PS2 Alpha Convention: 0x80 (128) = fully opaque ---
-    // PS2 alpha range is 0-128 where 128 = 1.0. Values above 128 are clamped.
-    // All internal math above operates in PS2 native space (0-255 integer or
-    // 0.0-1.0 GL normalized where 128/255 ≈ 0.502 = PS2 opaque).
-    // GL blending and framebuffer writes interpret alpha 1.0 as fully opaque,
-    // so we must rescale: PS2 alpha 128 → GL alpha 1.0.
-    // Formula: gl_alpha = min(ps2_alpha * 2, 255) / 255.0
-    // In normalized space: gl_alpha = min(result.a * (255.0/128.0), 1.0)
-    //
-    // NOTE: Only apply the rescale when GL fixed-function blending is active
-    // (u_sw_blend == 0). When shader-side blending is active, the blend math
-    // already operates in PS2 native space and the alpha written to the
-    // framebuffer should remain in PS2 convention for correct DATE/FBA behavior
-    // in subsequent passes.
-    //
-    // [S9-ABIT16] 16-bit COLOR frames (PSMCT16/16S) store only the A-bit:
-    // the FBO alpha channel now encodes it directly (1.0 iff PS2 alpha >=
-    // 0x80), REPLACING the x2 rescale for those targets. The x2 convention
-    // destroyed the bit for PS2 alphas in [0x40,0x7F] (doubled >= 0x80) —
-    // the blob-shadow accumulator's 0x78 clear read back as DATE-blocked
-    // everywhere, discarding all 108 volume strips. With the A-bit stored,
-    // the DATE test above and the fbmsk16 merge below keep their bit-7
-    // semantics unchanged. FF-blended draws (u_blend_enabled=1, u_sw_blend
-    // =0) are excluded: GL uses this output as the blend FACTOR, which
-    // needs the x2 scale (s9_shadow.h Abit16Applies — the recipe never
-    // authors accumulator alpha through FF blend). 32-bit targets are
-    // byte-identical to the legacy path.
+    // --- The stored alpha (the stored-alpha convention) ---
+    // 32-bit frames store result.a as the GS alpha byte, whatever the blend route
+    // (the x2 "GL convention" rescale is gone: the fixed-function factor travels
+    // on frag_factor, so DATE, FBA, the PSMT8H alpha-byte serves, the FBMSK
+    // merges and SyncRTToVRAM all read one convention).
+    // [S9-ABIT16] 16-bit COLOR frames (PSMCT16/16S) store only the A-bit: the
+    // FBO alpha channel encodes it directly (1.0 iff PS2 alpha >= 0x80), which
+    // the DATE test above, the fbmsk16 merge below, the fmt=5/6 serves and the
+    // 16-bit SyncRTToVRAM pack (bit 15 = a > 127) all read as the bit. FF-blended
+    // draws (u_blend_enabled=1, u_sw_blend=0) are excluded as before (the recipe
+    // never authors accumulator alpha through FF blend).
     if (u_fb16 != 0 && (u_blend_enabled == 0 || u_sw_blend != 0)) {
         result.a = (int(result.a * 255.0 + 0.5) >= 128) ? 1.0 : 0.0;
-    } else if (u_sw_blend == 0) {
-        result.a = clamp(result.a * (255.0 / 128.0), 0.0, 1.0);
     }
 
     // --- [WN4-CT16Q] Retail 16-bit frame write rule ---
@@ -1057,6 +1039,7 @@ void main() {
     }
 
     frag_color = result;
+    frag_factor = vec4(as_factor);
 }
 )GLSL";
 
@@ -1190,9 +1173,9 @@ void main() {
     ivec2 tdim = textureSize(u_rt_texture, 0);  // == u_tex_size (target dims)
     ivec2 tc = clamp(ivec2(floor(rtc)), ivec2(0), tdim - 1);
     vec4 src = texelFetch(u_rt_texture, tc, 0);
-    // [R164-IDXTEX] fmt=4 index reconstruction (generic arm verbatim).
-    uint a_gpu = uint(floor(src.a * 255.0 + 0.5));
-    uint idx = (a_gpu >= 255u) ? 128u : (a_gpu >> 1u);
+    // [R164-IDXTEX] fmt=4 index reconstruction (generic arm verbatim): the
+    // stored alpha byte (the stored-alpha convention).
+    uint idx = uint(floor(src.a * 255.0 + 0.5));
     // Verified CLUT row-1 texel fold, ORACLE-effective table ([GD4]):
     // the physical grid holds {FFFFFF, 255-CSM1(p)} and the legacy
     // chain's two CSM1 involutions cancel, so the generic serve's row-1

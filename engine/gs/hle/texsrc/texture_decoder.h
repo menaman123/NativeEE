@@ -4,7 +4,8 @@
 // The format layer (gs/format) does the addressing and the value rules; this
 // class binds a draw's register view to it: level size from TW/TH, the palette
 // read from CBP in CPSM/CSM (with the CLUT heal workaround applied when a cache is
-// given), TEXA, and the ONE GPU alpha scaling (PS2 0x80 = 1.0 -> 0xFF). DecodeRect
+// given) and TEXA; the alpha byte is stored as the GS stores it (0x80 = 1.0, no GPU
+// rescale -- the ONE alpha convention of the pipeline). DecodeRect
 // decodes a UV-bounded sub-rect and equals the crop of the full decode.
 // DecodeScanoutBuffer reads a frame buffer (CT32 / CT24 / CT16) as the CRTC does,
 // alpha forced opaque. ParseDispfb / ParseDisplay decode the privileged DISPFB
@@ -55,7 +56,6 @@ public:
     static Dispfb ParseDispfb(uint64_t v);
     static Display ParseDisplay(uint64_t v);
     // PS2 alpha byte -> GPU alpha byte (the one scaling site the decoder applies).
-    static uint32_t GpuAlpha(uint32_t rgba_ps2);
 };
 
 }  // namespace gs

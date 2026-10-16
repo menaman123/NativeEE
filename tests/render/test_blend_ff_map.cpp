@@ -20,18 +20,18 @@ static FfBlendMap Exp(bool fix, uint32_t eq, uint32_t src, uint32_t dst) {
 int main() {
     struct Row { uint8_t a, b, c, d; FfBlendMap want; };
     const Row rows[] = {
-        {0, 1, 0, 1, Exp(false, r::kGlFuncAdd, r::kGlSrcAlpha, r::kGlOneMinusSrcAlpha)},
-        {0, 2, 0, 1, Exp(false, r::kGlFuncAdd, r::kGlSrcAlpha, r::kGlOne)},
-        {0, 2, 0, 2, Exp(false, r::kGlFuncAdd, r::kGlSrcAlpha, r::kGlZero)},
+        {0, 1, 0, 1, Exp(false, r::kGlFuncAdd, r::kGlSrc1Alpha, r::kGlOneMinusSrc1Alpha)},
+        {0, 2, 0, 1, Exp(false, r::kGlFuncAdd, r::kGlSrc1Alpha, r::kGlOne)},
+        {0, 2, 0, 2, Exp(false, r::kGlFuncAdd, r::kGlSrc1Alpha, r::kGlZero)},
         {0, 1, 2, 1, Exp(true, r::kGlFuncAdd, r::kGlConstantAlpha, r::kGlOneMinusConstantAlpha)},
         {0, 2, 2, 1, Exp(true, r::kGlFuncAdd, r::kGlConstantAlpha, r::kGlOne)},
-        {1, 0, 0, 0, Exp(false, r::kGlFuncAdd, r::kGlOneMinusSrcAlpha, r::kGlSrcAlpha)},
+        {1, 0, 0, 0, Exp(false, r::kGlFuncAdd, r::kGlOneMinusSrc1Alpha, r::kGlSrc1Alpha)},
         {0, 2, 2, 2, Exp(true, r::kGlFuncAdd, r::kGlConstantAlpha, r::kGlZero)},
-        {0, 1, 0, 0, Exp(false, r::kGlFuncSubtract, r::kGlSrcAlpha, r::kGlSrcAlpha)},
-        {2, 1, 0, 1, Exp(false, r::kGlFuncAdd, r::kGlZero, r::kGlOneMinusSrcAlpha)},
-        {1, 2, 0, 0, Exp(false, r::kGlFuncAdd, r::kGlZero, r::kGlSrcAlpha)},
-        {0, 2, 0, 0, Exp(false, r::kGlFuncAdd, r::kGlSrcAlpha, r::kGlZero)},
-        {2, 0, 0, 1, Exp(false, r::kGlFuncReverseSubtract, r::kGlSrcAlpha, r::kGlOne)},
+        {0, 1, 0, 0, Exp(false, r::kGlFuncSubtract, r::kGlSrc1Alpha, r::kGlSrc1Alpha)},
+        {2, 1, 0, 1, Exp(false, r::kGlFuncAdd, r::kGlZero, r::kGlOneMinusSrc1Alpha)},
+        {1, 2, 0, 0, Exp(false, r::kGlFuncAdd, r::kGlZero, r::kGlSrc1Alpha)},
+        {0, 2, 0, 0, Exp(false, r::kGlFuncAdd, r::kGlSrc1Alpha, r::kGlZero)},
+        {2, 0, 0, 1, Exp(false, r::kGlFuncReverseSubtract, r::kGlSrc1Alpha, r::kGlOne)},
         {2, 0, 2, 1, Exp(true, r::kGlFuncReverseSubtract, r::kGlConstantAlpha, r::kGlOne)},
         {0, 1, 2, 2, Exp(true, r::kGlFuncSubtract, r::kGlConstantAlpha, r::kGlConstantAlpha)},   // (Cs-Cd)*FIX
     };
@@ -66,8 +66,8 @@ int main() {
                     if (in_table) { matched++; CHECK(m.matched, "table arm reports matched"); continue; }
                     fallback++;
                     CHECK(!m.matched, "non-table combo is a fallback");
-                    CHECK(m.eq_rgb == r::kGlFuncAdd && m.src_rgb == r::kGlSrcAlpha &&
-                          m.dst_rgb == r::kGlOneMinusSrcAlpha && !m.uses_fix,
+                    CHECK(m.eq_rgb == r::kGlFuncAdd && m.src_rgb == r::kGlSrc1Alpha &&
+                          m.dst_rgb == r::kGlOneMinusSrc1Alpha && !m.uses_fix,
                           "fallback is the standard alpha blend");
                 }
     CHECK(matched == 14 + 27 && fallback == 81 - 14 - 27, "14 table arms + 27 A=B arms, 40 fallbacks");

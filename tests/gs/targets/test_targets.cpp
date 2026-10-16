@@ -99,14 +99,14 @@ void FillColor(test::FakeBackend& be, RenderTarget& t, uint8_t r, uint8_t g, uin
 void Inv09() {
     World w;
     RenderTarget& t = w.cache.GetOrCreate(0x0, 64, 64, 0x00, 0);
-    FillColor(w.be, t, 0x10, 0x20, 0x30, 0xFF);
+    FillColor(w.be, t, 0x10, 0x20, 0x30, 0x80);
     // Nothing drawn -> nothing staged (a target that has not drawn since its sync writes back nothing).
     CHECK(w.cache.Readback().SyncRtToVram(w.be, t, w.vram, 1, nullptr, 0) == 0);
     t.AfterDraw(MakeDraw(0x0, 64, 0x00), Drew(0, 8, 64, 16), 1, 1);
     const uint32_t n = w.cache.Readback().SyncRtToVram(w.be, t, w.vram, 1, nullptr, 0);
     CHECK(n == 64 * 8);
     CHECK(!t.coherence.HasDrawnSinceSync());
-    // Row 8 landed (CT32 word, alpha 255 -> 0x80); row 0 did not.
+    // Row 8 landed (CT32 word, the alpha byte as stored -- the stored-alpha convention); row 0 did not.
     CHECK(VramWord(w.vram, PsmLayout::PixelByteAddress(Psm::CT32, 3, 8, 0, 1)) == 0x80302010u);
     CHECK(VramWord(w.vram, PsmLayout::PixelByteAddress(Psm::CT32, 3, 0, 0, 1)) == 0u);
     CHECK(w.cache.Readback().SyncRtToVram(w.be, t, w.vram, 2, nullptr, 0) == 0);
@@ -410,7 +410,7 @@ void Inv13_14() {
     RenderTarget& n = w2.cache.GetOrCreate(0x0, 128, 32, 0x00, 0);
     n.AfterDraw(MakeDraw(0x0, 100, 0x00), Drew(0, 0, 128, 32), 1, 1);
     w2.cache.Readback().SyncRtToVram(w2.be, n, w2.vram, 1, nullptr, 0);
-    w2.be.SetPixel(n.views.color, 70, 0, 0x11, 0x22, 0x33, 0xFF);
+    w2.be.SetPixel(n.views.color, 70, 0, 0x11, 0x22, 0x33, 0x80);
     w2.cache.GetOrCreate(0x0, 256, 32, 0x00, 0);   // grow -> rescue
     CHECK(VramWord(w2.vram, PsmLayout::PixelByteAddress(Psm::CT32, 70, 0, 0, 2)) == 0x80332211u);
     // A never-deposited target's rescue brackets its pages but writes no bytes
@@ -527,7 +527,7 @@ void EncodeVetoes() {
     // (b) batch newer than the page: the GPU is the last author.
     t.AfterDraw(MakeDraw(0x0, 64, 0x00), Drew(0, 0, 64, 64), 2, 2);
     w.cache.Readback().SyncRtToVram(w.be, t, w.vram, /*batch_epoch=*/5, nullptr, 0);
-    CHECK(VramWord(w.vram, ee_addr) == 0x80302010u);
+    CHECK(VramWord(w.vram, ee_addr) == 0xFF302010u);   // the stored-alpha convention: the GL alpha byte 0xFF deposits as 0xFF
     // (c) protected range: an uploaded texture over rows 32.. of the footprint whose
     // page epoch (fresh settle -> 2) is >= the batch epoch (2) keeps its bytes.
     World w2;
@@ -543,11 +543,11 @@ void EncodeVetoes() {
     u.AfterDraw(MakeDraw(0x0, 64, 0x00), Drew(0, 0, 64, 64), 1, 1);
     w2.cache.Readback().SyncRtToVram(w2.be, u, w2.vram, /*batch_epoch=*/1, nullptr, 0);
     CHECK(VramWord(w2.vram, up_addr + 0x40) == 0x04030201u);         // protected (epoch 1 >= 1)
-    CHECK(VramWord(w2.vram, 0x0800) == 0x80302010u);                 // outside the range: encoded
+    CHECK(VramWord(w2.vram, 0x0800) == 0xFF302010u);                 // outside the range: encoded
     // A later batch (2 > page epoch 1): no protection.
     u.AfterDraw(MakeDraw(0x0, 64, 0x00), Drew(0, 0, 64, 64), 2, 2);
     w2.cache.Readback().SyncRtToVram(w2.be, u, w2.vram, /*batch_epoch=*/2, nullptr, 0);
-    CHECK(VramWord(w2.vram, up_addr + 0x40) == 0x80302010u);
+    CHECK(VramWord(w2.vram, up_addr + 0x40) == 0xFF302010u);
     // Evicting the upload removes the protection source.
     rf2.EvictUploadedInRange(up_addr, 0x400);
     CHECK(w2.cache.Readback().UploadedSpans().empty());
@@ -577,7 +577,7 @@ void EncodeVetoes() {
     r.AfterDraw(MakeDraw(0x0, 64, 0x00), Drew(0, 64, 64, 128), 2, 2);   // valid covers page 1 too
     LogicalRect all{0, 0, 64, 128};
     w4.cache.Readback().SyncRtToVram(w4.be, r, w4.vram, 1, &all, 0);
-    CHECK(VramWord(w4.vram, PsmLayout::PixelByteAddress(Psm::CT32, 3, 8, 0, 1)) == 0x80302010u);
+    CHECK(VramWord(w4.vram, PsmLayout::PixelByteAddress(Psm::CT32, 3, 8, 0, 1)) == 0xFF302010u);
     CHECK(VramWord(w4.vram, PsmLayout::PixelByteAddress(Psm::CT32, 3, 72, 0, 1)) == 0u);   // page 1 vetoed
 }
 
@@ -590,7 +590,7 @@ void DepositSpan() {
     FillColor(w.be, t, 0x10, 0x20, 0x30, 0xFF);
     t.AfterDraw(MakeDraw(0x0, 128, 0x00), Drew(0, 0, 128, 8), 1, 1);
     CHECK(w.cache.Readback().SyncRtToVram(w.be, t, w.vram, 1, nullptr, 0) == 128 * 8);
-    CHECK(VramWord(w.vram, PsmLayout::PixelByteAddress(Psm::CT32, 10, 2, 0, 2)) == 0x80302010u);
+    CHECK(VramWord(w.vram, PsmLayout::PixelByteAddress(Psm::CT32, 10, 2, 0, 2)) == 0xFF302010u);
     CHECK(VramWord(w.vram, PsmLayout::PixelByteAddress(Psm::CT32, 70, 2, 0, 2)) == 0u);   // not staged
     CHECK(w.vram.PendingPages() == 1);
     // With page 1 already pending (a span that reaches it), the stray pixels land.
@@ -603,7 +603,7 @@ void DepositSpan() {
     CHECK(VramWord(w2.vram, PsmLayout::PixelByteAddress(Psm::CT32, 70, 2, 0, 2)) == 0u);   // row 2 not yet drawn
     u.AfterDraw(MakeDraw(0x0, 128, 0x00), Drew(0, 0, 128, 8), 2, 2);    // span page 0; page 1 pending
     CHECK(w2.cache.Readback().SyncRtToVram(w2.be, u, w2.vram, 1, nullptr, 0) == 128 * 8);
-    CHECK(VramWord(w2.vram, PsmLayout::PixelByteAddress(Psm::CT32, 70, 2, 0, 2)) == 0x80302010u);
+    CHECK(VramWord(w2.vram, PsmLayout::PixelByteAddress(Psm::CT32, 70, 2, 0, 2)) == 0xFF302010u);
 }
 
 // Invariant 37: a target consumed by a composite clears when marked, others once per EE frame.
@@ -1078,7 +1078,7 @@ void PendingLedger() {
     w.vram.NoteCpuWrite(VramImage::Span{0x302000, 0x2000});
     w.cache.Destroy(0x300000);
     CHECK(!w.cache.Has(0x300000) && w.vram.Page(0x300000 / 8192).shadow_epoch == 40);
-    CHECK(VramWord(w.vram, PsmLayout::PixelByteAddress(Psm::CT32, 5, 5, 0x300000 / 256, 1)) == 0x80332211u);
+    CHECK(VramWord(w.vram, PsmLayout::PixelByteAddress(Psm::CT32, 5, 5, 0x300000 / 256, 1)) == 0xFF332211u);
     CHECK(VramWord(w.vram, PsmLayout::PixelByteAddress(Psm::CT32, 5, 40, 0x300000 / 256, 1)) == 0u);   // page 385: CPU-authored, kept
     // ... and the rescue is a FOOTPRINT deposit, not a drawn-rows one: with the drawn
     // rect already consumed by a sync (nothing drawn since), the rows still land.
@@ -1092,7 +1092,7 @@ void PendingLedger() {
     w.be.SetPixel(h.views.color, 9, 9, 0x77, 0x88, 0x99, 0xFF);   // changed after the sync, nothing "drawn"
     CHECK(w.cache.SyncDrawn(h, 50) == 0);                          // a plain sync writes nothing now
     w.cache.Destroy(0x310000);
-    CHECK(VramWord(w.vram, PsmLayout::PixelByteAddress(Psm::CT32, 9, 9, 0x310000 / 256, 1)) == 0x80998877u);
+    CHECK(VramWord(w.vram, PsmLayout::PixelByteAddress(Psm::CT32, 9, 9, 0x310000 / 256, 1)) == 0xFF998877u);
     // The alias page walks CLAMP at page 511 (no 4 MiB wrap): a region running past
     // the end marks the tail pages only, never a low page; one starting past the
     // end marks nothing.

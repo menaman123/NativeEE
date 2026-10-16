@@ -142,8 +142,8 @@ int main() {
     dev.Readback(color, render::Rect{0, 0, 64, 64}, fb.data(), 64 * 4);
     const uint8_t* in = Px(fb, 64, 8, 8);        // inside: x + y < 64
     const uint8_t* out = Px(fb, 64, 56, 56);     // outside
-    // unblended output alpha is the x2 GL convention: 128 -> 255
-    CHECK(in[0] == 255 && in[1] == 0 && in[2] == 0 && in[3] == 255, "covered pixel is opaque red");
+    // the stored alpha is the GS byte (the stored-alpha convention): 0x80 stays 0x80
+    CHECK(in[0] == 255 && in[1] == 0 && in[2] == 0 && in[3] == 0x80, "covered pixel is opaque red, alpha 0x80 as stored");
     CHECK(out[0] == 0x11 && out[1] == 0x22 && out[2] == 0x33 && out[3] == 0x44, "uncovered pixel keeps the clear colour");
     int red = 0;
     for (int y = 0; y < 64; y++)
@@ -177,7 +177,7 @@ int main() {
     const render::DrawResult r3 = dev.Draw(ir, ts, p);
     CHECK(r3.drew, "CT24 draw executed");
     dev.Readback(color, render::Rect{8, 8, 1, 1}, fb.data(), 4);
-    CHECK(fb[2] == 255 && fb[3] == 255, "CT24 draw wrote blue and left alpha untouched");
+    CHECK(fb[2] == 255 && fb[3] == 0x80, "CT24 draw wrote blue and left alpha untouched");
     dev.BindTarget(color, depth);
     dev.State().Disable(GL_SCISSOR_TEST);
     glClearColor(0.f, 0.f, 0.f, 0x77 / 255.0f);   // raw: no mask calls of its own

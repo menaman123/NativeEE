@@ -10,6 +10,7 @@
 #include "engine/vu/tiers/vu_interpreter_tier.h"
 #include "engine/vu/vu0/lib_vu0_sin_cos.h"
 #include "engine/vu/vu_chop_round_guard.h"
+#include "engine/vu/vu_float.h"
 #include "engine/vu/vu_image_hash.h"
 #include "engine/vu/vu_unit.h"
 
@@ -137,11 +138,14 @@ void VuCachedTier::DrainAll(VuUnit& unit) { generic_.DrainAll(unit); }
 void VuCachedTier::ExecBundle(VuUnit& unit, const VuDecodedSlot& s, uint32_t pc, bool& branch_taken,
                               uint32_t& branch_target) {
     VUregs& regs = unit.regs();
+    // The NOP words short-circuit their dispatch: an upper NOP is exactly the
+    // ACC re-clamp (ExecUpperFast's VUK_U_NOP body), a lower NOP does nothing.
     if (!s.i_bit) {
         const int uvw = s.upper_vf_write;
         VR_reg vf_pre = {};
         if (s.hide_upper) vf_pre = regs.VF[uvw];
-        ExecUpperFast(unit, s);
+        if (s.upper_kind == VUK_U_NOP) VuFloat::ClampStoreACC(regs.ACC);
+        else ExecUpperFast(unit, s);
         VR_reg vf_post = {};
         if (s.hide_upper) {
             // Both words read at the same stage: the lower sees the pre-upper VF.
@@ -149,10 +153,11 @@ void VuCachedTier::ExecBundle(VuUnit& unit, const VuDecodedSlot& s, uint32_t pc,
             regs.VF[uvw] = vf_pre;
         }
         // Same VF written by both words: the upper wins and the lower is not issued.
-        if (!s.discard_lower) ExecLowerFast(unit, s, pc, branch_taken, branch_target);
+        if (!s.discard_lower && s.lower_kind != VUK_L_NOP) ExecLowerFast(unit, s, pc, branch_taken, branch_target);
         if (s.hide_upper) regs.VF[uvw] = vf_post;
     } else {
-        ExecUpperFast(unit, s);  // the upper reads the OLD I
+        if (s.upper_kind == VUK_U_NOP) VuFloat::ClampStoreACC(regs.ACC);
+        else ExecUpperFast(unit, s);  // the upper reads the OLD I
         regs.I = s.lower;
     }
 }

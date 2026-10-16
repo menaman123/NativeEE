@@ -155,3 +155,5 @@ private:
     uint64_t p_pending_retire_ = 0;
     float p_pending_value_ = 0.0f;
 };
+
+#include "engine/vu/flag_pipeline.inl"

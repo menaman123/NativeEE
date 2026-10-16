@@ -49,8 +49,8 @@ void PushQuantum(AudioPullRing& ring, uint64_t first_index) {
 
 void TestArithmetic() {
     static_assert(AudioPullRing::kQuantumFrames == 800, "one vsync at 48 kHz");
-    static_assert(AudioPullRing::kCapacityQuanta == 8, "eight quanta");
-    static_assert(AudioPullRing::kCapacityFrames == 6400, "6400 frames");
+    static_assert(AudioPullRing::kCapacityQuanta == 12, "twelve quanta (200 ms; the adaptive lead's room)");
+    static_assert(AudioPullRing::kCapacityFrames == 9600, "9600 frames");
     AudioPullRing ring;
     CHECK(ring.Available() == 0);
     for (int k = 1; k <= AudioPullRing::kCapacityQuanta; ++k) {
@@ -58,7 +58,7 @@ void TestArithmetic() {
         CHECK(ring.Available() == kQ * k);
         CHECK(ring.overruns() == 0);
     }
-    CHECK(ring.pushed() == 6400);
+    CHECK(ring.pushed() == static_cast<uint64_t>(AudioPullRing::kCapacityFrames));
     CHECK(ring.pulled() == 0);
     CHECK(ring.dropped() == 0);
     CHECK(ring.underruns() == 0);
@@ -128,14 +128,15 @@ void TestUnderrun() {
     }
 }
 
-// Nine quanta into an eight-quantum ring: the FIRST quantum is gone, the next
-// pull starts on quantum 2's first frame.
+// Capacity + 1 quanta into the ring: the FIRST quantum is gone, the next pull
+// starts on quantum 2's first frame.
 void TestOverrun() {
     AudioPullRing ring;
-    for (int q = 0; q < 9; ++q) PushQuantum(ring, static_cast<uint64_t>(q) * kQ);
+    constexpr int kN = AudioPullRing::kCapacityQuanta + 1;
+    for (int q = 0; q < kN; ++q) PushQuantum(ring, static_cast<uint64_t>(q) * kQ);
     CHECK(ring.overruns() == 1);
     CHECK(ring.dropped() == static_cast<uint64_t>(kQ));
-    CHECK(ring.pushed() == 9u * kQ);
+    CHECK(ring.pushed() == static_cast<uint64_t>(kN) * kQ);
     CHECK(ring.Available() == AudioPullRing::kCapacityFrames);
 
     std::vector<float> expected;
@@ -145,9 +146,9 @@ void TestOverrun() {
     CHECK(std::memcmp(out.data(), expected.data(), expected.size() * sizeof(float)) == 0);
     CHECK(ring.underruns() == 0);
 
-    // A tenth push after that partial pull frees room by dropping the REST of
+    // One more push after that partial pull frees room by dropping the REST of
     // quantum 2 plus nothing more (the read position lands on a quantum edge).
-    PushQuantum(ring, 9u * kQ);
+    PushQuantum(ring, static_cast<uint64_t>(kN) * kQ);
     CHECK(ring.overruns() == 2);
     CHECK(ring.dropped() == static_cast<uint64_t>(kQ) + (kQ - 512));
     FillPattern(expected, 2u * kQ, 512);
@@ -252,7 +253,7 @@ void TestSpsc() {
 // then the six quanta at once). With pad mode on and the standing lead:
 // dropped = 0 and underruns = 0; the gaps were filled from the previous quantum's
 // tail (padded > 0), the lead re-latched (relatches > 0) and the late burst trimmed
-// (trimmed > 0; the ring never exceeds kTrimFrames after a push, so latency never
+// (trimmed > 0; the ring never exceeds TrimFrames() after a push, so latency never
 // grows); the tone's frequency over the whole device stream -- its zero-crossing
 // count -- is the same as a never-late run's within 0.5 % (no pitch change: the
 // pad repeats, the repayment skips; nothing is resampled).
@@ -313,7 +314,10 @@ void TestPadWithTail() {
     CHECK(late->dropped() == 0);
     CHECK(late->underruns() == 0);
     CHECK(late->padded() > 0 && late->relatches() > 0 && late->trimmed() > 0);
-    CHECK(late->Available() <= AudioPullRing::kTrimFrames);
+    CHECK(late->Available() <= late->TrimFrames());
+    // E74: the pads grew the standing lead (the 100 ms stalls exceed the 50 ms initial lead).
+    CHECK(late->LeadQuanta() > AudioPullRing::kLeadQuanta && late->LeadQuanta() <= AudioPullRing::kMaxLeadQuanta);
+    CHECK(ref->LeadQuanta() == AudioPullRing::kLeadQuanta);
     const double ratio = static_cast<double>(zc_late) / static_cast<double>(zc_ref);
     CHECK(ratio > 0.995 && ratio < 1.005);
     CHECK(zero->underruns() > 0);   // the old contract on the same late producer: gaps
