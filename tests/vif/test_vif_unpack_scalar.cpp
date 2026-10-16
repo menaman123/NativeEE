@@ -90,19 +90,21 @@ void TestUnpackSize() {
 void TestMaskTable() {
     // row0: W, NW, ROW, COL ; row1: all COL ; row2: all ROW ; row3: all NW
     const uint32_t mask = 0x55AAFFE4u;
+    // STMASK codes (EE User's Manual): 00 data, 01 ROW, 10 COL, 11 write-protect.
     CHECK(VifUnpack::MaskActionFor(mask, 0, 0) == MaskAction::Write);
-    CHECK(VifUnpack::MaskActionFor(mask, 1, 0) == MaskAction::NoWrite);
-    CHECK(VifUnpack::MaskActionFor(mask, 2, 0) == MaskAction::Row);
-    CHECK(VifUnpack::MaskActionFor(mask, 3, 0) == MaskAction::Col);
+    CHECK(VifUnpack::MaskActionFor(mask, 1, 0) == MaskAction::Row);
+    CHECK(VifUnpack::MaskActionFor(mask, 2, 0) == MaskAction::Col);
+    CHECK(VifUnpack::MaskActionFor(mask, 3, 0) == MaskAction::NoWrite);
     for (int f = 0; f < 4; f++) {
-        CHECK(VifUnpack::MaskActionFor(mask, f, 1) == MaskAction::Col);
-        CHECK(VifUnpack::MaskActionFor(mask, f, 2) == MaskAction::Row);
-        CHECK(VifUnpack::MaskActionFor(mask, f, 3) == MaskAction::NoWrite);
-        CHECK(VifUnpack::MaskActionFor(mask, f, 5) == MaskAction::Col);   // row = cycle & 3
-        CHECK(VifUnpack::MaskActionFor(mask, f, 7) == MaskAction::NoWrite);
+        CHECK(VifUnpack::MaskActionFor(mask, f, 1) == MaskAction::NoWrite);
+        CHECK(VifUnpack::MaskActionFor(mask, f, 2) == MaskAction::Col);
+        CHECK(VifUnpack::MaskActionFor(mask, f, 3) == MaskAction::Row);
+        CHECK(VifUnpack::MaskActionFor(mask, f, 5) == MaskAction::NoWrite);   // row = cycle & 3
+        CHECK(VifUnpack::MaskActionFor(mask, f, 7) == MaskAction::Row);
     }
-    CHECK(VifUnpack::MaskActionFor(0x00000055u, 0, 0) == MaskAction::NoWrite);
-    CHECK(VifUnpack::MaskActionFor(0x00000055u, 3, 0) == MaskAction::NoWrite);
+    CHECK(VifUnpack::MaskActionFor(0x00000055u, 0, 0) == MaskAction::Row);
+    CHECK(VifUnpack::MaskActionFor(0x00000055u, 3, 0) == MaskAction::Row);
+    CHECK(VifUnpack::MaskActionFor(0x000000FFu, 0, 0) == MaskAction::NoWrite);
     CHECK(VifUnpack::MaskActionFor(0x00000055u, 0, 1) == MaskAction::Write);
 }
 
@@ -224,7 +226,7 @@ void TestModeAndMask() {
     Run(vu, r, 1, 0x60, 130, 1, Words({100}), 0);
     CHECK(QwIs(vu, 130, 111, 112, 113, 114));
 
-    // MASK: row0 W/NW/ROW/COL, row1 COL, row2 ROW, row3 NW; write_cycle 0..3 (CL=WL=4), then row 0 again.
+    // MASK: row0 W/ROW/COL/NW, row1 NW, row2 COL, row3 ROW; write_cycle 0..3 (CL=WL=4), then row 0 again.
     r.mode = 0;
     r.cycle = 0x0404;
     r.mask = 0x55AAFFE4u;
@@ -237,24 +239,35 @@ void TestModeAndMask() {
         p.insert(p.end(), w.begin(), w.end());
     }
     Run(vu, r, 1, 0x7C, 200, 5, p, 0);
-    CHECK(QwIs(vu, 200, 1, 0xEEEEEEEEu, 0x33, 0xA1));
-    CHECK(QwIs(vu, 201, 0xA2, 0xA2, 0xA2, 0xA2));
-    CHECK(QwIs(vu, 202, 0x11, 0x22, 0x33, 0x44));
-    CHECK(QwIs(vu, 203, 0xEEEEEEEEu, 0xEEEEEEEEu, 0xEEEEEEEEu, 0xEEEEEEEEu));
-    CHECK(QwIs(vu, 204, 17, 0xEEEEEEEEu, 0x33, 0xA1));
+    CHECK(QwIs(vu, 200, 1, 0x22, 0xA1, 0xEEEEEEEEu));
+    CHECK(QwIs(vu, 201, 0xEEEEEEEEu, 0xEEEEEEEEu, 0xEEEEEEEEu, 0xEEEEEEEEu));
+    CHECK(QwIs(vu, 202, 0xA3, 0xA3, 0xA3, 0xA3));
+    CHECK(QwIs(vu, 203, 0x11, 0x22, 0x33, 0x44));
+    CHECK(QwIs(vu, 204, 17, 0x22, 0xA1, 0xEEEEEEEEu));
     // Masked with WL=2: rows alternate 0,1,0,1.
     r.cycle = 0x0202;
     Run(vu, r, 1, 0x7C, 210, 4, p, 0);
-    CHECK(QwIs(vu, 210, 1, 0xEEEEEEEEu, 0x33, 0xA1));
-    CHECK(QwIs(vu, 211, 0xA2, 0xA2, 0xA2, 0xA2));
-    CHECK(QwIs(vu, 212, 9, 0xEEEEEEEEu, 0x33, 0xA1));
-    CHECK(QwIs(vu, 213, 0xA2, 0xA2, 0xA2, 0xA2));
+    CHECK(QwIs(vu, 210, 1, 0x22, 0xA1, 0xEEEEEEEEu));
+    CHECK(QwIs(vu, 211, 0xEEEEEEEEu, 0xEEEEEEEEu, 0xEEEEEEEEu, 0xEEEEEEEEu));
+    CHECK(QwIs(vu, 212, 9, 0x22, 0xA1, 0xEEEEEEEEu));
+    CHECK(QwIs(vu, 213, 0xEEEEEEEEu, 0xEEEEEEEEu, 0xEEEEEEEEu, 0xEEEEEEEEu));
     // Mask + mode: the add happens before the mask selects.
     r.mode = 1;
     r.cycle = 0x0101;
-    r.mask = 0x00000004u;  // field 1 NoWrite, others Write
+    r.mask = 0x0000000Cu;  // field 1 NoWrite, others Write
     Run(vu, r, 1, 0x7C, 220, 1, Words({1, 2, 3, 4}), 0);
     CHECK(QwIs(vu, 220, 0x12, 0xEEEEEEEEu, 0x36, 0x48));
+    // The vertex-colour idiom: V4-5 colours, then a masked S-8 alpha over the W field only
+    // (xyz write-protected = 0x3F per cycle row); RGB survives, W takes the byte.
+    r.mode = 0;
+    r.cycle = 0x0104;
+    r.mask = 0x3F3F3F3Fu;
+    Run(vu, r, 1, 0x6F, kUsn | 230, 2, Words({0x7FFFFFFFu}), 0);       // 0xFFFF white/a1, then 0x7FFF white/a0
+    CHECK(QwIs(vu, 230, 0xF8, 0xF8, 0xF8, 0x80));
+    CHECK(QwIs(vu, 234, 0xF8, 0xF8, 0xF8, 0x00));
+    Run(vu, r, 1, 0x72, kUsn | 230, 2, Words({0x00001E37u}), 0);       // S-8 masked: alpha 0x37, 0x1E
+    CHECK(QwIs(vu, 230, 0xF8, 0xF8, 0xF8, 0x37));
+    CHECK(QwIs(vu, 234, 0xF8, 0xF8, 0xF8, 0x1E));
 }
 
 void TestCycleShapes() {
@@ -340,7 +353,7 @@ void TestVu0MaskedRead() {
     uint32_t seed[4] = {0xC0C0C0C0u, 0xC1C1C1C1u, 0xC2C2C2C2u, 0xC3C3C3C3u};
     vu0.WriteDataMem(0x2C0, reinterpret_cast<uint8_t*>(seed), 16);
     VifRegs r = DefaultRegs();
-    r.mask = 0x00000054u;  // field 0 Write, fields 1-3 NoWrite
+    r.mask = 0x000000FCu;  // field 0 Write, fields 1-3 NoWrite
     Run(vu0, r, 0, 0x7C, 300, 1, Words({1, 2, 3, 4}), 0);
     CHECK(QwIs(vu0, 0x2C, 1, 0xC1C1C1C1u, 0xC2C2C2C2u, 0xC3C3C3C3u));
 }

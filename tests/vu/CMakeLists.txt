@@ -194,6 +194,17 @@ target_compile_options(test_gs_packet PRIVATE -Wall -Wextra -Werror -O2)
 add_test(NAME VuGsPacketCodec COMMAND test_gs_packet)
 set_tests_properties(VuGsPacketCodec PROPERTIES TIMEOUT 120)
 
+# Vu1CaptureReplay: one Vu1Case recorded by a title composition's capture probe (a file OUTSIDE
+# the tree -- no game bytes are checked in) replayed on a fresh unit through the interpreter tier:
+# the kicked GIF stream decoded, the run summary, and an optional per-bundle register trace
+# (--trace) for a reference evaluator to diff against. SKIP 77 with no argument / absent file;
+# the ctest row carries no argument and always skips -- the tool is run by hand on a capture.
+add_executable(test_vu1_capture_replay test_vu1_capture_replay.cpp)
+target_link_libraries(test_vu1_capture_replay PRIVATE ps2r_vu1_replay_lib)
+target_compile_options(test_vu1_capture_replay PRIVATE -Wall -Wextra -Werror -O2)
+add_test(NAME Vu1CaptureReplay COMMAND test_vu1_capture_replay)
+set_tests_properties(Vu1CaptureReplay PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+
 # Vu1HleMechanism: Vu1Registry lookup rules, Vu1ImageAnalyzer on synthetic
 # images, KickLowering's one-slot-per-kick raw tier, and Vu1HleRuntime::Hook
 # through the tier dispatch on one corpus case (kicks / data / TPC equal the

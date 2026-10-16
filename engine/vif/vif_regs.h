@@ -121,12 +121,14 @@ enum class VifCommand : uint8_t {
     Directhl = 0x51,
 };
 
-// One 2-bit MASK entry: what a masked UNPACK writes to a field.
+// One 2-bit MASK entry: what a masked UNPACK writes to a field (EE User's
+// Manual, STMASK: 00 = the unpacked data, 01 = the ROW register, 10 = the COL
+// register, 11 = write-protected -- the existing VU memory content stays).
 enum class MaskAction : uint8_t {
     Write = 0,    // the unpacked value
-    NoWrite = 1,  // the existing VU memory content
-    Row = 2,      // the ROW register of that field
-    Col = 3,      // the COL register of that write cycle
+    Row = 1,      // the ROW register of that field
+    Col = 2,      // the COL register of that write cycle
+    NoWrite = 3,  // the existing VU memory content
 };
 
 // The command-processor state of one unit.

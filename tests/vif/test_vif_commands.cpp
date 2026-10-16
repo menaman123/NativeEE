@@ -459,7 +459,7 @@ void TestTteFeed() {
 Stream MixedStream() {
     Stream s;
     Code(s, 0x01, 0, 0x0101);
-    Code(s, 0x20, 0, 0); Word(s, 0x00000055u);                                   // STMASK
+    Code(s, 0x20, 0, 0); Word(s, 0x000000FFu);                                   // STMASK (row 0 all write-protect)
     Code(s, 0x30, 0, 0); Word(s, 0x10); Word(s, 0x11); Word(s, 0x12); Word(s, 0x13);  // STROW
     Code(s, 0x6C, 3, 40); for (uint32_t i = 1; i <= 12; i++) Word(s, i * 0x01010101u);  // V4-32 x3 (payload at odd word)
     Code(s, 0x07, 0, 0x4242);                                                    // MARK
