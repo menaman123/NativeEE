@@ -675,6 +675,23 @@ static void PrivRegs() {
     const uint64_t display2 = ((uint64_t)3 << 23) | ((uint64_t)2559 << 32) | ((uint64_t)223 << 44);
     gs.WritePrivileged(0x12000080, display2);
     CHECK(jobs_of(JobKind::SetWindow) == 2 && sink.jobs.back().arg3 == ((224u << 16) | 224u), "a new geometry still emits");
+    // (c) SMODE2 interlaced FRAME mode (INT=1 FFMD=1): every buffer line is read in each
+    // field, so the 448-line raster scans a 224-line buffer -- the SetWindow job keeps the
+    // 448 window and carries content 224; the mode change itself re-emits the latched
+    // DISPLAY; FIELD mode (FFMD=0) restores 448/448.
+    gs.WritePrivileged(0x12000080, display);   // 640x448 again (frame mode off): window 448, content 448
+    CHECK(jobs_of(JobKind::SetWindow) == 3 && sink.jobs.back().arg3 == ((448u << 16) | 448u), "field mode: content = raster");
+    gs.WritePrivileged(0x12000020, 3);          // SMODE2 INT | FFMD
+    CHECK(jobs_of(JobKind::SetWindow) == 4 && sink.jobs.back().arg1 == 1 &&
+              sink.jobs.back().arg2 == ((640u << 16) | 640u) && sink.jobs.back().arg3 == ((448u << 16) | 224u),
+          "frame mode: SMODE2 re-emits the window with half the content lines");
+    gs.WritePrivileged(0x12000020, 3);
+    CHECK(jobs_of(JobKind::SetWindow) == 4, "same SMODE2: no re-emit");
+    gs.WritePrivileged(0x12000080, display2);   // DH 223 under frame mode: window 224, content 112
+    CHECK(jobs_of(JobKind::SetWindow) == 5 && sink.jobs.back().arg3 == ((224u << 16) | 112u), "frame mode applies to a new DISPLAY too");
+    gs.WritePrivileged(0x12000020, 1);          // back to FIELD mode
+    CHECK(jobs_of(JobKind::SetWindow) == 6 && sink.jobs.back().arg3 == ((224u << 16) | 224u), "field mode again: content = raster");
+    CHECK(gs.ReadPrivileged(0x12000020) == 1, "SMODE2 reads back");
     // CSR: write-1-to-clear of the event bits.
     gs.WriteRegister(0x61, 0);  // FINISH
     CHECK((gs.ReadPrivileged(0x12001000) & GsPrivRegs::kCsrFinish) != 0, "FINISH sets CSR.FINISH");

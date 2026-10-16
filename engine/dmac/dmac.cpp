@@ -236,6 +236,7 @@ void Dmac::StartChannel(int ch) {
             // FROM IPU: channel 3 copies the output FIFO to memory.
             if (regs.qwc > 0 && ipu_drain_output_) {
                 const size_t bytes = static_cast<size_t>(regs.qwc) * 16;
+                PS2R_LOG(DMAC, Narrate, "dmac-ipu: fromIPU chcr=0x%08x madr=0x%08x qwc=%u", regs.chcr, regs.madr, regs.qwc);
                 if (uint8_t* dst = walker_.Translate(regs.madr, bytes)) {
                     const size_t transferred = std::min(bytes, ipu_drain_output_(dst, bytes));
                     const uint32_t qwords = static_cast<uint32_t>(transferred / 16);

@@ -56,8 +56,13 @@ const uint8_t* ChainWalker::VifSpan(uint32_t addr, bool from_spr, size_t bytes) 
     return ram_.Pointer(addr & kRamMask, bytes);
 }
 
+// A channel register address (Dn_MADR / Dn_TADR): bit 31 is the SPR flag -- the
+// address names the scratchpad, not main memory (EE User's Manual 5.4 "memory /
+// SPR selection"; libmpeg's fromIPU macroblock buffers live there); the EE's
+// 0x70000000 scratchpad window routes there too. Everything else is RAM through
+// the physical map (KSEG / uncached / UCAB prefixes stripped).
 uint8_t* ChainWalker::Translate(uint32_t addr, size_t bytes) const {
-    if (Scratchpad::Contains(addr)) return spad_.Pointer(Scratchpad::Offset(addr), bytes);
+    if ((addr & kRegSprFlag) != 0 || Scratchpad::Contains(addr)) return spad_.Pointer(Scratchpad::Offset(addr), bytes);
     return ram_.Pointer(MainMemory::Phys(addr), bytes);
 }
 

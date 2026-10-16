@@ -41,6 +41,7 @@ void GsPrivRegs::Reset() {
     std::memset(regs_, 0, sizeof(regs_));
     csr_ = kCsrAfterReset;
     interlaced_ = false;
+    frame_mode_ = false;
 }
 
 uint64_t& GsPrivRegs::Slot(uint32_t addr) {
@@ -76,10 +77,19 @@ void GsPrivRegs::WriteUpper(uint32_t addr, uint32_t value) {
 void GsPrivRegs::Write(uint32_t addr, uint64_t v) {
     ++writes_;  // the half writes (WriteLower / WriteUpper) arrive here, so each counts once
     switch (addr & 0xFFFF) {
-        case kSmode2:  // INT 0 FFMD 1 DPMS 2-3
+        case kSmode2: {  // INT 0 FFMD 1 DPMS 2-3
             Slot(addr) = v;
             interlaced_ = (v & 1) != 0;
+            const bool frame_mode = (v & 2) != 0;
+            if (frame_mode != frame_mode_) {
+                // The buffer line count of both circuits' windows changed (see Display):
+                // re-derive them from the latched DISPLAY values.
+                frame_mode_ = frame_mode;
+                EmitWindow(kDisplay1);
+                EmitWindow(kDisplay2);
+            }
             return;
+        }
         case kDispfb1: case kDispfb2: Dispfb(addr, v); return;
         case kDisplay1: case kDisplay2: Display(addr, v); return;
         case kBgcolor:  // R 0-7 G 8-15 B 16-23
@@ -110,11 +120,24 @@ void GsPrivRegs::Dispfb(uint32_t addr, uint64_t v) {
 }
 
 // DISPLAY (6.x): DX 0-11 DY 12-22 MAGH 23-26 MAGV 27-28 DW 32-43 DH 44-54. The
-// window is the content size (DW+1)/(MAGH+1) x (DH+1)/(MAGV+1) clamped to
-// [1,1024]; the job carries window<<16 | content per axis and the VCK dims.
+// window is the raster size (DW+1)/(MAGH+1) x (DH+1)/(MAGV+1) clamped to [1,1024];
+// the content is the frame-buffer rectangle the CRTC reads for it: the same, except
+// in interlaced FRAME mode (SMODE2 INT=1 FFMD=1, GS User's Manual 6.3 / 3.5: every
+// line of the buffer is read in EACH field, so a field's (DH+1)/(MAGV+1) raster lines
+// come from half as many buffer lines -- a 448-line display scans a 224-line
+// buffer, line-doubled) where the content height is half the raster height. FIELD
+// mode (FFMD=0) and non-interlaced displays read one buffer line per raster line.
+// The job carries window<<16 | content per axis and the VCK dims; a SMODE2 change
+// of the mode re-derives both circuits' windows from the latched DISPLAY values.
 void GsPrivRegs::Display(uint32_t addr, uint64_t v) {
     if (Slot(addr) == v) return;
     Slot(addr) = v;
+    EmitWindow(addr);
+}
+
+void GsPrivRegs::EmitWindow(uint32_t addr) {
+    const uint64_t v = Slot(addr);
+    if (v == 0) return;   // no DISPLAY value latched for this circuit
     const int circuit = ((addr & 0xFFFF) == kDisplay1) ? 1 : 2;
     const int magh = (v >> 23) & 0xF, magv = (v >> 27) & 3;
     const int dw = (v >> 32) & 0xFFF, dh = (v >> 44) & 0x7FF;
@@ -126,6 +149,7 @@ void GsPrivRegs::Display(uint32_t addr, uint64_t v) {
     }
     auto clampw = [](int x) { return x < 1 ? 1 : (x > 1024 ? 1024 : x); };
     const int window_w = clampw(content_w), window_h = clampw(content_h);
+    if (interlaced_ && frame_mode_) content_h = (content_h + 1) / 2;   // frame mode: half the buffer lines per field
     const uint32_t packed_w = (static_cast<uint32_t>(window_w) << 16) | (content_w & 0xFFFF);
     const uint32_t packed_h = (static_cast<uint32_t>(window_h) << 16) | (content_h & 0xFFFF);
     const uint32_t packed_vck = ((static_cast<uint32_t>(dw + 1) & 0xFFFF) << 16) | ((dh + 1) & 0xFFFF);

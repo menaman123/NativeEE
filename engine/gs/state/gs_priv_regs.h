@@ -6,7 +6,9 @@
 // Writes store the 64-bit value; the display registers additionally emit the
 // scanout jobs the presenter consumes (SetFrontBuffer for DISPFB, SetWindow for
 // DISPLAY, SetClearColor for BGCOLOR), each only when the register value (or the
-// derived window triple) changed. Every job is stamped with the LIVE VRAM upload
+// derived window triple) changed; the SetWindow job's content height follows the
+// CRTC's read of the buffer (SMODE2 interlaced FRAME mode scans a half-height
+// buffer line-doubled -- see Display), so a SMODE2 mode change re-emits it. Every job is stamped with the LIVE VRAM upload
 // epoch at push time. CSR: bit 9 RESET zeroes the register file and leaves
 // CSR = 0x1402 (FIFO empty, FINISH, bit 2) -- the DISPLAY window latches are not
 // register state and survive it; bits 0-4 are write-1-to-clear (SIGNAL FINISH
@@ -63,6 +65,7 @@ public:
     void SetVsint() { csr_ |= kCsrVsint; }
 
     bool Interlaced() const { return interlaced_; }
+    bool FrameMode() const { return frame_mode_; }   // SMODE2.FFMD: every buffer line read in each field
     uint32_t TakeInterrupts();  // GS interrupt requests since the last call
     // Observer of each GS interrupt request as it is counted (SIGNAL / FINISH):
     // called with the CSR event bit (kCsrSignal / kCsrFinish) on the thread that
@@ -74,11 +77,13 @@ private:
     uint64_t& Slot(uint32_t addr);
     void Dispfb(uint32_t addr, uint64_t v);
     void Display(uint32_t addr, uint64_t v);
+    void EmitWindow(uint32_t addr);   // the SetWindow job for the latched DISPLAY of `addr`, when it changed
     void PushJob(JobKind kind, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4);
 
     uint64_t regs_[19] = {};
     uint64_t csr_ = kCsrAfterReset;
     bool interlaced_ = false;
+    bool frame_mode_ = false;
     Window window_[2];
     uint32_t interrupts_ = 0;
     uint64_t writes_ = 0;

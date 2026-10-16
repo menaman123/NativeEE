@@ -76,9 +76,11 @@ public:
     // Guest reads shared with the tail chase: 8 bytes at a VIF-walk tag
     // address (masked RAM / scratchpad), 0 when out of range.
     uint64_t ReadTagWord(uint32_t tadr, bool from_spr) const;
-    // A full guest address for `bytes`: the scratchpad prefix routes to the
-    // scratchpad, everything else to RAM through the physical mask; nullptr
-    // when the span is not entirely inside. Shared with the IPU/SIF channel bodies.
+    // A channel register address (MADR / TADR) for `bytes`: the SPR flag (bit 31)
+    // or the scratchpad prefix routes to the scratchpad, everything else to RAM
+    // through the physical map; nullptr when the span is not entirely inside.
+    // Shared with the IPU/SIF channel bodies.
+    static constexpr uint32_t kRegSprFlag = 0x80000000u;
     uint8_t* Translate(uint32_t addr, size_t bytes) const;
 
 private:
