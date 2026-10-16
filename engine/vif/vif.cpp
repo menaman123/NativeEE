@@ -2,6 +2,8 @@
 #include "engine/vif/vif.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "engine/gif/gif_arbiter.h"
@@ -292,6 +294,10 @@ void Vif::ExecuteCommand(int vif, uint32_t cmd, uint32_t imm, uint32_t num, cons
                          size_t payload_size, bool irq, bool use_mask) {
     VifUnitState& u = u_[vif];
     VifRegs& r = u.regs;
+    static const bool vif_trace = std::getenv("NATIVEEE_VIF_TRACE") != nullptr;  // TEMP-TRACE (boot triage)
+    if (vif_trace)
+        std::fprintf(stderr, "vif%d: cmd=0x%02x imm=0x%04x num=0x%02x irq=%d payload=%zu\n", vif, cmd, imm, num,
+                     irq ? 1 : 0, payload_size);
     if (irq && !(r.err & VifErr::kMii)) r.stat |= VifStat::kInt;
 
     if (VifUnpack::IsUnpackCmd(cmd)) {

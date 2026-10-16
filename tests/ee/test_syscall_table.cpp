@@ -126,6 +126,37 @@ static void Coverage() {
     c.cpuRegs.GPR.r[4].SL[0] = sid;
     st.Dispatch(69, c);
     CHECK(c.cpuRegs.GPR.r[2].SL[0] == 0, "PollSema on count 2 succeeds");
+    // ReferSemaStatus fills the SDK SemaParam (count after the poll = 1, max 4, init 2, 0 waiters) and
+    // returns the id; a game pacing loop polls currentCount (Sly 2's frame thread spins on it).
+    for (uint32_t i = 0; i < 6; ++i) memory::write<uint32_t>(0x100100 + 4 * i, 0xCCCCCCCCu);
+    c.cpuRegs.GPR.r[4].SL[0] = sid; c.cpuRegs.GPR.r[5].UL[0] = 0x100100;
+    st.Dispatch(71, c);
+    CHECK(c.cpuRegs.GPR.r[2].SL[0] == sid && memory::read<int32_t>(0x100100) == 1 &&
+              memory::read<int32_t>(0x100104) == 4 && memory::read<int32_t>(0x100108) == 2 &&
+              memory::read<int32_t>(0x10010C) == 0 && memory::read<uint32_t>(0x100110) == 0,
+          "ReferSemaStatus: id returned, {count 1, max 4, init 2, waiters 0, attr 0} written");
+    c.cpuRegs.GPR.r[4].SL[0] = sid + 1000; c.cpuRegs.GPR.r[5].UL[0] = 0x100100;
+    st.Dispatch(72, c);
+    CHECK(c.cpuRegs.GPR.r[2].SL[0] == -408 && memory::read<int32_t>(0x100100) == 1,
+          "iReferSemaStatus on an unknown id: KE_UNKNOWN_SEMID, struct untouched");
+    // Event flag: create {attr 2 (multi), option 7, init 0x5}; refer -> the SDK EventFlagParam view
+    // (a SetEventFlag from this non-holder test thread would be routed through the event queue,
+    // so the pattern pinned is the initial one).
+    memory::write<uint32_t>(0x100200, 2); memory::write<uint32_t>(0x100204, 7); memory::write<uint32_t>(0x100208, 5);
+    c.cpuRegs.GPR.r[4].UL[0] = 0x100200;
+    st.Dispatch(80, c);
+    const int eid = c.cpuRegs.GPR.r[2].SL[0];
+    CHECK(eid > 0, "CreateEventFlag returns an id");
+    for (uint32_t i = 0; i < 5; ++i) memory::write<uint32_t>(0x100300 + 4 * i, 0xCCCCCCCCu);
+    c.cpuRegs.GPR.r[4].SL[0] = eid; c.cpuRegs.GPR.r[5].UL[0] = 0x100300;
+    st.Dispatch(90, c);
+    CHECK(c.cpuRegs.GPR.r[2].SL[0] == eid && memory::read<uint32_t>(0x100300) == 2 &&
+              memory::read<uint32_t>(0x100304) == 7 && memory::read<uint32_t>(0x100308) == 5 &&
+              memory::read<uint32_t>(0x10030C) == 5 && memory::read<int32_t>(0x100310) == 0,
+          "iReferEventFlagStatus: id returned, {attr 2, option 7, init 5, pattern 5, waiters 0} written");
+    c.cpuRegs.GPR.r[4].SL[0] = eid + 1000;
+    st.Dispatch(89, c);
+    CHECK(c.cpuRegs.GPR.r[2].SL[0] == -409, "ReferEventFlagStatus on an unknown id: KE_UNKNOWN_EVFID");
     // INTC handler registry + masks.
     c.cpuRegs.GPR.r[4].SL[0] = 2; c.cpuRegs.GPR.r[5].UL[0] = 0x00123456; c.cpuRegs.GPR.r[6].SL[0] = -1;
     st.Dispatch(16, c);

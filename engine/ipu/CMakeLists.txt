@@ -42,9 +42,11 @@ target_link_libraries(ps2r_ipu
 
 add_library(ps2r_ipu_model STATIC
     ipu_device.cpp
+    ipu_fifo_port.cpp
     ipu_color.cpp
     ipu_vlc.cpp
     mpeg_decode.cpp
+    mpeg_coeff_vlc.cpp
     hle/libipu_api.cpp
     hle/dmac_channel_face_adapter.cpp
     hle/libipu_bindings.cpp

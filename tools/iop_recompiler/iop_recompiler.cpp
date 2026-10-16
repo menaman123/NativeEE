@@ -210,6 +210,46 @@ std::string IopRecompiler::resolve_stub_name(const std::string& raw_name) const 
     return "/* UNKNOWN STUB: " + raw_name + " */ iop_stubs::stdio_printf";
 }
 
+std::string IopRecompiler::import_call_expr(const std::string& raw_name) {
+    m_census.import_calls++;
+    if (!m_opts.import_call) return resolve_stub_name(raw_name) + "(iop_ctx)";
+    // "lib_idx" -> import_call("lib", idx, iop_ctx): the host's library table binds it.
+    const size_t us = raw_name.rfind('_');
+    const std::string lib = us == std::string::npos ? raw_name : raw_name.substr(0, us);
+    const std::string idx = us == std::string::npos ? "0" : raw_name.substr(us + 1);
+    return "iop_stubs::import_call(\"" + lib + "\", " + idx + ", iop_ctx)";
+}
+
+void IopRecompiler::emit_indirect_call(std::ofstream& file, const std::string& indent,
+                                       const std::string& target_expr, const std::string& on_missing,
+                                       const std::string& after_call) {
+    if (m_opts.ns.empty()) {
+        file << indent << "if (iop_recompiled_functions.count(" << target_expr << ")) {\n";
+        file << indent << "    iop_recompiled_functions[" << target_expr << "](iop_ctx);\n";
+        if (!after_call.empty()) file << indent << "    " << after_call << "\n";
+        file << indent << "}";
+        if (!on_missing.empty()) {
+            file << " else {\n";
+            file << indent << "    " << on_missing << "\n";
+            file << indent << "}";
+        }
+        file << "\n";
+        return;
+    }
+    // Namespaced module: the shared resolver (every hosted module + the HLE
+    // libraries' guest-visible entries) answers a computed address.
+    file << indent << "if (const auto* _fn = iop_stubs::iop_resolve(" << target_expr << ")) {\n";
+    file << indent << "    (*_fn)(iop_ctx);\n";
+    if (!after_call.empty()) file << indent << "    " << after_call << "\n";
+    file << indent << "}";
+    if (!on_missing.empty()) {
+        file << " else {\n";
+        file << indent << "    " << on_missing << "\n";
+        file << indent << "}";
+    }
+    file << "\n";
+}
+
 // ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
@@ -257,6 +297,8 @@ void IopRecompiler::write_header_file(std::ofstream& file) {
     file << "#include <functional>\n";
     file << "#include <map>\n\n";
 
+    if (!m_opts.ns.empty()) file << "namespace " << m_opts.ns << " {\n\n";
+
     for (const auto& [addr, func] : m_functions) {
         if (m_import_stubs.count(addr)) continue; // Skip import stubs
         file << "void " << func.name << "(IopContext& iop_ctx);\n";
@@ -266,6 +308,19 @@ void IopRecompiler::write_header_file(std::ofstream& file) {
     file << "extern std::map<uint32_t, std::function<void(IopContext&)>> "
             "iop_recompiled_functions;\n";
     file << "void initialize_iop_recompiled_functions();\n";
+
+    if (!m_opts.ns.empty()) {
+        file << "\n// The module as recompiled: its load base, relocated entry and allocated extent, and\n";
+        file << "// its import stubs (address -> library, index) so a stub address taken as a function\n";
+        file << "// pointer resolves to the same import_call the JAL sites make.\n";
+        file << "struct ImportStub { uint32_t addr; const char* lib; uint32_t index; };\n";
+        file << "constexpr uint32_t kBase = 0x" << std::hex << m_opts.base << ";\n";
+        file << "constexpr uint32_t kEntry = 0x" << m_opts.entry << ";\n";
+        file << "constexpr uint32_t kLoadExtent = 0x" << m_opts.load_extent << std::dec << ";\n";
+        file << "constexpr uint32_t kImportStubCount = " << m_import_stubs.size() << ";\n";
+        file << "extern const ImportStub kImportStubs[" << (m_import_stubs.empty() ? 1 : m_import_stubs.size()) << "];\n";
+        file << "\n}  // namespace " << m_opts.ns << "\n";
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -282,6 +337,12 @@ void IopRecompiler::write_cpp_file(std::ofstream& file,
     file << "#include <cstdlib>\n";
     file << "#include <functional>\n";
     file << "#include <map>\n\n";
+
+    if (!m_opts.ns.empty()) {
+        file << "// Recompiled from " << m_opts.input_name << " at base 0x" << std::hex << m_opts.base << std::dec
+             << " (ps2r_iop_recompiler --namespace " << m_opts.ns << ")\n";
+        file << "namespace " << m_opts.ns << " {\n\n";
+    }
 
     file << "std::map<uint32_t, std::function<void(IopContext&)>> "
             "iop_recompiled_functions;\n\n";
@@ -300,6 +361,19 @@ void IopRecompiler::write_cpp_file(std::ofstream& file,
              << "] = " << func.name << ";\n";
     }
     file << "}\n";
+
+    if (!m_opts.ns.empty()) {
+        file << std::dec << "\nconst ImportStub kImportStubs[" << (m_import_stubs.empty() ? 1 : m_import_stubs.size()) << "] = {\n";
+        if (m_import_stubs.empty()) file << "    {0, \"\", 0},\n";
+        for (const auto& [addr, raw] : m_import_stubs) {
+            const size_t us = raw.rfind('_');
+            const std::string lib = us == std::string::npos ? raw : raw.substr(0, us);
+            const std::string idx = us == std::string::npos ? "0" : raw.substr(us + 1);
+            file << "    {0x" << std::hex << addr << std::dec << ", \"" << lib << "\", " << idx << "},\n";
+        }
+        file << "};\n";
+        file << "\n}  // namespace " << m_opts.ns << "\n";
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -329,6 +403,7 @@ void IopRecompiler::recompile_function(const IopFunction& func,
     static const uint32_t kStrmqProbeAddrs[] = {0xc8f0, 0x594, 0xe9d4,
                                                 0xf230, 0xfc0c};
     for (uint32_t probe_addr : kStrmqProbeAddrs) {
+        if (!m_opts.legacy_title_stubs) break;
         if (func.start_addr != probe_addr) continue;
         file << "    { static const bool s_strmq = [] { const char* e = "
                 "std::getenv(\"PS2_STRMQ\"); return e && e[0] == '1'; }();\n"
@@ -370,7 +445,7 @@ void IopRecompiler::recompile_function(const IopFunction& func,
         // from the request at 0x14a00. Runs BEFORE the jr, so the caller sees the
         // synthesized reply on return. Self-gated: FUN_0000e278 only reaches this
         // when the RPC is armed (cutscene streaming), not the initial load.
-        if (pc == 0x000128a8) {
+        if (m_opts.legacy_title_stubs && pc == 0x000128a8) {
             file << "    iop_stubs::hle_stream_cd_read_rpc(iop_ctx);\n";
         }
 
@@ -461,6 +536,41 @@ void IopRecompiler::recompile_function(const IopFunction& func,
                 file << "    if (_cond) goto " << label(target) << ";\n";
                 file << "    } // end branch\n";
             }
+            // `b` (beq $zero,$zero) and `bal` (bgezal $zero): rabbitizer's pseudo
+            // ids for the unconditional forms -- the frozen tool never met them
+            // (its one title's TU has none); a module built by another compiler
+            // does. `b` is a goto; `bal` links ra and calls (a target inside the
+            // function is a local goto, as the bgezal form above).
+            else if (uid == rabbitizer::InstrId::UniqueId::cpu_b ||
+                     uid == rabbitizer::InstrId::UniqueId::cpu_bal) {
+                int16_t imm = static_cast<int16_t>(instr.Get_immediate());
+                uint32_t target = pc + 4 + (imm << 2);
+                const bool link = uid == rabbitizer::InstrId::UniqueId::cpu_bal;
+                file << "    { // " << (link ? "bal" : "b") << " + delay slot at 0x" << std::hex << pc << "\n";
+                if (link) {
+                    file << "    " << gpr(31) << " = 0x" << std::hex << (pc + 8) << ";\n";
+                    file << "    iop_fix_zero(iop_ctx);\n";
+                }
+                file << "    // delay slot:\n";
+                translate_instruction(ds_instr, ds_pc, file);
+                if (target >= func.start_addr && target < func.end_addr) {
+                    file << "    goto " << label(target) << ";\n";
+                } else if (link && m_functions.count(target)) {
+                    file << "    " << m_functions.at(target).name << "(iop_ctx);\n";
+                } else if (link) {
+                    m_census.unresolved_jal++;
+                    emit_indirect_call(file, "    ", "0x" + hex(target).substr(2),
+                                       "std::printf(\"[IOP-RECOMP] Unresolved BAL to 0x%08X\\n\", 0x" + hex(target).substr(2) + ");",
+                                       "");
+                } else {
+                    m_census.tail_j_sites++;
+                    emit_indirect_call(file, "    ", "0x" + hex(target).substr(2), "", "return;");
+                    file << "    std::printf(\"[IOP-RECOMP] Unresolved B to 0x%08X\\n\", 0x"
+                         << std::hex << target << ");\n";
+                    file << "    return;\n";
+                }
+                file << "    } // end " << (link ? "bal" : "b") << "\n";
+            }
             // Unconditional jumps: J, JAL, JR, JALR
             else if (uid == rabbitizer::InstrId::UniqueId::cpu_j) {
                 uint32_t target = (pc & 0xF0000000) | (instr.Get_instr_index() << 2);
@@ -474,15 +584,17 @@ void IopRecompiler::recompile_function(const IopFunction& func,
                     // Jump to another function — shouldn't normally happen
                     // but handle it as a tail call
                     file << "    // tail jump to 0x" << std::hex << target << "\n";
-                    file << "    if (iop_recompiled_functions.count(0x"
-                         << std::hex << target << ")) {\n";
-                    file << "        iop_recompiled_functions[0x"
-                         << std::hex << target << "](iop_ctx);\n";
-                    file << "        return;\n";
-                    file << "    }\n";
-                    file << "    std::printf(\"[IOP-RECOMP] Unresolved J to 0x%08X\\n\", 0x"
-                         << std::hex << target << ");\n";
-                    file << "    return;\n";
+                    m_census.tail_j_sites++;
+                    if (m_functions.count(target) && !m_opts.ns.empty()) {
+                        file << "    " << m_functions.at(target).name << "(iop_ctx);\n";
+                        file << "    return;\n";
+                    } else {
+                        emit_indirect_call(file, "    ", "0x" + hex(target).substr(2),
+                                           "", "return;");
+                        file << "    std::printf(\"[IOP-RECOMP] Unresolved J to 0x%08X\\n\", 0x"
+                             << std::hex << target << ");\n";
+                        file << "    return;\n";
+                    }
                 }
                 file << "    } // end j\n";
             }
@@ -500,8 +612,7 @@ void IopRecompiler::recompile_function(const IopFunction& func,
                 auto stub_it = m_import_stubs.find(target);
                 if (stub_it != m_import_stubs.end()) {
                     // Emit HLE stub call
-                    std::string cpp_name = resolve_stub_name(stub_it->second);
-                    file << "    " << cpp_name << "(iop_ctx);\n";
+                    file << "    " << import_call_expr(stub_it->second) << ";\n";
                 }
                 // Check if target is a known recompiled function
                 else if (m_functions.count(target)) {
@@ -509,15 +620,11 @@ void IopRecompiler::recompile_function(const IopFunction& func,
                 }
                 // Unresolved JAL — emit runtime lookup with error logging
                 else {
+                    m_census.unresolved_jal++;
                     file << "    // unresolved JAL target 0x" << std::hex << target << "\n";
-                    file << "    if (iop_recompiled_functions.count(0x"
-                         << std::hex << target << ")) {\n";
-                    file << "        iop_recompiled_functions[0x"
-                         << std::hex << target << "](iop_ctx);\n";
-                    file << "    } else {\n";
-                    file << "        std::printf(\"[IOP-RECOMP] Unresolved JAL to 0x%08X\\n\", 0x"
-                         << std::hex << target << ");\n";
-                    file << "    }\n";
+                    emit_indirect_call(file, "    ", "0x" + hex(target).substr(2),
+                                       "std::printf(\"[IOP-RECOMP] Unresolved JAL to 0x%08X\\n\", 0x" + hex(target).substr(2) + ");",
+                                       "");
                 }
                 file << "    } // end jal\n";
             }
@@ -548,19 +655,29 @@ void IopRecompiler::recompile_function(const IopFunction& func,
                     file << "    default:\n";
                     file << "        // Target outside this function — try "
                             "function map\n";
-                    file << "        if (iop_recompiled_functions.count("
-                            "_jr_target)) {\n";
-                    file << "            iop_recompiled_functions[_jr_target]"
-                            "(iop_ctx);\n";
-                    // After calling the external function, continue at the
-                    // next instruction (pc+8) instead of returning. This
-                    // handles jump tables used for command dispatch where
-                    // the handler returns to the caller's loop, not exits.
-                    file << "            goto " << label(pc + 8) << ";\n";
-                    file << "        }\n";
-                    file << "        std::printf(\"[IOP-RECOMP] Unresolved JR "
-                            "to 0x%08X\\n\", _jr_target);\n";
-                    file << "        goto " << label(pc + 8) << ";\n";
+                    m_census.jr_switch_sites++;
+                    if (m_opts.ns.empty()) {
+                        file << "        if (iop_recompiled_functions.count("
+                                "_jr_target)) {\n";
+                        file << "            iop_recompiled_functions[_jr_target]"
+                                "(iop_ctx);\n";
+                        // After calling the external function, continue at the
+                        // next instruction (pc+8) instead of returning. This
+                        // handles jump tables used for command dispatch where
+                        // the handler returns to the caller's loop, not exits.
+                        file << "            goto " << label(pc + 8) << ";\n";
+                        file << "        }\n";
+                        file << "        std::printf(\"[IOP-RECOMP] Unresolved JR "
+                                "to 0x%08X\\n\", _jr_target);\n";
+                        file << "        goto " << label(pc + 8) << ";\n";
+                    } else {
+                        // A jr to another function is a TAIL CALL (the callee returns
+                        // to this function's caller): run it and return.
+                        emit_indirect_call(file, "        ", "_jr_target", "", "return;");
+                        file << "        std::printf(\"[IOP-RECOMP] Unresolved JR "
+                                "to 0x%08X\\n\", _jr_target);\n";
+                        file << "        return;\n";
+                    }
                     file << "    }\n";
                 }
                 file << "    } // end jr\n";
@@ -577,11 +694,9 @@ void IopRecompiler::recompile_function(const IopFunction& func,
                 file << "    // delay slot:\n";
                 translate_instruction(ds_instr, ds_pc, file);
                 // Call target
-                file << "    if (iop_recompiled_functions.count(_jalr_target)) {\n";
-                file << "        iop_recompiled_functions[_jalr_target](iop_ctx);\n";
-                file << "    } else {\n";
-                file << "        std::printf(\"[IOP-RECOMP] Unresolved JALR to 0x%08X\\n\", _jalr_target);\n";
-                file << "    }\n";
+                m_census.jalr_sites++;
+                emit_indirect_call(file, "    ", "_jalr_target",
+                                   "std::printf(\"[IOP-RECOMP] Unresolved JALR to 0x%08X\\n\", _jalr_target);", "");
                 file << "    } // end jalr\n";
             }
             else {
@@ -960,6 +1075,7 @@ void IopRecompiler::translate_instruction(
     case rabbitizer::InstrId::UniqueId::cpu_jalr:
         file << "    // WARNING: branch/jump in delay slot at 0x"
              << std::hex << pc << " (" << instr.getOpcodeName() << ")\n";
+        m_census.branch_in_delay_slot++;
         break;
 
     // =====================================================================
@@ -994,12 +1110,15 @@ void IopRecompiler::translate_instruction(
         // appears here it means it was in a delay slot
         file << "    // WARNING: unconditional branch in delay slot at 0x"
              << std::hex << pc << "\n";
+        m_census.branch_in_delay_slot++;
         break;
 
     // =====================================================================
     // Default: unimplemented instruction
     // =====================================================================
     default:
+        m_census.unimplemented++;
+        m_census.unimplemented_opcodes[instr.getOpcodeName()]++;
         file << "    // UNIMPLEMENTED: " << instr.getOpcodeName()
              << " (0x" << std::hex << instr.getRaw() << ") at 0x" << pc << "\n";
         file << "    std::printf(\"[IOP-RECOMP] UNIMPLEMENTED: "

@@ -1,16 +1,20 @@
 // engine/iop/hle/sysclib/sysclib_module.cpp -- SysclibModule bodies.
 #include "engine/iop/hle/sysclib/sysclib_module.h"
 
+#include <cstdlib>
 #include <cstring>
 
 namespace ps2r::iop::hle {
 
 namespace {
 const SysclibModule::OrdinalEntry kOrdinals[SysclibModule::kOrdinalCount] = {
-    {12, "memcpy", &SysclibModule::memcpy},   {14, "memset", &SysclibModule::memset},
-    {20, "strcat", &SysclibModule::strcat},   {23, "strcpy", &SysclibModule::strcpy},
-    {27, "strlen", &SysclibModule::strlen},   {29, "strncmp", &SysclibModule::strncmp},
-    {34, "strstr", &SysclibModule::strstr},
+    {7, "tolower", &SysclibModule::tolower},  {12, "memcpy", &SysclibModule::memcpy},
+    {13, "memmove", &SysclibModule::memmove}, {14, "memset", &SysclibModule::memset},
+    {16, "bcopy", &SysclibModule::bcopy},     {17, "bzero", &SysclibModule::bzero},
+    {20, "strcat", &SysclibModule::strcat},   {22, "strcmp", &SysclibModule::strcmp},
+    {23, "strcpy", &SysclibModule::strcpy},   {27, "strlen", &SysclibModule::strlen},
+    {29, "strncmp", &SysclibModule::strncmp}, {34, "strstr", &SysclibModule::strstr},
+    {36, "strtol", &SysclibModule::strtol},   {40, "wmemcopy", &SysclibModule::wmemcopy},
 };
 }  // namespace
 
@@ -33,6 +37,62 @@ size_t SysclibModule::CStringLength(uint32_t addr) const {
 
 void SysclibModule::memcpy(IopContext& ctx) {
     const uint32_t n = ctx.gpr[6];
+    uint8_t* dst = mem_.Pointer(ctx.gpr[4], n);
+    const uint8_t* src = mem_.Pointer(ctx.gpr[5], n);
+    if (dst && src && n) std::memmove(dst, src, n);
+    ctx.gpr[2] = ctx.gpr[4];
+}
+
+void SysclibModule::tolower(IopContext& ctx) {
+    const uint32_t c = ctx.gpr[4];
+    ctx.gpr[2] = (c >= 'A' && c <= 'Z') ? c + ('a' - 'A') : c;
+}
+
+void SysclibModule::memmove(IopContext& ctx) { memcpy(ctx); }
+
+void SysclibModule::bcopy(IopContext& ctx) {
+    const uint32_t n = ctx.gpr[6];
+    const uint8_t* src = mem_.Pointer(ctx.gpr[4], n);
+    uint8_t* dst = mem_.Pointer(ctx.gpr[5], n);
+    if (dst && src && n) std::memmove(dst, src, n);
+    ctx.gpr[2] = 0;
+}
+
+void SysclibModule::bzero(IopContext& ctx) {
+    const uint32_t n = ctx.gpr[5];
+    uint8_t* dst = mem_.Pointer(ctx.gpr[4], n);
+    if (dst && n) std::memset(dst, 0, n);
+    ctx.gpr[2] = 0;
+}
+
+void SysclibModule::strcmp(IopContext& ctx) {
+    const size_t la = CStringLength(ctx.gpr[4]), lb = CStringLength(ctx.gpr[5]);
+    const uint8_t* a = mem_.Pointer(ctx.gpr[4], static_cast<uint32_t>(la) + 1);
+    const uint8_t* b = mem_.Pointer(ctx.gpr[5], static_cast<uint32_t>(lb) + 1);
+    if (!a || !b) {
+        ctx.gpr[2] = 0;
+        return;
+    }
+    const int r = std::strcmp(reinterpret_cast<const char*>(a), reinterpret_cast<const char*>(b));
+    ctx.gpr[2] = static_cast<uint32_t>(r < 0 ? -1 : (r > 0 ? 1 : 0));
+}
+
+void SysclibModule::strtol(IopContext& ctx) {
+    const size_t len = CStringLength(ctx.gpr[4]);
+    const uint8_t* s = mem_.Pointer(ctx.gpr[4], static_cast<uint32_t>(len) + 1);
+    if (!s) {
+        ctx.gpr[2] = 0;
+        return;
+    }
+    const char* begin = reinterpret_cast<const char*>(s);
+    char* end = nullptr;
+    const long v = std::strtol(begin, &end, static_cast<int>(static_cast<int32_t>(ctx.gpr[6])));
+    if (ctx.gpr[5]) mem_.Write<uint32_t>(ctx.gpr[5], ctx.gpr[4] + static_cast<uint32_t>(end - begin));
+    ctx.gpr[2] = static_cast<uint32_t>(static_cast<int32_t>(v));
+}
+
+void SysclibModule::wmemcopy(IopContext& ctx) {
+    const uint32_t n = ctx.gpr[6] & ~3u;
     uint8_t* dst = mem_.Pointer(ctx.gpr[4], n);
     const uint8_t* src = mem_.Pointer(ctx.gpr[5], n);
     if (dst && src && n) std::memmove(dst, src, n);

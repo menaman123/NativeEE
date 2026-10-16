@@ -33,11 +33,28 @@ public:
     static_assert(kFloor < kStackBandLo && kStackBandLo < kStackBandHi && kStackBandHi < kCeiling,
                   "floor < stack band < ceiling");
 
+    // The arena's layout as the composition root sets it (the defaults are the
+    // constants above): a root hosting several modules raises the floor past
+    // their images and sizes the stack band for their threads -- title data,
+    // passed in, never engine constants.
+    struct Layout {
+        uint32_t floor = kFloor;
+        uint32_t stack_band_lo = kStackBandLo;
+        uint32_t stack_band_hi = kStackBandHi;
+        uint32_t ceiling = kCeiling;
+    };
+
+    SysmemHeap() : SysmemHeap(Layout{}) {}
+    explicit SysmemHeap(const Layout& layout);
+    const Layout& GetLayout() const { return layout_; }
+
     // Allocated address, or 0 on arena exhaustion (the real kernel's failure shape).
     uint32_t Alloc(uint32_t size);
     // Freed rounded size, or 0 for an unknown block (no-op).
     uint32_t Free(uint32_t addr);
     uint32_t QueryMaxFree() const;
+    // The rounded size of the live block at `addr` (0 = not a live block).
+    uint32_t BlockSize(uint32_t addr) const;
 
     uint32_t HeapPtr() const { return heap_ptr_; }
     // Savestate restore: set the serialized bump tail and drop the transient maps.
@@ -46,6 +63,7 @@ public:
     size_t LiveBlocks() const { return alloc_sizes_.size(); }
 
 private:
+    Layout layout_;
     uint32_t heap_ptr_ = kFloor;
     std::map<uint32_t, uint32_t> alloc_sizes_;   // addr -> rounded size
     std::map<uint32_t, uint32_t> free_blocks_;   // addr -> size (coalesced)

@@ -26,6 +26,7 @@
 #include "engine/ee/recomp_abi/host_app/syscalls.h"
 #include "engine/ee/recomp_abi/host_app/timer_hle.h"
 #include "engine/ee/recomp_abi/host_app/vu.h"
+#include "engine/ee/sched/ee_yield_point.h"
 
 // ---- row 26: crash ring (REAL: forwards to core's RingLog; fatal = report + PARK)
 // The ONLY definitions of this extern "C" trio in the tree (ring_log owns the
@@ -79,6 +80,11 @@ void hle_sceCdDiskReady2(CpuContext& ctx) { GuestPark::Forever("iop_dependent", 
 // ---- rows 6, 18, 20 (REAL): SyscallTable, KernlTimer, KernlBoot -------------
 void runtime_syscall_dispatcher(uint32_t v1, CpuContext& ctx) { SyscallTable::Instance().Dispatch(v1, ctx); }
 void handle_mtc0_write(CpuContext& ctx, uint8_t rd, uint32_t value) { SyscallTable::Instance().HandleMtc0(ctx, rd, value); }
+// ---- row 6b (REAL): the back-edge yield of --yield-backedges generated code. The
+// budget is one plain counter: only the run-token holder executes guest code and
+// the token changes hands under a mutex (EeYieldPoint reloads it on every trip).
+uint32_t g_ee_backedge_budget = EeYieldPoint::kDefaultBudget;
+void ps2r_ee_yield_point(CpuContext& ctx) { EeYieldPoint::Instance().Trip(ctx); }
 void hle_TimerWaitMicroseconds(CpuContext& ctx) { KernlTimer::TimerWaitMicroseconds(ctx); }
 void hle_InitTLB(CpuContext& ctx) { KernlBoot::InitTLB(ctx); }
 void hle_ContextRestore(CpuContext& ctx) { KernlBoot::ContextRestore(ctx); }

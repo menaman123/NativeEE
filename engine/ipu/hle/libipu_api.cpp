@@ -52,9 +52,7 @@ void LibipuApi::StopDma(LibipuDmaSnapshot& out) {
     // Input is buffered beyond the hardware's eight-qword IFC. Represent
     // that excess as source data still pending, so BCLR + rewind reloads it.
     // The nine guest words carry the complete resume state.
-    const size_t supplied = ipu_.InputSize() / 16;
-    const size_t consumed = ipu_.BitPosition() / 128;
-    const size_t unread = supplied > consumed ? supplied - consumed : 0;
+    const size_t unread = ipu_.UnreadInputQwords();
     const uint32_t reported = RewindQuadwords(out.ipu_bp);
     if (out.ipu_to_qwc > kMaxDmaQwc || unread > kMaxDmaQwc - out.ipu_to_qwc ||
         unread > out.ipu_to_madr / 16 || (ipu_.InputSize() % 16) != 0) {

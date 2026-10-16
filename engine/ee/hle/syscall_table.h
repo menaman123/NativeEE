@@ -35,6 +35,10 @@ public:
     static const char* NameOf(int num);
     static int Normalize(uint32_t v1);
     static constexpr int kLiveLabels = 119;
+    // The kernel calls whose body may put the calling thread to sleep
+    // (SleepThread, SuspendThread, JoinThread, WaitSema, WaitEventFlag): the
+    // points where the EE gives the bus to its DMA (Dmac::ObserveAtKernelWait).
+    static bool IsBlockingWait(int num);
 
     // Guest-code call hook (DispatchTable::Invoke in the composition root):
     // SetSysCall-redirected numbers and alarm handlers run guest code through it.
@@ -56,6 +60,16 @@ public:
     // null); the composition root records the boot leg's first calls.
     using Trace = std::function<void(int num, const char* name)>;
     void SetTrace(Trace fn) { trace_ = std::move(fn); }
+    // Runs at the entry of every dispatched syscall, before its body: the
+    // "interrupt taken at the next kernel call" point. A hardware event raised
+    // in-line on the guest thread (a GS FINISH from a DMAC kick, a TIMn compare,
+    // a DMAC channel completion) sets its STAT bit at once but has no handler
+    // run until a dispatch point; on the console the ISR runs before the
+    // syscall's effect is observed. The composition root binds it to
+    // Intc::DispatchPending (+ Dmac::DispatchInterrupt); unbound = nothing.
+    // Intc's in-dispatch guard keeps an ISR's own kernel calls from recursing.
+    using PreDispatch = std::function<void(int num, CpuContext& ctx)>;
+    void SetPreDispatch(PreDispatch fn) { pre_dispatch_ = std::move(fn); }
 
     struct KernelHandler {  // INTC / DMAC handler records (AddIntcHandler / AddDmacHandler)
         int id = 0;
@@ -76,6 +90,11 @@ public:
     void BindIntcMask(uint32_t* mask) { intc_mask_ptr_ = mask ? mask : &intc_mask_; }
     uint32_t IntcMask() const { return *intc_mask_ptr_; }
     uint32_t DmacMask() const { return dmac_mask_; }
+    // _EnableDmac / _DisableDmac on the hardware toggle D_STAT's CIM bit of the channel;
+    // the composition root binds the Dmac's mask setter here so the kernel word and the
+    // register are one state (unbound = the kernel word only).
+    using DmacMaskSink = std::function<void(int channel, bool enable)>;
+    void SetDmacMaskSink(DmacMaskSink sink) { dmac_mask_sink_ = std::move(sink); }
     uint64_t GsImr() const { return gs_imr_; }
 
     uint64_t UnknownCount() const { return unknown_count_; }
@@ -95,6 +114,7 @@ private:
     void RemoveHandler(std::vector<KernelHandler>& q, CpuContext& ctx, int max_cause);
     void SetHandlerActive(std::vector<KernelHandler>& q, CpuContext& ctx, bool active);
     void ToggleMask(uint32_t& mask, CpuContext& ctx, bool enable);
+    void ToggleDmacMask(CpuContext& ctx, bool enable);
     void SifSetDma(CpuContext& ctx);
     void SifSetReg(CpuContext& ctx);
     void SifGetReg(CpuContext& ctx);
@@ -109,6 +129,7 @@ private:
     GuestCall guest_call_;
     std::function<uint64_t()> tick_now_;
     Trace trace_;
+    PreDispatch pre_dispatch_;
     std::vector<KernelHandler> intc_handlers_;
     std::vector<KernelHandler> dmac_handlers_;
     int next_intc_id_ = 1;   // AddIntcHandler ids (own counter, as the kernel's)
@@ -116,6 +137,7 @@ private:
     uint32_t intc_mask_ = 0;
     uint32_t* intc_mask_ptr_ = &intc_mask_;
     uint32_t dmac_mask_ = 0;
+    DmacMaskSink dmac_mask_sink_;
     uint64_t gs_imr_ = 0;
     bool crt_interlaced_ = false;
     int crt_mode_ = 0;

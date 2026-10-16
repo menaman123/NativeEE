@@ -10,6 +10,7 @@
 //   6 SdGetAddr        12 SdBlockTransStatus  (idle: 0)
 //   7 SdSetCoreAttr    13 SdSetEffectAttr / 14 SdClearEffectWorkArea (no reverb: 0)
 //                      15 SdSetTransIntrHandler(chan, fn, arg)
+//                      16 SdNote2Pitch(center_note, center_fine, note, fine) (export 13; pure arithmetic)
 // A voice transfer's data moves inline (the module reads its buffers back at
 // once); only the COMPLETION is deferred: the SPU DMA interrupt arrives after
 // SdVoiceTrans has returned and the module has latched its in-flight state --
@@ -39,7 +40,7 @@ namespace ps2r::iop::hle {
 
 class LibsdModule {
 public:
-    static constexpr int kOrdinals = 16;
+    static constexpr int kOrdinals = 17;   // 0..15 the first title's set + 16 SdNote2Pitch (export 13)
     static constexpr int kCores = 2;
     static constexpr uint32_t kMaxBatchRecords = 512;
     static constexpr uint32_t kBatchRecordBytes = 8;

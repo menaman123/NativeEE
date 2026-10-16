@@ -353,6 +353,7 @@ int main(int argc, char** argv) {
     int init_parts = 0;   // [INIT-PARTS] 0/1 = classic single init body
     bool direct_calls = true;
     bool legacy_title_stubs = false;   // --legacy-title-stubs: the first title's hardcoded stub blocks
+    bool yield_backedges = false;      // --yield-backedges: the engine's in-line yield check at loop back-edges
     for (int i = 1; i < argc; ++i) {
         auto need = [&](const char* flag) -> const char* {
             if (i + 1 >= argc) {
@@ -381,6 +382,8 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--no-direct-calls")) direct_calls = false;
         else if (!std::strcmp(argv[i], "--legacy-title-stubs")) legacy_title_stubs = true;
         else if (!std::strcmp(argv[i], "--no-legacy-title-stubs")) legacy_title_stubs = false;
+        else if (!std::strcmp(argv[i], "--yield-backedges")) yield_backedges = true;
+        else if (!std::strcmp(argv[i], "--no-yield-backedges")) yield_backedges = false;
         // [RECOMP-P4] corpus audit mode (design §9): --audit-corpus is
         // repeatable (one merged run over all files); --audit-out is the
         // deterministic markdown report. Exit 4 when gaps exist (gate-able).
@@ -567,6 +570,7 @@ int main(int argc, char** argv) {
         recompiler.set_direct_calls(direct_calls);
         recompiler.set_init_parts(init_parts);
         recompiler.set_legacy_title_stubs(legacy_title_stubs);
+        recompiler.set_yield_backedges(yield_backedges);
         recompiler.set_v2_emission(build.config);
         try {
             if (!recompiler.recompile_to_files(out_header, out_cpp,

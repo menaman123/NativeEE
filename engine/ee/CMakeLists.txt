@@ -41,6 +41,7 @@ add_library(ps2r_ee STATIC
     hle/libdev_bindings.cpp
     sched/ee_run_token.cpp
     sched/ee_event_queue.cpp
+    sched/ee_yield_point.cpp
     timing/tick_source.cpp
     timing/emu_domain.cpp
     timing/regime_detector.cpp

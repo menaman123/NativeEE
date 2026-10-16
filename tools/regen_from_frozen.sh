@@ -27,7 +27,10 @@
 # Inputs (the game's files are never in the tree): the title ELF is $NATIVEEE_TITLE_ELF (else
 # $PS2R_OLD_ROOT/game_files/example_title.rep/SLUS_123.45), STREAM.IRX is $NATIVEEE_STREAM_IRX
 # (else $PS2R_OLD_ROOT/game_files/STREAM.IRX); the IOP tool is the in-tree build
-# build/tools/iop_recompiler/ps2r_iop_recompiler (else $PS2R_IOP_TOOL). The stub lists are the
+# build/tools/iop_recompiler/ps2r_iop_recompiler (else $PS2R_IOP_TOOL). The first title's regeneration
+# passes --legacy-title-stubs: the in-tree tool's generic discovery (relocation-based entries, table
+# exclusion, --base/--namespace/--import-call) is off, the frozen tool's first-title facts are on, so the
+# output stays byte-identical; the frozen OLD tool ignores unknown arguments. The stub lists are the
 # committed games/<title>/recomp/inputs/ (else OLD's tmp_analysis/).
 #   tools/regen_from_frozen.sh --tool BIN ...
 #                                           run BIN instead of the default tool. The DEFAULT tool (DP-23,
@@ -123,7 +126,8 @@ iop_run_one() {  # $1 = output dir (absolute)
   local dir="$1"
   rm -rf "$dir"; mkdir -p "$dir/cwd"
   ( cd "$dir/cwd" && "$BOUND" "$IOP_TIMEOUT_S" "$dir/iop_gen.log" -- \
-      "$IOP_TOOL" --input "$IOP_IRX" --output-header "$dir/iop_recompiled.h" --output-cpp "$dir/iop_recompiled.cpp" )
+      "$IOP_TOOL" --input "$IOP_IRX" --output-header "$dir/iop_recompiled.h" --output-cpp "$dir/iop_recompiled.cpp" \
+      --legacy-title-stubs )
   local rc=$?
   if [ "$rc" -ne 0 ]; then echo "regen --iop: tool exit $rc (see $dir/iop_gen.log)" >&2; return "$rc"; fi
   return 0

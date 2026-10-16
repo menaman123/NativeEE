@@ -3,6 +3,7 @@
 #include "engine/ee/cpu/guest_park.h"
 #include "engine/ee/hle/sdk_binding_manifest.h"
 #include "engine/ee/recomp_abi/host_app/gs_hle.h"
+#include "engine/ee/sched/ee_run_token.h"
 #include "engine/ee/timing/boundary_sequencer.h"
 #include "engine/ee/timing/derived_clocks.h"
 
@@ -36,6 +37,10 @@ void GsSync::Register(SdkBindingManifest& m) { m.Register("libgraph.a", "sceGsSy
 void GsSync::SyncV(CpuContext& ctx) {
     if (!Bound()) GuestPark::Forever("gs_sync_unbound", ctx.cpuRegs.pc);
     g_sceGsSyncV_count.fetch_add(1, std::memory_order_relaxed);
+    // The vblank wait proper: the calling thread sleeps while the other READY
+    // guest threads run, until the EE is idle or a field of emulated time has
+    // been consumed (EeRunToken::WaitVblank). The boundary below is the vblank.
+    EeRunToken::Instance().WaitVblank();
     // The frame's VIF1 tail lands in this frame: the parked kick is flushed
     // and every END slot the game rewrote behind the walk is resumed, before
     // the boundary sequence (field tick, present) runs.

@@ -10,6 +10,8 @@ thread_local int t_prio = 0;
 thread_local bool t_holds = false;
 thread_local int t_park_depth = 0;
 thread_local bool t_guest_attached = false;
+thread_local int t_isr_depth = 0;            // IsrBegin .. IsrEnd nesting on this host thread
+thread_local bool t_preempt_deferred = false;  // a PreemptPoint recorded inside the handler
 }  // namespace
 
 EeRunToken& EeRunToken::Instance() {
@@ -150,6 +152,46 @@ void EeRunToken::ParkEnd() {
     BlockEnd(t_tid);
 }
 
+void EeRunToken::WaitVblank() {
+    if (!t_holds || t_tid == kNone) return;
+    const int tid = t_tid;
+    uint64_t field_seen = 0;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        bool others = false;
+        for (const auto& r : ready_)
+            if (r.valid && r.tid != tid) others = true;
+        vblank_waits_.fetch_add(1, std::memory_order_relaxed);
+        if (!others) {  // idle EE: the vblank is now
+            vblank_waits_idle_.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        field_seen = field_gen_;
+        if (Ready* r = FindReady(tid)) r->valid = false;  // WAITING, not READY (BlockBegin's body)
+        ReleaseLocked(tid);
+    }
+    cv_.notify_all();
+    t_holds = false;
+    {
+        std::unique_lock<std::mutex> lk(mu_);
+        cv_.wait(lk, [&] {
+            if (shutdown_ || field_gen_ != field_seen) return true;
+            for (const auto& r : ready_)
+                if (r.valid) return false;
+            return true;  // every other thread blocked: idle, the vblank is now
+        });
+    }
+    BlockEnd(tid);
+}
+
+void EeRunToken::NoteFieldElapsed() {
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        ++field_gen_;
+    }
+    cv_.notify_all();
+}
+
 void EeRunToken::MakeReady(int tid, int prio) {
     {
         std::lock_guard<std::mutex> lk(mu_);
@@ -174,10 +216,25 @@ uint64_t EeRunToken::RetiredReadyNoops() {
     return retired_ready_noops_;
 }
 
+void EeRunToken::IsrBegin() { ++t_isr_depth; }
+
+void EeRunToken::IsrEnd() {
+    if (t_isr_depth > 0) --t_isr_depth;
+    if (t_isr_depth != 0 || !t_preempt_deferred) return;
+    t_preempt_deferred = false;
+    PreemptPoint();  // the handler's exit: the one dispatch edge of the interrupt
+}
+
+bool EeRunToken::InIsr() const { return t_isr_depth > 0; }
+
 void EeRunToken::PreemptPoint() {
     if (!t_holds) return;
     const int tid = t_tid;
     if (tid == kNone) return;
+    if (t_isr_depth > 0) {
+        t_preempt_deferred = true;
+        return;
+    }
     bool yield = false;
     {
         std::lock_guard<std::mutex> lk(mu_);
@@ -337,6 +394,8 @@ void EeRunToken::ResetForTest() {
     t_holds = false;
     t_park_depth = 0;
     t_guest_attached = false;
+    t_isr_depth = 0;
+    t_preempt_deferred = false;
 }
 
 EeRunToken::HostGate::HostGate() {

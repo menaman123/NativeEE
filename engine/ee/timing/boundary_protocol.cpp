@@ -15,7 +15,10 @@ void BoundaryProtocol::SetRunahead(uint32_t lag) {
 
 void BoundaryProtocol::Wait(uint64_t) {
     ++waits_;
-    if (source_.policy() == TickSource::Policy::Deterministic) {
+    // Freerun (the headless harness: no pacer ever notes a tick) waits the way the
+    // deterministic policy does -- the field is demanded in-line -- else a timer wait
+    // or a yield point would park for a period and wake to no tick, forever.
+    if (source_.policy() == TickSource::Policy::Deterministic || source_.mode() == TickSource::Mode::Freerun) {
         if (is_guest_ && !is_guest_()) {
             ticks_.NotePending(TickSync::Cause::Demand);  // fired at the next boundary
             ++deferred_;

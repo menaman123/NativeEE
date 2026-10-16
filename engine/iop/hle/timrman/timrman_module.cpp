@@ -52,6 +52,7 @@ void TimrmanModule::SetTimerHandler(IopContext& ctx) {
         t->compare = ctx.gpr[5];
         t->handler = ctx.gpr[6];
         t->arg = ctx.gpr[7];
+        t->gp = ctx.gpr[28];
     }
     ctx.gpr[2] = 0;
 }
@@ -63,13 +64,23 @@ void TimrmanModule::StartHardTimer(IopContext& ctx) {
     Arm(Timer(ctx.gpr[4]), false);
 }
 
+void TimrmanModule::StopHardTimer(IopContext& ctx) {
+    if (HardTimer* t = Timer(ctx.gpr[4])) {
+        if (t->running && t->kernel_timer_id >= 0) table_.Kernel().StopTimer(t->kernel_timer_id);
+        t->running = false;
+        t->kernel_timer_id = -1;
+    }
+    ctx.gpr[2] = 0;
+}
+
 bool TimrmanModule::Arm(HardTimer* t, bool due_now) {
     if (!t || t->handler == 0 || t->running) return false;
     GuestFunction handler = resolve_ ? resolve_(t->handler) : GuestFunction{};
     if (!handler) return false;   // no recompiled handler: the timer stays inert
     t->running = true;
     const uint32_t arg = t->arg;
-    const TimerLayout layout = layout_;
+    TimerLayout layout = layout_;
+    if (layout.gp == 0) layout.gp = t->gp;
     const uint64_t period = PeriodUsec(t->compare);
     const uint64_t now = table_.Kernel().Clock().NowUs();
     t->kernel_timer_id = table_.Kernel().StartPeriodicTimerAtUs(due_now ? now : now + period, period, [t, handler, arg, layout] {

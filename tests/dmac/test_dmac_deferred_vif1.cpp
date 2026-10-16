@@ -155,6 +155,7 @@ void TestObservationPoints() {
          }},
         {"FlushDeferredVif1()", true, [](Rig& r) { r.dmac.FlushDeferredVif1(); }},
         {"ChaseVif1Tail()", true, [](Rig& r) { r.dmac.ChaseVif1Tail(); }},
+        {"ObserveAtKernelWait()", true, [](Rig& r) { r.dmac.ObserveAtKernelWait(); }},
         {"d_stat read", false, [](Rig& r) { r.dmac.Read(DmacAddr::kStat, 4); }},
         {"d_ctrl read", false, [](Rig& r) { r.dmac.Read(DmacAddr::kCtrl, 4); }},
         {"pcr without CPC(VIF1)", false, [](Rig& r) { r.dmac.Write(DmacAddr::kPcr, 4, 0xFFFDu); }},
@@ -202,6 +203,39 @@ void TestObservationPoints() {
     KickVif1(c, 0x4000);
     c.dmac.Write(DmacAddr::kVif1, 4, kChain);
     CHECK(!c.dmac.HasDeferredVif1() && QwIs(c.vu1, 1, 0x1100) && c.dmac.channel(1).chcr == kChain);
+}
+
+// A blocking kernel wait (WaitSema for the FINISH handler's semaphore) is an
+// observation point: the parked VIF1 chain is walked and the PATH3 the game
+// kicked AFTER it is delivered behind it, in one call; nothing pending = no-op.
+void TestKernelWaitObservation() {
+    Rig rig;
+    PutSimpleChain(rig, 0x4000, 1, 0x1100);
+    KickVif1(rig, 0x4000);
+    // A one-tag PATH3 chain (END, 1 qword GIFtag with NLOOP 0, EOP) kicked while VIF1 is parked.
+    PutTag(rig, 0x6000, 1, DmacTagId::kEnd);
+    Put64(At(rig, 0x6010), 0x8000ull);   // GIFtag: NLOOP 0, EOP
+    Put64(At(rig, 0x6018), 0);
+    rig.dmac.channel(2).tadr = 0x6000;
+    // The GIF kick itself is an observation point (PATH2 before PATH3); park a
+    // fresh VIF1 kick behind it so the kernel wait has both to deliver.
+    rig.dmac.Write(DmacAddr::kGif, 4, kChainKick);
+    CHECK(!rig.dmac.HasDeferredVif1() && QwIs(rig.vu1, 1, 0x1100));
+    const uint64_t drained_before = rig.arbiter.DrainedPackets();
+    PutSimpleChain(rig, 0x5000, 2, 0x2200);
+    KickVif1(rig, 0x5000);
+    CHECK(rig.dmac.HasDeferredVif1() && !QwIs(rig.vu1, 2, 0x2200));
+    rig.dmac.ObserveAtKernelWait();
+    CHECK(!rig.dmac.HasDeferredVif1());
+    CHECK(QwIs(rig.vu1, 2, 0x2200));
+    CHECK((rig.dmac.channel(1).chcr & DmacChcr::kStr) == 0);
+    CHECK((rig.dmac.globals().stat & DmacStat::Cis(1)) != 0);
+    CHECK(!rig.arbiter.hasPending());
+    CHECK(rig.arbiter.DrainedPackets() >= drained_before);
+    // Nothing parked, nothing queued: a no-op (the hot path of every WaitSema).
+    const uint64_t drained = rig.arbiter.DrainedPackets();
+    rig.dmac.ObserveAtKernelWait();
+    CHECK(rig.arbiter.DrainedPackets() == drained && !rig.dmac.HasDeferredVif1());
 }
 
 void TestReKickOrder() {
@@ -444,6 +478,7 @@ void TestFrameSyncFlush() {
 int main() {
     TestParkAndAppend();
     TestObservationPoints();
+    TestKernelWaitObservation();
     TestReKickOrder();
     TestSnapshot();
     TestTailChase();

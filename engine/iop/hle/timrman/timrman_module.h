@@ -24,7 +24,8 @@ public:
     using GuestFunction = std::function<void(IopContext&)>;
     using FunctionResolver = std::function<GuestFunction(uint32_t addr)>;
 
-    // The handler's scratch stack and the module $gp (title data).
+    // The handler's scratch stack and the module $gp (title data; gp 0 = the
+    // $gp of the thread that called SetTimerHandler, for several hosted modules).
     struct TimerLayout {
         uint32_t handler_sp = 0;
         uint32_t gp = 0;
@@ -42,6 +43,7 @@ public:
     void SetTimerHandler(IopContext& ctx);   // int (id, compare, handler, arg) -> 0
     void SetupHardTimer(IopContext& ctx);    // int (id, source, mode, prescale) -> 0
     void StartHardTimer(IopContext& ctx);    // int (id) -> 0; arms the periodic beat
+    void StopHardTimer(IopContext& ctx);     // int (id) -> 0; stops a running beat (the timer stays allocated)
 
     // compare sysclock ticks -> the beat period in microseconds (clamped).
     static uint64_t PeriodUsec(uint32_t compare);
@@ -75,6 +77,7 @@ private:
         uint32_t handler = 0;
         uint32_t arg = 0;
         uint32_t compare = 0;
+        uint32_t gp = 0;          // the registering thread's $gp when the layout's gp is 0
         int kernel_timer_id = -1;
     };
     HardTimer* Timer(uint32_t id);

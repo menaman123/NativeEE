@@ -143,6 +143,7 @@ endif()
 # gated against games/<title>/TITLE_INPUTS.sha256. Without an input the title and its tests
 # are skipped (STATUS, not an error): PS2R_TITLE_RECOMP_AVAILABLE / PS2R_TITLE_IRX_AVAILABLE.
 add_subdirectory(tools/disc_extract)
+add_subdirectory(tools/elf_embedded)   # an IOP module embedded in the title ELF -> a build input (TitleInputs `<ELF>!<module>` rows)
 # TitleInputs reads games/${PS2R_TITLE}/TITLE_INPUTS.sha256 and FATALs without it, so it is
 # only meaningful once a title is configured. With none, the generated-code variables stay
 # unset and every target that would consume them is skipped below.
@@ -160,8 +161,15 @@ if(PS2R_TITLE)
     set(_ps2r_title_src "${PS2R_GAMES_DIR}/${PS2R_TITLE}")
     set(_ps2r_title_bin "${CMAKE_BINARY_DIR}/games/${PS2R_TITLE}")
     add_subdirectory(${_ps2r_title_src}/recomp ${_ps2r_title_bin}/recomp)
+    # Phase 4B': the recompiled IOP module(s), BEFORE hle/ (a play composition may link them). A
+    # title with ONE disc-side module keeps the iop/stream_irx layout; a title hosting several
+    # (embedded) modules owns iop/CMakeLists.txt and adds its per-module directories itself.
+    if(EXISTS "${_ps2r_title_src}/iop/CMakeLists.txt")
+        add_subdirectory(${_ps2r_title_src}/iop ${_ps2r_title_bin}/iop)
+    else()
+        add_subdirectory(${_ps2r_title_src}/iop/stream_irx ${_ps2r_title_bin}/iop/stream_irx)
+    endif()
     add_subdirectory(${_ps2r_title_src}/hle ${_ps2r_title_bin}/hle)     # Phase 3C2: the TitleProfile definition + sdk_bindings.tsv
-    add_subdirectory(${_ps2r_title_src}/iop/stream_irx ${_ps2r_title_bin}/iop/stream_irx)   # Phase 4B': the recompiled IOP module + its stub surface
     add_subdirectory(${_ps2r_title_src}/vu1_library ${_ps2r_title_bin}/vu1_library)   # Phase 5: the VU1 HLE program library (title data)
     add_subdirectory(${_ps2r_title_src}/renderer_profile ${_ps2r_title_bin}/renderer_profile)  # Phase 6
 endif()

@@ -69,6 +69,13 @@ public:
     bool Dispatch(CpuContext& ctx, int cause);
     // Every pending, enabled cause in ascending order.
     int DispatchPending(CpuContext& ctx);
+    // True while a handler runs on this controller. Dispatch / DispatchPending
+    // refuse (return false / 0) while set: an ISR's own kernel calls (iSignalSema,
+    // the syscall-entry delivery, a yield inside the handler) must not re-enter the
+    // dispatch with the cause still pending -- the hardware's "interrupts are
+    // masked while the handler runs" (EXL), counted in NestedRefusals().
+    bool InDispatch() const { return in_dispatch_; }
+    uint64_t NestedRefusals() const { return nested_refusals_; }
 
     uint64_t RaiseCount() const { return raises_; }
     uint64_t DispatchCount() const { return dispatches_; }
@@ -85,4 +92,6 @@ private:
     uint64_t raises_ = 0;
     uint64_t dispatches_ = 0;
     std::atomic<uint64_t> queued_raises_{0};
+    bool in_dispatch_ = false;
+    uint64_t nested_refusals_ = 0;
 };

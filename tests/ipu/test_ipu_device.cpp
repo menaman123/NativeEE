@@ -103,25 +103,51 @@ void TestBclr() {
     CHECK(ipu2.InputSize() == 0);
 }
 
-void TestBusyNeverSet() {
+void TestBusyOnlyWhileStarved() {
+    // With the bits present every command completes inside WriteCmd: BUSY never reads 1.
     IpuDevice ipu;
     const std::vector<uint8_t> in = Bytes(IpuDevice::kCscInputBytesPerMb * 2, 7);
-    ipu.FeedInputFifo(in.data(), in.size());
-    const uint32_t cmds[] = {
-        Cmd(IpuCommand::Bclr, 0), Cmd(IpuCommand::Idec, 0), Cmd(IpuCommand::Bdec, 0),
-        Cmd(IpuCommand::Vdec, 0), Cmd(IpuCommand::Fdec, 0), Cmd(IpuCommand::SetIq, 0),
-        Cmd(IpuCommand::SetVq, 0), Cmd(IpuCommand::Csc, 1), Cmd(IpuCommand::Pack, 0),
-        Cmd(IpuCommand::SetTh, 0), 0xF0000000u,
+    const uint32_t fed[] = {
+        Cmd(IpuCommand::Idec, 0), Cmd(IpuCommand::Bdec, 0), Cmd(IpuCommand::Vdec, 0),
+        Cmd(IpuCommand::Fdec, 0), Cmd(IpuCommand::SetIq, 0), Cmd(IpuCommand::SetVq, 0),
+        Cmd(IpuCommand::Csc, 1), Cmd(IpuCommand::Pack, 0), Cmd(IpuCommand::SetTh, 0),
+        0xF0000000u, Cmd(IpuCommand::Bclr, 0),
     };
-    for (uint32_t c : cmds) {
+    for (uint32_t c : fed) {
+        ipu.FeedInputFifo(in.data(), in.size());
         ipu.WriteCmd(c);
         CHECK(!ipu.IsBusy());
         CHECK((ipu.ReadCtrl() & IpuDevice::kCtrlBusy) == 0);
-        CHECK((ipu.ReadCmd() & IpuDevice::kCtrlBusy) == 0);
+        CHECK((ipu.Read(IpuDevice::kRegCmd, 8) >> 63) == 0);
     }
-    // IDEC/BDEC and unknown opcodes remain unsupported; supplied-input commands
-    // issued on this empty FIFO report starvation instead of false success.
-    CHECK(ipu.DivergentCommandCount() == 8);
+    // IDEC (partial decoder) and unknown opcodes remain unsupported (2 of the eleven);
+    // BDEC decodes (here the 0x07 bytes carry a bitstream error: ECD, not divergence).
+    CHECK(ipu.DivergentCommandCount() == 2);
+    CHECK(ipu.UnsupportedCommandCount(2) == 0);
+
+    // On an empty FIFO the bitstream-consuming commands WAIT (BUSY in IPU_CMD bit 63
+    // and IPU_CTRL bit 31) instead of reporting a result; the others still complete.
+    IpuDevice empty;
+    for (uint32_t c : {Cmd(IpuCommand::Vdec, 0), Cmd(IpuCommand::Fdec, 0), Cmd(IpuCommand::SetIq, 0),
+                       Cmd(IpuCommand::SetVq, 0), Cmd(IpuCommand::Bdec, 0)}) {
+        empty.WriteCmd(c);
+        CHECK(empty.IsBusy() && empty.PendingCommand() == c);
+        CHECK((empty.ReadCtrl() & IpuDevice::kCtrlBusy) != 0);
+        CHECK((empty.Read(IpuDevice::kRegCmd, 8) >> 63) == 1);
+    }
+    CHECK(empty.UnsupportedCommandCount(3) == 0 && empty.UnsupportedCommandCount(4) == 0);
+    for (uint32_t c : {Cmd(IpuCommand::Bclr, 0), Cmd(IpuCommand::SetTh, 0), Cmd(IpuCommand::Pack, 0)}) {
+        empty.WriteCmd(c);   // a new command supersedes the pending wait
+        CHECK(!empty.IsBusy());
+    }
+    // The wait ends when the bits arrive: FDEC on an empty FIFO, then eight bytes.
+    IpuDevice fed_later;
+    fed_later.WriteCmd(Cmd(IpuCommand::Fdec, 0));
+    CHECK(fed_later.IsBusy() && fed_later.ReadCmd() == 0);
+    const uint8_t word[] = {0x12, 0x34, 0x56, 0x78, 0, 0, 0, 0};
+    fed_later.FeedInputFifo(word, sizeof(word));
+    CHECK(!fed_later.IsBusy() && fed_later.ReadCmd() == 0x12345678u);
+    CHECK(fed_later.PendingCompletions() == 1 && fed_later.CommandCount(4) == 1);
 }
 
 void TestIfcOfc() {
@@ -198,17 +224,42 @@ void TestFdec() {
     CHECK(ipu.BitPosition() == 4);
     CHECK(ipu.ReadTop() == 0x23456789u);
     CHECK((ipu.ReadBp() & 0x7F) == 4);
-    // Skip to where fewer than 32 bits remain (36 + 32 > 64): result 0, TOP 0,
-    // the pointer still moves.
+    // Skip to where fewer than 32 bits remain (36 + 32 > 64): the command waits for
+    // the bits (BUSY), the pointer parked at the issue point; four more bytes complete
+    // it: the pointer moves and the result is the window at 36.
     ipu.WriteCmd(Cmd(IpuCommand::Fdec, 32));
-    CHECK(ipu.ReadCmd() == 0);
-    CHECK(ipu.ReadTop() == 0);
+    CHECK(ipu.IsBusy());
+    CHECK(ipu.BitPosition() == 4);
+    const uint8_t tail_bytes[] = {0x11, 0x22, 0x33, 0x44};
+    ipu.FeedInputFifo(tail_bytes, sizeof(tail_bytes));
+    CHECK(!ipu.IsBusy());
     CHECK(ipu.BitPosition() == 36);
+    CHECK(ipu.ReadCmd() == ((0x9ABCDEF0u << 4) | (0x11u >> 4)));
     // Exactly 32 bits left peeks the tail word.
     IpuDevice tail;
     tail.FeedInputFifo(in, sizeof(in));
     tail.WriteCmd(Cmd(IpuCommand::Fdec, 32));
     CHECK(tail.ReadCmd() == 0x9ABCDEF0u);
+    // IPU_TOP with exactly 32 bits left is complete (bit 63 clear). A pending command
+    // also raises bit 63.
+    CHECK(tail.Read(IpuDevice::kRegTop, 8) == 0x9ABCDEF0ull && !tail.TopBusy());
+    tail.WriteCmd(Cmd(IpuCommand::Fdec, 4));
+    CHECK(tail.IsBusy() && tail.BitPosition() == 32);  // the FDEC waits for 32 bits past 36
+    CHECK(tail.Read(IpuDevice::kRegTop, 8) == ((1ull << 63) | 0x9ABCDEF0ull));
+    // Fewer than 32 bits past BP: the ones there come MSB-aligned over zeros with bit 63
+    // (BUSY) set -- libmpeg then takes 32 - (BP mod 32) of them as valid (the tail of the
+    // FIFO's last quadword) and FDECs for the rest. BCLR parks BP at 4 on an empty FIFO;
+    // four bytes give 28 bits past it.
+    IpuDevice part;
+    part.WriteCmd(Cmd(IpuCommand::Bclr, 4));
+    part.FeedInputFifo(in, 4);
+    CHECK(part.TopBusy() && part.BitPosition() == 4 && !part.IsBusy());
+    CHECK(part.Read(IpuDevice::kRegTop, 8) == ((1ull << 63) | 0x23456780ull));
+    CHECK((part.ReadBp() & 0x1f) == 4);  // 32 - 4 = 28 valid bits by libmpeg's rule
+    part.FeedInputFifo(in + 4, 4);       // 60 bits past BP: complete
+    CHECK(!part.TopBusy() && part.Read(IpuDevice::kRegTop, 8) == 0x23456789ull);
+    IpuDevice empty;
+    CHECK(empty.TopBusy() && empty.ReadTop() == 0);
 }
 
 void CheckConstantCsc(uint8_t y, uint8_t cb, uint8_t cr, uint32_t expect) {
@@ -243,14 +294,19 @@ void TestCscConstantMacroblock() {
     CheckConstantCsc(81, 90, 240, 0x800000feu);
     CheckConstantCsc(145, 54, 34, 0x8001ff00u);
     CheckConstantCsc(41, 240, 110, 0x80ff0100u);
-    // Two complete macroblocks are consumed; missing input is counted once.
+    // Two complete macroblocks are consumed and committed; the third waits (BUSY, the
+    // command pending with one macroblock left) and converts when its bytes arrive.
     IpuDevice ipu;
     std::vector<uint8_t> two(IpuDevice::kCscInputBytesPerMb * 2, 0x60);
     ipu.FeedInputFifo(two.data(), two.size());
     ipu.WriteCmd(Cmd(IpuCommand::Csc, 3));
     CHECK(ipu.OutputSize() == 2 * 1024);
     CHECK(ipu.BitPosition() == 2 * IpuDevice::kCscInputBytesPerMb * 8);
-    CHECK(ipu.UnsupportedCommandCount(7) == 1);
+    CHECK(ipu.UnsupportedCommandCount(7) == 0);
+    CHECK(ipu.IsBusy() && ipu.PendingCommand() == Cmd(IpuCommand::Csc, 1));
+    ipu.FeedInputFifo(two.data(), IpuDevice::kCscInputBytesPerMb);
+    CHECK(!ipu.IsBusy() && ipu.OutputSize() == 3 * 1024 && ipu.PendingCompletions() == 1);
+    CHECK(ipu.BitPosition() == 3 * IpuDevice::kCscInputBytesPerMb * 8);
     IpuDevice ipu16;
     ipu16.FeedInputFifo(two.data(), two.size());
     ipu16.WriteCmd(Cmd(IpuCommand::Csc, (1u << 27) | 1));
@@ -303,7 +359,7 @@ int main() {
     TestFreshState();
     TestRstClearsState();
     TestBclr();
-    TestBusyNeverSet();
+    TestBusyOnlyWhileStarved();
     TestIfcOfc();
     TestSetIqZigzag();
     TestSetTh();

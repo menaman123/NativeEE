@@ -67,6 +67,13 @@ public:
     // (--legacy-title-stubs). Default OFF -- a second title must not inherit another
     // title's addresses (one of them collides with a real function start elsewhere).
     void set_legacy_title_stubs(bool enabled) { m_legacy_title_stubs = enabled; }
+    // Back-edge yield checks (--yield-backedges): every in-function branch whose
+    // target lies at or before the branch's own pc (a loop) is preceded by
+    //   if (--g_ee_backedge_budget == 0) ps2r_ee_yield_point(ctx);
+    // -- the engine's in-line scheduling point for a guest loop that reaches no
+    // kernel call (declared by the ABI forwarder host_app/syscalls.h; the engine
+    // owns the budget and what the yield does). Default OFF: no emission change.
+    void set_yield_backedges(bool enabled) { m_yield_backedges = enabled; }
 
     // [RECOMP-P3a] v2 emission mode (RECOMP_P0_DESIGN.md §6-§8). When enabled,
     // unpinned functions take the general emission path with the v2 deltas:
@@ -115,6 +122,10 @@ private:
     bool m_direct_calls = true;
     int m_init_parts = 0;
     bool m_legacy_title_stubs = false;
+    bool m_yield_backedges = false;
+    // The pc of the branch translate_control_flow is emitting (0 outside it):
+    // emit_branch_target compares the target against it to recognise a back-edge.
+    uint32_t m_branch_from_pc = 0;
     // [W16R1][FIX-E1] Function addrs whose body emission was SKIPPED
     // (HLE-replaced): their FUN_ symbol does not exist, so the raw table
     // emits nullptr for them and the hook-list recompute force-hooks any

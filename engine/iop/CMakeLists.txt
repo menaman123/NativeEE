@@ -4,6 +4,11 @@
 # Stage 4A': the REALTIME host thread, the SIF RPC bridge, the module table
 # (FRAME pump points) and the IOPM savestate section.
 # Stage 4B/4B': the IRX loader and the kernel-facing HLE modules.
+# Generic hosting of any recompiled IRX (several per process): the library registry
+# (IopLibraryTable: RegisterLibraryEntries tables + HLE bodies = the import resolver),
+# the generated-code ABI surface (abi/: import_call / iop_resolve / memory), the
+# relocating loader (iop_relocator.h, shared with tools/iop_recompiler) and the
+# loadcore / thevent / modload / usbd stock modules.
 add_library(ps2r_iop STATIC
     iop_clock.cpp
     iop_coroutine.cpp
@@ -27,7 +32,15 @@ add_library(ps2r_iop STATIC
     hle/timrman/timrman_module.cpp
     hle/ioman/ioman_module.cpp
     hle/libsd/libsd_module.cpp
-    hle/cdvdman/cdvdman_module.cpp)
+    hle/cdvdman/cdvdman_module.cpp
+    iop_library_table.cpp
+    abi/iop_abi_surface.cpp
+    hle/loadcore/loadcore_module.cpp
+    hle/thevent/thevent_module.cpp
+    hle/modload/modload_module.cpp
+    hle/usbd/usbd_module.cpp
+    hle/thmsgbx/thmsgbx_module.cpp
+    hle/stock_library_binder.cpp)
 target_include_directories(ps2r_iop PUBLIC ${CMAKE_SOURCE_DIR})
 target_compile_options(ps2r_iop PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(ps2r_iop PUBLIC ps2r_core ps2r_platform ps2r_sound)

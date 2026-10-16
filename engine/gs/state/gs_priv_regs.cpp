@@ -142,11 +142,13 @@ void GsPrivRegs::Signal(uint64_t value) {
     s = (s & ~idmsk) | (id & idmsk);
     csr_ |= kCsrSignal;
     interrupts_++;
+    if (interrupt_observer_) interrupt_observer_(kCsrSignal);
 }
 
 void GsPrivRegs::Finish() {
     csr_ |= kCsrFinish;
     interrupts_++;
+    if (interrupt_observer_) interrupt_observer_(kCsrFinish);
 }
 
 // LABEL: ID 0-31 IDMSK 32-63 -> SIGLBLID high half; no interrupt.

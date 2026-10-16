@@ -124,6 +124,36 @@ static void TestPreemption() {
     CHECK(hi_before.load(), "preempt_point_hands_over_to_higher_priority");
 }
 
+// Inside an interrupt handler (IsrBegin .. IsrEnd) a PreemptPoint only records:
+// the lower-priority holder keeps running through the handler's remaining work
+// (the dispatcher's acknowledgement) and hands over exactly at IsrEnd.
+static void TestPreemptionDeferredInIsr() {
+    std::atomic<bool> hi_ran{false}, hi_during{false}, hi_after{false}, lo_holds{false};
+    std::thread lo([&] {
+        TOK().GuestEnter(45, 60);
+        lo_holds = true;
+        TOK().IsrBegin();
+        CHECK(TOK().InIsr(), "isr_scope_in_isr");
+        TOK().MakeReady(46, 10);
+        TOK().PreemptPoint();            // recorded, not taken
+        hi_during = hi_ran.load();       // still us: the higher thread has not run
+        TOK().IsrEnd();                  // the hand-over
+        hi_after = hi_ran.load();
+        CHECK(!TOK().InIsr(), "isr_scope_left");
+        TOK().GuestExit(45);
+    });
+    WaitUntil(lo_holds);
+    std::thread hi([&] { TOK().GuestEnter(46, 10); hi_ran = true; TOK().GuestExit(46); });
+    lo.join(); hi.join();
+    CHECK(!hi_during.load(), "preempt_point_inside_isr_is_deferred");
+    CHECK(hi_after.load(), "isr_end_hands_over_to_the_readied_higher_priority");
+    // No deferred record leaks: a scope without a PreemptPoint hands nothing over.
+    std::atomic<bool> lo2_holds{false}, ran_other{false};
+    std::thread lo2([&] { TOK().GuestEnter(47, 60); lo2_holds = true; TOK().IsrBegin(); TOK().IsrEnd(); ran_other = false; TOK().GuestExit(47); });
+    lo2.join();
+    CHECK(lo2_holds.load() && !ran_other.load(), "isr_scope_without_preempt_is_inert");
+}
+
 static void TestChangePriorityTail() {
     std::vector<int> order; std::mutex om; std::atomic<int> entered{0}; std::atomic<bool> boss_holds{false};
     std::thread boss([&] {
@@ -314,6 +344,7 @@ int main() {
     TestNoAsyncDescheduling();
     TestPriorityElection();
     TestPreemption();
+    TestPreemptionDeferredInIsr();
     TestChangePriorityTail();
     TestRetiredTidCannotWedge();
     TestEventQueueFifo();

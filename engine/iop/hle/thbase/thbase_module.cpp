@@ -16,6 +16,11 @@ constexpr uint32_t kMinDelayUsec = 100;   // threadman's SetAlarm minimum
 ThbaseModule::ThbaseModule(IopModuleTable& table, IopMemory& mem, FunctionResolver resolve, ThreadLayout layout)
     : table_(table), mem_(mem), resolve_(std::move(resolve)), layout_(layout) {}
 
+void ThbaseModule::SetStackAllocator(StackAlloc alloc, StackFree free) {
+    stack_alloc_ = std::move(alloc);
+    stack_free_ = std::move(free);
+}
+
 ThbaseModule::Counters ThbaseModule::Count() const {
     Counters result;
     result.priority_changes = priority_changes_.load(std::memory_order_relaxed);
@@ -40,7 +45,8 @@ void ThbaseModule::CreateThread(IopContext& ctx) {
         ctx.gpr[2] = static_cast<uint32_t>(IopError::IllegalEntry);
         return;
     }
-    if (mem_.Read<uint32_t>(param + 0x0C) < 0x130) {
+    const uint32_t stack_size = mem_.Read<uint32_t>(param + 0x0C);
+    if (stack_size < 0x130) {
         ctx.gpr[2] = static_cast<uint32_t>(IopError::IllegalStackSize);
         return;
     }
@@ -49,8 +55,20 @@ void ThbaseModule::CreateThread(IopContext& ctx) {
         for (int i = 0; i < kMaxThreads - 1; ++i) {
             const int tid = 1 + (next_tid_ - 1 + i) % (kMaxThreads - 1);
             if (k.ThreadRegistered(tid)) continue;
+            uint32_t stack_base = 0;
+            if (stack_alloc_) {
+                const uint32_t rounded = (stack_size + 0xFu) & ~0xFu;
+                stack_base = stack_alloc_(rounded);
+                if (!stack_base) {
+                    ctx.gpr[2] = static_cast<uint32_t>(IopError::NoMemory);
+                    return;
+                }
+                stack_size_[tid] = rounded;
+            }
             next_tid_ = tid + 1;
             entry_[tid] = entry;
+            gp_[tid] = layout_.gp ? layout_.gp : ctx.gpr[28];
+            stack_base_[tid] = stack_base;
             started_[tid] = false;
             k.RegisterThread(tid, priority);
             ctx.gpr[2] = static_cast<uint32_t>(tid);
@@ -73,6 +91,9 @@ void ThbaseModule::DeleteThread(IopContext& ctx) {
             return;
         }
         k.UnregisterThread(tid);
+        if (stack_base_[tid] && stack_free_) stack_free_(stack_base_[tid]);
+        stack_base_[tid] = 0;
+        stack_size_[tid] = 0;
         entry_[tid] = 0;
         started_[tid] = false;
         ctx.gpr[2] = 0;
@@ -80,6 +101,78 @@ void ThbaseModule::DeleteThread(IopContext& ctx) {
     if (k.OnKernelThread()) remove();
     else k.WithDispatchLock(remove);
 }
+
+void ThbaseModule::ExitThread(IopContext& ctx) {
+    IopKernel& k = table_.Kernel();
+    if (!k.OnKernelThread()) {
+        ctx.gpr[2] = static_cast<uint32_t>(IopError::IllegalContext);
+        return;
+    }
+    const int tid = k.CurrentTid();
+    if (tid > 0 && tid < kMaxThreads) started_[tid] = false;
+    ctx.gpr[2] = 0;
+    k.ExitThread();
+}
+
+void ThbaseModule::ReferThreadStatus(IopContext& ctx) {
+    IopKernel& k = table_.Kernel();
+    const int tid = ctx.gpr[4] == 0 ? k.CurrentTid() : static_cast<int32_t>(ctx.gpr[4]);
+    const uint32_t out = ctx.gpr[5];
+    if (tid <= 0 || tid >= kMaxThreads || !k.ThreadRegistered(tid)) {
+        ctx.gpr[2] = static_cast<uint32_t>(IopError::UnknownThid);
+        return;
+    }
+    uint32_t status = 0x10;   // THS_DORMANT
+    switch (k.ThreadState(tid)) {
+        case IopKernel::State::Run: status = 0x01; break;
+        case IopKernel::State::Ready: status = 0x02; break;
+        case IopKernel::State::Wait: status = 0x04; break;
+        case IopKernel::State::Dormant: status = 0x10; break;
+    }
+    if (out) {
+        mem_.Write<uint32_t>(out + 0x00, 0);                                      // attr
+        mem_.Write<uint32_t>(out + 0x04, 0);                                      // option
+        mem_.Write<uint32_t>(out + 0x08, status);
+        mem_.Write<uint32_t>(out + 0x0C, entry_[tid]);
+        mem_.Write<uint32_t>(out + 0x10, stack_base_[tid]);
+        mem_.Write<uint32_t>(out + 0x14, stack_size_[tid]);
+        mem_.Write<uint32_t>(out + 0x18, gp_[tid]);
+        mem_.Write<uint32_t>(out + 0x1C, k.ThreadPriority(tid));
+        mem_.Write<uint32_t>(out + 0x20, k.ThreadPriority(tid));
+        mem_.Write<uint32_t>(out + 0x24, static_cast<uint32_t>(k.ThreadWaitKind(tid)));
+        mem_.Write<uint32_t>(out + 0x28, 0);
+        mem_.Write<uint32_t>(out + 0x2C, 0);
+    }
+    ctx.gpr[2] = 0;
+}
+
+void ThbaseModule::ExitDeleteThread(IopContext& ctx) {
+    IopKernel& k = table_.Kernel();
+    if (!k.OnKernelThread()) {
+        ctx.gpr[2] = static_cast<uint32_t>(IopError::IllegalContext);
+        return;
+    }
+    const int tid = k.CurrentTid();
+    if (tid > 0 && tid < kMaxThreads) {
+        // The stack is released when the thread is gone; the body's return (below the
+        // kernel's ExitThread) never touches it again.
+        if (stack_base_[tid] && stack_free_) stack_free_(stack_base_[tid]);
+        stack_base_[tid] = 0;
+        stack_size_[tid] = 0;
+        entry_[tid] = 0;
+        started_[tid] = false;
+    }
+    ctx.gpr[2] = 0;
+    k.ExitThread();   // does not return to the body
+}
+
+void ThbaseModule::RotateThreadReadyQueue(IopContext& ctx) {
+    IopKernel& k = table_.Kernel();
+    if (k.OnKernelThread()) k.Yield();
+    ctx.gpr[2] = 0;
+}
+
+void ThbaseModule::iWakeupThread(IopContext& ctx) { WakeupThread(ctx); }
 
 void ThbaseModule::StartThread(IopContext& ctx) {
     const int tid = static_cast<int32_t>(ctx.gpr[4]);
@@ -108,9 +201,11 @@ void ThbaseModule::StartThread(IopContext& ctx) {
 bool ThbaseModule::ArmBody(int ktid, uint32_t arg, const GuestFunction& body) {
     const uint32_t entry = entry_[ktid];
     const ThreadLayout layout = layout_;
-    return table_.Kernel().StartThread(ktid, [this, ktid, body, entry, arg, layout] {
-        IopContext thread_ctx = IopContext::ForEntry(
-            layout.stack_top - static_cast<uint32_t>(ktid) * layout.stack_stride - 0x10, layout.gp);
+    const uint32_t gp = gp_[ktid] ? gp_[ktid] : layout.gp;
+    const uint32_t sp = stack_base_[ktid] ? stack_base_[ktid] + stack_size_[ktid] - 0x10
+                                          : layout.stack_top - static_cast<uint32_t>(ktid) * layout.stack_stride - 0x10;
+    return table_.Kernel().StartThread(ktid, [this, ktid, body, entry, arg, sp, gp] {
+        IopContext thread_ctx = IopContext::ForEntry(sp, gp);
         thread_ctx.gpr[4] = arg;
         thread_ctx.pc = entry;
         body(thread_ctx);

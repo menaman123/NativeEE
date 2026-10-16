@@ -34,6 +34,7 @@
 // post-load runner is therefore the thbase winner, never the first host
 // thread to arrive, and the old incarnation's later GuestExit is a no-op
 // because only the host thread that ENTERED a tid may exit it.
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <mutex>
@@ -71,6 +72,22 @@ public:
     void ParkBegin();
     void ParkEnd();
 
+    // The frame-boundary wait (sceGsSyncV / WaitForVblank): the calling guest
+    // thread sleeps until the next vblank while the other READY threads run.
+    // The vblank arrives when (a) every other guest thread has blocked -- the
+    // EE is idle and emulated time skips to it -- or (b) a running thread has
+    // consumed one field of emulated time (NoteFieldElapsed: the back-edge
+    // yield point's advance_field). Returns at once when nothing else is
+    // READY. Without it the wait is instantaneous in guest time: a render
+    // thread parks and is back at its next WaitSema before the lower-priority
+    // threads ran a single instruction, and a "frame ready" semaphore that is
+    // only ever signalled while the renderer sleeps on the vblank is never
+    // seen non-zero (Sly 2's frame pacer spins; its main thread starves).
+    void WaitVblank();
+    void NoteFieldElapsed();
+    uint64_t VblankWaits() const { return vblank_waits_.load(std::memory_order_relaxed); }
+    uint64_t VblankWaitsIdle() const { return vblank_waits_idle_.load(std::memory_order_relaxed); }
+
     // Mark tid READY (idempotent). THIS assigns the FIFO seq.
     // A tid whose host thread has EXITED (GuestExit ran, no GuestEnter since)
     // is RETIRED: readying it is a counted no-op, because a READY slot that no
@@ -83,7 +100,18 @@ public:
     // Preemption point: if a strictly-higher-priority thread is READY, hand
     // over (keeping our seq: a preempted thread resumes at the head of its
     // priority) and block until re-elected. Self-identified.
+    // Inside an interrupt handler (IsrBegin .. IsrEnd on the calling host
+    // thread) the point is only RECORDED: the kernel's i-variants (iSignalSema,
+    // iWakeupThread, iSetEventFlag ...) never dispatch from the handler; the
+    // dispatch happens once, at the handler's exit (IsrEnd), after the
+    // dispatcher has acknowledged the cause. Handing over mid-handler would let
+    // another thread run -- and raise the SAME cause again -- inside the
+    // handler's window, and the acknowledgement after the handler would then
+    // eat that second event (Sly 2's second GS FINISH).
     void PreemptPoint();
+    void IsrBegin();
+    void IsrEnd();
+    bool InIsr() const;
 
     // RotateThreadReadyQueue(prio): rotating our own priority yields to the
     // next same-priority READY thread (self to tail); another priority moves
@@ -171,6 +199,8 @@ private:
     uint32_t attached_guests_ = 0, attached_hosts_ = 0;
     std::mutex host_gate_mu_;     // serialises concurrent HostGate users
     void (*post_acquire_)() = nullptr;
+    uint64_t field_gen_ = 0;      // NoteFieldElapsed count (under mu_)
+    std::atomic<uint64_t> vblank_waits_{0}, vblank_waits_idle_{0};
 
     Ready* SlotFor(int tid);
     Ready* FindReady(int tid);

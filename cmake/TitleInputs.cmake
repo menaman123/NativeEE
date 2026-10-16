@@ -23,6 +23,15 @@
 # ctest that needs the title's generated code is skipped by its CMakeLists (if(TARGET ps2r_title_recomp)
 # / if(TARGET ps2r_title_stream_irx)) -- not an error.
 #
+# A title that embeds its IOP modules in the ELF (pushed with sceSifLoadModuleBuffer) lists
+# them as rows `<sha256>  <ELF name>!<module name>` (the module's .iopmod name) or
+# `<sha256>  <ELF name>@<offset>+<size>` (exact file bytes); tools/elf_embedded extracts each
+# from the (given or extracted) ELF into ${PS2R_TITLE_INPUTS_DIR}/<module name>.irx, SHA-256
+# gated like every other input. They need no disc image beyond the ELF itself. A row whose
+# prefix is another disc file (`<sha256>  IOPRP300.IMG!<module name>`: a stock module inside
+# the IOP reboot image) extracts that container from the disc first (ungated: the module row
+# is the gate), then the module out of it.
+#
 # Variables for the rest of the tree (normal variables, root scope):
 #   PS2R_TITLE_GEN_ROOT        ${CMAKE_BINARY_DIR}/generated -- the generated tree mirrors the source layout
 #   PS2R_TITLE_INPUTS_DIR      where extracted inputs land
@@ -32,6 +41,11 @@
 #                                              step depends on (the verification stamp or the extraction)
 #   PS2R_TITLE_IRX / PS2R_TITLE_IRX_READY      the same for STREAM.IRX
 #   PS2R_TITLE_RECOMP_AVAILABLE / PS2R_TITLE_IRX_AVAILABLE
+#   PS2R_TITLE_EMBEDDED_MODULES                 the embedded module names (list; empty = none)
+#   PS2R_TITLE_EMBEDDED_<name> / _READY / _SHA256   the extracted image path / the file to depend on / the row's hash
+#   PS2R_TITLE_EMBEDDED_AVAILABLE               ON when every embedded row can be extracted
+#   PS2R_IOP_GEN_ROOT                           ${PS2R_TITLE_GEN_ROOT}/games/<title>/iop -- a per-module
+#                                               generated directory lives at ${PS2R_IOP_GEN_ROOT}/<id>
 #   PS2R_RECOMP_ENV            `${CMAKE_COMMAND} -E env PS2R_RECOMP_DIR=... PS2R_IOP_RECOMP_DIR=...` -- prefix for
 #                              custom commands running the python generators that read the generated TUs
 #   PS2R_RECOMP_TEST_ENV       the same two assignments as a ctest ENVIRONMENT property value
@@ -50,7 +64,8 @@ option(PS2R_RECOMP_CHECK_MANIFEST
 set(PS2R_TITLE_GEN_ROOT "${CMAKE_BINARY_DIR}/generated")
 set(PS2R_TITLE_INPUTS_DIR "${PS2R_TITLE_GEN_ROOT}/games/${PS2R_TITLE}/inputs")
 set(PS2R_RECOMP_GEN_DIR "${PS2R_TITLE_GEN_ROOT}/games/${PS2R_TITLE}/recomp")
-set(PS2R_IOP_GEN_DIR "${PS2R_TITLE_GEN_ROOT}/games/${PS2R_TITLE}/iop/stream_irx")
+set(PS2R_IOP_GEN_ROOT "${PS2R_TITLE_GEN_ROOT}/games/${PS2R_TITLE}/iop")
+set(PS2R_IOP_GEN_DIR "${PS2R_IOP_GEN_ROOT}/stream_irx")
 set(PS2R_RECOMP_ENV ${CMAKE_COMMAND} -E env
     "PS2R_RECOMP_DIR=${PS2R_RECOMP_GEN_DIR}" "PS2R_IOP_RECOMP_DIR=${PS2R_IOP_GEN_DIR}")
 set(PS2R_RECOMP_TEST_ENV "PS2R_RECOMP_DIR=${PS2R_RECOMP_GEN_DIR};PS2R_IOP_RECOMP_DIR=${PS2R_IOP_GEN_DIR}")
@@ -65,13 +80,16 @@ set(PS2R_TITLE_ELF_DISC_PATH "")
 set(PS2R_TITLE_ELF_SHA256 "")
 set(PS2R_TITLE_IRX_DISC_PATH "")
 set(PS2R_TITLE_IRX_SHA256 "")
+set(_ps2r_embedded_rows "")   # "<selector>|<sha>" per embedded-module row
 file(STRINGS "${_ps2r_inputs_table}" _ps2r_input_rows REGEX "^[0-9a-fA-F]+ ")
 foreach(_row IN LISTS _ps2r_input_rows)
     if(_row MATCHES "^([0-9a-fA-F]+) [ *]?(.+)$")
         set(_sha "${CMAKE_MATCH_1}")
         set(_path "${CMAKE_MATCH_2}")
         string(TOLOWER "${_sha}" _sha)
-        if(_path MATCHES "\\.IRX$")
+        if(_path MATCHES "^([^/!@]+)([!@].+)$")
+            list(APPEND _ps2r_embedded_rows "${CMAKE_MATCH_1}|${CMAKE_MATCH_2}|${_sha}")
+        elseif(_path MATCHES "\\.IRX$")
             set(PS2R_TITLE_IRX_DISC_PATH "${_path}")
             set(PS2R_TITLE_IRX_SHA256 "${_sha}")
         elseif(NOT _path MATCHES "/")
@@ -164,6 +182,61 @@ else()
     set(PS2R_TITLE_IRX "")
     set(PS2R_TITLE_IRX_READY "")
     set(PS2R_TITLE_IRX_AVAILABLE OFF)
+endif()
+
+# --- the IOP modules embedded in the ELF --------------------------------------------------------
+set(PS2R_TITLE_EMBEDDED_MODULES "")
+set(PS2R_TITLE_EMBEDDED_AVAILABLE OFF)
+if(_ps2r_embedded_rows)
+    if(NOT PS2R_TITLE_ELF_AVAILABLE)
+        message(STATUS "TitleInputs: the title embeds IOP modules in its ELF; none can be extracted without the ELF")
+    elseif(NOT TARGET ps2r_elf_embedded)
+        message(FATAL_ERROR "TitleInputs: embedded-module rows need tools/elf_embedded (ps2r_elf_embedded) added before this file")
+    else()
+        set(PS2R_TITLE_EMBEDDED_AVAILABLE ON)
+        set(_ps2r_containers "")
+        foreach(_er IN LISTS _ps2r_embedded_rows)
+            string(REPLACE "|" ";" _parts "${_er}")
+            list(GET _parts 0 _container)
+            list(GET _parts 1 _selector)
+            list(GET _parts 2 _sha)
+            # The container: the title ELF itself, or another disc file extracted (ungated) first.
+            if(_container STREQUAL PS2R_TITLE_ELF_DISC_PATH)
+                set(_container_file "${PS2R_TITLE_ELF}")
+                set(_container_ready "${PS2R_TITLE_ELF_READY}")
+            elseif(NOT _PS2R_NATIVEEE_DISC STREQUAL "")
+                set(_container_file "${PS2R_TITLE_INPUTS_DIR}/${_container}")
+                set(_container_ready "${_container_file}")
+                if(NOT _container IN_LIST _ps2r_containers)
+                    list(APPEND _ps2r_containers "${_container}")
+                    add_custom_command(OUTPUT "${_container_file}"
+                        COMMAND ps2r_disc_extract "${_PS2R_NATIVEEE_DISC}" "${_container}" "${_container_file}"
+                        DEPENDS ps2r_disc_extract "${_PS2R_NATIVEEE_DISC}"
+                        COMMENT "Extracting ${_container} (an IOP module container) from ${_PS2R_NATIVEEE_DISC}"
+                        VERBATIM)
+                endif()
+            else()
+                message(STATUS "TitleInputs: ${_container}${_selector} needs the disc image (NATIVEEE_DISC); skipped")
+                set(PS2R_TITLE_EMBEDDED_AVAILABLE OFF)
+                continue()
+            endif()
+            # The module's name: `!name` as given, `@offset+size` as the hex offset.
+            string(REGEX REPLACE "^[!@]" "" _name "${_selector}")
+            string(REGEX REPLACE "[^A-Za-z0-9_]" "_" _name "${_name}")
+            set(_file "${PS2R_TITLE_INPUTS_DIR}/${_name}.irx")
+            add_custom_command(OUTPUT "${_file}"
+                COMMAND ps2r_elf_embedded "${_container_file}" "${_selector}" "${_file}" --sha256 "${_sha}"
+                DEPENDS ps2r_elf_embedded "${_container_ready}"
+                COMMENT "Extracting embedded IOP module ${_container}${_selector} (sha256 gated)"
+                VERBATIM)
+            list(APPEND PS2R_TITLE_EMBEDDED_MODULES "${_name}")
+            set(PS2R_TITLE_EMBEDDED_${_name} "${_file}")
+            set(PS2R_TITLE_EMBEDDED_${_name}_READY "${_file}")
+            set(PS2R_TITLE_EMBEDDED_${_name}_SHA256 "${_sha}")
+            list(APPEND _ps2r_input_stamps "${_file}")
+            message(STATUS "TitleInputs: embedded IOP module ${_container}${_selector} -> ${_file} (sha256 gated)")
+        endforeach()
+    endif()
 endif()
 
 add_custom_target(ps2r_title_inputs DEPENDS ${_ps2r_input_stamps})

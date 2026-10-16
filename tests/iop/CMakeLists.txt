@@ -21,6 +21,10 @@ ps2r_iop_test(test_iop_clock_rebase IopClockRebase)
 
 # 4A': the guest-stack guard page of the platform fiber layer (forked probes).
 ps2r_iop_test(test_fiber_guard FiberGuardPage)
+# A coroutine parked on one host thread and resumed from another (the IOP is pumped from the EE
+# main thread at the boundary and from whichever EE guest thread trips the yield point): each host
+# thread's current-context record stays its own across the migration.
+ps2r_iop_test(test_fiber_migrate FiberHostMigration)
 ps2r_iop_test(test_module_table IopModuleTable)
 ps2r_iop_test(test_sif_rpc_bridge SifRpcBridge)
 # Title tests (the recompiled STREAM.IRX is GENERATED at build time from the user's disc,

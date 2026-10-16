@@ -77,6 +77,12 @@ ps2r_ee_test(test_thread_manager ThreadManagerThbase)
 ps2r_ee_test(test_ee_sched EeRunTokenAndEventQueue)
 ps2r_ee_test(test_relaunch_order RelaunchOrder)
 set_tests_properties(ThreadManagerThbase EeRunTokenAndEventQueue RelaunchOrder PROPERTIES TIMEOUT 120)
+# The back-edge yield seam (--yield-backedges generated code -> EeYieldPoint): a call-free
+# spin trips every budget back-edges; the trip advances a field, runs the pending ISRs on the
+# spinner, and hands the CPU to an ISR-readied HIGHER-priority thread (thbase R2), never to an
+# equal one (R1); nested / in-dispatch / non-holder trips are refused; unbound = reload only.
+ps2r_ee_test(test_ee_yield_point EeYieldPointBackedge)
+set_tests_properties(EeYieldPointBackedge PROPERTIES TIMEOUT 120)
 
 # Stage 3C2: syscall table + boot env + libc + SDK binding manifest + kernl parks (one binary,
 # section per ctest name; the manifest section reads the title's sdk_bindings.tsv).

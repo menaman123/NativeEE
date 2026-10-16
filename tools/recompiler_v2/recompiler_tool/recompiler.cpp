@@ -22081,6 +22081,13 @@ void Recompiler::translate_control_flow(const rabbitizer::InstructionR5900& inst
     
     uint32_t current_pc = instr.getVram();
     std::string cond_var = "cond";
+    // The branch pc for emit_branch_target's back-edge test (--yield-backedges);
+    // cleared on every exit of this function.
+    struct BranchFromScope {
+        uint32_t& slot;
+        BranchFromScope(uint32_t& s, uint32_t pc) : slot(s) { slot = pc; }
+        ~BranchFromScope() { slot = 0; }
+    } branch_from_scope(m_branch_from_pc, current_pc);
 
     // [IND-SRC] Diagnostic helper for indirect jumps (jr/jalr). When the
     // resolved target is bad (0 or outside EE RAM) the runtime log used to show
@@ -22937,6 +22944,15 @@ void Recompiler::emit_branch_target(uint32_t target_addr, const Function& func, 
     bool found_internal = false;
     for (size_t i = 0; i < func.blocks.size(); ++i) {
         if (func.blocks[i].start_address == target_addr) {
+            // --yield-backedges: a branch to its own pc or an earlier block is a
+            // loop's back-edge; the engine's yield check runs before the jump.
+            if (m_yield_backedges && m_branch_from_pc != 0 && target_addr <= m_branch_from_pc) {
+                file << indent << "if (--g_ee_backedge_budget == 0) ps2r_ee_yield_point(ctx);\n";
+                // An empty indent means the caller (b / j) already printed the
+                // line's four spaces before us: they indented the check, so the
+                // goto gets its own -- every pre-existing line keeps its bytes.
+                if (indent.empty()) file << "    ";
+            }
             file << indent << "goto Label_" << std::setw(4) << std::setfill('0') << std::dec << i << ";\n";
             found_internal = true;
             break;

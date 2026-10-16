@@ -41,4 +41,11 @@ void IomanModule::iop_lseek(IopContext& ctx) {
     ctx.gpr[2] = reader_ ? static_cast<uint32_t>(reader_->Seek(fd, offset, whence)) : kErr;
 }
 
+void IomanModule::iop_write(IopContext& ctx) { ctx.gpr[2] = static_cast<uint32_t>(-1); }
+
+void IomanModule::iop_unsupported(IopContext& ctx) {
+    unsupported_calls_++;
+    ctx.gpr[2] = static_cast<uint32_t>(-1);
+}
+
 }  // namespace ps2r::iop::hle

@@ -8,8 +8,9 @@
 // PARKED with STR set (the channel reads busy) and walked at the first point
 // the game observes completion: any VIF1 register read or write, a PCR write
 // with CPC for VIF1, a GIF kick (PATH2 must land before PATH3), an HLE sync,
-// or the frame sync. END slots with QWC 0 are re-read at the frame sync and a
-// sane rewrite resumes the walk from that slot.
+// a blocking kernel wait of the EE (Dmac::ObserveAtKernelWait: the CPU sleeps,
+// the DMA runs), or the frame sync. END slots with QWC 0 are re-read at the
+// frame sync and a sane rewrite resumes the walk from that slot.
 //
 // The walk itself is the owner's (the DMAC runs it over the channel registers
 // and completes the channel); it is bound through the runner hook.
@@ -33,7 +34,7 @@ struct DmacVif1TailRecord {
 
 class DmacDeferredVif1 {
 public:
-    enum class FlushReason { ChcrRead, RegWrite, PcrCpc, GifKick, ReKick, FrameSync, Explicit };
+    enum class FlushReason { ChcrRead, RegWrite, PcrCpc, GifKick, ReKick, FrameSync, Explicit, KernelWait };
     // Runs the VIF1 chain walk over the channel registers as they stand and completes the channel.
     using RunChain = void (*)(void* user);
     static constexpr uint32_t kMaxSaneQwc = 0x4000;

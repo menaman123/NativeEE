@@ -65,6 +65,17 @@ void ThsemapModule::SignalSema(IopContext& ctx) {
 
 void ThsemapModule::iSignalSema(IopContext& ctx) { SignalSema(ctx); }
 
+void ThsemapModule::PollSema(IopContext& ctx) {
+    IopKernel& k = table_.Kernel();
+    const int sid = static_cast<int32_t>(ctx.gpr[4]);
+    auto poll = [&] {
+        if (!k.SemaActive(sid)) { Return(ctx, IopError::UnknownSemid); return; }
+        Return(ctx, k.PollSema(sid) == 0 ? IopError::Ok : IopError::SemaZero);
+    };
+    if (k.OnKernelThread()) poll();
+    else k.WithDispatchLock(poll);
+}
+
 void ThsemapModule::WaitSema(IopContext& ctx) {
     IopKernel& k = table_.Kernel();
     auto wait = [&] { Return(ctx, k.WaitSema(static_cast<int32_t>(ctx.gpr[4]))); };

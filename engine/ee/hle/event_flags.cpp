@@ -209,6 +209,18 @@ int EventFlags::Poll(int eid, uint32_t wait_bits, uint32_t mode, uint32_t* resul
     return KE_OK;
 }
 
+int EventFlags::ReferStatus(int eid, EventFlagStatus& out) {
+    auto info = Lookup(eid);
+    if (!info) return KE_UNKNOWN_EVFID;
+    std::lock_guard<std::mutex> lk(info->m);
+    out.attr = info->attr;
+    out.option = info->option;
+    out.init_bits = info->init_bits;
+    out.bits = info->bits;
+    out.wait_threads = info->waiters;
+    return KE_OK;
+}
+
 void EventFlags::RemoveWaiter(int eid, int tid) {
     auto info = Lookup(eid);
     if (!info) return;

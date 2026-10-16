@@ -4,6 +4,7 @@
 #include "engine/ee/hle/thread_manager.h"
 #include "engine/ee/mem/mmio_router.h"
 #include "engine/ee/sched/ee_event_queue.h"
+#include "engine/ee/sched/ee_run_token.h"
 
 Intc& Intc::Instance() {
     static Intc intc;
@@ -68,6 +69,14 @@ bool Intc::Dispatch(CpuContext& ctx, int cause) {
     if (cause < 0 || cause >= kCount) return false;
     const uint32_t bit = 1u << cause;
     if (!(Stat() & mask_ & bit)) return false;
+    if (in_dispatch_) {
+        ++nested_refusals_;
+        return false;
+    }
+    in_dispatch_ = true;   // cleared below; no other return path follows
+    // Interrupt context for the run token: an i-syscall inside the handler only
+    // records its preemption; the hand-over is at IsrEnd below, after the ack.
+    EeRunToken::Instance().IsrBegin();
     bool ran = false;
     // Copy the records: a handler may add/remove handlers while it runs.
     const auto handlers = SyscallTable::Instance().IntcHandlers();
@@ -84,10 +93,16 @@ bool Intc::Dispatch(CpuContext& ctx, int cause) {
     }
     stat_.fetch_and(~bit, std::memory_order_acq_rel);  // ack this cause only
     ++dispatches_;
+    in_dispatch_ = false;
+    EeRunToken::Instance().IsrEnd();  // the handler's exit: a thread it readied runs now
     return ran;
 }
 
 int Intc::DispatchPending(CpuContext& ctx) {
+    if (in_dispatch_) {
+        ++nested_refusals_;
+        return 0;
+    }
     int n = 0;
     const uint32_t pending = Stat() & mask_;
     for (int c = 0; c < kCount; ++c)
@@ -105,4 +120,6 @@ void Intc::ResetForTest() {
     mask_ = 0;
     raises_ = dispatches_ = 0;
     queued_raises_.store(0);
+    in_dispatch_ = false;
+    nested_refusals_ = 0;
 }

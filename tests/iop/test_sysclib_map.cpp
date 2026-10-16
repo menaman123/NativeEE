@@ -35,8 +35,9 @@ static std::string GetStr(IopMemory& m, uint32_t addr) {
 }
 
 static void TestOrdinalTable() {
-    const uint32_t expect_ord[SysclibModule::kOrdinalCount] = {12, 14, 20, 23, 27, 29, 34};
-    const char* expect_name[SysclibModule::kOrdinalCount] = {"memcpy", "memset", "strcat", "strcpy", "strlen", "strncmp", "strstr"};
+    const uint32_t expect_ord[SysclibModule::kOrdinalCount] = {7, 12, 13, 14, 16, 17, 20, 22, 23, 27, 29, 34, 36, 40};
+    const char* expect_name[SysclibModule::kOrdinalCount] = {"tolower", "memcpy", "memmove", "memset", "bcopy", "bzero", "strcat",
+                                                             "strcmp", "strcpy", "strlen", "strncmp", "strstr", "strtol", "wmemcopy"};
     const auto* t = SysclibModule::OrdinalTable();
     for (size_t i = 0; i < SysclibModule::kOrdinalCount; ++i) {
         CHECK(t[i].ordinal == expect_ord[i], "ordinal in table order");
@@ -121,6 +122,6 @@ int main() {
     TestStubs();
     TestSmallModules();
     if (g_fail) { std::printf("IopSysclibMap: %d FAILED\n", g_fail); return 1; }
-    std::printf("IopSysclibMap: all checks PASS (7 ordinals; sysmem/intrman/stdio faces)\n");
+    std::printf("IopSysclibMap: all checks PASS (14 ordinals; sysmem/intrman/stdio faces)\n");
     return 0;
 }
