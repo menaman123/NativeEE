@@ -117,6 +117,13 @@ int32_t McHostStore::Delete(const std::string& guest_path) {
     return removed ? kResOk : kResNoEntry;
 }
 
+bool McHostStore::DirExists(const std::string& guest_path) {
+    std::error_code ec;
+    const std::string host = HostPath(guest_path);
+    if (guest_path.empty() || guest_path == "/") fs::create_directories(host, ec);   // a formatted card's root
+    return fs::is_directory(host, ec);
+}
+
 int32_t McHostStore::GetDir(const std::string& pattern, uint32_t max, std::vector<DirEntry>& out) {
     out.clear();
     std::string dirpart = "/", prefix;

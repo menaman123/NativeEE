@@ -139,12 +139,13 @@ static int RunRoundTrip() {
     const std::vector<Blob> again = dst_reg.Capture();
     CHECK(again.size() == 1 && again[0].payload == p);
     // The restored READY-image flag is what the next stamp consults: port 0
-    // re-stamps READY without the zero pass (34 writes per slot, 68 per
-    // port); port 1 reaches READY for the first time and zeroes both slots
-    // first (65 per slot, 130 per port).
+    // re-stamps READY without the zero pass (45 writes per slot -- the 34
+    // status/report bytes plus the 8 actuator-table bytes, 2 mode-table
+    // halfwords and modeCurOffs -- 90 per port); port 1 reaches READY for the
+    // first time and zeroes both slots first (76 per slot, 152 per port).
     dst.Stamp(in, 200);
-    CHECK(dst_writes.in_area0 == 68);
-    CHECK(dst_writes.in_area1 == 130);
+    CHECK(dst_writes.in_area0 == 90);
+    CHECK(dst_writes.in_area1 == 152);
 
     // A wrong-length blob is refused by validate (short and long).
     std::vector<Blob> bad = sections;

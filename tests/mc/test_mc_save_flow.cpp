@@ -97,7 +97,7 @@ int main() {
     const int rows = LibmcBindings::Bind(manifest, &model, &store);
     size_t names = 0;
     LibmcBindings::RowNames(&names);
-    CHECK(rows == 14 && names == 14, "fourteen_libmc_rows_registered");
+    CHECK(rows == 15 && names == 15, "fifteen_libmc_rows_registered");
     std::vector<SdkBindingManifest::TitleRow> title = {{"libmc.a", "sceMcSync", 0x2c5820, ""}, {"libmc.a", "sceMcGetInfo", 0x2c5940, ""}};
     CHECK(manifest.Resolve(title).size() == 2, "rows_resolve_under_libmc_a");
 
@@ -177,6 +177,14 @@ int main() {
     CHECK(Sync(1, &cmd, &res) == 1 && cmd == 0xD && res == 1 && EntryName(kTable, 0) == "BASLUS-12345" &&
               memory::read<uint16_t>(kTable + 20) == 0x8427 && Rd(kTable + 16) == 0,
           "p3_exact_lookup_finds_the_directory_entry");
+    // The count-only form (maxent -1, table NULL): the entry count, nothing written.
+    PutStr("/BASLUS-12345");
+    memory::write<uint32_t>(kTable, 0xDEADBEEF);
+    Call(&LibmcBindings::GetDir, 0, 0, kStr, 0, 0xFFFFFFFFu, 0);
+    CHECK(Sync(1, &cmd, &res) == 1 && cmd == 0xD && res == 1 && static_cast<uint32_t>(Rd(kTable)) == 0xDEADBEEFu, "p3_count_only_getdir_finds_one");
+    PutStr("/ABSENT-00000");
+    Call(&LibmcBindings::GetDir, 0, 0, kStr, 0, 0xFFFFFFFFu, 0);
+    CHECK(Sync(1, &cmd, &res) == 1 && cmd == 0xD && res == 0, "p3_count_only_getdir_missing_is_0");
     PutStr("/BASLUS-12345");
     Call(&LibmcBindings::Chdir, 0, 0, kStr);
     CHECK(Sync(1, &cmd, &res) == 1 && cmd == 0xC && res == 0 && store.Cwd() == "BASLUS-12345", "p3_chdir_into_the_save_dir");
@@ -224,6 +232,16 @@ int main() {
           "p4_delete_removes_the_host_file");
     Call(&LibmcBindings::Format, 0, 0);
     CHECK(Sync(1, &cmd, &res) == 1 && cmd == 0x10 && res == 0, "p4_format_completes_0");
+    // sceMcGetEntSpace: the free entries of a directory (the fresh card's free clusters x 2), -4 when missing.
+    PutStr("/");
+    Call(&LibmcBindings::GetEntSpace, 0, 0, kStr);
+    CHECK(Sync(1, &cmd, &res) == 1 && cmd == 0x12 && res == 0x3E00, "p4_getentspace_root_is_free_clusters_x2");
+    PutStr("/BASLUS-12345");
+    Call(&LibmcBindings::GetEntSpace, 0, 0, kStr);
+    CHECK(Sync(1, &cmd, &res) == 1 && cmd == 0x12 && res == 0x3E00, "p4_getentspace_subdir");
+    PutStr("/NOPE");
+    Call(&LibmcBindings::GetEntSpace, 0, 0, kStr);
+    CHECK(Sync(1, &cmd, &res) == 1 && cmd == 0x12 && res == -4, "p4_getentspace_missing_is_minus_4");
     CHECK(S(Call(&LibmcBindings::Internal)) == 0, "mce_internal_rows_return_0");
     CHECK(store.HostPath("/../../etc") == root + "/mc0/etc", "host_path_never_escapes_the_card");
 

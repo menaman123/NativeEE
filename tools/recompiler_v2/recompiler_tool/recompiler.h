@@ -67,6 +67,13 @@ public:
     // (--legacy-title-stubs). Default OFF -- a second title must not inherit another
     // title's addresses (one of them collides with a real function start elsewhere).
     void set_legacy_title_stubs(bool enabled) { m_legacy_title_stubs = enabled; }
+    // The first title's address-keyed emission overrides (diagnostic wrappers, hand-written
+    // bodies, HLE hooks keyed on `func.base_address == <retail address>`) are the same
+    // title data as the stub blocks: a second title's function at that address must get
+    // the default emission. Every such site tests through this predicate.
+    bool legacy_title_addr(const Function& func, uint32_t address) const {
+        return m_legacy_title_stubs && func.base_address == address;
+    }
     // Back-edge yield checks (--yield-backedges): every in-function branch whose
     // target lies at or before the branch's own pc (a loop) is preceded by
     //   if (--g_ee_backedge_budget == 0) ps2r_ee_yield_point(ctx);

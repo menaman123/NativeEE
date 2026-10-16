@@ -57,7 +57,7 @@ public:
     static constexpr int32_t kStateFindCtp1 = 5;
     static constexpr uint32_t kMaxPort = 1, kMaxSlot = 3;
     static constexpr uint32_t kSlotBytes = 0x80;
-    static constexpr int kActuators = 2;
+    static constexpr int kActuators = 2;   // = PadProtocol::kActuators
 
     // Registers every row above; returns the number registered.
     static int Bind(SdkBindingManifest& m, PadProtocol* protocol, Statics statics, Now now);

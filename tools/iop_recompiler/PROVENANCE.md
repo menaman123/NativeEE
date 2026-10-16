@@ -42,3 +42,4 @@ are reached only without the flag or with `--namespace`), not by a regen run -- 
 | `--quiet`; unknown arguments are an error; an UNIMPLEMENTED instruction fails the run (listed in the summary) | `main.cpp` | always (OLD ignored unknown arguments) |
 | `b` / `bal` pseudo-branches (rabbitizer's ids for `beq $zero,$zero` / `bgezal $zero`) are emitted as goto / link+call instead of being dropped | `iop_recompiler.cpp` | always (OLD's one title had none: 0 such sites in its TU) |
 | ELF loaded through an in-memory stream; the .text bytes are copied (OLD kept a pointer into a destroyed ELFIO reader) | `main.cpp` parse_iop_elf | always (no output change) |
+| the `[IOP-RECOMP] Unresolved JR/JALR to 0x..` diagnostics name the site: `at 0x<link-time pc>` (a per-frame unresolved call was untraceable without it) | `iop_recompiler.cpp` jr/jalr emission | always (message text only) |

@@ -28,6 +28,7 @@ const Row kRows[] = {
     {"sceMcMkdir", &LibmcBindings::Mkdir},     {"sceMcChdir", &LibmcBindings::Chdir},
     {"sceMcGetDir", &LibmcBindings::GetDir},   {"sceMcDelete", &LibmcBindings::Delete},
     {"sceMcFormat", &LibmcBindings::Format},   {"mceIntrReadFixAlign", &LibmcBindings::Internal},
+    {"sceMcGetEntSpace", &LibmcBindings::GetEntSpace},
     {"mceGetInfoApdx", &LibmcBindings::Internal}, {"mceStorePwd", &LibmcBindings::Internal},
 };
 constexpr size_t kRowCount = sizeof(kRows) / sizeof(kRows[0]);
@@ -191,7 +192,12 @@ void LibmcBindings::GetDir(CpuContext& ctx) {
     const std::string pattern = ReadGuestString(A(ctx, 2), kMaxPath);
     const uint32_t max = ctx.cpuRegs.GPR.r[8].UL[0], table = ctx.cpuRegs.GPR.r[9].UL[0];
     int32_t result = 0;
-    if (g_store && ValidEeAddress(table) && max > 0 && max < kMaxDirEntries) {
+    if (g_store && max == kCountOnly) {
+        // maxent -1: the SDK's count-only form -- the matching entry count, no table written
+        // (the table pointer may be NULL); a title's "is my save directory there?" probe.
+        std::vector<McHostStore::DirEntry> entries;
+        result = g_store->GetDir(pattern, kMaxDirEntries, entries);
+    } else if (g_store && ValidEeAddress(table) && max > 0 && max < kMaxDirEntries) {
         std::vector<McHostStore::DirEntry> entries;
         result = g_store->GetDir(pattern, max, entries);
         for (size_t i = 0; i < entries.size(); i++) WriteDirEntry(table + static_cast<uint32_t>(i) * kDirEntryBytes, entries[i]);
@@ -208,6 +214,13 @@ void LibmcBindings::Delete(CpuContext& ctx) {
 void LibmcBindings::Format(CpuContext& ctx) {
     if (!Gate(ctx)) return;
     Queue(ctx, McCommandModel::kCmdFormat, 0);
+}
+
+void LibmcBindings::GetEntSpace(CpuContext& ctx) {
+    if (!Gate(ctx)) return;
+    const std::string path = ReadGuestString(A(ctx, 2), kMaxPath);
+    const bool exists = g_store && g_store->DirExists(path);
+    Queue(ctx, McCommandModel::kCmdGetEntSpace, exists ? McCommandModel::kFreeDirEntries : McHostStore::kResNoEntry);
 }
 
 void LibmcBindings::Internal(CpuContext& ctx) { Ret(ctx, 0); }

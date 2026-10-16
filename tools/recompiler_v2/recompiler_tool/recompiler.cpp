@@ -930,7 +930,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         ++init_index;
         
         // Check for sceSifInitRpc address
-        if (func.base_address == 0x002d1a50) {
+        if (legacy_title_addr(func, 0x002d1a50)) {
             file << "    // HLE Hook for sceSifInitRpc\n";
             file << "    recompiled_functions[0x2d1a50] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        hle_sceSifInitRpc(ctx);\n";
@@ -962,7 +962,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // whose returned pointer is outside the pool (wild); (2) FUN_001ffdc0 is the
         // object constructor that memsets the vtable — flags when it is handed an object
         // pointer in the static region and logs caller_ra (the function passing it).
-        else if (func.base_address == 0x002044f8) {
+        else if (legacy_title_addr(func, 0x002044f8)) {
             file << "    recompiled_functions[0x2044f8] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        uint32_t _size = ctx.cpuRegs.GPR.r[5].UL[0];\n";
             file << "        uint32_t _ra   = ctx.cpuRegs.GPR.r[31].UL[0];\n";
@@ -990,7 +990,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address
                  << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2044f8]});\n";
         }
-        else if (func.base_address == 0x00204740) {
+        else if (legacy_title_addr(func, 0x00204740)) {
             // [BIGHEAP-INIT] Lazy allocator init (called once from FUN_00181620
             // when the gp-guard is 0). On PCSX2 it leaves allocator+0x30
             // (0x31afe8) == 1, enabling the big-block path FUN_002049f8 that
@@ -1014,7 +1014,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address
                  << ", 0x" << std::hex << end_address_204740 << ", recompiled_functions[0x204740]});\n";
         }
-        else if (func.base_address == 0x001ffdc0) {
+        else if (legacy_title_addr(func, 0x001ffdc0)) {
             // [BADOBJ-CTOR] RESOLVED (ROUND 17): the two boot hits (0x30b720/0x30b780,
             // ra=0x11bf04/0x13e474) are ELF BSS statics (BSS = 0x30a0b8..0x3dae80,
             // zero-init) constructed by boot loops — legit. Threshold downgraded to
@@ -1035,7 +1035,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address
                  << ", 0x" << std::hex << end_address << ", recompiled_functions[0x1ffdc0]});\n";
         }
-        else if (func.base_address == 0x00194040) {
+        else if (legacy_title_addr(func, 0x00194040)) {
             // [ZMTX-SRC] (ROUND 17) FUN_00194040 = look-at controller: builds a look-at
             // rotation at sp+0x30 from dir = normalize(target_pos - node_pos) via
             // FUN_0018ba30(row-assemble), then M2Q at ra=0x1943f4. dir==0 (positions
@@ -1118,7 +1118,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address
                  << ", 0x" << std::hex << end_address_194040 << ", recompiled_functions[0x194040]});\n";
         }
-        else if (func.base_address == 0x00294b18) {
+        else if (legacy_title_addr(func, 0x00294b18)) {
             // [BONEWB] (ROUND 22) Pose write-back census. Serves two hunts:
             // 1. ORIENTATION FLIPS: g_pose_wb_count (read by the 0x194040
             //    look-at hook) says whether ANY pose write-back has happened
@@ -1156,7 +1156,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address
                  << ", 0x" << std::hex << end_address_294b18 << ", recompiled_functions[0x294b18]});\n";
         }
-        else if (func.base_address == 0x002971e0) {
+        else if (legacy_title_addr(func, 0x002971e0)) {
             // [CNT-SRC] Confirm where FUN_002971e0's element count is deserialized from:
             // the callback stream buffer (sbuf, which is stale + cursor-desynced on oversized
             // reads) or the directly-delivered working buffer dest (~0x123a740). param_2 (a1)
@@ -1180,7 +1180,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address
                  << ", 0x" << std::hex << end_address_2971e0 << ", recompiled_functions[0x2971e0]});\n";
         }
-        else if (func.base_address == 0x002b5cb0) {
+        else if (legacy_title_addr(func, 0x002b5cb0)) {
             // [SER-BUILD] FUN_002b5cb0(ser, buffer(a1), size(a2), ...) builds a serializer:
             // ser+0x8 = ser+0xc(cursor) = buffer; ser+0x10 = size. The cursor is later
             // dereferenced by FUN_002b57b8 (*(*(ser+0xc))). The beach.rm2 parse desyncs to a
@@ -1209,7 +1209,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address
                  << ", 0x" << std::hex << end_address_2b5cb0 << ", recompiled_functions[0x2b5cb0]});\n";
         }
-        else if (func.base_address == 0x00202bd8) {
+        else if (legacy_title_addr(func, 0x00202bd8)) {
             // [POOL-ALLOC] FUN_00202bd8(allocator a0, size a1) is the size-class pool
             // allocator reached via FUN_002a9040 path B (FUN_002053c0 -> here). It
             // returns a free-block node; node[+4] is the block buffer handed out as the
@@ -1269,7 +1269,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address
                  << ", 0x" << std::hex << end_address_202bd8 << ", recompiled_functions[0x202bd8]});\n";
         }
-        else if (func.base_address == 0x00205df0) {
+        else if (legacy_title_addr(func, 0x00205df0)) {
             // [DESER] Verbose deserialization trace (relocated here from a main.cpp
             // hook so ALL probes live at the recompiler.cpp level). FUN_00205df0
             // deserializes ONE node from the stream: the 32-bit header at the cursor
@@ -1320,7 +1320,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address
                  << ", 0x" << std::hex << end_address_205df0 << ", recompiled_functions[0x205df0]});\n";
         }
-        else if (func.base_address == 0x002adaf0) {
+        else if (legacy_title_addr(func, 0x002adaf0)) {
             // [POLL-COMPLETE] Faithful async sync-marker completion at the EE
             // completion-poll site (relocated here from a main.cpp dual-hook so the
             // FUN_002adaf0 interception lives at the recompiler.cpp level). The
@@ -1370,7 +1370,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address
                  << ", 0x" << std::hex << end_address_2adaf0 << ", recompiled_functions[0x2adaf0]});\n";
         }
-        else if (func.base_address == 0x00173ce8) {
+        else if (legacy_title_addr(func, 0x00173ce8)) {
             // [CASE6-DIAG] The scene state machine FUN_00177168 cleanly advances
             // 0->1->2->3->4->5->6 then WEDGES in case 6 (FUN_00173ce8): it returns
             // 0x18 (stay) every frame and never reaches case 7 (gameplay), even
@@ -1463,7 +1463,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address
                  << ", 0x" << std::hex << end_address_173ce8 << ", recompiled_functions[0x173ce8]});\n";
         }
-        else if (func.base_address == 0x002ac8b0) {
+        else if (legacy_title_addr(func, 0x002ac8b0)) {
             // [GATE-LEAF] FUN_002ac8b0 is the case-6 escape readiness check
             // (FUN_00173ce8 -> FUN_001681f8 -> FUN_002ac8b0 -> FUN_002acb50). It
             // returns true only if BOTH sub-resources (*(entry+0x20), *(entry+0x24))
@@ -1499,7 +1499,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address
                  << ", 0x" << std::hex << end_address_2ac8b0 << ", recompiled_functions[0x2ac8b0]});\n";
         }
-        else if (func.base_address == 0x002aa020) {
+        else if (legacy_title_addr(func, 0x002aa020)) {
             // [LEAF-FSM] The case-6 gate's sub-resources are frozen at leaf state
             // +0x10 == 2. FUN_002aa020 is the leaf state advancer (the +0x3c vtable
             // method pumped by FUN_002a9e88/FUN_002aa8d0). State 2 -> 3 requires the
@@ -1591,7 +1591,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address
                  << ", 0x" << std::hex << end_address_2aa020 << ", recompiled_functions[0x2aa020]});\n";
         }
-        else if (func.base_address == 0x002a9748) {
+        else if (legacy_title_addr(func, 0x002a9748)) {
             // [CHILD-GATE] FUN_002a9748 is the case-6 escape's "all CHILD
             // resources loaded" check (reached via FUN_001681f8 param_2==2 once
             // FUN_002ac8b0 — the Beach entry's own 2 subs — already passed). It
@@ -1647,7 +1647,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address
                  << ", 0x" << std::hex << end_address_2a9748 << ", recompiled_functions[0x2a9748]});\n";
         }
-        else if (func.base_address == 0x001681f8) {
+        else if (legacy_title_addr(func, 0x001681f8)) {
             // [ESCAPE-GATE] FUN_001681f8 resolves the case-6 escape: looks up the
             // Beach entry by name, then for param_2==1 requires FUN_002ac8b0 (the
             // entry's own 2 subs at {4,5}); for param_2==2 ALSO requires
@@ -1694,7 +1694,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address
                  << ", 0x" << std::hex << end_address_1681f8 << ", recompiled_functions[0x1681f8]});\n";
         }
-        else if (func.base_address == 0x002aa7f8) {
+        else if (legacy_title_addr(func, 0x002aa7f8)) {
             // [LOOKUP] FUN_002aa7f8(mgr, &name) resolves a resource entry by name
             // (walks mgr+0x18 list via +0x2c, compares entry+0xc). The escape gate
             // FUN_001681f8 calls this for the Beach level; in steady state it returns
@@ -1729,7 +1729,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address
                  << ", 0x" << std::hex << end_address_2aa7f8 << ", recompiled_functions[0x2aa7f8]});\n";
         }
-        else if (func.base_address == 0x002c6ce0) {
+        else if (legacy_title_addr(func, 0x002c6ce0)) {
             file << "    // HLE Hook for memcpy\n";
             file << "    recompiled_functions[0x2c6ce0] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        HLE_002c6ce0(ctx);\n";
@@ -1744,7 +1744,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2c6ce0]});\n";
         } 
 
-        else if (func.base_address == 0x002c6e88) {
+        else if (legacy_title_addr(func, 0x002c6e88)) {
             file << "    // HLE Hook for memset\n";
             file << "    recompiled_functions[0x2c6e88] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        HLE_002c6e88(ctx);\n";
@@ -1755,7 +1755,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2c6e88]});\n";
         }
 
-        else if (func.base_address == 0x002c7070) {
+        else if (legacy_title_addr(func, 0x002c7070)) {
             file << "    // HLE Hook for strcmp\n";
             file << "    recompiled_functions[0x2c7070] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        HLE_002c7070(ctx);\n";
@@ -1766,7 +1766,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2c7070]});\n";
         }
 
-        else if (func.base_address == 0x002c6d8c) {
+        else if (legacy_title_addr(func, 0x002c6d8c)) {
             file << "    // HLE Hook for memmove\n";
             file << "    recompiled_functions[0x2c6d8c] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        HLE_002c6d8c(ctx);\n";
@@ -1777,7 +1777,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2c6d8c]});\n";
         }
 
-        else if (func.base_address == 0x002c71bc) {
+        else if (legacy_title_addr(func, 0x002c71bc)) {
             file << "    // HLE Hook for strcpy\n";
             file << "    recompiled_functions[0x2c71bc] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        HLE_002c71bc(ctx);\n";
@@ -1788,7 +1788,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2c71bc]});\n";
         }
 
-        else if (func.base_address == 0x002c7418) {
+        else if (legacy_title_addr(func, 0x002c7418)) {
             file << "    // HLE Hook for strncpy\n";
             file << "    recompiled_functions[0x2c7418] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        HLE_002c7418(ctx);\n";
@@ -1800,9 +1800,9 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         }
 
         // strcat HLE disabled — caused display to stop (dispfb_addr=0x0)
-        // else if (func.base_address == 0x002c6f40) { ... }
+        // else if (legacy_title_addr(func, 0x002c6f40)) { ... }
 
-        else if (func.base_address == 0x002ccba0) {
+        else if (legacy_title_addr(func, 0x002ccba0)) {
             file << "    // HLE Hook for memchr\n";
             file << "    recompiled_functions[0x2ccba0] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        HLE_002ccba0(ctx);\n";
@@ -1813,7 +1813,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2ccba0]});\n";
         }
 
-        else if (func.base_address == 0x002c5080) {
+        else if (legacy_title_addr(func, 0x002c5080)) {
             file << "    // HLE Hook for sceMcInit\n";
             file << "    recompiled_functions[0x2c5080] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        HLE_002c5080(ctx);\n";
@@ -1824,7 +1824,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2c5080]});\n";
         }
 
-        else if (func.base_address == 0x002c5820) {
+        else if (legacy_title_addr(func, 0x002c5820)) {
             file << "    // HLE Hook for sceMcSync\n";
             file << "    recompiled_functions[0x2c5820] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        HLE_002c5820(ctx);\n";
@@ -1835,7 +1835,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2c5820]});\n";
         }
 
-        else if (func.base_address == 0x002c5940) {
+        else if (legacy_title_addr(func, 0x002c5940)) {
             file << "    // HLE Hook for sceMcGetInfo\n";
             file << "    recompiled_functions[0x2c5940] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        HLE_002c5940(ctx);\n";
@@ -1847,12 +1847,12 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         }
 
         // strlen HLE disabled — caused rendering to stop. Needs investigation.
-        // else if (func.base_address == 0x002c72d4) {
+        // else if (legacy_title_addr(func, 0x002c72d4)) {
         //     file << "    // HLE Hook for strlen\n";
         //     ...
         // }
 
-        else if (func.base_address == 0x002c75e8) {
+        else if (legacy_title_addr(func, 0x002c75e8)) {
             file << "    // HLE Hook for sprintf (FUN_002c75e8)\n";
             file << "    // Replaces the recompiled EE sprintf, which emits embedded\n";
             file << "    // NUL bytes in %s.<literal> formats because its MMI-based\n";
@@ -1874,7 +1874,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // NOTE (heap-overlap fix): 0x1815f0 (pool free entry point) is NO LONGER HLE-hooked.
         // It now falls through to the default recompiled registration and frees back to the
         // game's own pool, matching retail (see the note on 0x181560/0x1815c0 above).
-        else if (func.base_address == 0x002cf930) {
+        else if (legacy_title_addr(func, 0x002cf930)) {
             file << "    // HLE Hook for SysAlloc (sbrk)\n";
             file << "    recompiled_functions[0x2cf930] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        HLE_002cf930(ctx);\n";
@@ -1897,7 +1897,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
 
 
         /*
-        else if (func.base_address == 0x002cf770) {
+        else if (legacy_title_addr(func, 0x002cf770)) {
             file << "    // HLE Hook for WaitForVblank\n";
             file << "    recompiled_functions[0x2cf770] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        hle_WaitForVblank(ctx);\n";
@@ -1917,7 +1917,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         
 
 
-        else if (func.base_address == 0x002d6618) {
+        else if (legacy_title_addr(func, 0x002d6618)) {
             file << "    // HLE Hook for InitTLB\n";
             file << "    recompiled_functions[0x2d6618] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        hle_InitTLB(ctx);\n";
@@ -1931,7 +1931,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                 << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2d6618]});\n";
         }
 
-        else if (func.base_address == 0x002c1d78) {
+        else if (legacy_title_addr(func, 0x002c1d78)) {
             file << "    // HLE Hook for sceGsSyncV\n";
             file << "    recompiled_functions[0x2c1d78] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        hle_sceGsSyncV(ctx);\n";
@@ -1945,7 +1945,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                 << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2c1d78]});\n";
         }
 
-        else if (func.base_address == 0x002c1b50) {
+        else if (legacy_title_addr(func, 0x002c1b50)) {
             file << "    // HLE Hook for sceGsSyncPath\n";
             file << "    recompiled_functions[0x2c1b50] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        hle_sceGsSyncPath(ctx);\n";
@@ -1956,7 +1956,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                 << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2c1b50]});\n";
         }
 
-        else if (func.base_address == 0x002c1190) {
+        else if (legacy_title_addr(func, 0x002c1190)) {
             file << "    // HLE Hook for IPU-based image transfer (sceGsSendImage)\n";
             file << "    recompiled_functions[0x2c1190] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        hle_sceGsSendImage(ctx);\n";
@@ -1967,7 +1967,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                 << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2c1190]});\n";
         }
 
-        else if (func.base_address == 0x002d20d0) {
+        else if (legacy_title_addr(func, 0x002d20d0)) {
             file << "    // HLE Hook for FlushCache/SyncDCache - NOP (no data cache in recompiler)\n";
             file << "    recompiled_functions[0x2d20d0] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        // D-cache invalidation is a no-op in static recompilation\n";
@@ -1978,7 +1978,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                 << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2d20d0]});\n";
         }
 
-        else if (func.base_address == 0x002c1bd8) {
+        else if (legacy_title_addr(func, 0x002c1bd8)) {
             file << "    // HLE Hook for sceGsResetGraph\n";
             file << "    recompiled_functions[0x2c1bd8] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        hle_sceGsResetGraph(ctx);\n";
@@ -1989,7 +1989,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                 << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2c1bd8]});\n";
         }
 
-        else if (func.base_address == 0x0019aff0) {
+        else if (legacy_title_addr(func, 0x0019aff0)) {
             file << "    // HLE Hook for display register setup (FUN_0019aff0)\n";
             file << "    recompiled_functions[0x19aff0] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        hle_SetupDisplayRegisters(ctx);\n";
@@ -2000,7 +2000,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                 << ", 0x" << std::hex << end_address << ", recompiled_functions[0x19aff0]});\n";
         }
 
-        else if (func.base_address == 0x002c1ab0) {
+        else if (legacy_title_addr(func, 0x002c1ab0)) {
             file << "    // HLE Hook for sceGsResetPath\n";
             file << "    recompiled_functions[0x2c1ab0] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        hle_sceGsResetPath(ctx);\n";
@@ -2011,7 +2011,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                 << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2c1ab0]});\n";
         }
 
-        else if (func.base_address == 0x002c1030) {
+        else if (legacy_title_addr(func, 0x002c1030)) {
             file << "    // HLE Hook for sceDmaSync\n";
             file << "    recompiled_functions[0x2c1030] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        hle_sceDmaSync(ctx);\n";
@@ -2022,7 +2022,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                 << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2c1030]});\n";
         }
 
-        else if (func.base_address == 0x002c12e0) {
+        else if (legacy_title_addr(func, 0x002c12e0)) {
             file << "    // HLE Hook for sceGifSyncDma\n";
             file << "    recompiled_functions[0x2c12e0] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        hle_sceGifSyncDma(ctx);\n";
@@ -2036,7 +2036,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
 
 
 
-        else if (func.base_address == 0x002d29a8) {
+        else if (legacy_title_addr(func, 0x002d29a8)) {
             file << "    // HLE Hook for sceSifCallRpc — bypasses SIF packet pool\n";
             file << "    recompiled_functions[0x2d29a8] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        hle_sceSifCallRpc(ctx);\n";
@@ -2048,7 +2048,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         }
 
 
-        else if (func.base_address == 0x002d6880){
+        else if (legacy_title_addr(func, 0x002d6880)){
             file << "    // HLE Hook for Intitialize Graphics\n";
             file << "    recompiled_functions[0x2d6880] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        hle_ContextRestore(ctx);\n";
@@ -2061,7 +2061,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address 
                 << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2d6880]});\n";
         }
-        else if (func.base_address == 0x002adb18){
+        else if (legacy_title_addr(func, 0x002adb18)){
             file << "    // HLE Hook for Intitialize Graphics\n";
             file << "    recompiled_functions[0x2adb18] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        HLE_FUN_002adb18(ctx, addr);\n";
@@ -2076,7 +2076,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         }
 
 
-        else if (func.base_address == 0x002ad8f0){
+        else if (legacy_title_addr(func, 0x002ad8f0)){
             file << "    // HLE Hook for Intitialize Graphics\n";
             file << "    recompiled_functions[0x2ad8f0] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        HLE_FUN_002ad8f0(ctx, addr);\n";
@@ -2091,7 +2091,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         }
 
 
-        else if (func.base_address == 0x002aac80){
+        else if (legacy_title_addr(func, 0x002aac80)){
             file << "    // HLE Hook for Intitialize Graphics\n";
             file << "    recompiled_functions[0x2aac80] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        HLE_FUN_002aac80(ctx, addr);\n";
@@ -2104,7 +2104,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address 
                 << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2aac80]});\n";
         }
-        else if (func.base_address == 0x002adb40){
+        else if (legacy_title_addr(func, 0x002adb40)){
             file << "    // HLE Hook for Close Handle\n";
             file << "    recompiled_functions[0x2adb40] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        HLE_FUN_002adb40(ctx, addr);\n";
@@ -2119,7 +2119,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         }
 
 
-        else if (func.base_address == 0x002adb18){
+        else if (legacy_title_addr(func, 0x002adb18)){
             file << "    // HLE Hook for Intitialize Graphics\n";
             file << "    recompiled_functions[0x2adb18] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        HLE_FUN_002adb18(ctx, addr);\n";
@@ -2133,7 +2133,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                 << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2adb18]});\n";
         }
 
-        else if (func.base_address == 0x002ad1a0){
+        else if (legacy_title_addr(func, 0x002ad1a0)){
             file << "    // HLE Hook for WaitForReadComplete\n";
             file << "    recompiled_functions[0x2ad1a0] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        HLE_FUN_002ad1a0(ctx, addr);\n";
@@ -2145,7 +2145,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         }
 
 
-        else if (func.base_address == 0x002d69a0) { // Check this address matches your Ghidra export
+        else if (legacy_title_addr(func, 0x002d69a0)) { // Check this address matches your Ghidra export
             file << "    // HLE Hook for Global Constructors (__do_global_ctors)\n";
             file << "    recompiled_functions[0x2d69a0] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        hle_DoGlobalConstructors(ctx);\n";
@@ -2158,7 +2158,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address 
                 << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2d69a0]});\n";
         }
-        else if (func.base_address == 0x002d27c8) { // Check this address matches your Ghidra export
+        else if (legacy_title_addr(func, 0x002d27c8)) { // Check this address matches your Ghidra export
             file << "    // HLE Hook for hle_sceSifBindRpc\n";
             file << "    recompiled_functions[0x2d27c8] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        hle_sceSifBindRpc(ctx);\n";
@@ -2172,7 +2172,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                 << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2d27c8]});\n";
         }
         /*
-        else if (func.base_address == 0x002aa8d0) { // Check this address matches your Ghidra export
+        else if (legacy_title_addr(func, 0x002aa8d0)) { // Check this address matches your Ghidra export
             file << "    // HLE Hook for hle_sceSifBindRpc\n";
             file << "    recompiled_functions[0x2aa8d0] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        hle_RenderLoop(ctx);\n";
@@ -2188,7 +2188,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         */
 
 
-        else if (func.base_address == 0x00181490) { // Check this address matches your Ghidra export
+        else if (legacy_title_addr(func, 0x00181490)) { // Check this address matches your Ghidra export
             file << "    // HLE Hook for Piracy Skip\n";
             file << "    recompiled_functions[0x181490] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        FUN_00181490(ctx);\n";
@@ -2203,7 +2203,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         }
 
 
-        else if (func.base_address == 0x00172b60) {
+        else if (legacy_title_addr(func, 0x00172b60)) {
             // Diagnostic wrapper for FUN_00172b60 - Texture Load Request
             // Logs key decision points before calling the auto-generated function
             file << "    recompiled_functions[0x172b60] = [](CpuContext& ctx, uint32_t addr) {\n";
@@ -2248,7 +2248,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // shows 0 hits on host while its caller shows >0 is the divergence.
         // All tagged [CHAIN] with F=<g_vsync_frame> to align across links.
         // ===================================================================
-        else if (func.base_address == 0x0017ce50) {
+        else if (legacy_title_addr(func, 0x0017ce50)) {
             file << "    recompiled_functions[0x17ce50] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        extern std::atomic<uint32_t> g_vsync_frame;\n";
             file << "        uint32_t s0_in = ctx.cpuRegs.GPR.r[16].UL[0];\n";
@@ -2270,7 +2270,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         }
 
 
-        else if (func.base_address == 0x00181258) {
+        else if (legacy_title_addr(func, 0x00181258)) {
             file << "    recompiled_functions[0x181258] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        extern std::atomic<uint32_t> g_vsync_frame;\n";
             file << "        FUN_00181258(ctx, addr);\n";
@@ -2290,7 +2290,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         }
 
 
-        else if (func.base_address == 0x00100d78) {
+        else if (legacy_title_addr(func, 0x00100d78)) {
             file << "    recompiled_functions[0x100d78] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        extern std::atomic<uint32_t> g_vsync_frame;\n";
             file << "        FUN_00100d78(ctx, addr);\n";
@@ -2308,7 +2308,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         }
 
 
-        else if (func.base_address == 0x00177908) {
+        else if (legacy_title_addr(func, 0x00177908)) {
             file << "    recompiled_functions[0x177908] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        extern std::atomic<uint32_t> g_vsync_frame;\n";
             file << "        uint32_t s3_in = ctx.cpuRegs.GPR.r[19].UL[0];\n";
@@ -2328,7 +2328,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         }
 
 
-        else if (func.base_address == 0x00259e28) {
+        else if (legacy_title_addr(func, 0x00259e28)) {
             file << "    recompiled_functions[0x259e28] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        extern std::atomic<uint32_t> g_vsync_frame;\n";
             file << "        uint32_t a0_in = ctx.cpuRegs.GPR.r[4].UL[0];\n";
@@ -2350,7 +2350,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         }
 
 
-        else if (func.base_address == 0x0017d298) {
+        else if (legacy_title_addr(func, 0x0017d298)) {
             // [LOGO-S46] Per-frame probe for the upper-left THE TITLE
             // logo == ui slot 46. Retail (live PINE) proved this is a mode-3
             // channel whose ONLY animating fields are two wobble-phase
@@ -2422,7 +2422,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         }
 
 
-        else if (func.base_address == 0x00255f30) {
+        else if (legacy_title_addr(func, 0x00255f30)) {
             // [LOGO-EXT] FUN_00255f30 = slot-46 wobble-extent producer. Every
             // channel field matches retail and mode-3 selects f20=1.0 (FULL
             // extent), yet the host quad is zero-area in the hold — so the
@@ -2531,7 +2531,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         }
 
 
-        else if (func.base_address == 0x00171bb8) {
+        else if (legacy_title_addr(func, 0x00171bb8)) {
             // [LOGO-MAP-WOB] PATH-2 continuous-wobble stage of the [LOGO-MAP]
             // bundle. FUN_00171bb8 (screen-root vtable+0x5c) is the per-frame
             // wobble driver (decompile/13 PART 3). We run the ORIGINAL body
@@ -2602,7 +2602,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         }
 
 
-        else if (func.base_address == 0x001ab778) {
+        else if (legacy_title_addr(func, 0x001ab778)) {
             // [LOGO-MAP-APPLY] extent-applicator stage. FUN_001ab778 is the
             // channel iterator BOTH wobble paths funnel through (decompile/13
             // PART 1/4): PATH-1 per-instance = FUN_001ab778(dt, chan[0x23], ..)
@@ -2658,7 +2658,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                      << ", 0x" << std::hex << end_address << ", recompiled_functions[0x1ab778]});\n";
             }
         }
-        else if (func.base_address == 0x001ba3a8) {
+        else if (legacy_title_addr(func, 0x001ba3a8)) {
             // [TEXT-DESC] Diagnostic wrapper for FUN_001ba3a8 — the
             // text/sprite render DMA chain builder that produces the
             // malformed REF/UNPACK tag (QWC=1, ADDR=0x178f810, head
@@ -2750,7 +2750,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // gate, and the CALLER (ra) so the upstream dispatcher/gate that
         // retail skips but host runs can be identified.
         // ============================================================
-        else if (func.base_address == 0x001ac7a0) {
+        else if (legacy_title_addr(func, 0x001ac7a0)) {
             file << "    recompiled_functions[0x1ac7a0] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static int s_f1ac7a0 = 0; s_f1ac7a0++;\n";
             file << "        auto rd = [](uint32_t a) -> uint32_t { return (a >= 0x10000 && a < 0x2000000) ? memory::read<uint32_t>(a) : 0xffffffffu; };\n";
@@ -2824,7 +2824,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // +0x15c==0, +0x50==0xffffffff, +0x54==0x13. We log the SAME fields
         // on host so the divergent field is obvious in a single diff.
         // ============================================================
-        else if (func.base_address == 0x002b01e8) {
+        else if (legacy_title_addr(func, 0x002b01e8)) {
             file << "    recompiled_functions[0x2b01e8] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static uint32_t s_fmv = 0; uint32_t n = s_fmv++;\n";
             file << "        uint32_t entry_ra = ctx.cpuRegs.GPR.r[31].UL[0]; // [R196-FMV3] caller\n";
@@ -2901,7 +2901,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // playing). We log the SAME fields + the resolved BRANCH + return so
         // the divergent field is unambiguous on the host's teardown tick.
         // ============================================================
-        else if (func.base_address == 0x002b0f68) {
+        else if (legacy_title_addr(func, 0x002b0f68)) {
             file << "    recompiled_functions[0x2b0f68] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static uint32_t s_fin = 0; uint32_t n = s_fin++;\n";
             file << "        auto rd = [](uint32_t a) -> uint32_t { return (a >= 0x10000 && a < 0x2000000) ? memory::read<uint32_t>(a) : 0xffffffffu; };\n";
@@ -2956,7 +2956,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // draining (NOT a Timer0 problem -> Option B would not fix it). The
         // RING-WATCH then names whatever (if anything) decrements the ring.
         // ============================================================
-        else if (func.base_address == 0x002aea08) {
+        else if (legacy_title_addr(func, 0x002aea08)) {
             file << "    recompiled_functions[0x2aea08] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        extern std::atomic<uint32_t> g_ring_watch_addr;\n";
             file << "        static uint32_t s_ae = 0; uint32_t n = s_ae++;\n";
@@ -3022,7 +3022,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // decisive signature of the bug: every call shows ret=0 / *r4 stays 0.
         // Diagnostics only; calls the real function unchanged.
         // ============================================================
-        else if (func.base_address == 0x002b0e50) {
+        else if (legacy_title_addr(func, 0x002b0e50)) {
             file << "    recompiled_functions[0x2b0e50] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static uint32_t s_pr = 0; uint32_t n = s_pr++;\n";
             file << "        auto rd = [](uint32_t a) -> uint32_t { return (a >= 0x10000 && a < 0x2000000) ? memory::read<uint32_t>(a) : 0xffffffffu; };\n";
@@ -3064,7 +3064,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // is passed in (caller computed it wrong) or derived inside the builder.
         // Diagnostics only; calls the real function unchanged.
         // ============================================================
-        else if (func.base_address == 0x002b1448) {
+        else if (legacy_title_addr(func, 0x002b1448)) {
             file << "    recompiled_functions[0x2b1448] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static uint32_t s_vb1 = 0; uint32_t n = s_vb1++;\n";
             file << "        auto rd = [](uint32_t a) -> uint32_t { return (a >= 0x10000 && a < 0x2000000) ? memory::read<uint32_t>(a) : 0xffffffffu; };\n";
@@ -3095,7 +3095,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                      << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2b1448]});\n";
             }
         }
-        else if (func.base_address == 0x002b15f8) {
+        else if (legacy_title_addr(func, 0x002b15f8)) {
             file << "    recompiled_functions[0x2b15f8] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static uint32_t s_vb2 = 0; uint32_t n = s_vb2++;\n";
             file << "        auto rd = [](uint32_t a) -> uint32_t { return (a >= 0x10000 && a < 0x2000000) ? memory::read<uint32_t>(a) : 0xffffffffu; };\n";
@@ -3136,7 +3136,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // forcing the bit). Pure logging; calls the real function unchanged.
         // Emitted via recompiler.cpp codegen (never edit recompiled.cpp).
         // ============================================================
-        else if (func.base_address == 0x001d0590) {
+        else if (legacy_title_addr(func, 0x001d0590)) {
             file << "    recompiled_functions[0x1d0590] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static uint32_t s_de1 = 0; uint32_t n = s_de1++;\n";
             file << "        uint32_t a0 = ctx.cpuRegs.GPR.r[4].UL[0];\n";
@@ -3179,7 +3179,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // the malformed NUM=0 head originates from the unguarded single
         // flush path and confirms count at the build site.
         // ============================================================
-        else if (func.base_address == 0x001aa820) {
+        else if (legacy_title_addr(func, 0x001aa820)) {
             file << "    recompiled_functions[0x1aa820] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static int s_f1aa820 = 0; s_f1aa820++;\n";
             file << "        auto rd = [](uint32_t a) -> uint32_t { return (a >= 0x10000 && a < 0x2000000) ? memory::read<uint32_t>(a) : 0xffffffffu; };\n";
@@ -3220,7 +3220,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // in a1 (the caller FUN_0025a3e8-style thunks pass this in a0/a1;
         // we log both). Gated by PS2_SHADOW_DIAG=START:END.
         // ============================================================
-        else if (func.base_address == 0x00255f30) {
+        else if (legacy_title_addr(func, 0x00255f30)) {
             file << "    recompiled_functions[0x255f30] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        extern std::atomic<uint32_t> g_vsync_frame;\n";
             file << "        static long sf_s = -1, sf_e = -1; static bool sf_p = false;\n";
@@ -3269,7 +3269,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // the frame window exposes the exact shadow-vs-logo center delta
         // our recompiled math produced. Gated by PS2_SHADOW_DIAG.
         // ============================================================
-        else if (func.base_address == 0x001a0510) {
+        else if (legacy_title_addr(func, 0x001a0510)) {
             file << "    recompiled_functions[0x1a0510] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        extern std::atomic<uint32_t> g_vsync_frame;\n";
             file << "        static long sq_s = -1, sq_e = -1; static bool sq_p = false;\n";
@@ -3334,7 +3334,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // Gated by PS2_SHADOW_DIAG=START:END (g_vsync_frame window).
         // Pure logging; calls the real function unchanged.
         // ============================================================
-        else if (func.base_address == 0x001a80c8) {
+        else if (legacy_title_addr(func, 0x001a80c8)) {
             file << "    recompiled_functions[0x1a80c8] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        extern std::atomic<uint32_t> g_vsync_frame;\n";
             file << "        static long sd_s = -1, sd_e = -1; static bool sd_p = false;\n";
@@ -3399,7 +3399,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // env-gated default-OFF and log-open-gated; per-frame+ paths get
         // census only, never per-event prints).
 
-        else if (func.base_address == 0x002af8f0) {
+        else if (legacy_title_addr(func, 0x002af8f0)) {
             // ============================================================
             // HLE wrapper for FUN_002af8f0 — FMV/IPU per-frame advance
             //
@@ -3512,7 +3512,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
 
 
 
-        else if (func.base_address == 0x00203ec8) {
+        else if (legacy_title_addr(func, 0x00203ec8)) {
             // Safety wrapper for FUN_00203ec8 - String find-and-replace
             // Called in loops by FUN_002a1738. If the replacement creates new
             // instances of the search pattern, the caller loops infinitely.
@@ -3560,7 +3560,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address << ", recompiled_functions[0x203ec8]});\n";
         }
 
-        else if (func.base_address == 0x00172d88) {
+        else if (legacy_title_addr(func, 0x00172d88)) {
             // Diagnostic wrapper for FUN_00172d88 - Streaming State Check
             file << "    recompiled_functions[0x172d88] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        uint32_t p1 = ctx.cpuRegs.GPR.r[4].UL[0];\n";
@@ -3835,7 +3835,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address << ", recompiled_functions[0x172d88]});\n";
         }
 
-        else if (func.base_address == 0x00178388) {
+        else if (legacy_title_addr(func, 0x00178388)) {
             // Diagnostic wrapper for FUN_00178388 (Loading Screen Init).
             // We want a definitive log when this fires so we know the
             // bullseye creation path is reached.
@@ -3862,7 +3862,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_178388 << ", recompiled_functions[0x178388]});\n";
         }
 
-        else if (func.base_address == 0x001b3a70) {
+        else if (legacy_title_addr(func, 0x001b3a70)) {
             // IDEMPOTENT-INIT FIX: FUN_001b3a70 is the loading-screen renderer init.
             // It allocates 5 globals (DAT_0030a4d8/e0/e4/f4/500) and calls
             // FUN_001b36b8 which allocates 3 more internal buffers (137KB, 657KB,
@@ -3903,7 +3903,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_1b3a70 << ", recompiled_functions[0x1b3a70]});\n";
         }
 
-        else if (func.base_address == 0x002cf8a8) {
+        else if (legacy_title_addr(func, 0x002cf8a8)) {
             // DECI2-SHORT-CIRCUIT: FUN_002cf8a8 is the internal stdio "flush"
             // that calls into Deci2Call. On real dev PS2 it would succeed via
             // DECI2 hardware; on retail PS2 it returns -1 silently.
@@ -3923,7 +3923,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_2cf8a8 << ", recompiled_functions[0x2cf8a8]});\n";
         }
 
-        else if (func.base_address == 0x001700d8) {
+        else if (legacy_title_addr(func, 0x001700d8)) {
             // Diagnostic wrapper for FUN_001700d8 (Bullseye object creator).
             // This is called by FUN_00178388 to actually build the bullseye primitives.
             file << "    recompiled_functions[0x1700d8] = [](CpuContext& ctx, uint32_t addr) {\n";
@@ -3975,7 +3975,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_1700d8 << ", recompiled_functions[0x1700d8]});\n";
         }
 
-        else if (func.base_address == 0x001700d8) {
+        else if (legacy_title_addr(func, 0x001700d8)) {
             // Diagnostic wrapper for FUN_001700d8 (Bullseye Object Creator).
             file << "    recompiled_functions[0x1700d8] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static int s_1700d8_count = 0;\n";
@@ -3994,7 +3994,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         }
         // [R188-HYGIENE] duplicate (previously shadowed) bullseye wrapper deleted; standard registration applies.
 
-        else if (func.base_address == 0x001aae28) {
+        else if (legacy_title_addr(func, 0x001aae28)) {
             // [EMIT-AE28] Session 7 per-vertex GS-writer probe. FUN_001a9120
             // calls FUN_001aadb8(chain,color) then FUN_001aae28(x,y,chain,~0,
             // idx<2) per glyph vertex. aae28 packs XYZ into chain[0] and the
@@ -4049,7 +4049,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_1aae28 << ", recompiled_functions[0x1aae28]});\n";
         }
 
-        else if (func.base_address == 0x002557c0) {
+        else if (legacy_title_addr(func, 0x002557c0)) {
             // Diagnostic wrapper for FUN_002557c0 (text widget render dispatch).
             // This is the function that gates on widget flags and text-descriptor
             // pointer before calling FUN_002581a0 (the per-glyph emitter).
@@ -4096,7 +4096,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_2557c0 << ", recompiled_functions[0x2557c0]});\n";
         }
 
-        else if (func.base_address == 0x002581a0) {
+        else if (legacy_title_addr(func, 0x002581a0)) {
             // Diagnostic wrapper for FUN_002581a0 (per-glyph sprite emitter).
             // This is the function that produces the actual per-glyph RGBAQ/UV/XYZ
             // writes into the GIF packet. If the text is broken, either:
@@ -4123,7 +4123,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_2581a0 << ", recompiled_functions[0x2581a0]});\n";
         }
 
-        else if (func.base_address == 0x001c0490) {
+        else if (legacy_title_addr(func, 0x001c0490)) {
             // [TEXT-SRC-DUMP] FUN_001c0490 is the per-frame text drain/emit
             // dispatcher. It runs once per frame AFTER all text assets have
             // been filled (via FUN_001c0190 -> FUN_00181af0) and BEFORE
@@ -4174,7 +4174,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_1c0490 << ", recompiled_functions[0x1c0490]});\n";
         }
 
-        else if (func.base_address == 0x001a9c70) {
+        else if (legacy_title_addr(func, 0x001a9c70)) {
             // [TEXT-LAYOUT-ENTRY] Capture inputs to FUN_001a9c70, the per-line
             // text layout function. The previous TEXT-METRICS-WP hook in
             // memory.cpp couldn't read register values reliably because
@@ -4254,7 +4254,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_1a9c70 << ", recompiled_functions[0x1a9c70]});\n";
         }
 
-        else if (func.base_address == 0x001aa638) {
+        else if (legacy_title_addr(func, 0x001aa638)) {
             // [TEXT-METRICS-ENTRY] Definitive diagnostic for the per-line layout
             // bug. FUN_001aa638(font, str, scale, out) computes:
             //   for each line: line_width = sum(advance_x[ch]) * scale_x
@@ -4322,7 +4322,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_1aa638 << ", recompiled_functions[0x1aa638]});\n";
         }
 
-        else if (func.base_address == 0x00255b20) {
+        else if (legacy_title_addr(func, 0x00255b20)) {
             // [CH5-UPDATE] Diagnostic wrapper for FUN_00255b20 (Text_UpdateChannel).
             // This is the UPDATE / buffer-fill pass for the bullseye text. It
             // fills each mesh's per-glyph position buffer (mesh+0x58) via
@@ -4430,7 +4430,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_255b20 << ", recompiled_functions[0x255b20]});\n";
         }
 
-        else if (func.base_address == 0x00255cc0) {
+        else if (legacy_title_addr(func, 0x00255cc0)) {
             // Diagnostic wrapper for FUN_00255cc0 (ch5 mesh array renderer).
             // This is the actual text renderer for the bullseye memcard-check
             // scene. It iterates param_1[0x22] mesh entries from param_1[0x24]
@@ -4551,7 +4551,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_255cc0 << ", recompiled_functions[0x255cc0]});\n";
         }
 
-        else if (func.base_address == 0x00204ef8) {
+        else if (legacy_title_addr(func, 0x00204ef8)) {
             // [FREELIST-ADD-TRACE] Wrapper for FUN_00204ef8 — adds a block to
             // the free list of its size class.  Used by both the regular
             // free path and the split-remainder paths in FUN_00202bd8 and
@@ -4588,7 +4588,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_204ef8 << ", recompiled_functions[0x204ef8]});\n";
         }
 
-        else if (func.base_address == 0x001bc920) {
+        else if (legacy_title_addr(func, 0x001bc920)) {
             // [BC920-CURSOR] Diagnose the American.psm deserialization cursor
             // desync. FUN_001bc920 reads a u32 'size' into param_1+8 via the
             // stream's first read; on host it reads 0 -> size = 0-0x80 =
@@ -4626,7 +4626,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_1bc920 << ", recompiled_functions[0x1bc920]});\n";
         }
 
-        else if (func.base_address == 0x002a9040) {
+        else if (legacy_title_addr(func, 0x002a9040)) {
             // [PTC-LOAD] Wrapper for FUN_002a9040 (PTC-resource bind).
             // This is the immediate caller of FUN_002053c0 at the seq=41
             // bullseye allocation. We log the param_1 struct fields
@@ -4677,7 +4677,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_2a9040 << ", recompiled_functions[0x2a9040]});\n";
         }
 
-        else if (func.base_address == 0x002053c0) {
+        else if (legacy_title_addr(func, 0x002053c0)) {
             // [ALLOC-CALLER] Wrapper for FUN_002053c0.
             // This is the immediate caller of FUN_00202bd8 for the seq=41
             // bullseye allocation.  The decompile shows:
@@ -4710,7 +4710,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_2053c0 << ", recompiled_functions[0x2053c0]});\n";
         }
 
-        else if (func.base_address == 0x00202bd8) {
+        else if (legacy_title_addr(func, 0x00202bd8)) {
             // [ALLOC-TRACE] Wrapper for FUN_00202bd8 (allocator).
             // Records every allocation in sequence so we can compare against
             // PCSX2.  The allocator pulls indices from a stack-style free
@@ -4793,7 +4793,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_202bd8 << ", recompiled_functions[0x202bd8]});\n";
         }
 
-        else if (func.base_address == 0x00203230) {
+        else if (legacy_title_addr(func, 0x00203230)) {
             // [FREE-TRACE] Wrapper for FUN_00203230 (deallocator).
             // Frees an allocation: pops the index back to the free list at
             // pool_base + 0x5648 by decrementing the counter and writing
@@ -4919,7 +4919,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_203230 << ", recompiled_functions[0x203230]});\n";
         }
 
-        else if (func.base_address == 0x00205528) {
+        else if (legacy_title_addr(func, 0x00205528)) {
             // [POOL-LOOKUP] Wrapper for FUN_00205528 (alloc-pool index lookup).
             // Function signature: FUN_00205528(int pool_base, int* idx_ptr).
             //   idx = *idx_ptr
@@ -4960,7 +4960,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         }
         // [R188-HYGIENE] duplicate (previously shadowed) bullseye wrapper deleted; standard registration applies.
 
-        else if (func.base_address == 0x001a6190) {
+        else if (legacy_title_addr(func, 0x001a6190)) {
             // [LINK9] Session 9: FUN_001a6190 is the TEXT finalizer/linker
             // (called at the end of FUN_001a9120). It (a) finalizes the glyph
             // DATA chain at DAT_0030a7a0 — writes a CNT DMAtag (word0 |0x10000000,
@@ -5019,7 +5019,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_1a6190 << ", recompiled_functions[0x1a6190]});\n";
         }
 
-        else if (func.base_address == 0x001ab070) {
+        else if (legacy_title_addr(func, 0x001ab070)) {
             // Diagnostic wrapper for FUN_001ab070 — captures the current
             // global chain head into a 16-byte descriptor that the
             // owning sprite-effect saves.  When the caller later flushes
@@ -5049,7 +5049,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_1ab070 << ", recompiled_functions[0x1ab070]});\n";
         }
 
-        else if (func.base_address == 0x00255b20) {
+        else if (legacy_title_addr(func, 0x00255b20)) {
             // Diagnostic wrapper for FUN_00255b20 — text channel UPDATE path
             // (vtable_base=0x3029d8, slot +0x6c -> 0x255b20).  This is the
             // function that calls FUN_001abbc8 -> FUN_001a80c8 to FILL the
@@ -5200,7 +5200,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_255b20 << ", recompiled_functions[0x255b20]});\n";
         }
 
-        else if (func.base_address == 0x001a80c8) {
+        else if (legacy_title_addr(func, 0x001a80c8)) {
             // SESSION-6 deeper hook: FUN_001a80c8 (Glyph_WriteVertexAndColor)
             // is where the per-glyph X/Y position buffer (mesh+0x58, aliased
             // mesh+0x14) actually gets written.  Its disassembly at 0x1a80f0
@@ -5264,7 +5264,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_1a80c8 << ", recompiled_functions[0x1a80c8]});\n";
         }
 
-        else if (func.base_address == 0x001a0450) {
+        else if (legacy_title_addr(func, 0x001a0450)) {
             // Diagnostic wrapper for FUN_001a0450 — SHADOW mesh submit path
             // called from FUN_00255cc0 (ch5 text render) at PC=0x255ec8.
             // Signature: FUN_001a0450(render_ctx, mesh_ptr, color_idx)
@@ -5303,7 +5303,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_1a0450 << ", recompiled_functions[0x1a0450]});\n";
         }
 
-        else if (func.base_address == 0x001ef9a0) {
+        else if (legacy_title_addr(func, 0x001ef9a0)) {
             // [RENDER-INIT-OUTER] FUN_001EF9A0 is the small wrapper that
             // gates the call to FUN_001ED188.  It checks
             // *(scene + 4) & 1 and only calls FUN_001ED188 when that
@@ -5338,7 +5338,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_1ef9a0 << ", recompiled_functions[0x1ef9a0]});\n";
         }
 
-        else if (func.base_address == 0x00197650) {
+        else if (legacy_title_addr(func, 0x00197650)) {
             // [RENDER-WALK-OUTER] FUN_00197650 is the only known caller
             // of FUN_001EF9A0.  It iterates a render-list and at the end
             // dispatches to one of two finalizer paths based on local s4.
@@ -5373,7 +5373,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_197650 << ", recompiled_functions[0x197650]});\n";
         }
 
-        else if (func.base_address == 0x001ed188) {
+        else if (legacy_title_addr(func, 0x001ed188)) {
             // [RENDER-INIT] FUN_001ED188 is the per-frame "render scene"
             // function that lazy-initializes the chain buffer at
             // render_obj+0x160.  This 768-byte buffer is what the scene
@@ -5455,7 +5455,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // so we can see (a) whether it fires for the bullseye obj and
         // (b) whether it actually performs the allocation.
         // ============================================================
-        else if (func.base_address == 0x001f1518) {
+        else if (legacy_title_addr(func, 0x001f1518)) {
             file << "    recompiled_functions[0x1f1518] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static int s_c15c = 0; s_c15c++;\n";
             file << "        uint32_t a0 = ctx.cpuRegs.GPR.r[4].UL[0];\n";
@@ -5512,7 +5512,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // "PS2D" magic + red bg colour, the in-place build failed on host
         // (hypothesis b: missing/zero data).
         // ============================================================
-        else if (func.base_address == 0x00169348) {
+        else if (legacy_title_addr(func, 0x00169348)) {
             file << "    recompiled_functions[0x169348] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static int s_ps2d = 0; s_ps2d++;\n";
             file << "        uint32_t a0 = ctx.cpuRegs.GPR.r[4].UL[0];\n";
@@ -5562,7 +5562,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // [PS2D-DUMP], the build ran but wrote elsewhere; if BOTH are zero
         // the builder/palette never produced the data on host.
         // ============================================================
-        else if (func.base_address == 0x002a2200) {
+        else if (legacy_title_addr(func, 0x002a2200)) {
             file << "    recompiled_functions[0x2a2200] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static int s_load = 0; s_load++;\n";
             file << "        uint32_t a0 = ctx.cpuRegs.GPR.r[4].UL[0];\n";
@@ -5613,7 +5613,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // first dead link. All take (ctx, addr=0). Indirect (vtable) calls are
         // dispatched through recompiled_functions[] so the hooks catch them.
         // ============================================================
-        else if (func.base_address == 0x0017d978) {
+        else if (legacy_title_addr(func, 0x0017d978)) {
             file << "    recompiled_functions[0x17d978] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static int s_p = 0; s_p++;\n";
             file << "        uint32_t a0 = ctx.cpuRegs.GPR.r[4].UL[0];\n";
@@ -5645,7 +5645,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_a << ", recompiled_functions[0x17d978]});\n";
         }
 
-        else if (func.base_address == 0x0017d478) {
+        else if (legacy_title_addr(func, 0x0017d478)) {
             file << "    recompiled_functions[0x17d478] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static int s_d = 0; s_d++;\n";
             file << "        static uint32_t s_last_tuple = 0xffffffff;\n";
@@ -5674,7 +5674,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_a << ", recompiled_functions[0x17d478]});\n";
         }
 
-        else if (func.base_address == 0x002a13e0) {
+        else if (legacy_title_addr(func, 0x002a13e0)) {
             file << "    recompiled_functions[0x2a13e0] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static int s_x = 0; s_x++;\n";
             file << "        uint32_t a0 = ctx.cpuRegs.GPR.r[4].UL[0];\n";
@@ -5692,7 +5692,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_a << ", recompiled_functions[0x2a13e0]});\n";
         }
 
-        else if (func.base_address == 0x0029f5c0) {
+        else if (legacy_title_addr(func, 0x0029f5c0)) {
             file << "    recompiled_functions[0x29f5c0] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static int s_c = 0; s_c++;\n";
             file << "        uint32_t a0 = ctx.cpuRegs.GPR.r[4].UL[0];\n";
@@ -5716,7 +5716,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_a << ", recompiled_functions[0x29f5c0]});\n";
         }
 
-        else if (func.base_address == 0x002a1738) {
+        else if (legacy_title_addr(func, 0x002a1738)) {
             file << "    recompiled_functions[0x2a1738] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static int s_a = 0; s_a++;\n";
             file << "        uint32_t a0 = ctx.cpuRegs.GPR.r[4].UL[0];\n";
@@ -5755,7 +5755,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // a0/a1/a2/ra + text-gate state, so it is intentionally NOT
         // re-hooked here to avoid a duplicate else-if branch.
         // ============================================================
-        else if (func.base_address == 0x0015fda0) {
+        else if (legacy_title_addr(func, 0x0015fda0)) {
             file << "    recompiled_functions[0x15fda0] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static int s_it = 0; s_it++;\n";
             file << "        uint32_t a0 = ctx.cpuRegs.GPR.r[4].UL[0];\n";
@@ -5774,7 +5774,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_15fda0 << ", recompiled_functions[0x15fda0]});\n";
         }
 
-        else if (func.base_address == 0x00160008) {
+        else if (legacy_title_addr(func, 0x00160008)) {
             file << "    recompiled_functions[0x160008] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static int s_it = 0; s_it++;\n";
             file << "        uint32_t a0 = ctx.cpuRegs.GPR.r[4].UL[0];\n";
@@ -5793,7 +5793,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_160008 << ", recompiled_functions[0x160008]});\n";
         }
 
-        else if (func.base_address == 0x0017b390) {
+        else if (legacy_title_addr(func, 0x0017b390)) {
             file << "    recompiled_functions[0x17b390] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static int s_it = 0; s_it++;\n";
             file << "        uint32_t a0 = ctx.cpuRegs.GPR.r[4].UL[0];\n";
@@ -5812,7 +5812,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_17b390 << ", recompiled_functions[0x17b390]});\n";
         }
 
-        else if (func.base_address == 0x00195928) {
+        else if (legacy_title_addr(func, 0x00195928)) {
             file << "    recompiled_functions[0x195928] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static int s_it = 0; s_it++;\n";
             file << "        uint32_t a0 = ctx.cpuRegs.GPR.r[4].UL[0];\n";
@@ -5831,7 +5831,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_195928 << ", recompiled_functions[0x195928]});\n";
         }
 
-        else if (func.base_address == 0x001ed690) {
+        else if (legacy_title_addr(func, 0x001ed690)) {
             file << "    recompiled_functions[0x1ed690] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static int s_it = 0; s_it++;\n";
             file << "        uint32_t a0 = ctx.cpuRegs.GPR.r[4].UL[0];\n";
@@ -5850,7 +5850,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_1ed690 << ", recompiled_functions[0x1ed690]});\n";
         }
 
-        else if (func.base_address == 0x001979a8) {
+        else if (legacy_title_addr(func, 0x001979a8)) {
             file << "    recompiled_functions[0x1979a8] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static int s_it = 0; s_it++;\n";
             file << "        uint32_t a0 = ctx.cpuRegs.GPR.r[4].UL[0];\n";
@@ -5881,7 +5881,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // "init never dispatched" from "init dispatched for wrong object".
         // Signature is (CpuContext&, uint32_t) — a0=object/render-target.
         // ============================================================
-        else if (func.base_address == 0x001f40e0) {
+        else if (legacy_title_addr(func, 0x001f40e0)) {
             file << "    recompiled_functions[0x1f40e0] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static int s_i40e0 = 0; s_i40e0++;\n";
             file << "        uint32_t a0 = ctx.cpuRegs.GPR.r[4].UL[0];\n";
@@ -5912,7 +5912,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // ONLY callers of FUN_001f1518; if NEITHER logs, the +0x15c
         // allocator is never dispatched for any object at all.
         // ============================================================
-        else if (func.base_address == 0x00263f90) {
+        else if (legacy_title_addr(func, 0x00263f90)) {
             file << "    recompiled_functions[0x263f90] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static int s_i263 = 0; s_i263++;\n";
             file << "        uint32_t a0 = ctx.cpuRegs.GPR.r[4].UL[0];\n";
@@ -5960,7 +5960,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // Signature is (CpuContext&, uint32_t) — a0=object being ctor'd,
         // a1=param_2, a2=param_3.
         // ============================================================
-        else if (func.base_address == 0x001ec6a0) {
+        else if (legacy_title_addr(func, 0x001ec6a0)) {
             file << "    recompiled_functions[0x1ec6a0] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static int s_rctor = 0; s_rctor++;\n";
             file << "        uint32_t a0 = ctx.cpuRegs.GPR.r[4].UL[0];\n";
@@ -6002,7 +6002,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // predicate) so the next forced-init run pinpoints exactly which
         // pointer is null and which object owns it.
         // ============================================================
-        else if (func.base_address == 0x0019d138) {
+        else if (legacy_title_addr(func, 0x0019d138)) {
             file << "    recompiled_functions[0x19d138] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static int s_cVT = 0; s_cVT++;\n";
             file << "        uint32_t a0 = ctx.cpuRegs.GPR.r[4].UL[0];\n";
@@ -6028,7 +6028,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_19d138 << ", recompiled_functions[0x19d138]});\n";
         }
 
-        else if (func.base_address == 0x001a0220) {
+        else if (legacy_title_addr(func, 0x001a0220)) {
             // [SCENE-CONSTRUCT] FUN_001a0220 is the scene constructor.
             //
             // Signature: (scene, vtable_a1, third_arg)
@@ -6078,7 +6078,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_1a0220 << ", recompiled_functions[0x1a0220]});\n";
         }
 
-        else if (func.base_address == 0x0019b280) {
+        else if (legacy_title_addr(func, 0x0019b280)) {
             // [SCENE-RENDER-DISPATCH] FUN_0019b280 is the per-frame
             // scene-render dispatcher.  Its inner branch decides whether
             // to call FUN_001b9bc0 (the channel walker that consumes the
@@ -6168,7 +6168,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_19b280 << ", recompiled_functions[0x19b280]});\n";
         }
 
-        else if (func.base_address == 0x0018afa8) {
+        else if (legacy_title_addr(func, 0x0018afa8)) {
             // [MVPGATE] (ROUND 26) Camera/object node recompose, DIRTY-GATED on
             // (node+0x60 & 2): quat-normalize + FUN_0018E620 (quat->matrix) then
             // clears bit1. PCSX2 write-watch on pktbase+0xC0 proved the VP compose
@@ -6209,7 +6209,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address
                  << ", 0x" << std::hex << end_address_18afa8 << ", recompiled_functions[0x18afa8]});\n";
         }
-        else if (func.base_address == 0x0027ade8) {
+        else if (legacy_title_addr(func, 0x0027ade8)) {
             // [MVPGATE-VP] (ROUND 26) FUN_0027ADE8(base=pktbase, ctx) is THE VP
             // composer verified on PCSX2 (write watchpoint on pktbase+0xC0):
             //   base+0x80  = P*V   (mul rows=base+0x40 VIEW, mat=base PROJ)\n
@@ -6254,7 +6254,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address
                  << ", 0x" << std::hex << end_address_27ade8 << ", recompiled_functions[0x27ade8]});\n";
         }
-        else if (func.base_address == 0x0017ed50) {
+        else if (legacy_title_addr(func, 0x0017ed50)) {
             // [CHAIN-KICK-DUMP] FUN_0017ED50 is the VIF1 chain dispatcher
             // that the EE program calls each frame to send a built chain
             // to VIF1 DMA.
@@ -6653,7 +6653,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_17ed50 << ", recompiled_functions[0x17ed50]});\n";
         }
 
-        else if (func.base_address == 0x001b9bc0) {
+        else if (legacy_title_addr(func, 0x001b9bc0)) {
             // [SCENE-RENDER-WALKER] FUN_001b9bc0 is the per-frame top-level
             // render walker.  It iterates *(int *)(param_1 + 8) items at
             // *(int *)(param_1 + 0xC), dispatching each through FUN_001bec10
@@ -6701,7 +6701,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_1b9bc0 << ", recompiled_functions[0x1b9bc0]});\n";
         }
 
-        else if (func.base_address == 0x001bec10) {
+        else if (legacy_title_addr(func, 0x001bec10)) {
             // [CHAIN-DISPATCH] FUN_001bec10 is the per-channel render
             // dispatcher.  For each item in the scene render walker's
             // iteration list it reads the chain head from
@@ -6766,7 +6766,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_1bec10 << ", recompiled_functions[0x1bec10]});\n";
         }
 
-        else if (func.base_address == 0x00259db8) {
+        else if (legacy_title_addr(func, 0x00259db8)) {
             // [TICK-CHANNEL] Diagnostic wrapper for FUN_00259db8 — the
             // per-frame channel-ticker. Iterates 64 channel slots at
             // anim_base + 0x208 and invokes each active channel's vtable
@@ -6815,7 +6815,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_259db8 << ", recompiled_functions[0x259db8]});\n";
         }
 
-        else if (func.base_address == 0x001ab420) {
+        else if (legacy_title_addr(func, 0x001ab420)) {
             // Diagnostic wrapper for FUN_001ab420 — per-entry drain dispatcher
             // called from FUN_0019b120 (the 6-bucket drain loop).
             // Signature: FUN_001ab420(entry_ptr)
@@ -6867,7 +6867,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_1ab420 << ", recompiled_functions[0x1ab420]});\n";
         }
 
-        else if (func.base_address == 0x0019b120) {
+        else if (legacy_title_addr(func, 0x0019b120)) {
             // Diagnostic wrapper for FUN_0019b120 — the 6-bucket drain loop.
             // Logs the state of each bucket (head pointer and entry count)
             // before draining. This shows whether ch5's shadow-path entries
@@ -6913,7 +6913,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_19b120 << ", recompiled_functions[0x19b120]});\n";
         }
 
-        else if (func.base_address == 0x00177a90) {
+        else if (legacy_title_addr(func, 0x00177a90)) {
             // Diagnostic wrapper for FUN_00177a90 — the function that SETS
             // DAT_00309891 = 1 (text gate) and DAT_00309898 = text_mesh_ptr.
             //
@@ -6974,7 +6974,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // path that wires up the text channel on PCSX2.
         // ============================================================
 
-        else if (func.base_address == 0x0017c0c8) {
+        else if (legacy_title_addr(func, 0x0017c0c8)) {
             file << "    recompiled_functions[0x17c0c8] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static int s_17c0c8_count = 0;\n";
             file << "        s_17c0c8_count++;\n";
@@ -6999,7 +6999,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_addr << ", recompiled_functions[0x17c0c8]});\n";
         }
 
-        else if (func.base_address == 0x00122be0) {
+        else if (legacy_title_addr(func, 0x00122be0)) {
             file << "    recompiled_functions[0x122be0] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static int s_122be0_count = 0;\n";
             file << "        s_122be0_count++;\n";
@@ -7017,7 +7017,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_addr << ", recompiled_functions[0x122be0]});\n";
         }
 
-        else if (func.base_address == 0x00173f38) {
+        else if (legacy_title_addr(func, 0x00173f38)) {
             file << "    recompiled_functions[0x173f38] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static int s_173f38_count = 0;\n";
             file << "        s_173f38_count++;\n";
@@ -7075,7 +7075,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_addr << ", recompiled_functions[0x173f38]});\n";
         }
 
-        else if (func.base_address == 0x001745d0) {
+        else if (legacy_title_addr(func, 0x001745d0)) {
             file << "    recompiled_functions[0x1745d0] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static int s_1745d0_count = 0;\n";
             file << "        s_1745d0_count++;\n";
@@ -7094,7 +7094,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         }
         // [R188-HYGIENE] duplicate (previously shadowed) bullseye wrapper deleted; standard registration applies.
 
-        else if (func.base_address == 0x001a9448) {
+        else if (legacy_title_addr(func, 0x001a9448)) {
             // The OTHER glyph emitter — actually dispatched by FUN_001ab420
             // at vtable+0x2C when entry+0x40 has bit0=1 && bit1=1.
             // Same mesh layout as FUN_001a92a0:
@@ -7158,7 +7158,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_addr_1a9448 << ", recompiled_functions[0x1a9448]});\n";
         }
 
-        else if (func.base_address == 0x0013bea0) {
+        else if (legacy_title_addr(func, 0x0013bea0)) {
             // Diagnostic wrapper for FUN_0013bea0 — VTABLE-called function
             // that ALSO sets DAT_00309891=1 (text gate) and DAT_00309898
             // (text mesh ptr). No static xrefs, only via vtable 0x2F26FC
@@ -7201,7 +7201,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_13bea0 << ", recompiled_functions[0x13bea0]});\n";
         }
 
-        else if (func.base_address == 0x002b35a0) {
+        else if (legacy_title_addr(func, 0x002b35a0)) {
             // Diagnostic wrapper for FUN_002b35a0 — reads bit 34 of
             // *(param_1 + 8) + 0x568 to determine if the bullseye init
             // has completed (advances boot SM from case 2 to case 3).
@@ -7233,7 +7233,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_2b35a0 << ", recompiled_functions[0x2b35a0]});\n";
         }
 
-        else if (func.base_address == 0x001770a0) {
+        else if (legacy_title_addr(func, 0x001770a0)) {
             // Diagnostic wrapper for FUN_001770a0 — searches the 6-channel
             // array in boot_obj+0x570 for the channel whose +0xa0 target
             // matches the current text owner. If found, calls FUN_00177a90
@@ -7280,7 +7280,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_1770a0 << ", recompiled_functions[0x1770a0]});\n";
         }
 
-        else if (func.base_address == 0x002a7730) {
+        else if (legacy_title_addr(func, 0x002a7730)) {
             // [LOC-LOOKUP] Definitive diagnostic for CHECKING vs DUALSHOCK
             // (or any other dialog) string selection. FUN_002a7730(font_ctx, loc_idx)
             // returns the localised string pointer for the given loc index.
@@ -7334,7 +7334,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_2a7730 << ", recompiled_functions[0x2a7730]});\n";
         }
 
-        else if (func.base_address == 0x001a0510) {
+        else if (legacy_title_addr(func, 0x001a0510)) {
             // Diagnostic wrapper for FUN_001a0510 (mesh submit — called per glyph
             // line from FUN_00255cc0). It allocates a draw-list entry and enqueues
             // it at param_1 + 0x38 + color*4.
@@ -7372,7 +7372,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_1a0510 << ", recompiled_functions[0x1a0510]});\n";
         }
 
-        else if (func.base_address == 0x002b4a78) {
+        else if (legacy_title_addr(func, 0x002b4a78)) {
             // Diagnostic wrapper for FUN_002b4a78 (Asset Loader Tick).
             // Called from inside FUN_00178388. If it blocks, the bullseye
             // path after it (including FUN_001700d8) never runs.
@@ -7397,7 +7397,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_2b4a78 << ", recompiled_functions[0x2b4a78]});\n";
         }
 
-        else if (func.base_address == 0x001a7d70) {
+        else if (legacy_title_addr(func, 0x001a7d70)) {
             // [FADE-COLOR] Diagnostic wrapper for FUN_001a7d70 — the
             // per-quad fade/color writer. Per CH5 text mesh it is called
             // with param_3 = channel[0xe] (the tween RGBA result) and the
@@ -7459,7 +7459,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_1a7d70 << ", recompiled_functions[0x1a7d70]});\n";
         }
 
-        else if (func.base_address == 0x0025a5d0) {
+        else if (legacy_title_addr(func, 0x0025a5d0)) {
             // [CH5-FADE-MIX] Diagnostic wrapper for FUN_0025a5d0 — the
             // per-channel tween-render callback installed at vtable+0x2c.
             // For each channel it calls FUN_0019c748(progress_t, chan+0x38,
@@ -7508,7 +7508,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address_25a5d0 << ", recompiled_functions[0x25a5d0]});\n";
         }
 
-        else if (func.base_address == 0x00170d78) {
+        else if (legacy_title_addr(func, 0x00170d78)) {
             // Diagnostic wrapper for FUN_00170d78 - Animation Start via vtable dispatch
             file << "    recompiled_functions[0x170d78] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        uint32_t p1 = ctx.cpuRegs.GPR.r[4].UL[0];\n";
@@ -7539,7 +7539,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << end_address << ", recompiled_functions[0x170d78]});\n";
         }
 
-        else if (func.base_address == 0x00259af0) {
+        else if (legacy_title_addr(func, 0x00259af0)) {
             // Diagnostic wrapper for FUN_00259af0 - Animation Channel Lookup
             // Called by FUN_00172d88 to find which animation channel matches a mask
             file << "    recompiled_functions[0x259af0] = [](CpuContext& ctx, uint32_t addr) {\n";
@@ -7589,7 +7589,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // Loading-phase gated (0x309718==3), capped at 600 logged applies, EE-range
         // guarded — read-only (calls the unmodified recompiled body verbatim).
         // ================================================================
-        else if (func.base_address == 0x00179d80) {
+        else if (legacy_title_addr(func, 0x00179d80)) {
             file << "    recompiled_functions[0x179d80] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static std::atomic<int> s_la2{0};\n";
             file << "        uint32_t _mgr = ctx.cpuRegs.GPR.r[4].UL[0];\n";
@@ -7641,7 +7641,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // to understand why only 1 tile is being drawn.
         // Post-call: dump the DMA buffer to verify the GIF packet contents.
         // ================================================================
-        else if (func.base_address == 0x0019f1c8) {
+        else if (legacy_title_addr(func, 0x0019f1c8)) {
             file << "    recompiled_functions[0x19f1c8] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        static int s_19f1c8_count = 0;\n";
             file << "        s_19f1c8_count++;\n";
@@ -7753,7 +7753,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // ================================================================
         // CDVD Streaming HLE Hooks
         // ================================================================
-        else if (func.base_address == 0x002c4860) {
+        else if (legacy_title_addr(func, 0x002c4860)) {
             file << "    // HLE Hook for sceCdStInit\n";
             file << "    recompiled_functions[0x2c4860] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        hle_sceCdStInit(ctx);\n";
@@ -7763,7 +7763,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address
                 << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2c4860]});\n";
         }
-        else if (func.base_address == 0x002c4890) {
+        else if (legacy_title_addr(func, 0x002c4890)) {
             file << "    // HLE Hook for sceCdStStart\n";
             file << "    recompiled_functions[0x2c4890] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        hle_sceCdStStart(ctx);\n";
@@ -7773,7 +7773,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address
                 << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2c4890]});\n";
         }
-        else if (func.base_address == 0x002c48d0) {
+        else if (legacy_title_addr(func, 0x002c48d0)) {
             file << "    // HLE Hook for sceCdStSeek\n";
             file << "    recompiled_functions[0x2c48d0] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        hle_sceCdStSeek(ctx);\n";
@@ -7783,7 +7783,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address
                 << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2c48d0]});\n";
         }
-        else if (func.base_address == 0x002c4900) {
+        else if (legacy_title_addr(func, 0x002c4900)) {
             file << "    // HLE Hook for sceCdStStop\n";
             file << "    recompiled_functions[0x2c4900] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        hle_sceCdStStop(ctx);\n";
@@ -7793,7 +7793,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address
                 << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2c4900]});\n";
         }
-        else if (func.base_address == 0x002c4938) {
+        else if (legacy_title_addr(func, 0x002c4938)) {
             file << "    // HLE Hook for sceCdStRead\n";
             file << "    recompiled_functions[0x2c4938] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        hle_sceCdStRead(ctx);\n";
@@ -7803,7 +7803,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address
                 << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2c4938]});\n";
         }
-        else if (func.base_address == 0x002c4578) {
+        else if (legacy_title_addr(func, 0x002c4578)) {
             file << "    // HLE Hook for sceCdStStat\n";
             file << "    recompiled_functions[0x2c4578] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        hle_sceCdStStat(ctx);\n";
@@ -7813,7 +7813,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address
                 << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2c4578]});\n";
         }
-        else if (func.base_address == 0x002c4610) {
+        else if (legacy_title_addr(func, 0x002c4610)) {
             file << "    // HLE Hook for sceCdStPause\n";
             file << "    recompiled_functions[0x2c4610] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        hle_sceCdStPause(ctx);\n";
@@ -7823,7 +7823,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address
                 << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2c4610]});\n";
         }
-        else if (func.base_address == 0x002c46c8) {
+        else if (legacy_title_addr(func, 0x002c46c8)) {
             file << "    // HLE Hook for sceCdStResume\n";
             file << "    recompiled_functions[0x2c46c8] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        hle_sceCdStResume(ctx);\n";
@@ -7833,7 +7833,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address
                 << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2c46c8]});\n";
         }
-        else if (func.base_address == 0x002c4140) {
+        else if (legacy_title_addr(func, 0x002c4140)) {
             file << "    // HLE Hook for sceCdDiskReady\n";
             file << "    recompiled_functions[0x2c4140] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        hle_sceCdDiskReady(ctx);\n";
@@ -7843,7 +7843,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address
                 << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2c4140]});\n";
         }
-        else if (func.base_address == 0x002c4358) {
+        else if (legacy_title_addr(func, 0x002c4358)) {
             file << "    // HLE Hook for sceCdDiskReady2\n";
             file << "    recompiled_functions[0x2c4358] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        hle_sceCdDiskReady2(ctx);\n";
@@ -7867,7 +7867,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // kernel to clear that bit, so the spin loop hangs forever. Without this
         // HLE, the game's StartThread wrapper (0x2d0138) fails and threads 2 & 3
         // are never started.
-        else if (func.base_address == 0x002d4dc0) {
+        else if (legacy_title_addr(func, 0x002d4dc0)) {
             file << "    // HLE Hook for KernelLock (enter critical section)\n";
             file << "    recompiled_functions[0x2d4dc0] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        // Return 1 (old interrupt state = enabled) to indicate success\n";
@@ -7877,7 +7877,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
             file << "    function_ranges.push_back({0x" << std::hex << func.base_address
                 << ", 0x" << std::hex << end_address << ", recompiled_functions[0x2d4dc0]});\n";
         }
-        else if (func.base_address == 0x002d4e10) {
+        else if (legacy_title_addr(func, 0x002d4e10)) {
             file << "    // HLE Hook for KernelUnlock (leave critical section)\n";
             file << "    recompiled_functions[0x2d4e10] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        // No-op — interrupts stay enabled in our cooperative model\n";
@@ -7895,7 +7895,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // through the memory system already, but the ERET jumps to EPC
         // which is 0 in our context — re-entering the game entry function
         // and corrupting all state. HLE: just do the memory write and return.
-        else if (func.base_address == 0x002d53b0) {
+        else if (legacy_title_addr(func, 0x002d53b0)) {
             file << "    // HLE Hook for INTC Acknowledge + ERET\n";
             file << "    recompiled_functions[0x2d53b0] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        // a0 = hw register address, a1 = value to write\n";
@@ -7918,7 +7918,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // tight loop. The timer overflow interrupt (INTC_TIM0) only fires
         // from the scheduler loop, but the busy-wait never yields the fiber,
         // causing a deadlock. HLE: yield to scheduler + return 1.
-        else if (func.base_address == 0x00191bd0) {
+        else if (legacy_title_addr(func, 0x00191bd0)) {
             file << "    // HLE Hook for TimerWaitMicroseconds (busy-wait deadlock fix)\n";
             file << "    recompiled_functions[0x191bd0] = [](CpuContext& ctx, uint32_t addr) {\n";
             file << "        hle_TimerWaitMicroseconds(ctx);\n";
@@ -7941,7 +7941,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
         // (run orig, then log) reveal WHERE the pool / game-malloc actually land
         // so we can tell wrong-base vs heap-overlap vs exhaustion.
         // ================================================================
-        else if (func.base_address == 0x00181620) {
+        else if (legacy_title_addr(func, 0x00181620)) {
             // Streaming-pool getter: log the pool buffer base + pool struct
             // (base @0x31afbc, end @0x31afc0; buffer ptr @DAT_00309778=0x309778).
             file << "    recompiled_functions[0x181620] = [](CpuContext& ctx, uint32_t addr) {\n";
@@ -7962,7 +7962,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << (func.base_address + func.size) << ", recompiled_functions[0x181620]});\n";
         }
 
-        else if (func.base_address == 0x002c7718) {
+        else if (legacy_title_addr(func, 0x002c7718)) {
             // Pool-buffer allocator: a0 = size, v0 = returned base. The 0xb7ec10
             // (11.5MB) call is the streaming pool itself.
             file << "    recompiled_functions[0x2c7718] = [](CpuContext& ctx, uint32_t addr) {\n";
@@ -7983,7 +7983,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
                  << ", 0x" << std::hex << (func.base_address + func.size) << ", recompiled_functions[0x2c7718]});\n";
         }
 
-        else if (func.base_address == 0x002cbf98) {
+        else if (legacy_title_addr(func, 0x002cbf98)) {
             // Game malloc: a0 = heap obj (~0x2E9D40), a1 = size, v0 = ptr.
             // Logs only allocations that land past 32MB or fail (capped), so we
             // see exactly when/why the game heap crosses the 32MB boundary.
@@ -9039,7 +9039,7 @@ void Recompiler::recompile_function(const Function& func, std::ofstream& file) {
         // target mid-block. Each is reproduced verbatim from the recompiler's
         // own (correct) per-instruction translation, with the control flow
         // fixed to use local gotos. (analyze.cpp block discovery is unused.)
-        if (func.base_address == 0x00201428) {
+        if (legacy_title_addr(func, 0x00201428)) {
             file << R"code(void FUN_00201428(CpuContext& ctx, uint32_t addr) {
     (void)addr;
     bool branch_taken;
@@ -9095,7 +9095,7 @@ Label_201454: // 0x201454
             return;
         }
 
-        if (func.base_address == 0x00201460) {
+        if (legacy_title_addr(func, 0x00201460)) {
             file << R"code(void FUN_00201460(CpuContext& ctx, uint32_t addr) {
     (void)addr;
     bool branch_taken;
@@ -9177,7 +9177,7 @@ Label_2014cc: // 0x2014cc
             return;
         }
 
-        if (func.base_address == 0x0010d060) {
+        if (legacy_title_addr(func, 0x0010d060)) {
             file << R"code(void FUN_0010d060(CpuContext& ctx, uint32_t addr) {
     bool branch_taken;
     bool cond;
@@ -9310,7 +9310,7 @@ Label_0014: // 0x10d13c
 
 
 
-        if (func.base_address == 0x001e0fa0) {
+        if (legacy_title_addr(func, 0x001e0fa0)) {
         // PART 1: Prologue and switch dispatch
         file << R"code(void FUN_001e0fa0(CpuContext& ctx, uint32_t addr) {
         // Prologue - save registers
@@ -9598,7 +9598,7 @@ Label_0014: // 0x10d13c
     }
 
 
-    if (func.base_address == 0x002a6b68) {
+    if (legacy_title_addr(func, 0x002a6b68)) {
         // FUN_002a6b68 - Command State Machine Dispatcher
         file << R"code(void FUN_002a6b68(CpuContext& ctx, uint32_t addr) {
         // Prologue
@@ -9967,7 +9967,7 @@ Label_0014: // 0x10d13c
     //   a1 = (lui 0xbfff, ori 0xffff, dsll 4, ori 0xf) = 0xfffffffbffffffff
     //   v1 & a0 & a1                                   = 0xfffffff8ffffffff
     // ================================================================
-    if (func.base_address == 0x002b2558) {
+    if (legacy_title_addr(func, 0x002b2558)) {
         file << R"code(
     void FUN_002b2558(CpuContext& ctx, uint32_t addr) {
         // Prologue — stack setup and saved-reg preservation.
@@ -10529,7 +10529,7 @@ LAB_DONE_SWITCH:;
     }
 
 
-    if (func.base_address == 0x00177168) {
+    if (legacy_title_addr(func, 0x00177168)) {
         // FUN_00177168 - Main Dispatcher
         file << R"code(
 
@@ -12022,7 +12022,7 @@ LAB_DONE_SWITCH:;
         )code" << std::endl;
         return;
     }
-    if (func.base_address == 0x00101590) {
+    if (legacy_title_addr(func, 0x00101590)) {
         file << R"code(
         
             void FUN_00101590(CpuContext& ctx, uint32_t addr) {
@@ -12053,7 +12053,7 @@ LAB_DONE_SWITCH:;
         )code" << std::endl;
         return;
     }
-    if (func.base_address == 0x00173238) {
+    if (legacy_title_addr(func, 0x00173238)) {
         file << R"code(void FUN_00173238(CpuContext& ctx, uint32_t addr) {
         // [PGST-DRV] runtime page-state driver entry probe (2026-06-18). This is
         // the per-frame page-reveal state machine (reached every loading frame via
@@ -12805,7 +12805,7 @@ LAB_DONE_SWITCH:;
         return;
     }
 
-if (func.base_address == 0x00267080) {
+if (legacy_title_addr(func, 0x00267080)) {
         file << R"code(
         // Function: FUN_00267080 at 0x267080 (manual switch-dispatch override)
         void FUN_00267080(CpuContext& ctx, uint32_t addr) {
@@ -12878,7 +12878,7 @@ if (func.base_address == 0x00267080) {
         )code" << std::endl;
         return;
     }
-    if (func.base_address == 0x0019edb8) {
+    if (legacy_title_addr(func, 0x0019edb8)) {
         // Function: FUN_0019edb8 at 0x19edb8 (manual switch-dispatch override)
         //
         // Signature (inferred): void* FUN_0019edb8(void* param_1, void* param_2_unused,
@@ -12980,7 +12980,7 @@ if (func.base_address == 0x00267080) {
         )code" << std::endl;
         return;
     }
-    if (func.base_address == 0x001a1aa8) {
+    if (legacy_title_addr(func, 0x001a1aa8)) {
         // Function: FUN_001a1aa8 at 0x1a1aa8 (manual jump-table dispatcher).
         //
         // The auto-recompiler can't follow the computed `jr a0` at 0x1a1ad8
@@ -13053,7 +13053,7 @@ if (func.base_address == 0x00267080) {
         )code" << std::endl;
         return;
     }
-    if (func.base_address == 0x00265ce8) {
+    if (legacy_title_addr(func, 0x00265ce8)) {
         file << R"code(
         // Function: FUN_00265ce8 at 0x265ce8 (manual switch-dispatch override)
         void FUN_00265ce8(CpuContext& ctx, uint32_t addr) {
@@ -13153,7 +13153,7 @@ if (func.base_address == 0x00267080) {
         return;
     }
 
-    if (func.base_address == 0x0025c840) {
+    if (legacy_title_addr(func, 0x0025c840)) {
         // Function: FUN_0025c840 at 0x25c840 (manual switch-dispatch override)
         //
         // Signature: uint32_t FUN_0025c840(uint32_t param_1 /*a0*/, uint32_t cmd /*a1*/)
@@ -13295,7 +13295,7 @@ if (func.base_address == 0x00267080) {
         return;
     }
 
-    if (func.base_address == 0x002a0250) {
+    if (legacy_title_addr(func, 0x002a0250)) {
         file << R"code(
 // Function: FUN_002a0250 at 0x2a0250
 void FUN_002a0250(CpuContext& ctx, uint32_t addr) {
@@ -14178,7 +14178,7 @@ Label_0051: // 0x2a0764
     }
 
 
-    if (func.base_address == 0x002a0bb0) {
+    if (legacy_title_addr(func, 0x002a0bb0)) {
 
 
         file << R"code(
@@ -15178,7 +15178,7 @@ Label_0059: // 0x2a1084
 
 
 
-    if (func.base_address == 0x0001cca78){
+    if (legacy_title_addr(func, 0x0001cca78)){
         file << R"code(
         
         // Function: FUN_001cca78 at 0x1cca78
@@ -15912,7 +15912,7 @@ Label_0059: // 0x2a1084
 
 
     }
-    if(func.base_address == 0x001bb710){
+    if(legacy_title_addr(func, 0x001bb710)){
         file << R"code(
         
         // Function: FUN_001bb710 at 0x1bb710
@@ -17551,7 +17551,7 @@ Label_0059: // 0x2a1084
     }
     
     /* 
-        if (func.base_address == 0x001815c0) {
+        if (legacy_title_addr(func, 0x001815c0)) {
         std::cout << "Skipping recompile for 0x1815c0 (Hooked via HLE)" << std::endl;
         file << "// Function 0x1815c0 skipped - replaced by HLE hook\n";
         m_body_skipped.insert(func.base_address); // [W16R1][FIX-E1] no FUN_ symbol: raw table emits nullptr
@@ -17563,7 +17563,7 @@ Label_0059: // 0x2a1084
 
 
     /*
-        if (func.base_address == 0x001815f0) {
+        if (legacy_title_addr(func, 0x001815f0)) {
         std::cout << "Skipping recompile for 0x1815c0 (Hooked via HLE)" << std::endl;
         file << "// Function 0x1815f0 skipped - replaced by HLE hook\n";
         m_body_skipped.insert(func.base_address); // [W16R1][FIX-E1] no FUN_ symbol: raw table emits nullptr
@@ -17572,21 +17572,21 @@ Label_0059: // 0x2a1084
     */
 
 
-    if (func.base_address == 0x002d1a50) {
+    if (legacy_title_addr(func, 0x002d1a50)) {
         std::cout << "Skipping recompile for 0x2d1a50 (Hooked via HLE)" << std::endl;
         file << "// Function 0x2d1a50 skipped - replaced by HLE hook\n";
         m_body_skipped.insert(func.base_address); // [W16R1][FIX-E1] no FUN_ symbol: raw table emits nullptr
         return;
     }
 
-    if (func.base_address == 0x001017ce8) {
+    if (legacy_title_addr(func, 0x001017ce8)) {
         std::cout << "Skipping recompile for 0x1017ce8 (Hooked via HLE)" << std::endl;
         file << "// Function 0x1017ce8 skipped - replaced by HLE hook\n";
         m_body_skipped.insert(func.base_address); // [W16R1][FIX-E1] no FUN_ symbol: raw table emits nullptr
         return;
     }
 
-    if (func.base_address == 0x002d6880) {
+    if (legacy_title_addr(func, 0x002d6880)) {
         std::cout << "Skipping recompile for 0x002d6880 (Hooked via HLE)" << std::endl;
         file << "// Function 0x2d6880 skipped - replaced by HLE hook\n";
         m_body_skipped.insert(func.base_address); // [W16R1][FIX-E1] no FUN_ symbol: raw table emits nullptr
@@ -17594,7 +17594,7 @@ Label_0059: // 0x2a1084
     }
 
 
-    if (func.base_address == 0x002ad8f0) {
+    if (legacy_title_addr(func, 0x002ad8f0)) {
         std::cout << "Skipping recompile for 0x002ad8f0 (Hooked via HLE)" << std::endl;
         file << "// Function 0x2ad8f0 skipped - replaced by HLE hook\n";
         m_body_skipped.insert(func.base_address); // [W16R1][FIX-E1] no FUN_ symbol: raw table emits nullptr
@@ -17602,7 +17602,7 @@ Label_0059: // 0x2a1084
     }
 
 
-    if (func.base_address == 0x002aac80) {
+    if (legacy_title_addr(func, 0x002aac80)) {
         std::cout << "Skipping recompile for 0x002aac80 (Hooked via HLE)" << std::endl;
         file << "// Function 0x2aac80 skipped - replaced by HLE hook\n";
         m_body_skipped.insert(func.base_address); // [W16R1][FIX-E1] no FUN_ symbol: raw table emits nullptr
@@ -17612,14 +17612,14 @@ Label_0059: // 0x2a1084
 
 
 
-    if (func.base_address == 0x002adb18) {
+    if (legacy_title_addr(func, 0x002adb18)) {
         std::cout << "Skipping recompile for 0x002adb18 (Hooked via HLE)" << std::endl;
         file << "// Function 0x2adb18 skipped - replaced by HLE hook\n";
         m_body_skipped.insert(func.base_address); // [W16R1][FIX-E1] no FUN_ symbol: raw table emits nullptr
         return;
     }
 
-    if (func.base_address == 0x002ad1a0) {
+    if (legacy_title_addr(func, 0x002ad1a0)) {
         std::cout << "Skipping recompile for 0x002ad1a0 (Hooked via HLE)" << std::endl;
         file << "// Function 0x2ad1a0 skipped - replaced by HLE hook\n";
         m_body_skipped.insert(func.base_address); // [W16R1][FIX-E1] no FUN_ symbol: raw table emits nullptr
@@ -17627,85 +17627,85 @@ Label_0059: // 0x2a1084
     }
 
 
-    if (func.base_address == 0x002c6ce0) {
+    if (legacy_title_addr(func, 0x002c6ce0)) {
         std::cout << "Skipping recompile for 0x002c6ce0 (Hooked via HLE)" << std::endl;
         file << "// Function 0x2c6ce0 skipped - replaced by HLE hook\n";
         m_body_skipped.insert(func.base_address); // [W16R1][FIX-E1] no FUN_ symbol: raw table emits nullptr
         return;
     }
-    if (func.base_address == 0x002d69a0) {
+    if (legacy_title_addr(func, 0x002d69a0)) {
         std::cout << "Skipping recompile for 0x002d69a0 (Hooked via HLE)" << std::endl;
         file << "// Function 0x2d69a0 skipped - replaced by HLE hook\n";
         m_body_skipped.insert(func.base_address); // [W16R1][FIX-E1] no FUN_ symbol: raw table emits nullptr
         return;
     }
-    if (func.base_address == 0x002d27c8) {
+    if (legacy_title_addr(func, 0x002d27c8)) {
         std::cout << "Skipping recompile for 0x002d27c8 (Hooked via HLE)" << std::endl;
         file << "// Function 0x2d27c8 skipped - replaced by HLE hook\n";
         m_body_skipped.insert(func.base_address); // [W16R1][FIX-E1] no FUN_ symbol: raw table emits nullptr
         return;
     }
-    if (func.base_address == 0x002d27c8) {
+    if (legacy_title_addr(func, 0x002d27c8)) {
         std::cout << "Skipping recompile for 0x002d27c8 (Hooked via HLE)" << std::endl;
         file << "// Function 0x2d27c8 skipped - replaced by HLE hook\n";
         m_body_skipped.insert(func.base_address); // [W16R1][FIX-E1] no FUN_ symbol: raw table emits nullptr
         return;
     }
-    if (func.base_address == 0x00181490) {
+    if (legacy_title_addr(func, 0x00181490)) {
         std::cout << "Skipping recompile for 0x00181490 (Hooked via HLE)" << std::endl;
         file << "// Function 0x181490 skipped - replaced by HLE hook\n";
         m_body_skipped.insert(func.base_address); // [W16R1][FIX-E1] no FUN_ symbol: raw table emits nullptr
         return;
     }
-    if (func.base_address == 0x002c1d78) {
+    if (legacy_title_addr(func, 0x002c1d78)) {
         std::cout << "Skipping recompile for 0x002c1d78 (Hooked via HLE - sceGsSyncV)" << std::endl;
         file << "// Function 0x2c1d78 skipped - replaced by HLE hook (sceGsSyncV)\n";
         m_body_skipped.insert(func.base_address); // [W16R1][FIX-E1] no FUN_ symbol: raw table emits nullptr
         return;
     }
-    if (func.base_address == 0x002c1b50) {
+    if (legacy_title_addr(func, 0x002c1b50)) {
         std::cout << "Skipping recompile for 0x002c1b50 (Hooked via HLE - sceGsSyncPath)" << std::endl;
         file << "// Function 0x2c1b50 skipped - replaced by HLE hook (sceGsSyncPath)\n";
         m_body_skipped.insert(func.base_address); // [W16R1][FIX-E1] no FUN_ symbol: raw table emits nullptr
         return;
     }
-    if (func.base_address == 0x002c1bd8) {
+    if (legacy_title_addr(func, 0x002c1bd8)) {
         std::cout << "Skipping recompile for 0x002c1bd8 (Hooked via HLE - sceGsResetGraph)" << std::endl;
         file << "// Function 0x2c1bd8 skipped - replaced by HLE hook (sceGsResetGraph)\n";
         m_body_skipped.insert(func.base_address); // [W16R1][FIX-E1] no FUN_ symbol: raw table emits nullptr
         return;
     }
-    if (func.base_address == 0x0019aff0) {
+    if (legacy_title_addr(func, 0x0019aff0)) {
         std::cout << "Skipping recompile for 0x0019aff0 (Hooked via HLE - SetupDisplayRegisters)" << std::endl;
         file << "// Function 0x19aff0 skipped - replaced by HLE hook (SetupDisplayRegisters)\n";
         m_body_skipped.insert(func.base_address); // [W16R1][FIX-E1] no FUN_ symbol: raw table emits nullptr
         return;
     }
-    if (func.base_address == 0x002c1ab0) {
+    if (legacy_title_addr(func, 0x002c1ab0)) {
         std::cout << "Skipping recompile for 0x002c1ab0 (Hooked via HLE - sceGsResetPath)" << std::endl;
         file << "// Function 0x2c1ab0 skipped - replaced by HLE hook (sceGsResetPath)\n";
         m_body_skipped.insert(func.base_address); // [W16R1][FIX-E1] no FUN_ symbol: raw table emits nullptr
         return;
     }
-    if (func.base_address == 0x002c1030) {
+    if (legacy_title_addr(func, 0x002c1030)) {
         std::cout << "Skipping recompile for 0x002c1030 (Hooked via HLE - sceDmaSync)" << std::endl;
         file << "// Function 0x2c1030 skipped - replaced by HLE hook (sceDmaSync)\n";
         m_body_skipped.insert(func.base_address); // [W16R1][FIX-E1] no FUN_ symbol: raw table emits nullptr
         return;
     }
-    if (func.base_address == 0x002c12e0) {
+    if (legacy_title_addr(func, 0x002c12e0)) {
         std::cout << "Skipping recompile for 0x002c12e0 (Hooked via HLE - sceGifSyncDma)" << std::endl;
         file << "// Function 0x2c12e0 skipped - replaced by HLE hook (sceGifSyncDma)\n";
         m_body_skipped.insert(func.base_address); // [W16R1][FIX-E1] no FUN_ symbol: raw table emits nullptr
         return;
     }
-    if (func.base_address == 0x002c1190) {
+    if (legacy_title_addr(func, 0x002c1190)) {
         std::cout << "Skipping recompile for 0x002c1190 (Hooked via HLE - sceGsSendImage/IPU)" << std::endl;
         file << "// Function 0x2c1190 skipped - replaced by HLE hook (sceGsSendImage/IPU)\n";
         m_body_skipped.insert(func.base_address); // [W16R1][FIX-E1] no FUN_ symbol: raw table emits nullptr
         return;
     }
-    if (func.base_address == 0x002d20d0) {
+    if (legacy_title_addr(func, 0x002d20d0)) {
         std::cout << "Skipping recompile for 0x002d20d0 (HLE - FlushCache/SyncDCache NOP)" << std::endl;
         file << "// Function 0x2d20d0 skipped - D-cache invalidation, NOP in recompiler\n";
         m_body_skipped.insert(func.base_address); // [W16R1][FIX-E1] no FUN_ symbol: raw table emits nullptr
@@ -17717,7 +17717,7 @@ Label_0059: // 0x2a1084
     // pool like retail instead of the separate HLE g_heap that overlapped the game pool.
 
     /*
-        if (func.base_address == 0x002cf930) {
+        if (legacy_title_addr(func, 0x002cf930)) {
         std::cout << "Skipping recompile for 0x002cf930 (Hooked via HLE)" << std::endl;
         file << "// Function 0x2cf930 skipped - replaced by HLE hook\n";
         m_body_skipped.insert(func.base_address); // [W16R1][FIX-E1] no FUN_ symbol: raw table emits nullptr
@@ -17729,7 +17729,7 @@ Label_0059: // 0x2a1084
 
 
     /*
-    if (func.base_address == 0x00100360) {
+    if (legacy_title_addr(func, 0x00100360)) {
         // PART 1: Setup and Label_0000
         file << R"code(void FUN_00100360(CpuContext& ctx, uint32_t addr) {
     bool branch_taken;
@@ -18106,7 +18106,7 @@ Label_0059: // 0x2a1084
     */
 
 
-if (func.base_address == 0x00255188) {
+if (legacy_title_addr(func, 0x00255188)) {
     file << R"code(
 void FUN_00255188(CpuContext& ctx, uint32_t addr) {
     // ================================================================
@@ -18816,7 +18816,7 @@ Label_00255498:
 
 
 
-if (func.base_address == 0x0029e408) {
+if (legacy_title_addr(func, 0x0029e408)) {
     file << R"code(void FUN_0029e408(CpuContext& ctx, uint32_t addr) {
     // Prologue
     ctx.cpuRegs.GPR.r[29].SL[0] = ctx.cpuRegs.GPR.r[29].SL[0] - 0x10;
@@ -18931,7 +18931,7 @@ Label_epilogue:
 }
 
 
-if (func.base_address == 0x00202e28) {
+if (legacy_title_addr(func, 0x00202e28)) {
     file << R"code(
 void FUN_00202e28(CpuContext& ctx, uint32_t addr) {
     // ================================================================
@@ -19130,7 +19130,7 @@ Label_00202ee0:
 
    file << R"code(
 */
-if (func.base_address == 0x00254ee0){
+if (legacy_title_addr(func, 0x00254ee0)){
     file << R"code(
 
 void FUN_00254ee0(CpuContext& ctx, uint32_t addr) {
@@ -19430,7 +19430,7 @@ Label_00255010:
 }
 
 
-if (func.base_address == 0x00255040){
+if (legacy_title_addr(func, 0x00255040)){
     file << R"code(
     
 void FUN_00255040(CpuContext& ctx, uint32_t addr) {
@@ -19609,7 +19609,7 @@ Label_255158: // 0x255158
 
 
 
-if (func.base_address == 0x00202ef0) {
+if (legacy_title_addr(func, 0x00202ef0)) {
         // FUN_00202ef0
         file << R"code(void FUN_00202ef0(CpuContext& ctx, uint32_t addr) {
         uint32_t struct_base;
@@ -19806,7 +19806,7 @@ if (func.base_address == 0x00202ef0) {
     //   if FUN_00186900 input rows already ~0.86 -> the scale is seeded upstream.
     // Address read helper accepts main RAM (0x10000..0x2000000) and EE scratchpad
     // (0x70000000..0x70004000). Throttled to first 120 hits.
-    if (func.base_address == 0x186900 || func.base_address == 0x18e620) {
+    if (legacy_title_addr(func, 0x186900) || legacy_title_addr(func, 0x18e620)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_e620{0};\n";
         file << "      int _ec = s_e620.fetch_add(1);\n";
         file << "      if (_ec < 120) {\n";
@@ -19815,7 +19815,7 @@ if (func.base_address == 0x00202ef0) {
         file << "        uint32_t _ra = ctx.cpuRegs.GPR.r[31].UL[0];\n";
         file << "        auto _ok = [](uint32_t a)->bool{ return (a>=0x10000u&&a<0x2000000u)||(a>=0x70000000u&&a<0x70004000u); };\n";
         file << "        auto _rf = [&](uint32_t a)->float{ if(!_ok(a)) return 0.0f; uint32_t u=memory::read<uint32_t>(a); float f; std::memcpy(&f,&u,4); return f; };\n";
-        if (func.base_address == 0x186900) {
+        if (legacy_title_addr(func, 0x186900)) {
             // matrix -> quaternion : log input matrix row magnitudes (4x4, rotation 3x3, stride 0x10)
             file << "        float m00=_rf(_ip+0),m01=_rf(_ip+4),m02=_rf(_ip+8);\n";
             file << "        float m10=_rf(_ip+0x10),m11=_rf(_ip+0x14),m12=_rf(_ip+0x18);\n";
@@ -19847,8 +19847,8 @@ if (func.base_address == 0x00202ef0) {
     // the ACTIVE bullseye window rather than early-boot frames.
     // Draw routing (verified): FUN_002a1098 -> FUN_002a0bb0 -> (type==2 so)
     //   query2==0 ? vtable+0x34=FUN_002a75e0 : vtable+0xc=FUN_0029f5c0.
-    if (func.base_address == 0x2a1098 || func.base_address == 0x2a75e0 ||
-        func.base_address == 0x29f5c0 || func.base_address == 0x2a0bb0) {
+    if (legacy_title_addr(func, 0x2a1098) || legacy_title_addr(func, 0x2a75e0) ||
+        legacy_title_addr(func, 0x29f5c0) || legacy_title_addr(func, 0x2a0bb0)) {
         file << "    { extern std::ofstream g_logFile; static int s_te=0;\n";
         file << "      uint32_t _now=memory::read<uint32_t>(0x323534);\n";
         file << "      if (_now>11000u && s_te<120){ s_te++;\n";
@@ -19875,7 +19875,7 @@ if (func.base_address == 0x00202ef0) {
     // primary signal (v0 isn't computed yet at entry). Bounded to first 800
     // calls via a static counter; logs phase so the reader can filter == 3.
     // =========================================================================
-    if (func.base_address == 0x2b4f50) {
+    if (legacy_title_addr(func, 0x2b4f50)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_toc{0};\n";
         file << "      int _tc = s_toc.fetch_add(1);\n";
         file << "      if (_tc < 800) {\n";
@@ -19921,7 +19921,7 @@ if (func.base_address == 0x00202ef0) {
     //   branch reads *(char*)param_2 directly). v0 isn't computed at entry; the
     //   return is already paired via the host [MAYBEISSUE-DIAG] hook. Bounded 800.
     // =========================================================================
-    if (func.base_address == 0x2aab28) {
+    if (legacy_title_addr(func, 0x2aab28)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_mis{0};\n";
         file << "      int _mc = s_mis.fetch_add(1);\n";
         file << "      if (_mc < 800) {\n";
@@ -19981,7 +19981,7 @@ if (func.base_address == 0x00202ef0) {
     // Both dump the raw u32 window mgr+0x2bec..mgr+0x2ca0 (captures cx/cy/extent +
     // the oscillating phase field) and the engine delta DAT_003097dc @ 0x3097dc.
     // =========================================================================
-    if (func.base_address == 0x173040) {
+    if (legacy_title_addr(func, 0x173040)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_lx{0};\n";
         file << "      uint32_t _phase = memory::read<uint32_t>(0x309718);\n";
         file << "      int _lc = (_phase==3u) ? s_lx.fetch_add(1) : 1000000;\n";
@@ -20010,7 +20010,7 @@ if (func.base_address == 0x00202ef0) {
         file << "    }\n";
     }
 
-    if (func.base_address == 0x169640) {
+    if (legacy_title_addr(func, 0x169640)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_lu{0};\n";
         file << "      uint32_t _phase = memory::read<uint32_t>(0x309718);\n";
         file << "      int _uc = (_phase==3u) ? s_lu.fetch_add(1) : 1000000;\n";
@@ -20048,7 +20048,7 @@ if (func.base_address == 0x00202ef0) {
     // jalr dispatch drops it. Decoded (elf @0x1abeb0): s0=*(node+0xc); fnptr =
     // *(s0+0x44); adj = (s16)*(s0+0x40); call a0 = node + adj.
     // =========================================================================
-    if (func.base_address == 0x1abeb0) {
+    if (legacy_title_addr(func, 0x1abeb0)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_ind{0};\n";
         file << "      uint32_t _phase = memory::read<uint32_t>(0x309718);\n";
         file << "      uint32_t _node = ctx.cpuRegs.GPR.r[4].UL[0];   // a0\n";
@@ -20081,7 +20081,7 @@ if (func.base_address == 0x00202ef0) {
     // which leaf, logo-gated via the matrix src a1 (a2 here = *(elem+0x88) the
     // node matrix; a1=s2 is the matrix source). a0=s0=draw-state. Gated to phase 3.
     // =========================================================================
-    if (func.base_address == 0x1a0510) {
+    if (legacy_title_addr(func, 0x1a0510)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_lf{0};\n";
         file << "      uint32_t _phase = memory::read<uint32_t>(0x309718);\n";
         file << "      uint32_t _ds = ctx.cpuRegs.GPR.r[4].UL[0];   // a0 = draw-state\n";
@@ -20121,7 +20121,7 @@ if (func.base_address == 0x00202ef0) {
     // method is the projecting one or a degenerate path (host divergence vs
     // game-correct-but-broken). a0 = node. Logo-gated via the wobble 2x2.
     // =========================================================================
-    if (func.base_address == 0x1ab420) {
+    if (legacy_title_addr(func, 0x1ab420)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_dp{0};\n";
         file << "      uint32_t _node = ctx.cpuRegs.GPR.r[4].UL[0];\n";
         file << "      auto _rf=[&](uint32_t _a)->float{ float _f=0.0f; if(_a>=0x10000u&&_a<0x2000000u){uint32_t _r=memory::read<uint32_t>(_a); std::memcpy(&_f,&_r,4);} return _f; };\n";
@@ -20162,7 +20162,7 @@ if (func.base_address == 0x00202ef0) {
     // (host reads zero for the committed pose). a0=s1 (node, +0x08 gate byte),
     // a1=s0 (local quad elem), a2=s5 (GIF cursor). Gated to loading phase + a cap.
     // =========================================================================
-    if (func.base_address == 0x1a89e0) {
+    if (legacy_title_addr(func, 0x1a89e0)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_sc{0};\n";
         file << "      uint32_t _phase = memory::read<uint32_t>(0x309718);\n";
         file << "      uint32_t _a0 = ctx.cpuRegs.GPR.r[4].UL[0];\n";
@@ -20199,7 +20199,7 @@ if (func.base_address == 0x00202ef0) {
     // body performs) to show whether the EMITTED vertex collapses even when the
     // node matrix is full.
     // =========================================================================
-    if (func.base_address == 0x18e4f0) {
+    if (legacy_title_addr(func, 0x18e4f0)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_ov{0};\n";
         // [R142-SCENEWALK] Budget early-out BEFORE the 16 guarded matrix reads.
         // This probe sits on the per-element transform (8k-16k calls per 2s in
@@ -20253,7 +20253,7 @@ if (func.base_address == 0x00202ef0) {
     // phase field mgr+0x2bec for direct correlation. Phase==3 gated, capped,
     // EE-range guarded, READ-ONLY. (Reading 0x10000000 invokes the host T0
     // handler exactly as the game does; no state mutated.)
-    if (func.base_address == 0x169640) {
+    if (legacy_title_addr(func, 0x169640)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_le2{0};\n";
         file << "      uint32_t _ph2 = memory::read<uint32_t>(0x309718);\n";
         file << "      int _e2c = (_ph2==3u) ? s_le2.fetch_add(1) : 1000000;\n";
@@ -20289,7 +20289,7 @@ if (func.base_address == 0x00202ef0) {
     // +0x2c50); corner pair 1 = +0x80/+0x84 (mgr+0x2c6c/+0x2c70); color/alpha =
     // +0x40 (mgr+0x2c2c). Floats read as uint32 bit-patterns, printed hex. Same
     // guards as [LOGO-EMIT2]: phase==3 gated, capped, EE-range guarded, READ-ONLY.
-    if (func.base_address == 0x169640) {
+    if (legacy_title_addr(func, 0x169640)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_lv2{0};\n";
         file << "      uint32_t _phv2 = memory::read<uint32_t>(0x309718);\n";
         file << "      int _v2c = (_phv2==3u) ? s_lv2.fetch_add(1) : 1000000;\n";
@@ -20321,7 +20321,7 @@ if (func.base_address == 0x00202ef0) {
     // first child + that child's +0x4c emit target, so the loading leaf that issues
     // the 0x370000 sprite can be identified (and cross-checked against the [LOGO-VIS2]
     // desc collapse). All reads EE-range guarded; phase==3 gated; capped; READ-ONLY.
-    if (func.base_address == 0x1f3218) {
+    if (legacy_title_addr(func, 0x1f3218)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_lv3{0};\n";
         file << "      uint32_t _phv3 = memory::read<uint32_t>(0x309718);\n";
         file << "      int _v3c = (_phv3==3u) ? s_lv3.fetch_add(1) : 1000000;\n";
@@ -20393,7 +20393,7 @@ if (func.base_address == 0x00202ef0) {
     //   real (so any collapse is strictly post-transform). float fields printed as
     //   uint32 bit-patterns (hex). phase==3 gated (0x309718), cap 4000, EE-range
     //   guarded [0x10000,0x2000000), READ-ONLY.
-    if (func.base_address == 0x1ba3a8) {
+    if (legacy_title_addr(func, 0x1ba3a8)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_lv4{0};\n";
         file << "      uint32_t _phv4 = memory::read<uint32_t>(0x309718);\n";
         file << "      int _v4c = (_phv4==3u) ? s_lv4.fetch_add(1) : 1000000;\n";
@@ -20442,7 +20442,7 @@ if (func.base_address == 0x00202ef0) {
     // obj fields that feed the dynamic +0x34 vertex emit (+0x10/+0x14 tex/+0x30/
     // +0x40 candidate color-alpha/+0x60). float fields as uint32 hex. phase==3
     // gated (0x309718), cap 4000, EE-range guarded [0x10000,0x2000000), READ-ONLY.
-    if (func.base_address == 0x1ba3a8) {
+    if (legacy_title_addr(func, 0x1ba3a8)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_lv5{0};\n";
         file << "      uint32_t _phv5 = memory::read<uint32_t>(0x309718);\n";
         file << "      int _v5c = (_phv5==3u) ? s_lv5.fetch_add(1) : 1000000;\n";
@@ -20498,7 +20498,7 @@ if (func.base_address == 0x00202ef0) {
     // branch that emits model (0,0) corners. a0 = param_1 (sprite element). float
     // fields as uint32 hex. phase==3 gated (0x309718), cap 4000, EE-range guarded
     // [0x10000,0x2000000), READ-ONLY.
-    if (func.base_address == 0x1ba3a8) {
+    if (legacy_title_addr(func, 0x1ba3a8)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_lv6{0};\n";
         file << "      uint32_t _phv6 = memory::read<uint32_t>(0x309718);\n";
         file << "      int _v6c = (_phv6==3u) ? s_lv6.fetch_add(1) : 1000000;\n";
@@ -20558,7 +20558,7 @@ if (func.base_address == 0x00202ef0) {
     //   alpha candidates a40=*(obj+0x40) a44=*(obj+0x44) e2c=*(p1+0x2c) e30=*(p1+0x30)
     // float fields printed as uint32 bit-patterns (hex). phase==3 gated (0x309718),
     // cap 4000, EE-range guarded [0x10000,0x2000000), READ-ONLY. Modeled on [LOGO-VIS5].
-    if (func.base_address == 0x1ba3a8) {
+    if (legacy_title_addr(func, 0x1ba3a8)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_lv7{0};\n";
         file << "      uint32_t _phv7 = memory::read<uint32_t>(0x309718);\n";
         file << "      int _v7c = (_phv7==3u) ? s_lv7.fetch_add(1) : 1000000;\n";
@@ -20650,8 +20650,8 @@ if (func.base_address == 0x00202ef0) {
     // overshoots 1.0 (clock/codegen) vs cleanly hits 1.0 (faithful missing hand-off).
     // floats logged as uint32 bit-patterns. phase==3 gated (0x309718==3), EE-range
     // guarded [0x10000,0x2000000), atomic cap 4000, READ-ONLY. Modeled on [LOGO-VIS6].
-    if (func.base_address == 0x25a5d0 || func.base_address == 0x25af88) {
-        const char* _src = (func.base_address == 0x25a5d0) ? "a5d0" : "af88";
+    if (legacy_title_addr(func, 0x25a5d0) || legacy_title_addr(func, 0x25af88)) {
+        const char* _src = (legacy_title_addr(func, 0x25a5d0)) ? "a5d0" : "af88";
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_lv8{0};\n";
         file << "      uint32_t _ph8 = memory::read<uint32_t>(0x309718);\n";
         file << "      uint32_t _el = ctx.cpuRegs.GPR.r[4].UL[0];\n";
@@ -20714,7 +20714,7 @@ if (func.base_address == 0x00202ef0) {
     //       zeroed downstream in the +0xc apply / emit leaf despite selection
     //       (fix moves to FUN_001ab778's +0xc method / the emit).
     // EE-range guarded [0x10000,0x2000000), atomic cap 4000, READ-ONLY.
-    if (func.base_address == 0x00171bb8) {
+    if (legacy_title_addr(func, 0x00171bb8)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_lv9{0};\n";
         file << "      uint32_t _ph9 = memory::read<uint32_t>(0x309718);\n";
         file << "      uint32_t _nd = ctx.cpuRegs.GPR.r[4].UL[0];\n";
@@ -20777,7 +20777,7 @@ if (func.base_address == 0x00202ef0) {
     // Phase==3 gated (0x309718==3), EE-range guarded [0x10000,0x2000000), deduped
     // by g_vsync_frame (one line/frame, like [LOGO-FRAME]), READ-ONLY.
     // =========================================================================
-    if (func.base_address == 0x00171bb8) {
+    if (legacy_title_addr(func, 0x00171bb8)) {
         file << "    { extern std::ofstream g_logFile; extern std::atomic<uint32_t> g_vsync_frame;\n";
         file << "      static std::atomic<uint32_t> s_wobF{0xffffffffu};\n";
         file << "      uint32_t _phw = memory::read<uint32_t>(0x309718);\n";
@@ -20848,7 +20848,7 @@ if (func.base_address == 0x00202ef0) {
     //       channel completes-and-reverts and is not re-driven (fix = the channel
     //       restart in FUN_00172d88 / channel state in FUN_00255040).
     // EE-range guarded [0x10000,0x2000000), atomic cap 4000, READ-ONLY.
-    if (func.base_address == 0x00256620) {
+    if (legacy_title_addr(func, 0x00256620)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_lvA{0};\n";
         file << "      uint32_t _phA = memory::read<uint32_t>(0x309718);\n";
         file << "      uint32_t _ch = ctx.cpuRegs.GPR.r[4].UL[0];\n";
@@ -20906,7 +20906,7 @@ if (func.base_address == 0x00202ef0) {
     //   - if clk8 IS 0 while etime advances -> FUN_001915f0 is force-zeroing it
     //     (bit0 of clk+0 clear, or bit1 stuck) -> fix the clock state word feed.
     // Phase==3 gated (0x309718==3), EE-range guarded, atomic cap 4000, READ-ONLY.
-    if (func.base_address == 0x00256620) {
+    if (legacy_title_addr(func, 0x00256620)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_lvAA{0};\n";
         file << "      uint32_t _phAA = memory::read<uint32_t>(0x309718);\n";
         file << "      uint32_t _chAA = ctx.cpuRegs.GPR.r[4].UL[0];\n";
@@ -20950,7 +20950,7 @@ if (func.base_address == 0x00202ef0) {
     // mgr = a0-0x5d0. DECISION: geom key-masks (k0b/k0c) NONZERO + pgst never
     // 5/6 + modes all 0  => (i); k0b/k0c == 0 => (ii).
     // Phase==3 gated (0x309718==3), atomic cap 800, EE-range guarded, READ-ONLY.
-    if (func.base_address == 0x1714a8) {
+    if (legacy_title_addr(func, 0x1714a8)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_armk{0};\n";
         file << "      uint32_t _phk = memory::read<uint32_t>(0x309718);\n";
         file << "      uint32_t _ui = ctx.cpuRegs.GPR.r[4].UL[0];\n";
@@ -21001,7 +21001,7 @@ if (func.base_address == 0x00202ef0) {
     // + the live phase. If covers_geom never appears, the geom-channel START is
     // never issued on host (confirms the (i)/(ii) split from [LOGO-ARMCHK]).
     // Atomic cap 1000, EE-range guarded, READ-ONLY.
-    if (func.base_address == 0x259b20) {
+    if (legacy_title_addr(func, 0x259b20)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_lstart{0};\n";
         file << "      int _lsc = s_lstart.fetch_add(1);\n";
         file << "      if (_lsc < 1000) {\n";
@@ -21053,7 +21053,7 @@ if (func.base_address == 0x00202ef0) {
     // Phase==3 gated (0x309718==3), FRAME-ALIGNED + deduped one line per
     // distinct g_vsync_frame (like [LOGO-FRAME]/[LOGO-WOBBLE]), EE-range guarded
     // on every read, static counter cap 600 (in addition to dedup), READ-ONLY.
-    if (func.base_address == 0x259b20) {
+    if (legacy_title_addr(func, 0x259b20)) {
         file << "    { extern std::ofstream g_logFile; extern std::atomic<uint32_t> g_vsync_frame;\n";
         file << "      static std::atomic<uint32_t> s_reqF{0xffffffffu};\n";
         file << "      static std::atomic<int> s_reqC{0};\n";
@@ -21114,7 +21114,7 @@ if (func.base_address == 0x00202ef0) {
     // (the geom-group keys are never populated) => fix the channel-group
     // registration codegen. Phase==3 gated, atomic cap 400, EE-range guarded,
     // READ-ONLY.
-    if (func.base_address == 0x176260) {
+    if (legacy_title_addr(func, 0x176260)) {
         file << "    { extern std::ofstream g_logFile; extern std::atomic<uint32_t> g_vsync_frame;\n";
         file << "      static std::atomic<int> s_a260{0};\n";
         file << "      uint32_t _ph = memory::read<uint32_t>(0x309718);\n";
@@ -21149,7 +21149,7 @@ if (func.base_address == 0x00202ef0) {
     // path into the per-group geom START. a0 (r[4]) = mgr. Same decision rule as
     // [LOGO-ARM260]: confirms whether this path runs on host and what selector
     // it sees. Phase==3 gated, atomic cap 400, EE-range guarded, READ-ONLY.
-    if (func.base_address == 0x176698) {
+    if (legacy_title_addr(func, 0x176698)) {
         file << "    { extern std::ofstream g_logFile; extern std::atomic<uint32_t> g_vsync_frame;\n";
         file << "      static std::atomic<int> s_a698{0};\n";
         file << "      uint32_t _ph = memory::read<uint32_t>(0x309718);\n";
@@ -21182,7 +21182,7 @@ if (func.base_address == 0x00202ef0) {
     // never invoked on host (control-flow); appears with k09==0 -> registration
     // gap; appears with k09!=0 and slot12 mode still 0 afterward -> slot/array
     // wiring mismatch. Phase==3 gated, atomic cap 200, EE-range guarded, READ-ONLY.
-    if (func.base_address == 0x164450) {
+    if (legacy_title_addr(func, 0x164450)) {
         file << "    { extern std::ofstream g_logFile; extern std::atomic<uint32_t> g_vsync_frame;\n";
         file << "      static std::atomic<int> s_a450{0};\n";
         file << "      uint32_t _ph = memory::read<uint32_t>(0x309718);\n";
@@ -21220,7 +21220,7 @@ if (func.base_address == 0x00202ef0) {
     //   * page-OPEN never fires                     -> case-3 issues no OPEN on
     //     host (the entry-edge gate / OPEN path diverges).
     // Phase==3 gated (0x309718==3), atomic cap 400, EE-range guarded, READ-ONLY.
-    if (func.base_address == 0x2a11d0) {
+    if (legacy_title_addr(func, 0x2a11d0)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_pgopen{0};\n";
         file << "      uint32_t _phpo = memory::read<uint32_t>(0x309718);\n";
         file << "      int _poc = (_phpo==3u) ? s_pgopen.fetch_add(1) : 1000000;\n";
@@ -21272,7 +21272,7 @@ if (func.base_address == 0x00202ef0) {
     // clip length, *p1 & 0xf = mode, p1+0x20 = ptr to 2 channel-active flag
     // words. Phase==3 gated (0x309718==3), atomic cap 400, EE-range guarded,
     // READ-ONLY.
-    if (func.base_address == 0x29ee78) {
+    if (legacy_title_addr(func, 0x29ee78)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_clip{0};\n";
         file << "      uint32_t _phcl = memory::read<uint32_t>(0x309718);\n";
         file << "      uint32_t _p1 = ctx.cpuRegs.GPR.r[4].UL[0];\n";
@@ -21329,7 +21329,7 @@ if (func.base_address == 0x00202ef0) {
     // override at 0x2a1738 calls through to FUN_002a1738, whose body carries this
     // prologue probe, so it runs on every arm call.)
     // =========================================================================
-    if (func.base_address == 0x2a1738) {
+    if (legacy_title_addr(func, 0x2a1738)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_arm{0};\n";
         file << "      uint32_t _pharm = memory::read<uint32_t>(0x309718);\n";
         file << "      int _amc = (_pharm==3u) ? s_arm.fetch_add(1) : 1000000;\n";
@@ -21373,7 +21373,7 @@ if (func.base_address == 0x00202ef0) {
     // Phase==3 gated, atomic cap, EE-range guarded, READ-ONLY. (0x2a6fa8 is
     // auto-generated, so this prologue probe runs on every advance call.)
     // =========================================================================
-    if (func.base_address == 0x2a6fa8) {
+    if (legacy_title_addr(func, 0x2a6fa8)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_adv{0};\n";
         file << "      uint32_t _phad = memory::read<uint32_t>(0x309718);\n";
         file << "      int _avc = (_phad==3u) ? s_adv.fetch_add(1) : 1000000;\n";
@@ -21416,7 +21416,7 @@ if (func.base_address == 0x00202ef0) {
     // disasm (pcsx2-pine; Ghidra bridges 8080/8081 OFFLINE this run). Gated on
     // loading phase (0x309718==3), capped, EE-range-guarded — read-only.
     // =========================================================================
-    if (func.base_address == 0x173ce8) {
+    if (legacy_title_addr(func, 0x173ce8)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_l6{0};\n";
         file << "      uint32_t _phase = memory::read<uint32_t>(0x309718);\n";
         file << "      int _c6 = (_phase==3u) ? s_l6.fetch_add(1) : 1000000;\n";
@@ -21465,7 +21465,7 @@ if (func.base_address == 0x00202ef0) {
     //   node+0x2c = next; node+0xc = name.
     // Answers: does the cursor reach end / sub-anim state hit 4 at ~#946, AND is the
     // clip marked to loop (mode 1/2)? Phase==3 gated, capped, EE-range guarded, READ-ONLY.
-    if (func.base_address == 0x2aa8d0) {
+    if (legacy_title_addr(func, 0x2aa8d0)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_lv1{0};\n";
         file << "      uint32_t _phv = memory::read<uint32_t>(0x309718);\n";
         file << "      int _v1 = (_phv==3u) ? s_lv1.fetch_add(1) : 1000000;\n";
@@ -21502,7 +21502,7 @@ if (func.base_address == 0x00202ef0) {
     // (the clip-control latch predicate) and the SAME clip manager *0x309738 the
     // poll queries, so the done flag + cursor + loop mode are timestamped per frame
     // against the #946 collapse. Phase==3 gated, capped, EE-range guarded, READ-ONLY.
-    if (func.base_address == 0x173ce8) {
+    if (legacy_title_addr(func, 0x173ce8)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_lv2{0};\n";
         file << "      uint32_t _phv2 = memory::read<uint32_t>(0x309718);\n";
         file << "      int _v2 = (_phv2==3u) ? s_lv2.fetch_add(1) : 1000000;\n";
@@ -21565,7 +21565,7 @@ if (func.base_address == 0x00202ef0) {
     //   [LOGO-XFORM] uiupd found FROZEN) every frame so consecutive-frame deltas
     //   are visible, plus the engine time-base dt = u32@0x3097dc (=9000.0f).
     // =========================================================================
-    if (func.base_address == 0x17d558) {
+    if (legacy_title_addr(func, 0x17d558)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_le{0};\n";
         file << "      uint32_t _phase = memory::read<uint32_t>(0x309718);\n";
         file << "      int _ec = (_phase==3u) ? s_le.fetch_add(1) : 1000000;\n";
@@ -21634,7 +21634,7 @@ if (func.base_address == 0x00202ef0) {
     //       (g14 zeroed once then frozen); (iii) s=0x3 exists at a different idx =>
     //       index helper FUN_00259af0 divergence. Read-only; phase-gated; capped.
     // =========================================================================
-    if (func.base_address == 0x172d88) {
+    if (legacy_title_addr(func, 0x172d88)) {
         file << "    { extern std::ofstream g_logFile; static std::atomic<int> s_lg{0};\n";
         file << "      uint32_t _phase = memory::read<uint32_t>(0x309718);\n";
         file << "      int _gc = (_phase==3u) ? s_lg.fetch_add(1) : 1000000;\n";
@@ -21774,14 +21774,14 @@ if (func.base_address == 0x00202ef0) {
     }
     
     // Generate each basic block with simple labels
-    if (func.base_address == 0x2d4cb0 || func.base_address == 0x2d4c60){
+    if (legacy_title_addr(func, 0x2d4cb0) || legacy_title_addr(func, 0x2d4c60)){
         file << "   ctx.cpuRegs.GPR.r[2].UL[0] = 0x10000;" << std::endl;
 
 
         file << "   return;" << std::endl;
         file <<    "   }" << std::endl;
     }
-    else if (func.base_address == 0x1e8198) {
+    else if (legacy_title_addr(func, 0x1e8198)) {
             file << "    // HLE Hook for DMA Wait: Force 'Success/Not Busy' (0)\n";
             file << "    //recompiled_functions[0x" << std::hex << func.base_address << "] = [](CpuContext& ctx, uint32_t addr);\n";
             file << "        ctx.cpuRegs.GPR.r[2].UL[0] = 0; // v0 = 0 (Breaks the loop)\n";
@@ -22610,7 +22610,7 @@ void Recompiler::translate_control_flow(const rabbitizer::InstructionR5900& inst
             // + flushed on EVERY pass through this jal (uncapped, per-call
             // g_logFile.flush() = one fsync-class syscall per call). The
             // s7/a2 null-object hunt closed with the R187 fun_001745d0 fix.
-            if (false && func.base_address == 0x21f0a0 && target_addr == 0x25e478) {
+            if (false && legacy_title_addr(func, 0x21f0a0) && target_addr == 0x25e478) {
                 file << "    { // [21F0A0-A2-PROBE] object-arg state before FUN_0025e478\n";
                 file << "        static int _p21_n = 0; int _p21_i = ++_p21_n;\n";
                 file << "        uint32_t _p21_param1 = ctx.cpuRegs.GPR.r[18].UL[0];\n";
@@ -22802,7 +22802,7 @@ void Recompiler::translate_control_flow(const rabbitizer::InstructionR5900& inst
                 // clobber detector logged + flushed on EVERY dispatch through
                 // the 0x21f20c jalr (uncapped, 2 flushes per call). The
                 // clobber hunt closed with the R187 fun_001745d0 fix.
-                bool _is_vt20c = false && (func.base_address == 0x21f0a0 && current_pc == 0x21f20c);
+                bool _is_vt20c = false && (legacy_title_addr(func, 0x21f0a0) && current_pc == 0x21f20c);
                 if (_is_vt20c) {
                     file << "        uint32_t _vt20c_s7 = ctx.cpuRegs.GPR.r[23].UL[0];\n";
                     file << "        g_logFile << \"[VT20C] @0x21f20c target=0x\" << std::hex << target << \" s7_before=0x\" << _vt20c_s7 << std::dec << std::endl; g_logFile.flush();\n";

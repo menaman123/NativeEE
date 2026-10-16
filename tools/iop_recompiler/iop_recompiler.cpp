@@ -668,14 +668,14 @@ void IopRecompiler::recompile_function(const IopFunction& func,
                         file << "            goto " << label(pc + 8) << ";\n";
                         file << "        }\n";
                         file << "        std::printf(\"[IOP-RECOMP] Unresolved JR "
-                                "to 0x%08X\\n\", _jr_target);\n";
+                                "to 0x%08X at 0x" << hex(pc).substr(2) << "\\n\", _jr_target);\n";
                         file << "        goto " << label(pc + 8) << ";\n";
                     } else {
                         // A jr to another function is a TAIL CALL (the callee returns
                         // to this function's caller): run it and return.
                         emit_indirect_call(file, "        ", "_jr_target", "", "return;");
                         file << "        std::printf(\"[IOP-RECOMP] Unresolved JR "
-                                "to 0x%08X\\n\", _jr_target);\n";
+                                "to 0x%08X at 0x" << hex(pc).substr(2) << "\\n\", _jr_target);\n";
                         file << "        return;\n";
                     }
                     file << "    }\n";
@@ -696,7 +696,7 @@ void IopRecompiler::recompile_function(const IopFunction& func,
                 // Call target
                 m_census.jalr_sites++;
                 emit_indirect_call(file, "    ", "_jalr_target",
-                                   "std::printf(\"[IOP-RECOMP] Unresolved JALR to 0x%08X\\n\", _jalr_target);", "");
+                                   "std::printf(\"[IOP-RECOMP] Unresolved JALR to 0x%08X at 0x" + hex(pc).substr(2) + "\\n\", _jalr_target);", "");
                 file << "    } // end jalr\n";
             }
             else {

@@ -118,7 +118,7 @@ int main() {
     CHECK(Call(&LibpadBindings::SetReqState, 0, 0, 0) == 1 && S(Call(&LibpadBindings::GetState, 0, 0)) == 6, "set_req_state_0_back_to_6");
     CHECK(Call(&LibpadBindings::GetButtonMask, 0, 0) == 0x3FFFF, "button_mask_0x3ffff");
     CHECK(Call(&LibpadBindings::InfoAct, 0, 0, 0xFFFFFFFFu, 0) == 2 && Call(&LibpadBindings::InfoAct, 0, 0, 1, 1) == 1 &&
-              Call(&LibpadBindings::InfoAct, 0, 0, 1, 4) == 0xFF && Call(&LibpadBindings::InfoAct, 0, 0, 2, 1) == 0,
+              Call(&LibpadBindings::InfoAct, 0, 0, 1, 4) == 0x14 && Call(&LibpadBindings::InfoAct, 0, 0, 0, 2) == 2 && Call(&LibpadBindings::InfoAct, 0, 0, 2, 1) == 0,
           "info_act_dualshock2_table");
     CHECK(Call(&LibpadBindings::InfoMode, 0, 0, 1, 0) == (PadProtocol::kModeCurIdAnalog >> 4), "info_mode_cur_id_7");
     for (uint32_t i = 0; i < 6; i++) memory::write<uint8_t>(kActData + i, static_cast<uint8_t>(0xA0 + i));
@@ -170,6 +170,65 @@ int main() {
     memory::write<uint32_t>(kSend, 0x42);
     padman.Call(req);
     CHECK(padman.UnknownCalls() == 1 && memory::read<uint32_t>(kRecv) == 1 && padman.Calls() == 6, "padman_unknown_op_1_counted");
+
+    // --- PadmanModule, SDK 3 dialect (padman.irx 4.10 table): the per-op reply offsets, OPEN's
+    // area at +0x10 / id at +0x14, GET_MODVER, the actuator sink slices, CLOSE -----------------
+    padman.SetModuleFacts([] { return PadmanModule::ModuleFacts{0x0410, 0x00088040, 0x1bd0}; });
+    const auto Clear = [] { for (uint32_t i = 0; i < 0x20; i += 4) memory::write<uint32_t>(kRecv + i, 0xEEEEEEEEu); };
+    Clear();
+    memory::write<uint32_t>(kSend, PadmanModule::kSdk3GetModVersion);
+    padman.Call(req);
+    CHECK(padman.LastSdk3() && memory::read<uint32_t>(kRecv + 0x0C) == 0x0410 && memory::read<uint32_t>(kRecv) == 0xEEEEEEEEu &&
+              memory::read<uint32_t>(kRecv + 0x14) == 0xEEEEEEEEu,
+          "sdk3_get_modver_at_0c_only");
+    Clear();
+    memory::write<uint32_t>(kSend, PadmanModule::kSdk3Init);
+    padman.Call(req);
+    CHECK(padman.InitCalls() == 2 && memory::read<uint32_t>(kRecv + 0x0C) == 1, "sdk3_init_at_0c");
+    pad.ClearArea(0);
+    Clear();
+    memory::write<uint32_t>(kSend, PadmanModule::kSdk3Open);
+    memory::write<uint32_t>(kSend + 4, 0);
+    memory::write<uint32_t>(kSend + 8, 0);
+    memory::write<uint32_t>(kSend + 0x0C, 0);        // the legacy area word: ignored here
+    memory::write<uint32_t>(kSend + 0x10, kArea);
+    g_now = 900;
+    padman.Call(req);
+    CHECK(padman.OpenCalls() == 2 && pad.Area(0) == kArea && pad.OpenedAt(0) == 900 && memory::read<uint32_t>(kRecv + 0x0C) == 1 &&
+              memory::read<uint32_t>(kRecv + 0x14) == 0x00088040,
+          "sdk3_open_area_at_10_result_0c_id_14");
+    CHECK(PadmanModule::Sdk3PadId(PadmanModule::ModuleFacts{0x0410, 0x00088040, 0x1bd0}, 1, 0) == 0x00088040 + 4 * 0x40 &&
+              PadmanModule::Sdk3PadId(PadmanModule::ModuleFacts{0x0410, 0x00088040, 0x40}, 0, 1) == 1 &&
+              PadmanModule::Sdk3PadId(PadmanModule::ModuleFacts{0x0410, 0, 0}, 0, 0) == 1,
+          "sdk3_pad_id_slices_the_sink");
+    Clear();
+    memory::write<uint32_t>(kSend, PadmanModule::kSdk3SetMainMode);
+    padman.Call(req);
+    CHECK(memory::read<uint32_t>(kRecv + 0x14) == 1 && memory::read<uint32_t>(kRecv + 0x0C) == 0xEEEEEEEEu, "sdk3_set_mmode_at_14");
+    Clear();
+    memory::write<uint32_t>(kSend, PadmanModule::kSdk3SetButtonInfo);
+    padman.Call(req);
+    CHECK(memory::read<uint32_t>(kRecv + 0x10) == 1, "sdk3_set_btninfo_at_10");
+    Clear();
+    memory::write<uint32_t>(kSend, PadmanModule::kSdk3GetButtonMask);
+    padman.Call(req);
+    CHECK(memory::read<uint32_t>(kRecv + 0x0C) == PadProtocol::kButtonMask, "sdk3_get_btnmask_at_0c");
+    Clear();
+    memory::write<uint32_t>(kSend, PadmanModule::kSdk3GetPortMax);
+    padman.Call(req);
+    CHECK(memory::read<uint32_t>(kRecv + 0x0C) == 2, "sdk3_portmax_2");
+    Clear();
+    memory::write<uint32_t>(kSend, 0x02);
+    padman.Call(req);
+    CHECK(padman.UnknownCalls() == 2 && memory::read<uint32_t>(kRecv) == 0xEEEEEEEEu, "sdk3_unknown_untouched");
+    Clear();
+    memory::write<uint32_t>(kSend, PadmanModule::kSdk3Close);
+    padman.Call(req);
+    CHECK(pad.Area(0) == 0 && memory::read<uint32_t>(kRecv + 0x0C) == 1, "sdk3_close_clears_area");
+    padman.SetModuleFacts([] { return PadmanModule::ModuleFacts{0x0204, 0, 0}; });
+    memory::write<uint32_t>(kSend, PadmanModule::kOpGetState);
+    padman.Call(req);
+    CHECK(!padman.LastSdk3() && memory::read<uint32_t>(kRecv) == 2, "padman_2_04_is_legacy");
 
     std::printf(g_fail ? "FAILED %d\n" : "ALL PASS\n", g_fail);
     return g_fail ? 1 : 0;
