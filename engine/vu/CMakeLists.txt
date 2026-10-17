@@ -2,7 +2,7 @@
 # static span classifier, the flag pipeline, the stall model, XGKICK, the VU
 # float rules, the round-toward-zero guard, the image hash and the frozen
 # Vu1Case record, the SDK libvu0 sin/cos substitution (vu0/), the interpreter
-# and cached tiers and the tier dispatch (tiers/), and the VU1 HLE mechanism
+# cached and block tiers and the tier dispatch (tiers/), and the VU1 HLE mechanism
 # (hle/: contract, registry, image analyzer, runtime, kick lowering, builder),
 # and the EE COP2 <-> unit hand-over behind the generated code's VCALLMS /
 # CMSAR1 sites (macro/: VuMacroBridge, which also DEFINES the row-27 seam
@@ -35,6 +35,7 @@ add_library(ps2r_vu STATIC
     tiers/vu_interpreter_tier_lower.cpp
     tiers/vu_cached_tier.cpp
     tiers/vu_cached_tier_exec.cpp
+    tiers/vu_block_tier.cpp
     tiers/vu_tier_dispatch.cpp
     tiers/mtvu_clock.cpp
     tiers/runahead_guard.cpp

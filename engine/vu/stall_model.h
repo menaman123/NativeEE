@@ -59,6 +59,15 @@ public:
     // before `close_idx` (slot index of the first unexecuted bundle), the
     // bundle k back having issued at `cycle + 1 - k`. The IALU ring is untouched.
     void MaterializeFmac(const VuDecodedSlot* slots, size_t close_idx, uint32_t executed, uint64_t cycle);
+    // The block tier's close: rebuild the FMAC ring from `n` (<= 3) bundles
+    // with their recorded issue cycles (oldest first; a bundle k back issued
+    // at issue[k], its writebacks retiring at issue[k] + 4). The IALU ring is
+    // untouched.
+    void MaterializeFmacIssued(const VuDecodedSlot* const* bundles, const uint64_t* issue, int n);
+    // Queue an ILW / ILWR VI writeback issued at `cycle` (step 8 of the body
+    // on its own: the block tier's static schedule skips the body but keeps
+    // the IALU ring live for the branch stall).
+    void QueueIalu(uint8_t vi, uint64_t cycle) { PushIalu(vi, cycle); }
 
     // Program end: the clock passes every in-flight writeback, rings emptied.
     void FlushFmacWb(FlagPipeline& pipes);

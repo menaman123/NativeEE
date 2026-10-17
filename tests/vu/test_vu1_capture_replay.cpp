@@ -72,6 +72,10 @@ void RestoreRegsAndData(VuUnit& vu, const Vu1Case& c) {
     vu.flags().SetCycle(c.vu_cycle);
 }
 
+const char* ModeName(VuTierMode mode) {
+    return mode == VuTierMode::Cached ? "cached" : mode == VuTierMode::Block ? "block" : "interp";
+}
+
 // --bench: N replays of every case on one unit; the mean ns per replay and per bundle, then the aggregate.
 int RunBench(const std::vector<std::string>& files, int n, VuTierMode mode) {
     constexpr int kRounds = 5;
@@ -120,8 +124,16 @@ int RunBench(const std::vector<std::string>& files, int n, VuTierMode mode) {
         total_bundles += bundles;
     }
     std::printf("bench total mode=%s cases=%zu replays=%d(min of %d rounds) bundles=%.0f ns=%.0f ns/bundle=%.2f Mbundles/s=%.1f\n",
-                mode == VuTierMode::Cached ? "cached" : "interp", files.size(), n, kRounds, total_bundles, total_ns,
+                ModeName(mode), files.size(), n, kRounds, total_bundles, total_ns,
                 total_bundles > 0 ? total_ns / total_bundles : 0.0, total_ns > 0 ? total_bundles * 1e3 / total_ns : 0.0);
+    if (mode == VuTierMode::Block) {
+        const VuBlockTier::Stats& bs = vu.dispatch().block().stats();
+        std::printf("bench block stats blocks_run=%llu ops_static=%llu ops_model=%llu blocks_built=%llu ops/block=%.2f static=%.1f%%\n",
+                    static_cast<unsigned long long>(bs.blocks_run), static_cast<unsigned long long>(bs.ops_static),
+                    static_cast<unsigned long long>(bs.ops_model), static_cast<unsigned long long>(bs.blocks_built),
+                    bs.blocks_run ? static_cast<double>(bs.ops_static + bs.ops_model) / static_cast<double>(bs.blocks_run) : 0.0,
+                    (bs.ops_static + bs.ops_model) ? 100.0 * static_cast<double>(bs.ops_static) / static_cast<double>(bs.ops_static + bs.ops_model) : 0.0);
+    }
     return 0;
 }
 
@@ -129,20 +141,21 @@ int RunBench(const std::vector<std::string>& files, int n, VuTierMode mode) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::printf("SKIP: no capture given (usage: test_vu1_capture_replay <case.bin> [--trace] [--cached] | --bench N [--cached] <case.bin>...)\n");
+        std::printf("SKIP: no capture given (usage: test_vu1_capture_replay <case.bin> [--trace] [--cached|--block] | --bench N [--cached|--block] <case.bin>...)\n");
         return 77;
     }
-    bool trace = false, cached = false;
+    bool trace = false, cached = false, block = false;
     int bench = 0;
     std::vector<std::string> files;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--trace") trace = true;
         else if (a == "--cached") cached = true;
+        else if (a == "--block") block = true;
         else if (a == "--bench" && i + 1 < argc) bench = std::atoi(argv[++i]);
         else files.push_back(a);
     }
-    const VuTierMode mode = cached ? VuTierMode::Cached : VuTierMode::Interp;
+    const VuTierMode mode = block ? VuTierMode::Block : cached ? VuTierMode::Cached : VuTierMode::Interp;
     if (bench > 0) return RunBench(files, bench, mode);
     if (files.empty()) {
         std::printf("SKIP: no capture given\n");
@@ -182,7 +195,7 @@ int main(int argc, char** argv) {
     rig.arbiter.drain();
     const GsPacketDiff::Stream s = GsPacketDiff::Decode(rig.sink.kicks());
     std::printf("case %s start_pc=0x%04x mode=%s bundles=%llu cycles=%llu kicks=%d kick_bytes=%zu TPC=0x%04x\n", case_name, c.start_pc,
-                cached ? "cached" : "interp", static_cast<unsigned long long>(vu.dispatch().bundles()),
+                ModeName(mode), static_cast<unsigned long long>(vu.dispatch().bundles()),
                 static_cast<unsigned long long>(vu.cycle() - c.vu_cycle), vu.state().xgkick_count, rig.sink.kick_bytes(), vu.regs().TPC);
     GsPacketDiff::Print(s, stdout);
     PrintRegs(vu.regs(), vu.state().cur_bundle_pc, vu.dispatch().bundles());

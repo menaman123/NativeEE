@@ -129,6 +129,18 @@ target_link_libraries(test_vu_macro_bridge PRIVATE ps2r_private_fixtures)
 # ladder, the epoch fast path + 64-entry eviction, and the dispatch hooks.
 ps2r_vu_test(test_vu_cached_tier VuCachedSuperblock)
 
+# VuBlockTier: the block tier against the interpreter on hand-encoded programs
+# (block then interp on a fresh unit -> identical regs / data / clock / bundles /
+# kicked op stream), each swept over EVERY cycle cap (TPC and the writeback
+# ring at a cut), the static stall schedule vs the stall model on 3000 random
+# straight-line sequences, the block structure (terminals, merged delay slot,
+# static targets, lazily chained successors), stall kinds, the post-issue
+# advance guard (a second XGKICK inside a static run), FDIV / WAITQ mid-block,
+# XTOP yields in a body and in a delay slot, the NOP sled, the image-end wrap,
+# a misaligned entry (interpreter leg), VU0 staying on the cached tier, the
+# epoch fast path + 64-entry eviction.
+ps2r_vu_test(test_vu_block_tier VuBlockTier)
+
 # VuCachedVsInterpCorpus: every recorded VU1 case under the frozen corpus
 # directory through both tiers on fresh units -> identical post regs / data /
 # clock / bundles / kicks (SKIP 77 when the corpus is absent), plus the three

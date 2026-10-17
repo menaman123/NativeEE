@@ -12,7 +12,19 @@ tier dispatch (`VuTierDispatch`, mode + HLE-library consult) and the MTVU worker
   TU-private half: `ExecUpperFast` dispatching to `ExecUpperFmac` / `ExecUpperAcc` over the `VuFloat` lane kernels,
   `ExecLowerFast`; NOP words are short-circuited in `ExecBundle`) with the `VuCachedProgram` POD (the table entry)
   declared in its header.
-- `vu_tier_dispatch.h/.cpp` — `VuTierDispatch` (the Execute ladder) with `VuSettings` / `VuTierMode` and the two hook slots.
+- `vu_block_tier.h/.cpp` — `VuBlockTier` (ONE class; the instruction bodies are the cached tier's resolved
+  kind -> body tables `VuCachedTier::UpperFastFn / LowerFastFn`) with the `VuBlockOp` / `VuBlock` / `VuBlockProgram`
+  PODs declared in its header: per image (hash key, epoch fast path, 64-entry table) a lazily built table of
+  straight-line blocks keyed by entry address -- ops pre-resolved (upper / lower body pointer, stall-model entry per
+  static class, stall kind None / Push / Model, hazard flags), the delay slot merged into its branch / E-bit block,
+  successors chained (`fall` / `jump` with static branch targets), and the STATIC STALL SCHEDULE (`Schedule` /
+  `StaticStall`: the FMAC read-after-write recurrence over the three previous writers) applied by addition once the
+  model has agreed on two consecutive ops at or past the fourth (`kWarmupOps 3`, `kMatchStreak 2`, `kMinStaticOps 3`),
+  the FMAC ring rebuilt from recorded issue cycles (`StallModel::MaterializeFmacIssued`) on leaving static mode; a
+  post-issue clock advance (second XGKICK, WAITQ/WAITP) re-arms a 3-op model guard. VU1 only (VU0 and a misaligned
+  entry run elsewhere). Flag bookkeeping is never skipped (STATUS sticky bits are observable across programs).
+- `vu_tier_dispatch.h/.cpp` — `VuTierDispatch` (the Execute ladder) with `VuSettings` / `VuTierMode {Cached, Interp,
+  Block}` and the two hook slots; `Block` runs VU1 on the block tier and VU0 on the cached tier.
 - `mtvu_settings.h` — `MtvuSettings {enabled=true, depth_frames=2}` (types-only; mirrors the Config keys `engine.mtvu` /
   `engine.mtvu_depth`, copied by the composition root; deterministic profile `{false, 2}`).
 - `mtvu_clock.h/.cpp` — `MtvuClock` (virtual `NowNs()`, default = the process steady clock via `ps2r::Park::NowNs`;

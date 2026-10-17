@@ -51,8 +51,10 @@ public:
 
 private:
     // The cached tier reuses these bodies for the kinds it has no fast form of
-    // and for the shared program-end drain (ONE semantics, two dispatchers).
+    // and for the shared program-end drain (ONE semantics, two dispatchers);
+    // the block tier runs the cached tier's resolved bodies and shares the drain.
     friend class VuCachedTier;
+    friend class VuBlockTier;
 
     // The upper word (RunUpper dispatches func >= 0x3C to the special-2 table).
     void RunUpper(VuUnit& u, uint32_t upper);

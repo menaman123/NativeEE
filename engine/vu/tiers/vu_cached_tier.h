@@ -12,6 +12,7 @@
 // until a micro-memory store (the unit's epoch) or a different image under the
 // same epoch; a misaligned pc executes the bundle decoded on the fly; the
 // FMAC writeback rules are those of the stall model (issue + 4).
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -62,6 +63,17 @@ public:
     size_t table_size() const { return table_.size(); }
     const VuCachedProgram* current() const { return current_; }
 
+    // The fast bodies, ONE per decoded kind, resolved to a function: the
+    // cached tier dispatches `kind -> body` per bundle, the block tier stores
+    // the resolved body per op. `g` supplies the interpreter's bodies for the
+    // GENERIC kinds (and CLIP / DIV). The NOP kinds are bodies too (the upper
+    // NOP = the ACC re-clamp; the lower NOP = nothing).
+    using UpperFn = void (*)(VuInterpreterTier& g, VuUnit& u, const VuDecodedSlot& s);
+    using LowerFn = void (*)(VuInterpreterTier& g, VuUnit& u, const VuDecodedSlot& s, uint32_t pc, bool& branch_taken,
+                             uint32_t& branch_target);
+    static UpperFn UpperFastFn(uint8_t upper_kind);
+    static LowerFn LowerFastFn(uint8_t lower_kind);
+
 private:
     VuCachedProgram* Lookup(VuUnit& unit);
     void DecodeProgram(const VuUnit& unit, VuCachedProgram& prog) const;
@@ -69,11 +81,23 @@ private:
     // The two words of one bundle in issue order (the interpreter's hazards).
     void ExecBundle(VuUnit& unit, const VuDecodedSlot& s, uint32_t pc, bool& branch_taken, uint32_t& branch_target);
     void ExecUpperFast(VuUnit& unit, const VuDecodedSlot& s);
-    // The two FMAC families of the upper word (fd-writing results; the ACC accumulators).
-    static void ExecUpperFmac(VuUnit& unit, const VuDecodedSlot& s);
-    static void ExecUpperAcc(VuUnit& unit, const VuDecodedSlot& s);
     void ExecLowerFast(VuUnit& unit, const VuDecodedSlot& s, uint32_t pc, bool& branch_taken, uint32_t& branch_target);
+    // The body of one kind, the kind a compile-time constant (the inner
+    // dispatch folds away); the tables above are built from these.
+    template <uint8_t K>
+    static void ExecUpperK(VuInterpreterTier& g, VuUnit& u, const VuDecodedSlot& s);
+    template <uint8_t K>
+    static void ExecLowerK(VuInterpreterTier& g, VuUnit& u, const VuDecodedSlot& s, uint32_t pc, bool& branch_taken,
+                           uint32_t& branch_target);
+    // The two FMAC families of the upper word (fd-writing results; the ACC accumulators).
+    template <uint8_t K>
+    static void ExecUpperFmac(VuUnit& unit, const VuDecodedSlot& s);
+    template <uint8_t K>
+    static void ExecUpperAcc(VuUnit& unit, const VuDecodedSlot& s);
     void DrainAll(VuUnit& unit);
+
+    static const std::array<UpperFn, VUK_U_COUNT> kUpperTable;
+    static const std::array<LowerFn, VUK_L_COUNT> kLowerTable;
 
     VuInterpreterTier& generic_;
     uint64_t cycle_cap_;

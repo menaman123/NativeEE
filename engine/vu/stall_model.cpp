@@ -22,6 +22,16 @@ void StallModel::MaterializeFmac(const VuDecodedSlot* slots, size_t close_idx, u
     }
 }
 
+void StallModel::MaterializeFmacIssued(const VuDecodedSlot* const* bundles, const uint64_t* issue, int n) {
+    fmac_wb_n_ = 0;
+    fmac_wb_regs_ = 0;
+    fmac_wb_min_retire_ = 0;
+    for (int i = 0; i < n; ++i) {
+        const VuDecodedSlot& q = *bundles[i];
+        for (int w = 0; w < q.n_wr; ++w) PushFmac(q.wr_reg[w], q.wr_mask[w], issue[i]);
+    }
+}
+
 void StallModel::FlushFmacWb(FlagPipeline& pipes) {
     uint64_t& cycle = pipes.cycle();
     for (int i = 0; i < fmac_wb_n_; ++i) {
