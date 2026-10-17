@@ -43,7 +43,8 @@ public:
     Target Armed() const { return armed_; }
     int ArmedRow() const { return armed_row_; }
     // A key name while a KEY row is armed: Escape cancels, Backspace unbinds,
-    // anything else binds. Returns true when the arm was consumed.
+    // anything else binds (and unbinds the row that had the same key: one key,
+    // one PS2 button). Returns true when the arm was consumed.
     bool OfferKey(const std::string& sdl_key_name);
     // A pad control name ("a", "lefttrigger", ...) while a PAD row is armed;
     // "" is ignored (not a bindable edge). Returns true when consumed.

@@ -62,7 +62,7 @@ void SessionPanel::DrawSettings(SessionControls&, const SessionControls::Snapsho
     if (!ImGui::CollapsingHeader("Session state", ImGuiTreeNodeFlags_DefaultOpen)) return;
     const auto& r = snapshot.runtime;
     if (!r.input_name.empty()) ImGui::TextWrapped("Input: %s", r.input_name.c_str());
-    ImGui::TextDisabled("Display: %s, perf overlay %s (set in the game's Options > Display page)",
+    ImGui::TextDisabled("Display: %s, perf overlay %s (the Display page below, or the game's own options page)",
                         r.fullscreen ? "fullscreen" : "windowed", r.perf_overlay ? "on" : "off");
     // Presenter readers (video.vsync / video.fps_cap, Config-owned): shown,
     // not edited here; resize changes the window only, never the game's
@@ -176,6 +176,15 @@ void SessionPanel::DrawNotice(const SessionControls::Snapshot& snapshot) {
     ImGui::End();
 }
 
+// The pause menu's Resume (the button, Escape with the menu open): the menu closes and
+// the pause IT issued is released; a pause the user took with F9 stays.
+void SessionPanel::Resume(SessionControls& controls, const SessionControls::Snapshot& snapshot) {
+    if (snapshot.menu_paused && snapshot.runtime.paused && !Busy(snapshot, Action::TogglePause))
+        controls.Submit(Action::TogglePause);
+    controls.SetMenuPaused(false);
+    controls.Submit(Action::ToggleMenu);
+}
+
 void SessionPanel::Draw(SessionControls& controls, const SessionControls::Snapshot& snapshot) {
     DrawPerfOverlay(snapshot);
     if (!snapshot.menu_open) { DrawNotice(snapshot); return; }
@@ -185,23 +194,38 @@ void SessionPanel::Draw(SessionControls& controls, const SessionControls::Snapsh
                                    std::min(760.0f, std::max(240.0f, available.y - 48.0f))),
                              ImGuiCond_FirstUseEver);
     bool open = true;
-    if (ImGui::Begin("the title", &open, ImGuiWindowFlags_NoCollapse)) {
+    const char* title = snapshot.pause_menu ? "Paused" : "the title";
+    if (ImGui::Begin(title, &open, ImGuiWindowFlags_NoCollapse)) {
+        if (snapshot.pause_menu) {
+            // The pause menu's two verbs first: Resume (Escape) and Quit (the window close).
+            ImGui::BeginDisabled(snapshot.closing);
+            if (ImGui::Button("Resume (Esc)", ImVec2(160, 0))) Resume(controls, snapshot);
+            ImGui::SameLine();
+            if (ImGui::Button("Quit", ImVec2(160, 0))) controls.Submit(Action::Close);
+            ImGui::EndDisabled();
+            ImGui::Spacing();
+        }
         DrawSession(controls, snapshot);
         ImGui::Spacing();
         DrawResults(snapshot);
         DrawSettings(controls, snapshot);
+        display_.Draw(controls, snapshot);
+        controls_page_.Draw(controls, snapshot);
         sound_.Draw(controls, snapshot);
         DrawReproduction(controls, snapshot);
         DrawRecording(controls, snapshot);
         triage_.Draw(snapshot);
         ImGui::Separator();
         ImGui::BeginDisabled(snapshot.closing);
-        if (ImGui::Button("Close session")) controls.Submit(Action::Close);
+        if (ImGui::Button(snapshot.pause_menu ? "Quit to desktop" : "Close session")) controls.Submit(Action::Close);
         ImGui::EndDisabled();
         if (snapshot.closing) ImGui::TextUnformatted("Closing session...");
     }
     ImGui::End();
-    if (!open) controls.Submit(Action::ToggleMenu);
+    if (!open) {
+        if (snapshot.pause_menu) Resume(controls, snapshot);
+        else controls.Submit(Action::ToggleMenu);
+    }
 }
 
 }  // namespace ps2r::app

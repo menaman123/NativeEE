@@ -83,6 +83,12 @@ set_tests_properties(ThreadManagerThbase EeRunTokenAndEventQueue RelaunchOrder P
 # equal one (R1); nested / in-dispatch / non-holder trips are refused; unbound = reload only.
 ps2r_ee_test(test_ee_yield_point EeYieldPointBackedge)
 set_tests_properties(EeYieldPointBackedge PROPERTIES TIMEOUT 120)
+# The kernel's idle (EeYieldPoint::IdleWhileBlocked over EeRunToken's idle grant): two guest
+# threads blocked on ISR-signalled semaphores; the last blocker advances fields under the grant
+# until the handler readies it; a READY thread / a holder refuses the grant; PreemptPoint is a
+# no-op under it; unbound idles nothing.
+ps2r_ee_test(test_ee_idle_wait EeIdleWait)
+set_tests_properties(EeIdleWait PROPERTIES TIMEOUT 120)
 # Intc refusal / edge census: a cause raised inside a handler is refused at every dispatch
 # point reached from the handler (keyed site/in-cause>refused), stays pending and is serviced
 # at the next point; raised == dispatched + guest-acked + pending per cause.

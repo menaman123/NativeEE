@@ -16,6 +16,20 @@ bool DisplaySequence::ModeOf(const std::string& mode, SessionControls::Action& a
     }
     if (mode == "vsync") { action = Action::SetVSync; value = 1; return true; }
     if (mode == "novsync") { action = Action::SetVSync; value = 0; return true; }
+    // The Display page's other rows (the same AspectSel / TextureFilterSel orders as the settings file).
+    static const char* const kAspects[] = {"aspect_auto", "aspect_4_3", "aspect_16_9", "aspect_16_10", "aspect_21_9"};
+    for (int i = 0; i < 5; ++i)
+        if (mode == kAspects[i]) { action = Action::SetAspect; value = i; return true; }
+    static const char* const kFilters[] = {"filter_title", "filter_point", "filter_bilinear", "filter_trilinear"};
+    for (int i = 0; i < 4; ++i)
+        if (mode == kFilters[i]) { action = Action::SetTextureFilter; value = i; return true; }
+    static const int kAniso[] = {1, 2, 4, 8, 16};
+    for (int a : kAniso)
+        if (mode == "aniso" + std::to_string(a)) { action = Action::SetAnisotropy; value = a; return true; }
+    if (mode == "overlay") { action = Action::SetPerfOverlay; value = 1; return true; }
+    if (mode == "nooverlay") { action = Action::SetPerfOverlay; value = 0; return true; }
+    if (mode == "rate60") { action = Action::SetRenderRate; value = 0; return true; }
+    if (mode == "ratedisplay") { action = Action::SetRenderRate; value = 1; return true; }
     return false;
 }
 

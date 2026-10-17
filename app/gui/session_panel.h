@@ -2,6 +2,8 @@
 
 #include <array>
 
+#include "app/gui/controls_section.h"
+#include "app/gui/display_section.h"
 #include "app/gui/savestate_browser.h"
 #include "app/gui/sound_section.h"
 #include "app/gui/triage_section.h"
@@ -15,6 +17,10 @@ class SessionPanel {
 public:
     bool WantsFrame(const SessionControls::Snapshot& snapshot, double now_seconds);
     void Draw(SessionControls& controls, const SessionControls::Snapshot& snapshot);
+    // The Controls page's binding model (the composition's; main thread).
+    ControlsSection& Controls() { return controls_page_; }
+    // The pause menu's Resume: close the menu and release the pause it holds.
+    static void Resume(SessionControls& controls, const SessionControls::Snapshot& snapshot);
 
 private:
     void DrawSession(SessionControls& controls, const SessionControls::Snapshot& snapshot);
@@ -29,6 +35,8 @@ private:
     bool path_editing_ = false;
     SavestateBrowser browser_;
     SoundSection sound_;
+    DisplaySection display_;
+    ControlsSection controls_page_;
     TriageSection triage_;
     uint64_t notice_id_ = 0;
     SessionControls::Phase notice_phase_ = SessionControls::Phase::Queued;

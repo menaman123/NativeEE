@@ -148,6 +148,7 @@ int EventFlags::Wait(int eid, uint32_t wait_bits, uint32_t mode, uint32_t* resul
         if (satisfied) break;
         tm.NotePark(tid, true);
         EeRunToken::Instance().BlockBegin(tid);
+        tm.IdleWhileBlocked(t);   // the kernel's idle: the last runner advances time
         {
             EeEventQueue::ParkReg reg(&info->m, &info->cv);
             std::unique_lock<std::mutex> lk(info->m);

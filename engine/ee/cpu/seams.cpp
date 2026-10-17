@@ -81,9 +81,10 @@ void hle_sceCdDiskReady2(CpuContext& ctx) { GuestPark::Forever("iop_dependent", 
 void runtime_syscall_dispatcher(uint32_t v1, CpuContext& ctx) { SyscallTable::Instance().Dispatch(v1, ctx); }
 void handle_mtc0_write(CpuContext& ctx, uint8_t rd, uint32_t value) { SyscallTable::Instance().HandleMtc0(ctx, rd, value); }
 // ---- row 6b (REAL): the back-edge yield of --yield-backedges generated code. The
-// budget is one plain counter: only the run-token holder executes guest code and
-// the token changes hands under a mutex (EeYieldPoint reloads it on every trip).
-uint32_t g_ee_backedge_budget = EeYieldPoint::kDefaultBudget;
+// budget counter g_ee_backedge_budget is defined beside its owner (ee/sched/
+// ee_yield_point.cpp, which reloads it on every trip): the kernel's idle path
+// reaches EeYieldPoint from ThreadManager, and a kernel-only link (the thbase
+// tests) must not drag this seam TU's shadow-stack imports in with it.
 void ps2r_ee_yield_point(CpuContext& ctx) { EeYieldPoint::Instance().Trip(ctx); }
 void hle_TimerWaitMicroseconds(CpuContext& ctx) { KernlTimer::TimerWaitMicroseconds(ctx); }
 void hle_InitTLB(CpuContext& ctx) { KernlBoot::InitTLB(ctx); }

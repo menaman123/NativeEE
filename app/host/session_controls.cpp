@@ -243,13 +243,34 @@ bool SessionControls::SelectRestorePath(std::string path) {
 
 SessionControls::Snapshot SessionControls::Read() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return {capabilities_, runtime_, menu_open_, closing_, restore_path_,
-            {pending_.begin(), pending_.end()}, {recent_.begin(), recent_.end()}};
+    Snapshot s{capabilities_, runtime_, menu_open_, closing_, pause_menu_, menu_paused_, restore_path_,
+               {pending_.begin(), pending_.end()}, {recent_.begin(), recent_.end()}};
+    return s;
 }
 
 bool SessionControls::MenuOpen() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return menu_open_;
+}
+
+void SessionControls::SetPauseMenu(bool on) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pause_menu_ = on;
+}
+
+bool SessionControls::PauseMenu() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return pause_menu_;
+}
+
+void SessionControls::SetMenuPaused(bool paused) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    menu_paused_ = paused;
+}
+
+bool SessionControls::MenuPaused() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return menu_paused_;
 }
 
 const char* SessionControls::ActionLabel(Action action) {

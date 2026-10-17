@@ -12,6 +12,7 @@ thread_local int t_park_depth = 0;
 thread_local bool t_guest_attached = false;
 thread_local int t_isr_depth = 0;            // IsrBegin .. IsrEnd nesting on this host thread
 thread_local bool t_preempt_deferred = false;  // a PreemptPoint recorded inside the handler
+thread_local bool t_idle = false;              // this host thread holds the idle grant (TryIdleAcquire .. IdleRelease)
 }  // namespace
 
 EeRunToken& EeRunToken::Instance() {
@@ -169,6 +170,7 @@ void EeRunToken::WaitVblank() {
         field_seen = field_gen_;
         if (Ready* r = FindReady(tid)) r->valid = false;  // WAITING, not READY (BlockBegin's body)
         ReleaseLocked(tid);
+        ++vblank_waiters_;  // an all-blocked EE wakes THIS thread, never the idle grant
     }
     cv_.notify_all();
     t_holds = false;
@@ -180,9 +182,43 @@ void EeRunToken::WaitVblank() {
                 if (r.valid) return false;
             return true;  // every other thread blocked: idle, the vblank is now
         });
+        --vblank_waiters_;
     }
     BlockEnd(tid);
 }
+
+bool EeRunToken::TryIdleAcquire(int tid) {
+    if (tid == kNone || tid == kHostTid || t_holds || t_idle) return false;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (shutdown_ || hold_election_ || owner_ != kNone || vblank_waiters_ != 0) return false;
+        for (const auto& r : ready_)
+            if (r.valid) return false;   // something to schedule: not idle
+        owner_ = tid;
+        owner_running_ = true;
+    }
+    t_holds = true;
+    t_idle = true;
+    idle_grants_.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
+void EeRunToken::IdleRelease(int tid) {
+    if (!t_idle) return;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (owner_ == tid) {
+            owner_ = kNone;
+            owner_running_ = false;
+            ElectLocked();   // whatever the field readied runs now
+        }
+    }
+    cv_.notify_all();
+    t_holds = false;
+    t_idle = false;
+}
+
+bool EeRunToken::CurrentThreadIdling() const { return t_idle; }
 
 void EeRunToken::NoteFieldElapsed() {
     {
@@ -228,7 +264,7 @@ void EeRunToken::IsrEnd() {
 bool EeRunToken::InIsr() const { return t_isr_depth > 0; }
 
 void EeRunToken::PreemptPoint() {
-    if (!t_holds) return;
+    if (!t_holds || t_idle) return;   // the idle runner hands over at IdleRelease, never mid-field
     const int tid = t_tid;
     if (tid == kNone) return;
     if (t_isr_depth > 0) {
@@ -255,7 +291,7 @@ void EeRunToken::PreemptPoint() {
 }
 
 void EeRunToken::Rotate(int rot_prio) {
-    if (!t_holds) return;
+    if (!t_holds || t_idle) return;
     const int tid = t_tid;
     if (tid == kNone) return;
     int my_prio = t_prio;
@@ -350,6 +386,8 @@ bool EeRunToken::RestartAfterJoin(std::string* error) {
     t_tid = kNone;
     t_prio = 0;
     t_park_depth = 0;
+    t_idle = false;
+    vblank_waiters_ = 0;
     // Scheduling sequence and diagnostic counters remain monotonic.
     if (error) error->clear();
     return true;
@@ -396,6 +434,8 @@ void EeRunToken::ResetForTest() {
     t_guest_attached = false;
     t_isr_depth = 0;
     t_preempt_deferred = false;
+    t_idle = false;
+    vblank_waiters_ = 0;
 }
 
 EeRunToken::HostGate::HostGate() {

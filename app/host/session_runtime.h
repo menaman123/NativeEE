@@ -127,6 +127,13 @@ public:
     // since the last take (1..4; 0 = none pending). The caller applies it on
     // the backend owner between frames (VideoStack::ApplyScale).
     int TakeScaleRequest() { return scale_request_.exchange(0); }
+    // Main thread before Run: the pause-menu shape -- Escape opens the menu and
+    // pauses the game (hooks.pause must exist for the pause), the panel's Resume /
+    // Quit; off, Escape is the window close (the first title's shape).
+    void ConfigurePauseMenu(bool on);
+    // Main thread before Run: the menu's Controls page model (the keyboard rows'
+    // press-to-bind over the composition's bindings file + live mapper reload).
+    void ConfigureControlsPage(ControlsSection::Model model);
     // Main thread before Run: called after EVERY frame the presenter draws to
     // the window (the display-rate render census and the camera interpolation).
     void SetPresentObserver(std::function<void(std::chrono::steady_clock::time_point)> observer);

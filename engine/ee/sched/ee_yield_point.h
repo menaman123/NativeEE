@@ -32,6 +32,20 @@
 // in flight or an INTC dispatch is running (the composition's `inhibit`); a
 // caller that is not the run-token holder or not a guest thread.
 //
+// The kernel's idle (IdleWhileBlocked): the same sequence, steps 1-4b, run by
+// the guest thread that has JUST blocked on a kernel object when nothing is
+// READY and nobody waits on the vblank -- the thbase idle state. On the console
+// an idle EE still takes its vblank and timer interrupts and the IOP runs on its
+// own clock; here nothing else advances emulated time once every guest thread
+// sleeps (no boundary: the vsync site is a guest thread; no trip: a trip needs
+// a spinning holder). Under EeRunToken's idle grant the runner advances one
+// field at a time, releasing after each so the election runs over what the
+// field readied (an ISR's iSignalSema, an IOP completion's SIF notify, an
+// alarm), and stops at the first READY thread -- its own included. Never a
+// PreemptPoint (the grant makes it a no-op) and never a frame. Refused like a
+// trip: unbound, nested, inhibited, not a guest thread; a grant refused by the
+// token (something READY / a vblank waiter) ends the idle.
+//
 // Budget: one dec+branch per loop iteration. ~295 MHz / 60 Hz is ~4.9 M cycles
 // per field and a loop body is a few to a few dozen instructions, so 2^18
 // back-edges per trip is about one field of a tight spin -- kDefaultBudget.
@@ -70,7 +84,9 @@ public:
     struct Census {
         uint64_t trips = 0;        // ps2r_ee_yield_point calls
         uint64_t yields = 0;       // trips that ran the sequence
-        uint64_t isrs = 0;         // INTC handlers dispatched by trips
+        uint64_t isrs = 0;         // INTC handlers dispatched by trips (and idle fields)
+        uint64_t idle_calls = 0;   // IdleWhileBlocked calls that found the EE idle (>= 1 field)
+        uint64_t idle_fields = 0;  // fields advanced by the idle runner
         uint64_t contended = 0;    // trips that found another READY thread before PreemptPoint
         uint64_t nested = 0;       // refused: inside a trip
         uint64_t inhibited = 0;    // refused: inhibit() or an INTC dispatch in progress
@@ -88,12 +104,18 @@ public:
 
     // The seam body (seams.cpp: ps2r_ee_yield_point). Reloads g_ee_backedge_budget first.
     void Trip(CpuContext& ctx);
+    // The kernel's idle (header comment): called by a kernel-object wait right
+    // after EeRunToken::BlockBegin with no lock held; returns the fields advanced
+    // (0 = the EE was not idle or the call was refused).
+    uint64_t IdleWhileBlocked(CpuContext& ctx);
 
     const Census& Stats() const { return census_; }
     void ResetForTest();
 
 private:
     EeYieldPoint() = default;
+    // Steps 1-4b on the token holder `ctx` runs on (Trip's body before the preemption point).
+    void RunField(CpuContext& ctx);
     Deps deps_;
     bool bound_ = false;
     bool in_trip_ = false;

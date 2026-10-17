@@ -14,6 +14,7 @@
 #include "engine/ee/hle/semaphores.h"
 #include "engine/ee/sched/ee_event_queue.h"
 #include "engine/ee/sched/ee_run_token.h"
+#include "engine/ee/sched/ee_yield_point.h"
 
 namespace {
 thread_local int t_current_tid = 1;  // id 1 = the main thread (R10)
@@ -456,6 +457,7 @@ int ThreadManager::SleepThread() {
         }
         NotePark(tid, true);
         EeRunToken::Instance().BlockBegin(tid);
+        IdleWhileBlocked(info);
         {
             EeEventQueue::ParkReg reg(&info->m, &info->cv);
             std::unique_lock<std::mutex> lk(info->m);
@@ -693,6 +695,11 @@ void ThreadManager::WaitWhileSuspended(const std::shared_ptr<ThreadInfo>& info) 
 void ThreadManager::NotePark(int tid, bool parked) {
     NoteCapturePark(tid, parked, false);
     if (auto* fn = park_observer_.load(std::memory_order_acquire)) fn(tid, parked);
+}
+
+void ThreadManager::IdleWhileBlocked(const std::shared_ptr<ThreadInfo>& info) {
+    if (!info || !info->ctx || !Running()) return;
+    EeYieldPoint::Instance().IdleWhileBlocked(*info->ctx);
 }
 
 void ThreadManager::NoteCapturePark(int tid, bool parked, bool suspended) {

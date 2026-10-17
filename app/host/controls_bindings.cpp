@@ -105,8 +105,15 @@ void ControlsBindings::Arm(Target target, int row) {
 bool ControlsBindings::OfferKey(const std::string& sdl_key_name) {
     if (armed_ != Target::Key || armed_row_ < 0 || armed_row_ >= static_cast<int>(keys_.size())) return false;
     if (sdl_key_name == "Escape") { Disarm(); return true; }
-    if (sdl_key_name == "Backspace") keys_[armed_row_].value.clear();
-    else keys_[armed_row_].value = sdl_key_name;
+    if (sdl_key_name == "Backspace") {
+        keys_[armed_row_].value.clear();
+    } else {
+        // The same key may drive only one PS2 button (as a pad control may): the row that
+        // had it is unbound, so a rebound key never presses two buttons at once.
+        for (Row& r : keys_)
+            if (r.value == sdl_key_name) r.value.clear();
+        keys_[armed_row_].value = sdl_key_name;
+    }
     Disarm();
     Save(nullptr);
     return true;

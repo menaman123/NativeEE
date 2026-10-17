@@ -125,6 +125,7 @@ int Semaphores::Wait(int sid) {
         if (consumed) break;
         tm.NotePark(tid, true);
         EeRunToken::Instance().BlockBegin(tid);
+        tm.IdleWhileBlocked(info);   // the kernel's idle: the last runner advances time
         {
             EeEventQueue::ParkReg reg(&sema->m, &sema->cv);  // registered before the object lock
             std::unique_lock<std::mutex> lk(sema->m);

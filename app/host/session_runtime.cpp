@@ -96,6 +96,17 @@ void SessionRuntime::ConfigureDisplayRows(const DisplaySettings& seed) {
     Publish();
 }
 
+void SessionRuntime::ConfigurePauseMenu(bool on) {
+    if (std::this_thread::get_id() != main_thread_) return;
+    controls_.SetPauseMenu(on);
+    Publish();
+}
+
+void SessionRuntime::ConfigureControlsPage(ControlsSection::Model model) {
+    if (std::this_thread::get_id() != main_thread_) return;
+    window_.Gui().SetControlsModel(std::move(model));
+}
+
 int SessionRuntime::PresentHz() const {
     if (display_hz_ > 0) return display_hz_;
     const int display = window_.DisplayRefreshHz();

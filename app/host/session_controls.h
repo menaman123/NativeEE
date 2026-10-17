@@ -98,6 +98,11 @@ public:
         RuntimeState runtime;
         bool menu_open = false;
         bool closing = false;
+        // The pause-menu shape (SetPauseMenu): Escape opens the menu and pauses
+        // the game instead of closing the window; `menu_paused` = the menu holds
+        // a pause it will release on Resume.
+        bool pause_menu = false;
+        bool menu_paused = false;
         std::string restore_path;
         std::vector<Result> pending;
         std::vector<Result> recent;
@@ -144,6 +149,14 @@ public:
     bool SelectRestorePath(std::string path);
     Snapshot Read() const;
     bool MenuOpen() const;
+    // The pause-menu shape (the composition's choice, main thread before the
+    // pump): Escape = open the menu + pause (SessionGui), the panel offers Resume
+    // / Quit. Off (the default) keeps Escape = the window close. `MenuPaused` is
+    // the GUI's note that the menu issued the pause it must release on Resume.
+    void SetPauseMenu(bool on);
+    bool PauseMenu() const;
+    void SetMenuPaused(bool paused);
+    bool MenuPaused() const;
     static const char* ActionLabel(Action action);
     static const char* PhaseLabel(Phase phase);
 
@@ -166,6 +179,8 @@ private:
     uint64_t next_id_ = 1;
     bool menu_open_ = false;
     bool closing_ = false;
+    bool pause_menu_ = false;
+    bool menu_paused_ = false;
 };
 
 }  // namespace ps2r::app

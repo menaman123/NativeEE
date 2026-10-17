@@ -88,6 +88,26 @@ public:
     uint64_t VblankWaits() const { return vblank_waits_.load(std::memory_order_relaxed); }
     uint64_t VblankWaitsIdle() const { return vblank_waits_idle_.load(std::memory_order_relaxed); }
 
+    // The kernel's idle (the thbase idle state: no thread READY). A guest thread
+    // that has just blocked on a kernel object (BlockBegin done, its slot left
+    // the ready set) asks for the IDLE GRANT: it holds the token -- as the idle
+    // runner, not as a schedulable thread -- while nothing is READY, no thread
+    // waits on the vblank (WaitVblank's own "every other thread blocked = the
+    // vblank is now" rule covers that case), no relaunch holds the election and
+    // the token is not shut down. The runner advances emulated time (the yield
+    // sequence: a field, alarms, timers, ISRs, device pumps) so an external event
+    // -- a vblank ISR's iSignalSema, an IOP completion's SIF notify, an alarm --
+    // can ready a thread; it releases after each field (IdleRelease: the
+    // election runs over whatever became READY) and asks again. Under the grant
+    // PreemptPoint and Rotate are no-ops: the idle runner has no ready slot to
+    // resume from and hands over at its release instead. The console's EE idles
+    // with interrupts enabled and the IOP on its own clock; without this grant an
+    // all-blocked EE would stop the world (no boundary, no yield trip, no pump).
+    bool TryIdleAcquire(int tid);
+    void IdleRelease(int tid);
+    bool CurrentThreadIdling() const;
+    uint64_t IdleGrants() const { return idle_grants_.load(std::memory_order_relaxed); }
+
     // Mark tid READY (idempotent). THIS assigns the FIFO seq.
     // A tid whose host thread has EXITED (GuestExit ran, no GuestEnter since)
     // is RETIRED: readying it is a counted no-op, because a READY slot that no
@@ -200,7 +220,9 @@ private:
     std::mutex host_gate_mu_;     // serialises concurrent HostGate users
     void (*post_acquire_)() = nullptr;
     uint64_t field_gen_ = 0;      // NoteFieldElapsed count (under mu_)
+    uint32_t vblank_waiters_ = 0; // threads sleeping inside WaitVblank (under mu_)
     std::atomic<uint64_t> vblank_waits_{0}, vblank_waits_idle_{0};
+    std::atomic<uint64_t> idle_grants_{0};
 
     Ready* SlotFor(int tid);
     Ready* FindReady(int tid);

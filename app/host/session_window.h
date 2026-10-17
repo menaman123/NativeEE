@@ -41,6 +41,8 @@ public:
     uint32_t WindowId() const;
     // Main thread, after Open: the window's title bar text (the title's name).
     void SetTitle(const std::string& title);
+    // Main thread: the menu (its Controls page's binding model is set through it).
+    SessionGui& Gui() { return gui_; }
 
 private:
     // The frame's draw without the swap (Draw and DumpPresented share it).

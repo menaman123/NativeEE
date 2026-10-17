@@ -256,7 +256,10 @@ bool ConfigValidator::Validate(const Config& c, bool harness_window_requested, s
         // "<frame>:<mode>[,<frame>:<mode>...]", frame > 0, mode one of the Display
         // page's requests (the composition root's DisplaySequence names the same set).
         static const char* const kModes[] = {"windowed", "fullscreen", "borderless", "scale1", "scale2", "scale3", "scale4",
-                                             "vsync", "novsync"};
+                                             "vsync", "novsync", "aspect_auto", "aspect_4_3", "aspect_16_9", "aspect_16_10",
+                                             "aspect_21_9", "filter_title", "filter_point", "filter_bilinear", "filter_trilinear",
+                                             "aniso1", "aniso2", "aniso4", "aniso8", "aniso16", "overlay", "nooverlay", "rate60",
+                                             "ratedisplay"};
         std::string rest = c.harness.display_sequence;
         while (!rest.empty()) {
             const size_t comma = rest.find(',');
@@ -272,7 +275,9 @@ bool ConfigValidator::Validate(const Config& c, bool harness_window_requested, s
             }
             if (!ok)
                 return Refuse(err, "harness.display_sequence must be <frame>:<mode>[,...] with frame > 0 and mode one of "
-                                   "windowed|fullscreen|borderless|scale1..scale4|vsync|novsync (e.g. 300:borderless,600:windowed)");
+                                   "windowed|fullscreen|borderless|scale1..scale4|vsync|novsync|aspect_<auto|4_3|16_9|16_10|21_9>|"
+                                   "filter_<title|point|bilinear|trilinear>|aniso<1|2|4|8|16>|overlay|nooverlay|rate60|ratedisplay "
+                                   "(e.g. 300:borderless,600:windowed)");
         }
     }
     if (c.harness.live_pad_probe) {

@@ -38,7 +38,14 @@ struct DmacVifWalkResult {
 
 class ChainWalker {
 public:
-    static constexpr int kMaxTags = 10000;
+    // The walk's loop guard. The console's DMAC has no tag limit: a chain ends at
+    // its terminator or hangs the bus (a NEXT to itself). Every DMAtag occupies
+    // one quadword of RAM (32 MiB) or the scratchpad (16 KiB), so a walk that has
+    // read more tags than those hold has re-read a slot and is looping -- that,
+    // not a round number, is the bound. (A real display list of a loading world
+    // exceeded a 10000-tag guard; its END and the FINISH behind it were dropped
+    // and the title's render thread waited for ever.)
+    static constexpr int kMaxTags = (32 * 1024 * 1024 + 16 * 1024) / 16;
     static constexpr uint32_t kRamMask = 0x01FFFFFFu;    // VIF walk: 25-bit RAM window
     static constexpr uint32_t kTadrMask = 0x0FFFFFFFu;   // VIF walk: TADR without the SPR prefix
 

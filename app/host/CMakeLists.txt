@@ -19,12 +19,14 @@ add_library(ps2r_app_host STATIC
     launcher.cpp
     launcher_settings.cpp
     controls_bindings.cpp
+    controls_page_binding.cpp
     platform_input.cpp
     tick_thread.cpp
     clock_census.cpp
     camera_track.cpp
     display_sequence.cpp
     savestate_slots.cpp
+    session_capture.cpp
     session_relaunch.cpp
     live_restore_gate.cpp
     leg_closer.cpp
@@ -60,7 +62,7 @@ target_compile_definitions(ps2r_app_host PUBLIC PS2R_IOP_ORACLE=0)
 target_link_libraries(ps2r_app_host PUBLIC
     ps2r_title_api ps2r_ee ps2r_vu ps2r_gif_hle ps2r_dmac ps2r_cdvd ps2r_mc ps2r_pad
     ps2r_sound ps2r_sound_hle ps2r_gs_hle_queue ps2r_render_gl ps2r_render_review
-    ps2r_platform_sdl ps2r_ipu ps2r_imgui)
+    ps2r_platform_sdl ps2r_ipu ps2r_imgui ps2r_session_checkpoint ps2r_session_clock)
 if(PS2R_DIAGNOSTICS)
     target_compile_definitions(ps2r_app_host PRIVATE PS2R_DIAGNOSTICS=1)
     target_link_libraries(ps2r_app_host PUBLIC ps2r_diag)

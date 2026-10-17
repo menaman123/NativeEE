@@ -97,6 +97,17 @@ bool PlatformInput::HandleEvent(const SDL_Event& event) {
     return true;
 }
 
+bool PlatformInput::ReloadBindings(const std::string& path) {
+    // Owner only (main, the GUI's thread): the mapper's whole-file parse -- a rejected
+    // file leaves the current bindings (InputMapper::LoadConfig); the kbm backend maps
+    // through the mapper at its next Frame, so the change is live at the next sample.
+    if (std::this_thread::get_id() != owner_) return false;
+    const bool ok = system_.Mapper().LoadConfig(path);
+    ++bindings_reloads_;
+    if (ok) ++bindings_reloads_ok_;
+    return ok;
+}
+
 bool PlatformInput::ServicePending() {
     if (std::this_thread::get_id() != owner_) return false;
     std::deque<std::shared_ptr<Work>> work;

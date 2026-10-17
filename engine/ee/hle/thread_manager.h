@@ -191,6 +191,14 @@ public:
     void ThrowIfTerminated(const std::shared_ptr<ThreadInfo>& info);
     bool Running() const { return running_.load(std::memory_order_relaxed); }
     void NotePark(int tid, bool parked);
+    // The kernel's idle: a kernel-object wait (sema / event flag / SleepThread)
+    // calls this right after EeRunToken::BlockBegin, no lock held. When the EE is
+    // thereby idle -- nothing READY, nobody waiting on the vblank -- the blocked
+    // thread advances emulated time on its own context (EeYieldPoint::
+    // IdleWhileBlocked: fields, alarms, timers, ISRs, device pumps) until a
+    // thread is READY. A thread without a live context (an adopted test thread
+    // that set none) idles nothing. Hardware parks (ParkScope) never call it.
+    void IdleWhileBlocked(const std::shared_ptr<ThreadInfo>& info);
 
     // Re-install the queue applier (tests that swap in a model restore it).
     void InstallEventApplier();

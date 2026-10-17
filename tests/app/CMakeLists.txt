@@ -58,6 +58,21 @@ target_link_libraries(test_controls_bindings PRIVATE ps2r_platform_sdl)
 target_compile_options(test_controls_bindings PRIVATE -Wall -Wextra -Werror)
 add_test(NAME ControlsBindingsPressToBind COMMAND test_controls_bindings "${CMAKE_BINARY_DIR}/test_scratch/controls_bindings")
 
+# ControlsPageLiveRebind (Bernoulli): the in-game Controls page's model (ControlsPageBinding over
+# ControlsBindings + the REAL PlatformInput) under synthetic key events, no window: a landed key
+# writes bindings.ini, points ps2r.ini's input.bindings_file at it and reloads the live mapper, so
+# the rebound key samples as that PS2 button on the same pad object; Escape cancels; a key moves
+# off the row that had it.
+add_executable(test_controls_page_binding test_controls_page_binding.cpp
+    "${CMAKE_SOURCE_DIR}/app/host/controls_bindings.cpp"
+    "${CMAKE_SOURCE_DIR}/app/host/controls_page_binding.cpp"
+    "${CMAKE_SOURCE_DIR}/app/host/platform_input.cpp")
+target_include_directories(test_controls_page_binding PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(test_controls_page_binding PRIVATE ps2r_platform_sdl ps2r_core)
+target_compile_options(test_controls_page_binding PRIVATE -Wall -Wextra -Werror)
+add_test(NAME ControlsPageLiveRebind COMMAND test_controls_page_binding "${CMAKE_BINARY_DIR}/test_scratch/controls_page_binding")
+set_tests_properties(ControlsPageLiveRebind PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
+
 # DisplaySequenceSchedule (Charter 3 item 4, Bernoulli): harness.display_sequence's pure
 # parser / schedule -- mode names to the Display page's requests, malformed items skipped
 # and counted, each step submitted once at the first boundary >= its frame, the first

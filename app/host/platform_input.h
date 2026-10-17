@@ -67,6 +67,13 @@ public:
 
     // Main-only event handling; root routes reserved GUI keys first.
     bool HandleEvent(const SDL_Event& event);
+    // Owner (main) only: re-read the bindings INI (the in-game Controls page's
+    // press-to-bind wrote it) into the live mapper -- the next Sample maps keys
+    // through it. False = not the owner, or the file was rejected (the previous
+    // bindings stand; the mapper printed why). Census: BindingsReloads().
+    bool ReloadBindings(const std::string& path);
+    uint64_t BindingsReloads() const { return bindings_reloads_.load(); }
+    uint64_t BindingsReloadsOk() const { return bindings_reloads_ok_.load(); }
     bool ServicePending();
     void BindMainWake(ps2r::Park* wake);
     // The owner's "inside a blocking call" flag (the presenter's swap / a display
@@ -131,7 +138,7 @@ private:
     bool stopped_ = false;
     bool accepted_connected_ = false;
     std::atomic<bool> gamepad_active_{false}, keyboard_enabled_{true};
-    std::atomic<uint64_t> samples_{0}, drains_{0};
+    std::atomic<uint64_t> samples_{0}, drains_{0}, bindings_reloads_{0}, bindings_reloads_ok_{0};
     // The game owner's Sample state (that thread's alone: no lock).
     std::shared_ptr<Work> outstanding_;   // a posted Sample main has not answered yet
     PadProtocol::Input last_sample_{};
