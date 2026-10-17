@@ -37,6 +37,8 @@ add_library(ps2r_vu STATIC
     tiers/vu_cached_tier_exec.cpp
     tiers/vu_block_tier.cpp
     tiers/vu_tier_dispatch.cpp
+    vu1_aot/vu1_aot_tier.cpp
+    vu1_aot/vu1_aot_verifier.cpp
     tiers/mtvu_clock.cpp
     tiers/runahead_guard.cpp
     tiers/mtvu_backpressure.cpp

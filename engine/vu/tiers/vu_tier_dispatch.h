@@ -2,10 +2,12 @@
 // The VU execution ladder, written once: a program start (MSCAL / MSCNT /
 // MSCALF / VCALLMS / CMSAR0 / a resume) is offered to the VU1 HLE library, then
 // to the MTVU redirect, then run on the configured tier -- cached (the
-// default), the block tier (VU1 only: VU0 stays on the cached tier under it)
-// or the interpreter reference. Every tier consumes the ONE decoder, stall
-// model, flag pipeline and XGKICK; their identity is proven by the
-// differential tests, never assumed.
+// default), the block tier (VU1 only: VU0 stays on the cached tier under it),
+// the AOT tier (VU1 only: a verified image on its specialised block table,
+// anything else on the AOT tier's fallback; engine/vu/vu1_aot/) or the
+// interpreter reference. Every tier consumes the ONE decoder, stall model,
+// flag pipeline and XGKICK; their identity is proven by the differential
+// tests, never assumed.
 //
 // Cross-thread contract: the two hook slots are plain callbacks installed by
 // the composition root (the HLE runtime, the MTVU worker); null means absent.
@@ -18,11 +20,12 @@
 #include "engine/vu/tiers/vu_block_tier.h"
 #include "engine/vu/tiers/vu_cached_tier.h"
 #include "engine/vu/tiers/vu_interpreter_tier.h"
+#include "engine/vu/vu1_aot/vu1_aot_tier.h"
 
 class VuUnit;
 
 // The fallback tier a program runs on when no hook takes it.
-enum class VuTierMode : uint8_t { Cached, Interp, Block };
+enum class VuTierMode : uint8_t { Cached, Interp, Block, Aot };
 
 // Module-local settings (the Config keys `engine.vu1_mode` / the VU1 HLE gate
 // are copied here at integration).
@@ -43,7 +46,7 @@ public:
     explicit VuTierDispatch(VuSettings settings = VuSettings{}, uint64_t cycle_cap = kDefaultCycleCap);
 
     // The ladder: hle (VU1, enabled, hook set) -> mtvu (VU1, hook set) -> tier
-    // (Block: VU1 on the block tier, VU0 on the cached tier).
+    // (Block / Aot: VU1 on that tier, VU0 on the cached tier).
     void Execute(VuUnit& unit, uint32_t start_pc);
     // A parked VU0 (self-spin suspend) resumes through the ladder.
     void ResumeIfWaiting(VuUnit& unit);
@@ -60,7 +63,10 @@ public:
     VuInterpreterTier& interp() { return interp_; }
     VuCachedTier& cached() { return cached_; }
     VuBlockTier& block() { return block_; }
-    // Bundles retired on any tier (the catalog's exec count).
+    Vu1AotTier& aot() { return aot_; }
+    const Vu1AotTier& aot() const { return aot_; }
+    // Bundles retired on any tier (the catalog's exec count; the AOT tier's
+    // native runs retire on the block tier's counter).
     uint64_t bundles() const { return interp_.bundles() + cached_.bundles() + block_.bundles(); }
 
 private:
@@ -68,6 +74,7 @@ private:
     VuInterpreterTier interp_;
     VuCachedTier cached_;
     VuBlockTier block_;
+    Vu1AotTier aot_;
     HleHook hle_ = nullptr;
     void* hle_user_ = nullptr;
     MtvuHook mtvu_ = nullptr;

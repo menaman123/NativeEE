@@ -3,6 +3,7 @@
 // are the cached tier's resolved tables (vu_cached_tier_exec.cpp).
 #include "engine/vu/tiers/vu_block_tier.h"
 
+#include <chrono>
 #include <cstring>
 
 #include "engine/platform/host/platform.h"
@@ -209,11 +210,12 @@ VuBlock* VuBlockTier::Build(VuBlockProgram& prog, size_t slot_idx) {
     std::unique_ptr<VuBlock> blk(new VuBlock());
     blk->pc = static_cast<uint32_t>(slot_idx * 8);
     const size_t n_slots = prog.slots.size();
+    const VuBlockOpResolver resolve = prog.resolve != nullptr ? prog.resolve : &VuBlockTier::ResolveOp;
     size_t i = slot_idx;
     for (;;) {
         const VuDecodedSlot& s = prog.slots[i];
         VuBlockOp op;
-        ResolveOp(op, s);
+        resolve(op, s);
         blk->ops.push_back(op);
         const bool last_slot = i + 1 >= n_slots;  // the image end: the next pc wraps, the block does not
         // A NOP pair is a block of its own (the sled count is per block), so the
@@ -238,7 +240,7 @@ VuBlock* VuBlockTier::Build(VuBlockProgram& prog, size_t slot_idx) {
             // bit are ignored and it never advances TPC.
             if ((branch || s.e_bit) && !last_slot) {
                 VuBlockOp ds;
-                ResolveOp(ds, prog.slots[i + 1]);
+                resolve(ds, prog.slots[i + 1]);
                 blk->ops.push_back(ds);
                 blk->has_ds = true;
             }
@@ -260,6 +262,15 @@ VuBlock* VuBlockTier::BlockAt(VuBlockProgram& prog, uint32_t pc) {
     return b != nullptr ? b : Build(prog, idx);
 }
 
+void VuBlockTier::SetResolver(VuBlockProgram& prog, VuBlockOpResolver resolve) {
+    prog.resolve = resolve;
+    const VuBlockOpResolver r = resolve != nullptr ? resolve : &VuBlockTier::ResolveOp;
+    for (auto& blk : prog.blocks) {
+        for (VuBlockOp& op : blk->ops) r(op, *op.slot);
+        Schedule(blk->ops.data(), blk->ops.size());
+    }
+}
+
 // ---- execution -------------------------------------------------------------
 
 void VuBlockTier::Execute(VuUnit& unit, uint32_t start_pc) { Execute(unit, start_pc, cycle_cap_); }
@@ -272,11 +283,16 @@ void VuBlockTier::Execute(VuUnit& unit, uint32_t start_pc, uint64_t cycle_limit)
         generic_.Run(unit, start_pc, opt);
         return;
     }
+    Run(unit, pc, *Lookup(unit), cycle_limit);  // at every entry (MSCAL / MSCNT / resume)
+}
+
+void VuBlockTier::ExecuteAcquired(VuUnit& unit, uint32_t pc, VuBlockProgram& prog) { Run(unit, pc, prog, cycle_cap_); }
+
+void VuBlockTier::Run(VuUnit& unit, uint32_t pc, VuBlockProgram& prog, uint64_t cycle_limit) {
+    const auto t0 = std::chrono::steady_clock::now();
     VuChopRoundGuard round_guard;  // FMAC/FDIV/EFU truncate for the whole run
     Vu1State& st = unit.state();
     VUregs& regs = st.regs;
-
-    VuBlockProgram* prog = Lookup(unit);  // at every entry (MSCAL / MSCNT / resume)
 
     regs.VF[0].x = 0.0f;
     regs.VF[0].y = 0.0f;
@@ -289,8 +305,11 @@ void VuBlockTier::Execute(VuUnit& unit, uint32_t start_pc, uint64_t cycle_limit)
     st.xgkick_count = 0;
 
     const uint64_t before = bundles_;
-    Loop(unit, pc, *prog, cycle_limit);
-    prog->bundles += bundles_ - before;
+    Loop(unit, pc, prog, cycle_limit);
+    prog.bundles += bundles_ - before;
+    ++stats_.runs;
+    stats_.run_ns += static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count());
 }
 
 void VuBlockTier::DrainAll(VuUnit& unit) { generic_.DrainAll(unit); }

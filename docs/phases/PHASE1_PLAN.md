@@ -149,7 +149,10 @@ Peak default = FLAG_LEDGER SETTINGS table (run_play.sh CANON); "det" = the
 | `cdvd.load_turbo` | bool | false | false | PS2_LOAD_TURBO |
 | `cdvd.delivery_visibility` | boundary\|poll | poll | poll | — (DP-17 (a) toggle, I8.13-A; default `poll` since gate S4, 2026-10-03 — KEPT by score (DECISIONS_LOG DP-17); `boundary` = the pre-decision model: a completed host-served read visible at the poll that asks once the modelled drive is done) |
 | `cdvd.poll_latency_scale` | float > 0 | 1.0 | 1.0 (not pinned: the profile's `latency_scale=0` is boundary mode's "no drive time") | — (DP-17 (a) attempt 2, I8.14-A: the virtual drive's time under `delivery_visibility=poll`) |
-| `engine.vu1_mode` | hle\|cached\|interp | cached (HLE→cached ladder is NORM) | cached | PS2_VU_MODE |
+| `engine.vu1_mode` | hle\|cached\|interp\|block\|aot | cached (HLE→cached ladder is NORM) | cached | PS2_VU_MODE (`block` = the pre-resolved block tier; `aot` = the generic run-time VU1 recompiler, engine/vu/vu1_aot/: a verified image on its specialised block table, the rest on `engine.vu1_aot_fallback`) |
+| `engine.vu1_aot_corpus` | str | "" | — | — (the AOT verifier's corpus directory of Vu1Case files read at start; "" = the corpus collected under `<user_data>/vu1_aot/corpus` only; a path to oracle data, excluded from the fingerprint like `paths.*`) |
+| `engine.vu1_aot_verify` | bool | on | — | — (off = every image runs native unverified: the harness / bench knob, never the play default) |
+| `engine.vu1_aot_fallback` | block\|interp | block | — | — (the tier an unverified image runs on; block == interp by VuCachedVsInterpCorpus) |
 | `engine.mtvu` | bool | on | false | PS2_MTVU (NORM-with-field) |
 | `engine.mtvu_depth` | int | 2 | — | PS2_MTVU_MAX_FRAMES |
 | `engine.mtvu_kick_drop` | bool | on | — | — (DT-14 clock contract, Mecha-Bandicoot 2026-10-13: in play mode the game thread never parks on the MTVU worker — a frame the worker is > 2 frames behind runs its VIF stream without its VU1 programs, run.meta `mtvu=` kick_drop/drop/kicks_dropped; off = the bytes/frames park, the red-before) |

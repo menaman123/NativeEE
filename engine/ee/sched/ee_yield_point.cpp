@@ -59,7 +59,7 @@ void EeYieldPoint::Trip(CpuContext& ctx) {
     }
     if (deps_.alarms && deps_.domain) deps_.alarms->FireDue(deps_.domain->DomainTick());
     if (deps_.timers) deps_.timers->PumpAtBoundary(ctx);
-    if (deps_.intc) census_.isrs += static_cast<uint64_t>(deps_.intc->DispatchPending(ctx));
+    if (deps_.intc) census_.isrs += static_cast<uint64_t>(deps_.intc->DispatchPending(ctx, Intc::kSiteYield));
     if (deps_.dispatch_dmac) deps_.dispatch_dmac(ctx);
     if (deps_.queue) deps_.queue->DrainIfPendingOnHolder();
     if (deps_.pump_devices) deps_.pump_devices(ctx);

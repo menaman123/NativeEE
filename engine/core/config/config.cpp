@@ -77,7 +77,8 @@ const char* const kAspectNames[]    = {"auto", "4:3", "16:9", "16:10", "21:9"};
 const char* const kTextureFilterNames[] = {"title", "point", "bilinear", "trilinear"};
 const char* const kLatencyNames[]   = {"instant", "modelled"};
 const char* const kVisibilityNames[] = {"boundary", "poll"};
-const char* const kVu1Names[]       = {"hle", "cached", "interp"};
+const char* const kVu1Names[]       = {"hle", "cached", "interp", "block", "aot"};
+const char* const kVu1AotFbNames[]  = {"block", "interp"};
 const char* const kPacingNames[]    = {"realtime", "freerun"};
 const char* const kIopNames[]       = {"realtime", "frame"};
 const char* const kTimerDueNames[]  = {"one_period", "at_restore"};
@@ -95,7 +96,8 @@ const EnumTable kAspect{kAspectNames, 5};
 const EnumTable kTextureFilter{kTextureFilterNames, 4};
 const EnumTable kLatency{kLatencyNames, 2};
 const EnumTable kVisibility{kVisibilityNames, 2};
-const EnumTable kVu1{kVu1Names, 3};
+const EnumTable kVu1{kVu1Names, 5};
+const EnumTable kVu1AotFb{kVu1AotFbNames, 2};
 const EnumTable kPacing{kPacingNames, 2};
 const EnumTable kIop{kIopNames, 2};
 const EnumTable kTimerDue{kTimerDueNames, 2};
@@ -174,6 +176,9 @@ const std::vector<Field>& Fields() {
         INT_FIELD("engine.shutdown_wait_s", engine.shutdown_wait_s),
         INT_FIELD("engine.time_regime_pin", engine.time_regime_pin),
         INT_FIELD("engine.turbo", engine.turbo),
+        STR_FIELD("engine.vu1_aot_corpus", engine.vu1_aot_corpus),
+        ENUM_FIELD("engine.vu1_aot_fallback", engine.vu1_aot_fallback, kVu1AotFb),
+        BOOL_FIELD("engine.vu1_aot_verify", engine.vu1_aot_verify),
         ENUM_FIELD("engine.vu1_mode", engine.vu1_mode, kVu1),
         BOOL_FIELD("game.rtc_fixed", game.rtc_fixed),
         ENUM_FIELD("gs.queue", gs.queue, kGsQueue),
@@ -311,9 +316,11 @@ bool ExcludedFromFingerprint(const std::string& key) {
     // resume leg attributes its stall with diag.tick_census=on).
     // engine.mtvu_kick_drop is the host's scheduling of the worker (park vs
     // drop): nothing the title executes or an image carries changes with it.
+    // engine.vu1_aot_corpus is a path to oracle data (where the AOT tier's
+    // verifier reads its cases): the tiers are the identity on what executes.
     return key.compare(0, 8, "harness.") == 0 || key.compare(0, 6, "paths.") == 0 || key.compare(0, 5, "diag.") == 0 ||
            key == "meta.profile" || key == "meta.source_fingerprint" || key == "save.restore_mode" ||
-           key == "engine.mtvu_kick_drop";
+           key == "engine.mtvu_kick_drop" || key == "engine.vu1_aot_corpus";
 }
 
 }  // namespace

@@ -24,7 +24,13 @@ tier dispatch (`VuTierDispatch`, mode + HLE-library consult) and the MTVU worker
   post-issue clock advance (second XGKICK, WAITQ/WAITP) re-arms a 3-op model guard. VU1 only (VU0 and a misaligned
   entry run elsewhere). Flag bookkeeping is never skipped (STATUS sticky bits are observable across programs).
 - `vu_tier_dispatch.h/.cpp` — `VuTierDispatch` (the Execute ladder) with `VuSettings` / `VuTierMode {Cached, Interp,
-  Block}` and the two hook slots; `Block` runs VU1 on the block tier and VU0 on the cached tier.
+  Block, Aot}` and the two hook slots; `Block` / `Aot` run VU1 on that tier and VU0 on the cached tier. `Aot` is the
+  generic run-time recompiler of `engine/vu/vu1_aot/` (owned here as the `aot_` member: a verified image on its
+  (kind, dest)-specialised block table, every other image on the AOT tier's fallback).
+- `vu_block_tier` also carries the AOT tier's hook: `VuBlockProgram::resolve` (a `VuBlockOpResolver`, null = `ResolveOp`),
+  `SetResolver(prog, fn)` (re-resolves the built blocks, recomputes the schedule) and `ExecuteAcquired(unit, pc, prog)`.
+- `vu_cached_tier_exec.cpp`'s body templates take `D` (the dest mask, -1 = dynamic): `UpperFastFnD / LowerFastFnD` are
+  the (kind, dest) tables the AOT resolver installs; the dynamic tables are the `D = -1` instantiations (byte-identical).
 - `mtvu_settings.h` — `MtvuSettings {enabled=true, depth_frames=2}` (types-only; mirrors the Config keys `engine.mtvu` /
   `engine.mtvu_depth`, copied by the composition root; deterministic profile `{false, 2}`).
 - `mtvu_clock.h/.cpp` — `MtvuClock` (virtual `NowNs()`, default = the process steady clock via `ps2r::Park::NowNs`;

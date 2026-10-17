@@ -11,6 +11,7 @@
 // the 64-entry eviction.
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include "engine/gif/gif_arbiter.h"
@@ -129,6 +130,7 @@ Outcome RunMode(VuTierMode mode, const Program& p, uint64_t cycle_cap = 1000000)
     WriteProgram(vu, p.code, p.base);
     if (p.setup) p.setup(vu);
     vu.dispatch().settings().vu1_mode = mode;
+    vu.dispatch().aot().set_assume_verified(mode == VuTierMode::Aot);  // the AOT leg: the specialised bodies on every op
     vu.dispatch().set_cycle_cap(cycle_cap);
     vu.Execute(p.start_pc);
     rig.arbiter.drain();
@@ -186,21 +188,27 @@ bool Same(const Outcome& a, const Outcome& b, const char* tag) {
     return ok;
 }
 
-// Both tiers on a fresh unit, then the cycle-cap sweep (every cap from 1 to
-// the full run + 2, or every `stride`-th for long runs); returns the block outcome.
+// The block tier, the AOT tier (the (kind, dest)-specialised bodies on the same
+// blocks) and the interpreter on fresh units, then the cycle-cap sweep (every cap
+// from 1 to the full run + 2, or every `stride`-th for long runs) for both tiers;
+// returns the block outcome.
 Outcome RunCase(const Program& p, uint64_t sweep_stride = 1) {
     const Outcome b = RunMode(VuTierMode::Block, p);
     const Outcome i = RunMode(VuTierMode::Interp, p);
-    const bool same = Same(b, i, p.tag);
+    const Outcome a = RunMode(VuTierMode::Aot, p);
+    const bool same = Same(b, i, p.tag) && Same(a, i, (std::string(p.tag) + " [aot]").c_str());
     CHECK(same);
     int cut_fail = 0;
     uint64_t caps = 0;
     for (uint64_t cap = 1; cap <= b.bundles + 2; cap += sweep_stride) {
         const Outcome bc = RunMode(VuTierMode::Block, p, cap);
         const Outcome ic = RunMode(VuTierMode::Interp, p, cap);
+        const Outcome ac = RunMode(VuTierMode::Aot, p, cap);
         char tag[96];
         std::snprintf(tag, sizeof(tag), "%s@cap%llu", p.tag, static_cast<unsigned long long>(cap));
         if (!Same(bc, ic, tag)) ++cut_fail;
+        std::snprintf(tag, sizeof(tag), "%s@cap%llu [aot]", p.tag, static_cast<unsigned long long>(cap));
+        if (!Same(ac, ic, tag)) ++cut_fail;
         ++caps;
     }
     CHECK(cut_fail == 0);

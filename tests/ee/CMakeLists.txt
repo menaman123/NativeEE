@@ -83,6 +83,11 @@ set_tests_properties(ThreadManagerThbase EeRunTokenAndEventQueue RelaunchOrder P
 # equal one (R1); nested / in-dispatch / non-holder trips are refused; unbound = reload only.
 ps2r_ee_test(test_ee_yield_point EeYieldPointBackedge)
 set_tests_properties(EeYieldPointBackedge PROPERTIES TIMEOUT 120)
+# Intc refusal / edge census: a cause raised inside a handler is refused at every dispatch
+# point reached from the handler (keyed site/in-cause>refused), stays pending and is serviced
+# at the next point; raised == dispatched + guest-acked + pending per cause.
+ps2r_ee_test(test_intc_census EeIntcCensus)
+set_tests_properties(EeIntcCensus PROPERTIES TIMEOUT 60)
 
 # Stage 3C2: syscall table + boot env + libc + SDK binding manifest + kernl parks (one binary,
 # section per ctest name; the manifest section reads the title's sdk_bindings.tsv).

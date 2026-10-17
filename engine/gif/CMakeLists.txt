@@ -7,6 +7,7 @@
 
 add_library(ps2r_gif STATIC
     gs_sink.cpp
+    null_gs_sink.cpp
     gif_tag.cpp
     gif_regs.cpp
     gif_register_dispatch.cpp

@@ -29,6 +29,7 @@ add_library(ps2r_app_host STATIC
     live_restore_gate.cpp
     leg_closer.cpp
     mtvu_stack.cpp
+    vu1_aot_cache.cpp
     shutdown_ladder.cpp
     shutdown_census.cpp
     subsystem_census.cpp

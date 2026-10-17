@@ -11,6 +11,13 @@
   objects it constructs on its own frame, hands later phases pointers through `EeBootstrap::LegState`
   (leg_state.h, private to these TUs) and tail-calls the next, so destruction runs in reverse construction
   order as one scope would; an early return ends the leg
+- `Vu1AotCache` (vu1_aot_cache.h/.cpp): the VU1 AOT tier's persistent side -- `<user_data>/vu1_aot/corpus/` (the
+  title's `Vu1Case` corpus, collected at first run through the tier's kick observer, quota per image) and
+  `<user_data>/vu1_aot/<build token>/manifest.txt` (one verdict row per image: hash, status, cases, corpus hash,
+  engine build, time, bundles, divergence); `Open` seeds the tier from the manifest and queues the unjudged
+  corpus, a verifier thread runs `Vu1AotVerifier` and publishes the verdicts (the frame never waits), `Close`
+  joins; `CensusRow` is the run.meta `vu1_aot=` row. A title composition constructs it on the LIVE VU1 unit when
+  `engine.vu1_mode=aot`
 
 ## Does not belong here
 

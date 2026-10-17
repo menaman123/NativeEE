@@ -9,7 +9,9 @@
 //                                                   file after that bundle (fresh unit per step,
 //                                                   RunOptions{cycle_limit = k}, pipes drained)
 //   test_vu1_capture_replay <case.bin> --cached     the cached tier instead of the interpreter
-//   test_vu1_capture_replay --bench N [--cached] <case.bin>...
+//   test_vu1_capture_replay <case.bin> --block      the block tier
+//   test_vu1_capture_replay <case.bin> --aot        the AOT tier, the image assumed verified
+//   test_vu1_capture_replay --bench N [--cached|--block|--aot] <case.bin>...
 //                                                   microbenchmark: every case replayed N times on ONE
 //                                                   unit, 5 rounds, the fastest round reported (registers
 //                                                   and data memory restored before each replay, the image
@@ -73,7 +75,13 @@ void RestoreRegsAndData(VuUnit& vu, const Vu1Case& c) {
 }
 
 const char* ModeName(VuTierMode mode) {
-    return mode == VuTierMode::Cached ? "cached" : mode == VuTierMode::Block ? "block" : "interp";
+    return mode == VuTierMode::Cached ? "cached" : mode == VuTierMode::Block ? "block" : mode == VuTierMode::Aot ? "aot" : "interp";
+}
+
+// The mode on a unit: the AOT tier runs every image native here (no manifest in a tool).
+void SetMode(VuUnit& vu, VuTierMode mode) {
+    vu.dispatch().settings().vu1_mode = mode;
+    vu.dispatch().aot().set_assume_verified(mode == VuTierMode::Aot);
 }
 
 // --bench: N replays of every case on one unit; the mean ns per replay and per bundle, then the aggregate.
@@ -85,7 +93,7 @@ int RunBench(const std::vector<std::string>& files, int n, VuTierMode mode) {
     }
     TestVu1CaptureReplay rig;
     VuUnit vu(1, &rig.arbiter);
-    vu.dispatch().settings().vu1_mode = mode;
+    SetMode(vu, mode);
     double total_ns = 0.0;
     double total_bundles = 0.0;
     for (const std::string& f : files) {
@@ -126,7 +134,7 @@ int RunBench(const std::vector<std::string>& files, int n, VuTierMode mode) {
     std::printf("bench total mode=%s cases=%zu replays=%d(min of %d rounds) bundles=%.0f ns=%.0f ns/bundle=%.2f Mbundles/s=%.1f\n",
                 ModeName(mode), files.size(), n, kRounds, total_bundles, total_ns,
                 total_bundles > 0 ? total_ns / total_bundles : 0.0, total_ns > 0 ? total_bundles * 1e3 / total_ns : 0.0);
-    if (mode == VuTierMode::Block) {
+    if (mode == VuTierMode::Block || mode == VuTierMode::Aot) {
         const VuBlockTier::Stats& bs = vu.dispatch().block().stats();
         std::printf("bench block stats blocks_run=%llu ops_static=%llu ops_model=%llu blocks_built=%llu ops/block=%.2f static=%.1f%%\n",
                     static_cast<unsigned long long>(bs.blocks_run), static_cast<unsigned long long>(bs.ops_static),
@@ -141,10 +149,10 @@ int RunBench(const std::vector<std::string>& files, int n, VuTierMode mode) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::printf("SKIP: no capture given (usage: test_vu1_capture_replay <case.bin> [--trace] [--cached|--block] | --bench N [--cached|--block] <case.bin>...)\n");
+        std::printf("SKIP: no capture given (usage: test_vu1_capture_replay <case.bin> [--trace] [--cached|--block|--aot] | --bench N [--cached|--block|--aot] <case.bin>...)\n");
         return 77;
     }
-    bool trace = false, cached = false, block = false;
+    bool trace = false, cached = false, block = false, aot = false;
     int bench = 0;
     std::vector<std::string> files;
     for (int i = 1; i < argc; ++i) {
@@ -152,10 +160,11 @@ int main(int argc, char** argv) {
         if (a == "--trace") trace = true;
         else if (a == "--cached") cached = true;
         else if (a == "--block") block = true;
+        else if (a == "--aot") aot = true;
         else if (a == "--bench" && i + 1 < argc) bench = std::atoi(argv[++i]);
         else files.push_back(a);
     }
-    const VuTierMode mode = block ? VuTierMode::Block : cached ? VuTierMode::Cached : VuTierMode::Interp;
+    const VuTierMode mode = aot ? VuTierMode::Aot : block ? VuTierMode::Block : cached ? VuTierMode::Cached : VuTierMode::Interp;
     if (bench > 0) return RunBench(files, bench, mode);
     if (files.empty()) {
         std::printf("SKIP: no capture given\n");
@@ -190,7 +199,7 @@ int main(int argc, char** argv) {
     TestVu1CaptureReplay rig;
     VuUnit vu(1, &rig.arbiter);
     vu.LoadCase(c);
-    vu.dispatch().settings().vu1_mode = mode;
+    SetMode(vu, mode);
     vu.Execute(c.start_pc);
     rig.arbiter.drain();
     const GsPacketDiff::Stream s = GsPacketDiff::Decode(rig.sink.kicks());

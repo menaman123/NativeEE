@@ -26,6 +26,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <string>
 
 #include "engine/ee/cpu/cpu_state.h"
 #include "engine/ee/mem/mmio_handler.h"
@@ -65,10 +66,11 @@ public:
     uint32_t* MaskWord() { return &mask_; }
 
     // Runs the active handlers of `cause` iff STAT & MASK has its bit, then
-    // acknowledges that bit only. Returns true when a handler ran.
-    bool Dispatch(CpuContext& ctx, int cause);
+    // acknowledges that bit only. Returns true when a handler ran. `site` names
+    // the dispatch point for the refusal census (see Site).
+    bool Dispatch(CpuContext& ctx, int cause, int site = kSiteOther);
     // Every pending, enabled cause in ascending order.
-    int DispatchPending(CpuContext& ctx);
+    int DispatchPending(CpuContext& ctx, int site = kSiteOther);
     // True while a handler runs on this controller. Dispatch / DispatchPending
     // refuse (return false / 0) while set: an ISR's own kernel calls (iSignalSema,
     // the syscall-entry delivery, a yield inside the handler) must not re-enter the
@@ -76,6 +78,28 @@ public:
     // masked while the handler runs" (EXL), counted in NestedRefusals().
     bool InDispatch() const { return in_dispatch_; }
     uint64_t NestedRefusals() const { return nested_refusals_; }
+
+    // The dispatch points a composition calls from (the census key; the EE kernel's
+    // own dispatch points are the exception vector and the handler's exit -- here
+    // the exit is the NEXT of these the running thread reaches).
+    enum Site : int { kSiteOther = 0, kSiteBoundary, kSiteYield, kSiteSyscallEntry, kSiteTimerPump, kSiteCount };
+    static const char* CauseName(int cause);
+    static const char* SiteName(int site);
+    // Per-cause edge accounting: Raise edges that set a STAT bit (raised), handler
+    // runs (dispatched), the guest's own W1C acks of a set bit (acked), and the
+    // bits still set (Stat()). A cause is lost iff raised > dispatched + acked +
+    // pending(cause): nothing else clears a STAT bit.
+    uint64_t RaisedCount(int cause) const { return raised_[cause]; }
+    uint64_t DispatchedCount(int cause) const { return dispatched_[cause]; }
+    uint64_t GuestAckedCount(int cause) const { return guest_acked_[cause]; }
+    // Refusals keyed by (site, cause in dispatch, cause refused).
+    uint64_t RefusalCount(int site, int in_cause, int refused_cause) const {
+        return refusals_[site][in_cause][refused_cause];
+    }
+    // "site/in-cause>refused=count" rows, comma-joined, descending count; empty when none.
+    std::string RefusalCensus() const;
+    // "cause:raised/dispatched/acked/pending" per cause with any raise, comma-joined.
+    std::string EdgeCensus() const;
 
     uint64_t RaiseCount() const { return raises_; }
     uint64_t DispatchCount() const { return dispatches_; }
@@ -93,5 +117,10 @@ private:
     uint64_t dispatches_ = 0;
     std::atomic<uint64_t> queued_raises_{0};
     bool in_dispatch_ = false;
+    int in_dispatch_cause_ = -1;
     uint64_t nested_refusals_ = 0;
+    uint64_t raised_[kCount] = {};
+    uint64_t dispatched_[kCount] = {};
+    uint64_t guest_acked_[kCount] = {};
+    uint64_t refusals_[kSiteCount][kCount][kCount] = {};
 };

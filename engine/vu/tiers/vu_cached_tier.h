@@ -73,6 +73,20 @@ public:
                              uint32_t& branch_target);
     static UpperFn UpperFastFn(uint8_t upper_kind);
     static LowerFn LowerFastFn(uint8_t lower_kind);
+    // The same bodies SPECIALISED on the slot's dest mask as well: one
+    // instantiation per (kind, dest) in which `dest` is a compile-time
+    // constant (the lane loops, the lane-select load and the MAC mask fold
+    // away). Same source text as the dynamic body -- the template parameter
+    // replaces the field read, nothing else -- so the two are the identity by
+    // construction and proven so by the differential tests. These serve the
+    // AOT tier's resolver (engine/vu/vu1_aot/); the dynamic tables above stay
+    // the cached and block tiers' bodies. A lower kind that never reads dest
+    // resolves to its dynamic body for every dest.
+    static UpperFn UpperFastFnD(uint8_t upper_kind, uint8_t dest);
+    static LowerFn LowerFastFnD(uint8_t lower_kind, uint8_t dest);
+    // Does the lower kind's body read the dest field (LQ/SQ/ILW/ISW/MOVE/MR32/
+    // MFIR/RGET/LQI/SQI)? Otherwise its D-instantiations would be copies.
+    static bool LowerKindReadsDest(uint8_t lower_kind);
 
 private:
     VuCachedProgram* Lookup(VuUnit& unit);
@@ -83,21 +97,25 @@ private:
     void ExecUpperFast(VuUnit& unit, const VuDecodedSlot& s);
     void ExecLowerFast(VuUnit& unit, const VuDecodedSlot& s, uint32_t pc, bool& branch_taken, uint32_t& branch_target);
     // The body of one kind, the kind a compile-time constant (the inner
-    // dispatch folds away); the tables above are built from these.
-    template <uint8_t K>
+    // dispatch folds away); the tables above are built from these. `D` is the
+    // dest mask as a constant (0..15) or -1 = read the slot's field at run time.
+    template <uint8_t K, int D = -1>
     static void ExecUpperK(VuInterpreterTier& g, VuUnit& u, const VuDecodedSlot& s);
-    template <uint8_t K>
+    template <uint8_t K, int D = -1>
     static void ExecLowerK(VuInterpreterTier& g, VuUnit& u, const VuDecodedSlot& s, uint32_t pc, bool& branch_taken,
                            uint32_t& branch_target);
     // The two FMAC families of the upper word (fd-writing results; the ACC accumulators).
-    template <uint8_t K>
+    template <uint8_t K, int D>
     static void ExecUpperFmac(VuUnit& unit, const VuDecodedSlot& s);
-    template <uint8_t K>
+    template <uint8_t K, int D>
     static void ExecUpperAcc(VuUnit& unit, const VuDecodedSlot& s);
     void DrainAll(VuUnit& unit);
 
     static const std::array<UpperFn, VUK_U_COUNT> kUpperTable;
     static const std::array<LowerFn, VUK_L_COUNT> kLowerTable;
+    // Entry kind * 16 + dest.
+    static const std::array<UpperFn, VUK_U_COUNT * 16> kUpperTableD;
+    static const std::array<LowerFn, VUK_L_COUNT * 16> kLowerTableD;
 
     VuInterpreterTier& generic_;
     uint64_t cycle_cap_;

@@ -78,7 +78,7 @@ static void TestResetScope() {
     CHECK(vu.flags().clip_depth() == 1 && vu.flags().mac_depth() == 1);  // CLIP / MAC rings untouched
     CHECK(vu.flags().q_pending());                             // Q latch untouched
     CHECK(!vu.flags().p_pending());                            // P latch dropped
-    CHECK(vu.stalls().fmac_depth() == 0 && vu.stalls().ialu_depth() == 0);
+    CHECK(vu.stalls().fmac_newest_retire() == 0 && vu.stalls().ialu_newest_retire() == 0);  // writebacks forgotten
     CHECK(!vu.xgkick()->armed());
     CHECK(vu.state().xgkick_count == 0 && !vu.state().suspended);
     vu.SetVifTop(0x1234, 0x0056);

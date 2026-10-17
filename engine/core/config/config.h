@@ -47,7 +47,13 @@ enum class CdvdLatencyModel : uint8_t { Instant = 0, Modelled };
 // When a completed host-served disc read becomes visible to the EE: at the next
 // boundary (slot 4) or at the poll that asks once the modelled drive is done.
 enum class CdvdDeliveryVisibility : uint8_t { Boundary = 0, Poll };
-enum class Vu1Mode : uint8_t { Hle = 0, Cached, Interp };
+// The VU1 fallback tier: hle = the title's library over the cached tier (the
+// Crash ladder), cached, interp, block (the pre-resolved straight-line block
+// tier), aot (the generic run-time recompiler: a verified image on its
+// (kind, dest)-specialised block table, every other image on vu1_aot_fallback).
+enum class Vu1Mode : uint8_t { Hle = 0, Cached, Interp, Block, Aot };
+// Where an image the AOT tier has not verified runs.
+enum class Vu1AotFallback : uint8_t { Block = 0, Interp };
 enum class Pacing : uint8_t { Realtime = 0, Freerun };
 enum class IopDispatch : uint8_t { Realtime = 0, Frame };
 // The first due of a RUNNING hard timer restored from a savestate: one period
@@ -133,6 +139,14 @@ struct CdvdConfig {
 
 struct EngineConfig {
     Vu1Mode vu1_mode = Vu1Mode::Cached;
+    // The AOT tier (engine.vu1_mode=aot): the corpus directory of Vu1Case
+    // files its verifier reads at start ("" = only the corpus collected under
+    // <user_data>/vu1_aot/corpus), whether an image must be verified before it
+    // runs native (off = every image native: the harness / bench knob, never
+    // the play default), and the tier an unverified image runs on.
+    std::string    vu1_aot_corpus;
+    bool           vu1_aot_verify = true;
+    Vu1AotFallback vu1_aot_fallback = Vu1AotFallback::Block;
     bool    mtvu = true;
     int     mtvu_depth = 2;
     // The clock contract's KICK DROP (play mode): the game thread never parks

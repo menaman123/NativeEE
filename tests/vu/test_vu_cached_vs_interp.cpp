@@ -1,8 +1,9 @@
 // VuCachedVsInterpCorpus: every recorded VU1 case of the frozen corpus
-// directory run through the cached tier, the block tier and the interpreter
-// tier on fresh units (cold program table each leg) -> identical post-run
-// registers (the whole 608-byte file), data memory, clock, bundle count and
-// kicked register-op stream (cached vs interp, block vs interp); then the
+// directory run through the cached tier, the block tier, the AOT tier (every
+// image assumed verified: the specialised bodies on every op) and the
+// interpreter tier on fresh units (cold program table each leg) -> identical
+// post-run registers (the whole 608-byte file), data memory, clock, bundle
+// count and kicked register-op stream (cached / block / aot vs interp); then the
 // three retail VU0 fixture images from their entry points through the cached
 // and interpreter tiers the same way (VU0 never runs on the block tier). SKIP 77 when the corpus
 // directory is absent (the fixtures always run).
@@ -48,6 +49,7 @@ Outcome RunLeg(const Vu1Case& c, VuTierMode mode) {
     VuUnit vu(1, &rig.arbiter);
     vu.LoadCase(c);
     vu.dispatch().settings().vu1_mode = mode;
+    vu.dispatch().aot().set_assume_verified(mode == VuTierMode::Aot);
     vu.Execute(c.start_pc);
     rig.arbiter.drain();
     Outcome o;
@@ -193,11 +195,13 @@ int main(int argc, char** argv) {
         const Outcome cached = RunLeg(*c, VuTierMode::Cached);
         const Outcome interp = RunLeg(*c, VuTierMode::Interp);
         const Outcome block = RunLeg(*c, VuTierMode::Block);
+        const Outcome aot = RunLeg(*c, VuTierMode::Aot);
         const bool same_c = Same(cached, interp, name.c_str());
         const bool same_b = Same(block, interp, (name + " [block]").c_str());
-        const bool same = same_c && same_b;
+        const bool same_a = Same(aot, interp, (name + " [aot]").c_str());
+        const bool same = same_c && same_b && same_a;
         if (same) ++same_n; else ++failures;
-        std::printf("COMPARE %s: pc=0x%04x bundles=%llu cycles=%llu kicks=%d ops=%zu ophash=%016llx %s (cached, block vs interp)\n",
+        std::printf("COMPARE %s: pc=0x%04x bundles=%llu cycles=%llu kicks=%d ops=%zu ophash=%016llx %s (cached, block, aot vs interp)\n",
                     same ? "PASS" : "FAIL", c->start_pc, static_cast<unsigned long long>(cached.bundles),
                     static_cast<unsigned long long>(cached.cycle - c->vu_cycle), cached.kicks, cached.opcount,
                     static_cast<unsigned long long>(cached.ophash), name.c_str());

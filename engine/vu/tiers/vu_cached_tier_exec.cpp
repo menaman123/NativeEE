@@ -11,7 +11,11 @@
 // the per-kind choice inside a family folds away at compile time; the two
 // tables (UpperFastFn / LowerFastFn) hold one resolved body per kind and
 // serve both the cached tier's per-bundle dispatch and the block tier's
-// pre-resolved ops.
+// pre-resolved ops. The second template parameter D (-1 = dynamic) makes the
+// dest mask a constant too: the (kind, dest) tables (UpperFastFnD /
+// LowerFastFnD) are the AOT tier's specialised bodies -- the SAME text, the
+// field read replaced by the parameter, so dynamic and specialised are the
+// identity by construction (and proven so by Vu1AotSpecializer).
 #include "engine/vu/tiers/vu_cached_tier.h"
 
 #include <array>
@@ -19,6 +23,7 @@
 #include <cstring>
 #include <utility>
 
+#include "engine/platform/host/platform.h"
 #include "engine/vu/tiers/vu_interpreter_tier.h"
 #include "engine/vu/vu_float.h"
 #include "engine/vu/vu_unit.h"
@@ -71,17 +76,52 @@ constexpr bool IsAccKind(uint8_t k) {
            k == VUK_U_MULA || k == VUK_U_MADDA;
 }
 
+// The dest mask of a body: the template constant when specialised, the
+// slot's field otherwise (the one place the two forms differ).
+template <int D>
+PS2R_FORCE_INLINE uint8_t UpperDest(const VuDecodedSlot& s) {
+    if constexpr (D >= 0) return static_cast<uint8_t>(D);
+    else return s.u_dest;
+}
+template <int D>
+PS2R_FORCE_INLINE uint8_t LowerDest(const VuDecodedSlot& s) {
+    if constexpr (D >= 0) return static_cast<uint8_t>(D);
+    else return s.l_dest;
+}
+
+// VuFloat::WriteMaskClamp with the mask a constant: the full mask is a plain
+// clamped store, a partial one a lane select on a constant vector (the table
+// load goes away); the dynamic form is VuFloat's.
+template <int D>
+PS2R_FORCE_INLINE void WriteMaskClampD(VR_reg& dst, const VR_reg& result, uint8_t dest) {
+    if constexpr (D < 0) {
+        VuFloat::WriteMaskClamp(dst, result.I, dest);
+    } else if constexpr (D == vu_dest::XYZW) {
+        dst = VuFloat::ClampVec(result);
+    } else {
+#if PS2R_VU_NEON
+        const uint32x4_t lm = {(D & 8) ? ~0u : 0u, (D & 4) ? ~0u : 0u, (D & 2) ? ~0u : 0u, (D & 1) ? ~0u : 0u};
+        vst1q_u32(dst.I, vbslq_u32(lm, VuFloat::ClampBits4(vld1q_u32(result.I)), vld1q_u32(dst.I)));
+#else
+        if constexpr ((D & 8) != 0) dst.I[0] = VuFloat::ClampBits1(result.I[0]);
+        if constexpr ((D & 4) != 0) dst.I[1] = VuFloat::ClampBits1(result.I[1]);
+        if constexpr ((D & 2) != 0) dst.I[2] = VuFloat::ClampBits1(result.I[2]);
+        if constexpr ((D & 1) != 0) dst.I[3] = VuFloat::ClampBits1(result.I[3]);
+#endif
+    }
+}
+
 }  // namespace
 
 // FMAC result family (fd written): the VuFloat lane kernels compute the raw
 // result from clamped source copies and the re-clamped ACC; the dest lanes of
 // fd take the clamped result (VF00 protected) and the flags judge the raw one.
-template <uint8_t K>
+template <uint8_t K, int D>
 void VuCachedTier::ExecUpperFmac(VuUnit& u, const VuDecodedSlot& s) {
     static_assert(IsFmacKind(K), "an FMAC result kind");
     VUregs& regs = u.regs();
     const uint32_t fd = s.u_fd, fs = s.u_fs, ft = s.u_ft, bc = s.u_bc;
-    const uint8_t dest = s.u_dest;
+    const uint8_t dest = UpperDest<D>(s);
     const VR_reg s1 = VuFloat::ClampVec(regs.VF[fs]);
     VuFloat::ClampStoreACC(regs.ACC);
     VR_reg result;
@@ -106,18 +146,18 @@ void VuCachedTier::ExecUpperFmac(VuUnit& u, const VuDecodedSlot& s) {
     } else {  // ADD_I
         result = VuFloat::Add4(s1, VuFloat::Splat4(VuFloat::ClampFloat(VuFloat::Bits2F(regs.I))));
     }
-    if (fd != 0) VuFloat::WriteMaskClamp(regs.VF[fd], result.I, dest);
+    if (fd != 0) WriteMaskClampD<D>(regs.VF[fd], result, dest);
     u.flags().UpdateMACFlags(regs, result, dest);
 }
 
 // ACC family: lanes outside dest keep the incoming (clamped) ACC, the flags
 // judge the raw ACC, then the dest lanes are clamped in place.
-template <uint8_t K>
+template <uint8_t K, int D>
 void VuCachedTier::ExecUpperAcc(VuUnit& u, const VuDecodedSlot& s) {
     static_assert(IsAccKind(K), "an ACC kind");
     VUregs& regs = u.regs();
     const uint32_t fs = s.u_fs, ft = s.u_ft, bc = s.u_bc;
-    const uint8_t dest = s.u_dest;
+    const uint8_t dest = UpperDest<D>(s);
     VuFloat::ClampStoreACC(regs.ACC);
     const VR_reg acc_in = regs.ACC;
     const VR_reg s1 = VuFloat::ClampVec(regs.VF[fs]);
@@ -136,14 +176,14 @@ void VuCachedTier::ExecUpperAcc(VuUnit& u, const VuDecodedSlot& s) {
         if (!(dest & (8u >> k))) acc.I[k] = acc_in.I[k];
     }
     u.flags().UpdateMACFlags(regs, acc, dest);
-    VuFloat::WriteMaskClamp(regs.ACC, acc.I, dest);  // dest lanes clamped in place; the others are acc_in already
+    WriteMaskClampD<D>(regs.ACC, acc, dest);  // dest lanes clamped in place; the others are acc_in already
 }
 
-template <uint8_t K>
+template <uint8_t K, int D>
 void VuCachedTier::ExecUpperK(VuInterpreterTier& g, VuUnit& u, const VuDecodedSlot& s) {
     VUregs& regs = u.regs();
     const uint32_t fd = s.u_fd, fs = s.u_fs, ft = s.u_ft, bc = s.u_bc;
-    const uint8_t dest = s.u_dest;
+    const uint8_t dest = UpperDest<D>(s);
 
     auto minmax_bc = [&](uint32_t bits, bool is_max) {
         VR_reg b4;
@@ -160,9 +200,9 @@ void VuCachedTier::ExecUpperK(VuInterpreterTier& g, VuUnit& u, const VuDecodedSl
     if constexpr (K == VUK_U_NOP) {
         VuFloat::ClampStoreACC(regs.ACC);
     } else if constexpr (IsFmacKind(K)) {
-        ExecUpperFmac<K>(u, s);
+        ExecUpperFmac<K, D>(u, s);
     } else if constexpr (IsAccKind(K)) {
-        ExecUpperAcc<K>(u, s);
+        ExecUpperAcc<K, D>(u, s);
     } else if constexpr (K == VUK_U_MAX_BC) {
         VuFloat::ClampStoreACC(regs.ACC);
         minmax_bc(regs.VF[ft].I[bc], true);
@@ -196,7 +236,7 @@ void VuCachedTier::ExecUpperK(VuInterpreterTier& g, VuUnit& u, const VuDecodedSl
     }
 }
 
-template <uint8_t K>
+template <uint8_t K, int D>
 void VuCachedTier::ExecLowerK(VuInterpreterTier& g, VuUnit& u, const VuDecodedSlot& s, uint32_t pc, bool& branch_taken,
                               uint32_t& branch_target) {
     VUregs& regs = u.regs();
@@ -205,7 +245,7 @@ void VuCachedTier::ExecLowerK(VuInterpreterTier& g, VuUnit& u, const VuDecodedSl
     const uint32_t mask = u.mem_mask();
     const uint32_t ft = s.l_ft, fs = s.l_fs;
     const uint32_t vit = ft & 0xFu, vis = fs & 0xFu, vid = s.l_fd & 0xFu;
-    const uint32_t dest = s.l_dest;
+    const uint32_t dest = LowerDest<D>(s);
     const int32_t imm11 = s.l_imm11;
     branch_taken = false;
 
@@ -412,12 +452,72 @@ const std::array<VuCachedTier::LowerFn, VUK_L_COUNT> VuCachedTier::kLowerTable =
     return t;
 }();
 
+// The (kind, dest) tables: entry K * 16 + D is &ExecUpperK<K, D>; a lower kind
+// that never reads dest keeps its dynamic body in every D slot.
+const std::array<VuCachedTier::UpperFn, VUK_U_COUNT * 16> VuCachedTier::kUpperTableD = [] {
+    std::array<UpperFn, VUK_U_COUNT * 16> t{};
+    auto fill_d = [&t](auto self, auto kc, auto dc) {
+        constexpr uint8_t K = decltype(kc)::value;
+        constexpr int D = decltype(dc)::value;
+        t[K * 16 + D] = &VuCachedTier::ExecUpperK<K, D>;
+        if constexpr (D + 1 < 16) self(self, kc, std::integral_constant<int, D + 1>{});
+    };
+    auto fill_k = [&](auto self, auto kc) {
+        fill_d(fill_d, kc, std::integral_constant<int, 0>{});
+        constexpr uint8_t K = decltype(kc)::value;
+        if constexpr (K + 1 < VUK_U_COUNT) self(self, std::integral_constant<uint8_t, K + 1>{});
+    };
+    fill_k(fill_k, std::integral_constant<uint8_t, 0>{});
+    return t;
+}();
+
+bool VuCachedTier::LowerKindReadsDest(uint8_t k) {
+    switch (k) {
+        case VUK_L_LQ: case VUK_L_SQ: case VUK_L_ILW: case VUK_L_ISW: case VUK_L_MOVE: case VUK_L_MR32:
+        case VUK_L_MFIR: case VUK_L_RGET: case VUK_L_LQI: case VUK_L_SQI:
+            return true;
+        default:
+            return false;
+    }
+}
+
+const std::array<VuCachedTier::LowerFn, VUK_L_COUNT * 16> VuCachedTier::kLowerTableD = [] {
+    std::array<LowerFn, VUK_L_COUNT * 16> t{};
+    auto fill_d = [&t](auto self, auto kc, auto dc) {
+        constexpr uint8_t K = decltype(kc)::value;
+        constexpr int D = decltype(dc)::value;
+        t[K * 16 + D] = &VuCachedTier::ExecLowerK<K, D>;
+        if constexpr (D + 1 < 16) self(self, kc, std::integral_constant<int, D + 1>{});
+    };
+    auto fill_k = [&](auto self, auto kc) {
+        constexpr uint8_t K = decltype(kc)::value;
+        if (LowerKindReadsDest(K)) {
+            fill_d(fill_d, kc, std::integral_constant<int, 0>{});
+        } else {
+            for (int d = 0; d < 16; ++d) t[K * 16 + d] = &VuCachedTier::ExecLowerK<K>;
+        }
+        if constexpr (K + 1 < VUK_L_COUNT) self(self, std::integral_constant<uint8_t, K + 1>{});
+    };
+    fill_k(fill_k, std::integral_constant<uint8_t, 0>{});
+    return t;
+}();
+
 VuCachedTier::UpperFn VuCachedTier::UpperFastFn(uint8_t upper_kind) {
     return kUpperTable[upper_kind < VUK_U_COUNT ? upper_kind : VUK_U_GENERIC];
 }
 
 VuCachedTier::LowerFn VuCachedTier::LowerFastFn(uint8_t lower_kind) {
     return kLowerTable[lower_kind < VUK_L_COUNT ? lower_kind : VUK_L_GENERIC];
+}
+
+VuCachedTier::UpperFn VuCachedTier::UpperFastFnD(uint8_t upper_kind, uint8_t dest) {
+    const uint8_t k = upper_kind < VUK_U_COUNT ? upper_kind : VUK_U_GENERIC;
+    return kUpperTableD[k * 16 + (dest & 0xFu)];
+}
+
+VuCachedTier::LowerFn VuCachedTier::LowerFastFnD(uint8_t lower_kind, uint8_t dest) {
+    const uint8_t k = lower_kind < VUK_L_COUNT ? lower_kind : VUK_L_GENERIC;
+    return kLowerTableD[k * 16 + (dest & 0xFu)];
 }
 
 void VuCachedTier::ExecUpperFast(VuUnit& u, const VuDecodedSlot& s) { kUpperTable[s.upper_kind](generic_, u, s); }

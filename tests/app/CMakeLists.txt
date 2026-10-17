@@ -67,6 +67,19 @@ add_executable(test_display_sequence test_display_sequence.cpp
 target_include_directories(test_display_sequence PRIVATE ${CMAKE_SOURCE_DIR})
 target_compile_options(test_display_sequence PRIVATE -Wall -Wextra -Werror)
 add_test(NAME DisplaySequenceSchedule COMMAND test_display_sequence)
+
+# Vu1AotCacheManifest: the AOT tier's persistent side on a temp root -- the manifest row
+# grammar round-trips, the build-id directory name is sanitised, a corpus on disk is
+# verified by the thread and its verdict published to the tier and persisted, a second
+# cache on the same root is seeded from the manifest without re-verifying, another build
+# id re-verifies, and a kick of a new image is collected (quota 1), judged and runs native.
+add_executable(test_vu1_aot_cache test_vu1_aot_cache.cpp
+    "${CMAKE_SOURCE_DIR}/app/host/vu1_aot_cache.cpp")
+target_include_directories(test_vu1_aot_cache PRIVATE ${CMAKE_SOURCE_DIR})
+target_compile_options(test_vu1_aot_cache PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(test_vu1_aot_cache PRIVATE ps2r_vu)
+add_test(NAME Vu1AotCacheManifest COMMAND test_vu1_aot_cache)
+set_tests_properties(Vu1AotCacheManifest PROPERTIES TIMEOUT 60)
 set_tests_properties(ControlsBindingsPressToBind PROPERTIES TIMEOUT 60)
 
 # RootFirstRunExtract (CHARTER 2 C2, Bernoulli): the first-run extraction on the actual play binary

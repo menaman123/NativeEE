@@ -4,7 +4,7 @@
 #include "engine/vu/vu_unit.h"
 
 VuTierDispatch::VuTierDispatch(VuSettings settings, uint64_t cycle_cap)
-    : settings_(settings), interp_(cycle_cap), cached_(interp_, cycle_cap), block_(interp_, cycle_cap) {}
+    : settings_(settings), interp_(cycle_cap), cached_(interp_, cycle_cap), block_(interp_, cycle_cap), aot_(block_, interp_) {}
 
 void VuTierDispatch::SetHleHook(HleHook fn, void* user) {
     hle_ = fn;
@@ -30,6 +30,10 @@ void VuTierDispatch::Execute(VuUnit& unit, uint32_t start_pc) {
     switch (settings_.vu1_mode) {
         case VuTierMode::Block:
             if (unit.id() == 1) block_.Execute(unit, start_pc);
+            else cached_.Execute(unit, start_pc);
+            break;
+        case VuTierMode::Aot:
+            if (unit.id() == 1) aot_.Execute(unit, start_pc);
             else cached_.Execute(unit, start_pc);
             break;
         case VuTierMode::Cached: cached_.Execute(unit, start_pc); break;

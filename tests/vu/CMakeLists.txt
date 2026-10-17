@@ -141,10 +141,23 @@ ps2r_vu_test(test_vu_cached_tier VuCachedSuperblock)
 # epoch fast path + 64-entry eviction.
 ps2r_vu_test(test_vu_block_tier VuBlockTier)
 
+# Vu1AotSpecializer: the AOT tier's (kind, dest)-specialised bodies against the
+# dynamic bodies on every upper / lower encoding under every dest mask and
+# several random register files -> identical registers, data, clock, branch
+# verdict; every (kind, dest) pair exercised. Arg: random register files per encoding.
+ps2r_vu_test(test_vu1_aot_specializer Vu1AotSpecializer 3)
+
+# Vu1AotVerifier: the verification gate on fabricated corpus cases (identical /
+# empty / mixed images, the corpus hash) and the tier's status machine
+# (unverified -> fallback + observer, verified -> native on the specialised
+# table, refused -> dynamic bodies, the interpreter fallback, assume_verified).
+ps2r_vu_test(test_vu1_aot_verifier Vu1AotVerifier)
+
 # VuCachedVsInterpCorpus: every recorded VU1 case under the frozen corpus
-# directory through both tiers on fresh units -> identical post regs / data /
-# clock / bundles / kicks (SKIP 77 when the corpus is absent), plus the three
-# retail VU0 fixture images from their entry points through both tiers.
+# directory through the cached, block and AOT tiers (the last with every image
+# assumed verified) and the interpreter on fresh units -> identical post regs /
+# data / clock / bundles / kicks (SKIP 77 when the corpus is absent), plus the
+# three retail VU0 fixture images from their entry points through both tiers.
 # The fixture directory is the private root's at run time ({PRIVATE_FIXTURES}/tests/vu/fixtures via the
 # runner; no FIXTURES precondition -- the binary skips the images itself and still runs the corpus).
 add_executable(test_vu_cached_vs_interp test_vu_cached_vs_interp.cpp)

@@ -95,12 +95,20 @@ struct VuBlock {
     std::vector<VuBlockOp> ops;
 };
 
+// How the builder resolves an op's two bodies from its decoded slot: the
+// block tier's own ResolveOp (the dynamic kind -> body tables) unless a tier
+// installs another for the program (the AOT tier's (kind, dest)-specialised
+// bodies, engine/vu/vu1_aot/). A resolver fills every VuBlockOp field but
+// `s_delta` (the schedule's).
+using VuBlockOpResolver = void (*)(VuBlockOp& op, const VuDecodedSlot& s);
+
 // One decoded image with its block table (built lazily per entry address).
 struct VuBlockProgram {
     uint64_t hash = 0;
     uint64_t generation = 0;
     uint64_t exec_count = 0;
     uint64_t bundles = 0;
+    VuBlockOpResolver resolve = nullptr;             // null = VuBlockTier::ResolveOp
     std::vector<VuDecodedSlot> slots;                // one per 8-byte bundle of the unit's micro memory
     std::vector<VuBlock*> block_at;                  // slot -> its block, null = none yet
     std::vector<std::unique_ptr<VuBlock>> blocks;
@@ -121,6 +129,8 @@ public:
         uint64_t ops_static = 0;    // ops whose stall came from the schedule
         uint64_t ops_model = 0;     // ops that consulted the stall model
         uint64_t blocks_built = 0;
+        uint64_t runs = 0;          // programs run (one steady-clock pair each: the census's ns per bundle)
+        uint64_t run_ns = 0;        // wall time inside Run
     };
 
     // `generic` supplies the drain and the GENERIC bodies through the cached tier's tables.
@@ -129,12 +139,19 @@ public:
     // Run the unit's microprogram from `start_pc` (byte address) to its end.
     void Execute(VuUnit& unit, uint32_t start_pc);
     void Execute(VuUnit& unit, uint32_t start_pc, uint64_t cycle_limit);
+    // The same run on a program the caller Acquired for this unit (VU1, `pc`
+    // 8-aligned and masked): the AOT tier's entry after its status read.
+    void ExecuteAcquired(VuUnit& unit, uint32_t pc, VuBlockProgram& prog);
 
     // The program for the unit's current micro memory (epoch fast path, hash
     // lookup, decode on a miss; the least-executed entry evicted at cap).
     VuBlockProgram* Acquire(VuUnit& unit);
     // The block entered at `pc` (8-aligned) of that program, built on first use.
     VuBlock* BlockAt(VuBlockProgram& prog, uint32_t pc);
+    // Install `resolve` (null = ResolveOp) on the program and re-resolve every
+    // block built so far (the schedule is recomputed: it depends on the slots
+    // only). Blocks built later use it too.
+    void SetResolver(VuBlockProgram& prog, VuBlockOpResolver resolve);
 
     uint64_t cycle_cap() const { return cycle_cap_; }
     void set_cycle_cap(uint64_t cap) { cycle_cap_ = cap; }
@@ -163,6 +180,8 @@ private:
     VuBlockProgram* Lookup(VuUnit& unit);
     void DecodeProgram(const VuUnit& unit, VuBlockProgram& prog) const;
     VuBlock* Build(VuBlockProgram& prog, size_t slot_idx);
+    // The run proper: the per-run unit state, the loop, the program's bundle count.
+    void Run(VuUnit& unit, uint32_t pc, VuBlockProgram& prog, uint64_t cycle_limit);
     void Loop(VuUnit& unit, uint32_t pc, VuBlockProgram& prog, uint64_t cycle_limit);
     // `n` ops of a block from `pc`: clock, stalls, pacing, the two words, the
     // VF00/VI00 pin; op `branch_idx`'s verdict lands in `taken`/`target`.
