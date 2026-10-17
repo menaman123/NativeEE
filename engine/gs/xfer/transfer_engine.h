@@ -32,12 +32,18 @@
 // store's exactly; only the image's per-call counters (stream_writes, a page's
 // view generation) count one write per run instead of per pixel.
 //
-// Store rules kept bit-exact with the original runtime (recorded findings):
-//   CT24 stores its 3 colour bytes and forces the 4th byte to 0x80;
-//   PSMT4 host->local data advances the cursor, stamps the pages and notes each
-//   pixel as a written PixelSize span (so the completion settle bumps the upload
-//   epoch) but stores no nibble (upload-drop compatibility); T8H/T4HL/T4HH
-//   likewise store nothing.
+// Store rules:
+//   CT24 stores its 3 colour bytes and forces the 4th byte to 0x80 (kept bit-exact
+//   with the original runtime);
+//   PSMT4 IMAGE data is 16 nibbles per HWREG word (GS User's Manual 4.2 / 8.3.4):
+//   each lands in its nibble of the byte PsmLayout addresses (the two nibbles of
+//   a byte are rows y and y+2 of the column, so the stage seeds the byte from the
+//   image before the first nibble and keeps the other half); PSMT8H data is 8 bits
+//   per pixel into byte 3 of the CT32-layout word, PSMT4HL / PSMT4HH 4 bits into
+//   the low / high nibble of that byte (section 8.3.1 index-in-word modes). The
+//   original runtime stored none of these (its first title never issued them); a
+//   title whose textures are PSMT4 uploads sampled every one as whatever the
+//   pages held before, which is what the texture oracle caught.
 #pragma once
 
 #include <cstddef>
@@ -71,6 +77,7 @@ public:
         uint64_t bitbltbuf = 0, trxdir = 0, hwreg = 0, completed = 0, local_local = 0, local_host = 0;
         uint64_t local_local_over_gpu = 0;  // source pages authored by a GPU target (the mirror may lag)
         uint64_t owned = 0;                 // NoteOwnedUpload: uploads an owner placed without bytes
+        uint64_t host_local_by_dpsm[64] = {};   // host->local starts per BITBLTBUF.DPSM field value
     };
 
     explicit TransferEngine(VramImage* vram) : vram_(vram) {}
@@ -108,8 +115,11 @@ public:
     // UploadVRAMTexture job. Counted `owned`.
     void NoteOwnedUpload(uint32_t dbp, uint32_t bytes);
 
-    // Bytes per pixel the original runtime charges a PSM (T4 counts 1).
+    // Bytes per pixel the original runtime charges a PSM for the destination span
+    // it stamps / invalidates (T4 counts 1; the index-in-word modes 4).
     static uint32_t PixelSize(uint32_t psm);
+    // Pixels one 64-bit HWREG word carries: 2 / 4 / 8 / 16 by the IMAGE data width
+    // (32 / 16 / 8 / 4 bits: T8H is 8-bit data, T4HL / T4HH 4-bit data).
     static uint32_t PixelsPerWord(uint32_t psm);
 
     const Regs& Staged() const { return stage_; }
@@ -122,11 +132,17 @@ private:
     void SetTrxDir(uint64_t value);
     void ArmHostToLocal();
     void StampDest();
-    void StorePixel(uint32_t addr, uint32_t px, uint32_t lin_index);
+    // `addr` = the byte PsmLayout names for the pixel; `nibble_shift` = 0 / 4 for the
+    // 4-bit modes (the nibble inside that byte, T4) or inside byte 3 (T4HL / T4HH).
+    void StorePixel(uint32_t addr, uint32_t nibble_shift, uint32_t px, uint32_t lin_index);
     // The staged column store: `bytes[0..size)` at `addr` (size 4 / 2 / 1) into the
     // column slot `col` (the row-relative column index), flushed as runs when a
     // slot changes column or the stage is flushed.
     void StageBytes(uint32_t col, uint32_t addr, const uint8_t* bytes, uint32_t size);
+    // One nibble (`value` & 0xF at bit `shift`) of the byte at `addr`: the byte is
+    // seeded from the image when the slot does not hold it yet, so a flush writes
+    // the other nibble as it was.
+    void StageNibble(uint32_t col, uint32_t addr, uint32_t shift, uint32_t value);
     void FlushStageSlot(size_t slot);
     void FlushStage();
     // The row-segment walk over `nwords` IMAGE words that lie entirely inside the

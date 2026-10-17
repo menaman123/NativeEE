@@ -258,7 +258,7 @@ void PsmLayout::RowAddresser::Begin(Psm m, uint32_t row, uint32_t base, uint32_t
     byte_shift = storage_bits == 32 ? 2 : storage_bits == 16 ? 1 : storage_bits == 8 ? 0 : -1;
 }
 
-uint32_t PsmLayout::RowAddresser::ByteAddress(uint32_t x) const {
+uint32_t PsmLayout::RowAddresser::ElementAddress(uint32_t x) const {
     // The same terms PixelAddress sums, with the row's constants hoisted:
     // page = page_row * pages_per_row + x / page_w; element in page = block *
     // per_block + element in block. Every divisor is a power of two (Begin), so
@@ -269,8 +269,12 @@ uint32_t PsmLayout::RowAddresser::ByteAddress(uint32_t x) const {
     const uint64_t block = BlockInPage(psm, lx >> block_w_shift, block_y);
     const uint64_t element = row_base + (page_x << per_page_shift) + (block << per_block_shift) +
                              ElementInBlock(psm, lx & (block_w - 1u), by);
-    const uint64_t wrapped = element & vram_mask;
-    return static_cast<uint32_t>(byte_shift >= 0 ? (wrapped << byte_shift) : (wrapped >> 1));
+    return static_cast<uint32_t>(element & vram_mask);
+}
+
+uint32_t PsmLayout::RowAddresser::ByteAddress(uint32_t x) const {
+    const uint32_t wrapped = ElementAddress(x);
+    return byte_shift >= 0 ? (wrapped << byte_shift) : (wrapped >> 1);
 }
 
 uint32_t PsmLayout::PixelByteAddress(Psm psm, uint32_t x, uint32_t y, uint32_t bp, uint32_t bw) {

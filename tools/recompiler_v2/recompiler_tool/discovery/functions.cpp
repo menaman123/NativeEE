@@ -228,6 +228,12 @@ struct Walker {
             }
             case Kind::Other:
             default:
+                // A no-return kernel syscall (Exit / ExitThread / ExitDeleteThread in the SDK's
+                // `addiu v1,zero,N ; syscall` stub shape) is a hard stop like `jr ra`: the next
+                // word may be another function's entry (rv2_decode.h is_noreturn_syscall_imm).
+                if (decode::is_syscall_word(ins.word) && pc >= text.base_va + 4 &&
+                    decode::is_noreturn_syscall_imm(text.read_u32(pc - 4)))
+                    break;
                 queue.push_back(pc + 4);
                 break;
         }

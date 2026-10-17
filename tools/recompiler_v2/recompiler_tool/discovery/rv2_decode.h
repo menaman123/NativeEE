@@ -105,6 +105,22 @@ inline Insn decode(uint32_t word) {
     return in;
 }
 
+// `syscall` (SPECIAL funct 0xC, any code field).
+inline bool is_syscall_word(uint32_t word) { return (word & 0xFC00003Fu) == 0x0000000Cu; }
+
+// The EE kernel's no-return syscalls in the SDK's stub shape -- `addiu $v1, $zero, N` immediately
+// followed by `syscall` (libkernl's stubs, crt0's InitMainThread root): Exit (0x04), ExitThread
+// (0x23), ExitDeleteThread (0x24). The kernel never returns from these, so the word after the
+// syscall is NOT reached by fall-through: a function may begin there (SCUS_973.16: crt0's root
+// `addiu v1,0x23; syscall` at 0x100220 is followed by the address-taken function 0x100228 --
+// a Splice native reached only through a .data pointer -- which the walk must not absorb, or the
+// generated body enters it at the ExitThread).
+inline bool is_noreturn_syscall_imm(uint32_t prev_word) {
+    if ((prev_word >> 16) != 0x2403u) return false;   // addiu $v1, $zero, imm
+    const uint32_t imm = prev_word & 0xFFFFu;
+    return imm == 0x04u || imm == 0x23u || imm == 0x24u;
+}
+
 // Prologue shape (seed source 3, SEED-ONLY): addiu/daddiu sp, sp, -N.
 inline bool is_prologue_word(uint32_t word) {
     const uint32_t hi = word >> 16;

@@ -229,8 +229,9 @@ void TextureResolver::ServeColor(const DrawIr& ir, const Context& ctx, const Ren
 }
 
 // A served read (target / depth / self) leaves one trace line naming the tier.
-static void TraceServe(TexresTrace& tr, const DrawIr& ir, const TextureResolver::Context& ctx,
+static void TraceServe(TexresTrace& tr, TextureDumpSink& sink, const DrawIr& ir, const TextureResolver::Context& ctx,
                        TexresTrace::Outcome o) {
+    if (sink.Armed()) sink.NoteServe(ir.tex, TexresTrace::OutcomeName(o), ctx.frame_count, ctx.draw_seq);
     if (!tr.Wants(ir.tex)) return;
     TexresTrace::Line l;
     l.draw_seq = ctx.draw_seq;
@@ -255,7 +256,7 @@ TextureSource TextureResolver::ResolveRead(const DrawIr& ir, const Context& ctx)
     out.transform.uv_pre_h = out.transform.uv_tex_h;
     if (RenderTarget* t = targets_.Find(ir.tex.tbp)) {
         if (MatchTarget(ir, ctx, *t, &out)) {
-            TraceServe(trace_, ir, ctx, (out.owner.fmt_case == 0 && ir.tex.tbp == ctx.active_fbp)
+            TraceServe(trace_, dump_sink_, ir, ctx, (out.owner.fmt_case == 0 && ir.tex.tbp == ctx.active_fbp)
                                             ? TexresTrace::Outcome::SelfRead
                                             : TexresTrace::Outcome::TargetServe);
             // A colour-class serve of the draw's own target binds nothing: the read
@@ -279,7 +280,7 @@ TextureSource TextureResolver::ResolveRead(const DrawIr& ir, const Context& ctx)
         return out;
     }
     if (MatchDepth(ir, ctx, &out)) {
-        TraceServe(trace_, ir, ctx, TexresTrace::Outcome::DepthServe);
+        TraceServe(trace_, dump_sink_, ir, ctx, TexresTrace::Outcome::DepthServe);
         out.enabled = true;
         return out;
     }
@@ -610,8 +611,8 @@ uint8_t* TextureResolver::Scratch(std::vector<uint8_t>& buf, size_t n) {
     return buf.data();
 }
 
-render::SurfaceId TextureResolver::DecodeAndUpload(const DrawIr& ir, const ContentKey::Rect& rgn, bool sub,
-                                                   int dw, int dh, const MipSampler::Chain& mips,
+render::SurfaceId TextureResolver::DecodeAndUpload(const DrawIr& ir, const Context& ctx, const ContentKey::Rect& rgn,
+                                                   bool sub, int dw, int dh, const MipSampler::Chain& mips,
                                                    uint8_t* levels) {
     const TexReadView& v = ir.tex;
     // The decoder addresses texels through the composed 4 MiB view (pending-shadow
@@ -640,6 +641,24 @@ render::SurfaceId TextureResolver::DecodeAndUpload(const DrawIr& ir, const Conte
     census_.decodes++;
     if (sub) TextureDecoder::DecodeRect(view_.data(), v, rgn.x0, rgn.y0, dw, dh, &heal_, &layout_, &texels_);
     else TextureDecoder::Decode(view_.data(), v, &heal_, &layout_, &texels_);
+    if (dump_sink_.Armed()) {
+        // The texture oracle sees the decode as the GPU will sample it (before the FMV
+        // edge clamp, which is a sampling workaround, not a decode rule).
+        TextureDumpSink::Decode rec;
+        rec.tex = &v;
+        rec.view = view_.data();
+        rec.texels = texels_.data();
+        rec.dw = dw;
+        rec.dh = dh;
+        rec.sub = sub;
+        rec.x0 = rgn.x0;
+        rec.y0 = rgn.y0;
+        rec.fp_start = fp_start;
+        rec.fp_size = fp_size;
+        rec.frame_count = ctx.frame_count;
+        rec.draw_seq = ctx.draw_seq;
+        dump_sink_.OnDecode(rec);
+    }
     if (sub) ApplyFmvEdgeClamp(ir, rgn, dw, dh);
     render::SurfaceDesc d;
     d.width = static_cast<uint32_t>(dw);
@@ -708,7 +727,7 @@ void TextureResolver::DecodeFallback(const DrawIr& ir, const Context& ctx, Textu
     if (owned_.BoundCount()) {
         if (owned_.Serve(v, out)) {
             census_.owned_serves++;
-            TraceServe(trace_, ir, ctx, TexresTrace::Outcome::OwnedServe);
+            TraceServe(trace_, dump_sink_, ir, ctx, TexresTrace::Outcome::OwnedServe);
             return;
         }
         if (owned_.LastMiss() != OwnedTextureSlots::Miss::NoBind) census_.owned_misses++;
@@ -716,7 +735,7 @@ void TextureResolver::DecodeFallback(const DrawIr& ir, const Context& ctx, Textu
     if (!ctx.has_snapshot) {
         // No texel source at all: the draw keeps its textured UV conversion over
         // the TEX0 window and samples nothing.
-        TraceServe(trace_, ir, ctx, TexresTrace::Outcome::NoSnapshot);
+        TraceServe(trace_, dump_sink_, ir, ctx, TexresTrace::Outcome::NoSnapshot);
         out->declined = TextureSource::Declined::NoSnapshot;
         out->enabled = true;
         return;
@@ -827,7 +846,7 @@ void TextureResolver::DecodeFallback(const DrawIr& ir, const Context& ctx, Textu
             cache_.L2MarkProbation(prev->second.key);
         }
         uint8_t levels = 0;
-        tex = DecodeAndUpload(ir, rgn, sub, dw, dh, mips, &levels);
+        tex = DecodeAndUpload(ir, ctx, rgn, sub, dw, dh, mips, &levels);
         cache_.L1Insert(key, tex, dw, dh, fp_start, fp_size);
         cache_.L2Insert(key, tex, dw, dh, suspect);
         if (tex_levels_.size() >= 65536) tex_levels_.clear();

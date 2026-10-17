@@ -74,6 +74,7 @@
 #include "engine/gs/hle/texsrc/mip_sampler.h"
 #include "engine/gs/hle/texsrc/owned_texture_slots.h"
 #include "engine/gs/hle/texsrc/texres_trace.h"
+#include "engine/gs/hle/texsrc/texture_dump_sink.h"
 #include "engine/gs/hle/texsrc/texture_source.h"
 #include "engine/gs/vram/vram_image.h"
 #include "engine/render/backend.h"
@@ -134,6 +135,10 @@ public:
     // The source-composition trace (inert until a filter enables it).
     TexresTrace& Trace() { return trace_; }
     const TexresTrace& Trace() const { return trace_; }
+    // The texture-oracle observer (inert until armed): every fresh decode of the miss
+    // path and every read served without one.
+    TextureDumpSink& DumpSink() { return dump_sink_; }
+    const TextureDumpSink& DumpSink() const { return dump_sink_; }
 
     // Predicates (public for the unit tests).
     static bool Is16BitClass(uint32_t psm);
@@ -176,8 +181,8 @@ private:
     void TraceCompose(const TexReadView& v, uint32_t fp_start, uint32_t fp_size, uint32_t win_size,
                       TexresTrace::Line* line) const;
     bool DeriveRegion(const DrawIr& ir, int tex_w, int tex_h, ContentKey::Rect* rgn);
-    render::SurfaceId DecodeAndUpload(const DrawIr& ir, const ContentKey::Rect& rgn, bool sub, int dw,
-                                      int dh, const MipSampler::Chain& mips, uint8_t* levels);
+    render::SurfaceId DecodeAndUpload(const DrawIr& ir, const Context& ctx, const ContentKey::Rect& rgn, bool sub,
+                                      int dw, int dh, const MipSampler::Chain& mips, uint8_t* levels);
     void ApplyFmvEdgeClamp(const DrawIr& ir, const ContentKey::Rect& rgn, int dw, int dh);
     void FlushPendingUnderRead(const TexReadView& v, const RenderTarget& t);
     void RescueDeposit(const DrawIr& ir, RenderTarget& t);
@@ -212,6 +217,7 @@ private:
     std::vector<uint32_t> texels_;
     Census census_;
     TexresTrace trace_;
+    TextureDumpSink dump_sink_;
     // The scratch buffer's first `n` bytes, growing it once when it is shorter.
     static uint8_t* Scratch(std::vector<uint8_t>& buf, size_t n);
 };

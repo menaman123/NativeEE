@@ -240,6 +240,20 @@ foreach(pair "Texsrc_OwnedSlotsServe;serve" "Texsrc_OwnedSlotsTier;tier" "Texsrc
     set_tests_properties(${tname} PROPERTIES TIMEOUT 120)
 endforeach()
 
+# The texture-oracle observer (TextureDumpSink): Oracle B -- the fast tier == the per-pixel
+# reference over every PSM x CLUT (CPSM / CSM / CSA) x TBW != TW/8 x block-granular bases x
+# TEXA x sub-rects, the corrupted-texel control; and the file contract (one write per distinct
+# texture, dedup, serves.tsv).
+add_executable(test_texture_dump_sink texsrc/test_texture_dump_sink.cpp)
+target_link_libraries(test_texture_dump_sink PRIVATE ps2r_gs_hle_texsrc)
+target_compile_options(test_texture_dump_sink PRIVATE -Wall -Wextra -Werror -O2)
+foreach(pair "Texsrc_DumpSinkOracleB;oracle_b" "Texsrc_DumpSinkFiles;files")
+    list(GET pair 0 tname)
+    list(GET pair 1 arg)
+    add_test(NAME ${tname} COMMAND test_texture_dump_sink ${arg})
+    set_tests_properties(${tname} PROPERTIES TIMEOUT 120)
+endforeach()
+
 # Phase 8 (P8.21-A): the title logo atlas from the PCSX2 dump through TransferEngine + TextureDecoder.
 add_executable(test_title_atlas_decode texsrc/test_title_atlas_decode.cpp)
 target_link_libraries(test_title_atlas_decode PRIVATE ps2r_gs_hle_texsrc ps2r_gs_xfer)

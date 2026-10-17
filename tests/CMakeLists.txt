@@ -213,4 +213,11 @@ function(ps2r_apply_default_test_timeout dir)
         ps2r_apply_default_test_timeout("${s}")
     endforeach()
 endfunction()
+# A title's own judges as ctest rows: games/<title>/verify/CMakeLists.txt, added here (after
+# enable_testing(); the title's hle/ directory is added by the root before it, for the libraries).
+# Title-neutral: any title may ship one; a title without it registers nothing.
+if(PS2R_TITLE AND EXISTS "${PS2R_GAMES_DIR}/${PS2R_TITLE}/verify/CMakeLists.txt")
+    add_subdirectory("${PS2R_GAMES_DIR}/${PS2R_TITLE}/verify" "${CMAKE_BINARY_DIR}/games/${PS2R_TITLE}/verify")
+endif()
+
 ps2r_apply_default_test_timeout("${CMAKE_CURRENT_SOURCE_DIR}")

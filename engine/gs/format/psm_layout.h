@@ -91,6 +91,9 @@ public:
     struct RowAddresser {
         void Begin(Psm psm, uint32_t y, uint32_t bp, uint32_t bw);
         uint32_t ByteAddress(uint32_t x) const;
+        // The element address (== PixelAddress(psm, x, y, bp, bw)); for T4 its low
+        // bit is the nibble inside the byte ByteAddress names.
+        uint32_t ElementAddress(uint32_t x) const;
 
         Psm psm = Psm::CT32;
         uint32_t y = 0, bp = 0, bw = 0;   // the row this addresser was begun for
