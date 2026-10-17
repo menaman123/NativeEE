@@ -206,6 +206,18 @@ uint64_t MtvuWorker::BatchSegmentsProcessed() const {
     return batch_segments_.load(std::memory_order_relaxed);
 }
 
+MtvuWorker::Ledger MtvuWorker::ledger() const {
+    Ledger l;
+    l.busy_ns = busy_ns_.load(std::memory_order_relaxed);
+    l.wait_ns = wait_ns_.load(std::memory_order_relaxed);
+    l.spin_ns = spin_ns_.load(std::memory_order_relaxed);
+    l.segments = segments_.load(std::memory_order_relaxed);
+    l.records = records_.load(std::memory_order_relaxed);
+    l.pops = pops_.load(std::memory_order_relaxed);
+    l.depth_max = depth_max_.load(std::memory_order_relaxed);
+    return l;
+}
+
 // ---- worker thread -----------------------------------------------------------
 
 void MtvuWorker::ReplaySpan(const uint8_t* data, size_t size, bool tte) {
@@ -244,6 +256,7 @@ void MtvuWorker::ProcessSegment(Segment& seg) {
             worker_vu1_.SetKickDrop(seg.drop_kicks);
             const uint8_t* p = seg.bytes.data();
             const uint8_t* end = p + seg.bytes.size();
+            uint64_t records = 0;
             while (p + kBatchRecordHeader <= end) {
                 uint32_t len = 0;
                 std::memcpy(&len, p, sizeof(len));
@@ -252,10 +265,12 @@ void MtvuWorker::ProcessSegment(Segment& seg) {
                 if (p + len > end) break;
                 ReplaySpan(p, len, tte);
                 p += len;
+                ++records;
             }
             worker_vu1_.SetKickDrop(false);
             active_marker_.reset();
             batch_segments_.fetch_add(1, std::memory_order_relaxed);
+            records_.fetch_add(records, std::memory_order_relaxed);
             break;
         }
         case Segment::Op::Data:
@@ -264,6 +279,7 @@ void MtvuWorker::ProcessSegment(Segment& seg) {
             ReplaySpan(seg.bytes.data(), seg.bytes.size(), seg.tte);
             worker_vu1_.SetKickDrop(false);
             active_marker_.reset();
+            records_.fetch_add(1, std::memory_order_relaxed);
             break;
     }
     SealAndRetire(seg);
@@ -290,19 +306,30 @@ void MtvuWorker::WorkerLoop() {
                     MtvuBackpressure::CpuRelax();
                 }
             }
+            spin_ns_.fetch_add(ps2r::Park::NowNs() - t0, std::memory_order_relaxed);
         }
         {
             std::unique_lock<std::mutex> lk(mtx_);
-            cv_work_.wait(lk, [this] { return stop_ || !queue_.empty(); });
+            if (!stop_ && queue_.empty()) {
+                const uint64_t t0 = ps2r::Park::NowNs();
+                cv_work_.wait(lk, [this] { return stop_ || !queue_.empty(); });
+                wait_ns_.fetch_add(ps2r::Park::NowNs() - t0, std::memory_order_relaxed);
+            }
             if (stop_ && queue_.empty()) break;
             // Batched pop: the whole queue under one lock.
             local.swap(queue_);
             processing_ = true;
         }
+        const uint64_t busy_t0 = ps2r::Park::NowNs();
+        const uint64_t depth = local.size();
+        pops_.fetch_add(1, std::memory_order_relaxed);
+        if (depth > depth_max_.load(std::memory_order_relaxed)) depth_max_.store(depth, std::memory_order_relaxed);
         while (!local.empty()) {
             ProcessSegment(local.front());
             local.pop_front();
         }
+        segments_.fetch_add(depth, std::memory_order_relaxed);
+        busy_ns_.fetch_add(ps2r::Park::NowNs() - busy_t0, std::memory_order_relaxed);
         {
             std::lock_guard<std::mutex> lk(mtx_);
             processing_ = false;

@@ -53,10 +53,23 @@ public:
     uint32_t cyclecount() const { return cyclecount_; }
     size_t staging_bytes() const { return staging_.size(); }
 
+    // Census of the PATH1 hand-off: kicks armed, packets submitted and their
+    // bytes, and the Arms whose staging had to allocate. Counts only: a clock
+    // read per packet cost 2.8 % of the worker's run time (E182's measurement:
+    // the submit tail itself is ~150 ns per packet, 0.6 ns per bundle).
+    struct Census {
+        uint64_t arms = 0;
+        uint64_t submits = 0;
+        uint64_t submit_bytes = 0;
+        uint64_t staging_allocs = 0;
+    };
+    const Census& census() const { return census_; }
+
 private:
     void Transfer(const uint8_t* data, uint64_t& vu_cycle, int64_t cycles, bool flush, bool add_stall_cycles);
 
     GifArbiter& arbiter_;
+    Census census_;
     bool paced_;
     bool enable_ = false;
     uint32_t addr_ = 0;            // drain pointer (byte address)

@@ -130,16 +130,18 @@ private:
     void AccumulateLazyEntry(const PendingMac& e);
     void LazyRingOverflow();
 
-    bool lazy_;
-    uint64_t vu_cycle_ = 0;
-
-    PendingClip clip_pending_[kRingDepth] = {};
-    int clip_pending_n_ = 0;
-    uint32_t clip_latest_ = 0;
-
-    PendingMac mac_pending_[kRingDepth] = {};
+    // Hot state first, phased to the host cache line (StallModel::kLineBytes):
+    // the clock and the ring counters share one line, the MAC ring (8 x 32 B)
+    // starts a line so no entry straddles one. The unit's placement used to
+    // decide the phase (bench7 native 9.5 .. 15.0 ns/bundle by phase, E181).
+    alignas(128) uint64_t vu_cycle_ = 0;
     int mac_pending_n_ = 0;
     int mac_head_ = 0;
+    int clip_pending_n_ = 0;
+    uint32_t clip_latest_ = 0;
+    bool lazy_;
+    alignas(128) PendingMac mac_pending_[kRingDepth] = {};
+    alignas(128) PendingClip clip_pending_[kRingDepth] = {};
     alignas(16) uint32_t lazy_acc_[4][4] = {};  // [Z,S,U,O][lane] all-ones where seen (SIMD fold)
     uint16_t lazy_or_mac_ = 0;                  // OR of packed words (scalar fold)
     uint32_t lazy_last_bits_[4] = {};

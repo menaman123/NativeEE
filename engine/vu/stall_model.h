@@ -37,6 +37,7 @@
 
 class StallModel {
 public:
+    static constexpr size_t kLineBytes = 128;  // the host cache line the hot tables are phased to
     static constexpr int kFmacWbLatency = 4;
     static constexpr int kIaluLwLatency = 4;
 
@@ -96,7 +97,11 @@ private:
     void PushFmac(uint8_t reg, uint8_t mask, uint64_t cycle);
     void PushIalu(uint8_t vi, uint64_t cycle);
 
-    alignas(16) uint64_t fmac_retire_[32][4] = {};
+    // Line-aligned: a VF row (4 x 8 B) must never straddle a cache line. With
+    // the 16-byte alignment the unit's placement decided the row phase, and
+    // one phase in eight (the table at 112 mod 128) ran the block tier at
+    // 3x its cost (bench7 47 vs 14.6 ns/bundle; E181).
+    alignas(kLineBytes) uint64_t fmac_retire_[32][4] = {};
     uint64_t fmac_newest_ = 0;
     uint64_t ialu_retire_[16] = {};
     uint64_t ialu_newest_ = 0;

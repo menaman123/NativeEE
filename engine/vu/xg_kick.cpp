@@ -44,7 +44,11 @@ void XgKick::Arm(const uint8_t* data, uint32_t vi_addr, uint64_t& vu_cycle) {
     next_due_ = lastcycle_ + static_cast<uint64_t>(kQuantum) + 1;
     cyclecount_ = 1;  // the kick itself counts as one transfer cycle
     staging_.clear();
-    if (staging_.capacity() < kMemSize) staging_.reserve(kMemSize);
+    if (staging_.capacity() < kMemSize) {
+        staging_.reserve(kMemSize);
+        ++census_.staging_allocs;
+    }
+    ++census_.arms;
     if (!paced_) Transfer(data, vu_cycle, 0, /*flush=*/true, /*add_stall_cycles=*/false);
 }
 
@@ -107,8 +111,16 @@ void XgKick::Transfer(const uint8_t* data, uint64_t& vu_cycle, int64_t cycles, b
     }
 
     if (!enable_ && !staging_.empty()) {
-        std::vector<uint8_t> out = arbiter_.acquireBuffer();
-        out.swap(staging_);
+        // The packet goes out as a right-sized copy (mean ~0.9 KB in the first
+        // title) and the 16 KB staging buffer stays with the unit. Handing the
+        // staging vector itself to the arbiter made every next Arm reserve a
+        // fresh 16 KB (a large-class malloc + its free on the drain thread per
+        // packet: 95 % of ~3000 packets a frame missed the arbiter's 4-buffer
+        // pool, E182) for a packet a fraction of that size.
+        census_.submit_bytes += staging_.size();
+        ++census_.submits;
+        std::vector<uint8_t> out(staging_.begin(), staging_.end());
+        staging_.clear();
         arbiter_.submitOwned(GifPath::Path1, std::move(out));
     }
 }

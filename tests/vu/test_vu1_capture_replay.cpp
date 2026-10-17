@@ -24,6 +24,11 @@
 //                                                   is timed); per case the mean ns per replay and ns per
 //                                                   bundle, then the aggregate bundles/s. No output
 //                                                   comparison: pair it with the plain mode for identity.
+//   test_vu1_capture_replay --bench-rr N [--cached|--block|--aot [--native <dir>]] <case.bin>...
+//                                                   the cases in ROTATION, N rounds, every replay timed: a
+//                                                   different program / entry / data memory each time (an
+//                                                   image change = LoadCase, i.e. an MPG + re-lookup) -- the
+//                                                   game's shape between kicks, against --bench's hot loop.
 //
 // Exit 77 (SKIP) with no argument or an unreadable case; 1 on a decode error in the kicked stream.
 #include <chrono>
@@ -199,6 +204,62 @@ int RunBench(const std::vector<std::string>& files, int n, VuTierMode mode) {
     return 0;
 }
 
+// --bench-rr: N rounds over EVERY case in rotation (case 1, 2, ..., k, 1, 2, ...), each replay timed; the
+// aggregate ns per bundle. Where --bench replays one case N times (hot code and data: the best case), the
+// rotation runs a different program image/entry/data every replay -- the game's shape between kicks.
+int RunBenchRoundRobin(const std::vector<std::string>& files, int n, VuTierMode mode) {
+    if (files.empty() || n <= 0) {
+        std::printf("SKIP: --bench-rr needs N > 0 and at least one case\n");
+        return 77;
+    }
+    TestVu1CaptureReplay rig;
+    VuUnit vu(1, &rig.arbiter);
+    SetMode(vu, mode);
+    std::vector<Vu1Case> cases(files.size());
+    for (size_t i = 0; i < files.size(); ++i) {
+        if (!vu1_case::ReadCase(files[i].c_str(), cases[i])) {
+            std::printf("SKIP: capture not readable: %s\n", files[i].c_str());
+            return 77;
+        }
+        vu.LoadCase(cases[i]);
+        if (!InstallNativeFor(vu, cases[i])) return 77;
+        vu.Execute(cases[i].start_pc);
+        rig.arbiter.drain();
+        rig.sink.Clear();
+    }
+    double total_ns = 0.0;
+    uint64_t total_bundles = 0;
+    uint64_t same_image = 0;
+    uint64_t last_hash = 0;
+    for (int round = 0; round < n; ++round) {
+        for (size_t i = 0; i < cases.size(); ++i) {
+            const Vu1Case& c = cases[i];
+            const uint64_t h = Vu1AotVerifier::ImageHashOf(c);
+            if (h == last_hash) {
+                RestoreRegsAndData(vu, c);  // the image stays resident: the game's consecutive kicks of one program
+                ++same_image;
+            } else {
+                vu.LoadCase(c);             // another image: the micro memory rewritten (an MPG), the table re-looked-up
+            }
+            last_hash = h;
+            const uint64_t b0 = vu.dispatch().bundles();
+            const auto t0 = std::chrono::steady_clock::now();
+            vu.Execute(c.start_pc);
+            const auto t1 = std::chrono::steady_clock::now();
+            total_ns += static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+            total_bundles += vu.dispatch().bundles() - b0;
+            rig.arbiter.drain();
+            rig.sink.Clear();
+        }
+    }
+    const uint64_t replays = static_cast<uint64_t>(n) * cases.size();
+    std::printf("bench-rr total mode=%s cases=%zu rounds=%d replays=%llu same_image=%llu bundles=%llu bundles/replay=%.0f ns/replay=%.0f ns/bundle=%.2f\n",
+                ModeName(mode), cases.size(), n, static_cast<unsigned long long>(replays), static_cast<unsigned long long>(same_image),
+                static_cast<unsigned long long>(total_bundles), replays ? static_cast<double>(total_bundles) / static_cast<double>(replays) : 0.0,
+                replays ? total_ns / static_cast<double>(replays) : 0.0, total_bundles ? total_ns / static_cast<double>(total_bundles) : 0.0);
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -207,7 +268,7 @@ int main(int argc, char** argv) {
         return 77;
     }
     bool trace = false, cached = false, block = false, aot = false;
-    int bench = 0;
+    int bench = 0, bench_rr = 0;
     std::vector<std::string> files;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -216,11 +277,13 @@ int main(int argc, char** argv) {
         else if (a == "--block") block = true;
         else if (a == "--aot") aot = true;
         else if (a == "--bench" && i + 1 < argc) bench = std::atoi(argv[++i]);
+        else if (a == "--bench-rr" && i + 1 < argc) bench_rr = std::atoi(argv[++i]);
         else if (a == "--native" && i + 1 < argc) g_native_dir = argv[++i];
         else files.push_back(a);
     }
     const VuTierMode mode = aot ? VuTierMode::Aot : block ? VuTierMode::Block : cached ? VuTierMode::Cached : VuTierMode::Interp;
     if (bench > 0) return RunBench(files, bench, mode);
+    if (bench_rr > 0) return RunBenchRoundRobin(files, bench_rr, mode);
     if (files.empty()) {
         std::printf("SKIP: no capture given\n");
         return 77;

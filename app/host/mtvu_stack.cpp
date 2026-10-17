@@ -170,5 +170,11 @@ std::string MtvuStack::Census() const {
          std::to_string(backpressure_.DropEpisodes()) + "/" + std::to_string(backpressure_.DropValveFrames()) +
          ",kicks_dropped=" + std::to_string(worker_.DroppedKicks()) + ",lag_max=" + std::to_string(backpressure_.LagMaxFrames()) +
          ",frame_marks=" + std::to_string(worker_.FrameMarksPushed()) + "/" + std::to_string(worker_.FrameMarksPassed());
+    // The worker thread's time ledger: busy / parked / spinning ns, segments and
+    // spans it replayed, queue pops and the deepest pop.
+    const MtvuWorker::Ledger l = worker_.ledger();
+    s += ",worker_ns=" + std::to_string(l.busy_ns) + "/" + std::to_string(l.wait_ns) + "/" + std::to_string(l.spin_ns) +
+         ",worker_segs=" + std::to_string(l.segments) + "/" + std::to_string(l.records) + ",worker_pops=" + std::to_string(l.pops) +
+         "/" + std::to_string(l.depth_max);
     return s;
 }

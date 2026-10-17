@@ -97,6 +97,21 @@ public:
     bool IsBusy() const;
     // Batch segments the worker has processed (relaxed census).
     uint64_t BatchSegmentsProcessed() const;
+    // The worker thread's time ledger (relaxed census, written by the worker):
+    // wall ns processing segments (the VIF stream, the programs, their kicks),
+    // ns parked on the work condition, ns in the spin tier; segments and batch
+    // records (spans) processed; queue pops and the deepest pop (segments
+    // taken under one lock -- the feed's queue depth as the worker saw it).
+    struct Ledger {
+        uint64_t busy_ns = 0;
+        uint64_t wait_ns = 0;
+        uint64_t spin_ns = 0;
+        uint64_t segments = 0;
+        uint64_t records = 0;
+        uint64_t pops = 0;
+        uint64_t depth_max = 0;
+    };
+    Ledger ledger() const;
     uint64_t StagedRecords() const { return stage_records_; }
     size_t StagedBytes() const { return stage_bytes_.size(); }
     // The staging buffer's high-water capacity (the ONE buffer the producer
@@ -179,6 +194,13 @@ private:
     std::atomic<uint64_t> seal_count_{0};
     std::atomic<int> sync_waiters_{0};
     std::atomic<uint64_t> batch_segments_{0};
+    std::atomic<uint64_t> busy_ns_{0};
+    std::atomic<uint64_t> wait_ns_{0};
+    std::atomic<uint64_t> spin_ns_{0};
+    std::atomic<uint64_t> segments_{0};
+    std::atomic<uint64_t> records_{0};
+    std::atomic<uint64_t> pops_{0};
+    std::atomic<uint64_t> depth_max_{0};
     uint64_t frame_marks_pushed_ = 0;              // producer thread
     std::atomic<uint64_t> frame_marks_passed_{0};  // worker thread writes, producer reads
     std::atomic<bool> drain_busy_{false};
