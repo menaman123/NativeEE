@@ -41,6 +41,12 @@ void MtvuSync::Sync(SyncSite site) {
             worker_.WaitIdleOrSeal(kPollNs, seen);
         }
         worker_.LeaveSyncWait();
+        // The worker seals its last marker BEFORE it publishes idle (inflight_
+        // released after the seal): a drain that ran between the two saw the
+        // marker unsealed and the idle check then ended the loop with that
+        // marker still in the inbox. Idle observed = the seal is visible; what
+        // the arbiter still holds is ready and goes now, on this thread.
+        if (arbiter_.hasPending()) worker_.TryDrainGuarded();
     } else {
         // Nested inside a drain: a plain wait, no second drain.
         worker_.WaitIdle();
@@ -67,9 +73,42 @@ void MtvuSync::TryEagerDrain() {
     worker_.TryDrainGuarded();
 }
 
+void MtvuSync::TryDrainPending() {
+    if (!worker_.IsRunning() || worker_.OnWorkerThread() || worker_.InEagerDrain()) return;
+    if (!arbiter_.hasPending()) return;
+    worker_.TryDrainGuarded();
+}
+
 void MtvuSync::TryParkDrain() {
     if (!DeferOn()) return;
     TryEagerDrain();
+}
+
+bool MtvuSync::WaitProgress() {
+    if (!worker_.IsRunning() || worker_.OnWorkerThread()) return true;
+    if (worker_.InEagerDrain()) return worker_.WorkerIdle();
+    // Whatever is sealed goes first; an idle worker after that owes nothing.
+    // Idle is published AFTER the last seal (see Sync): an idle worker observed
+    // after a drain may have sealed since -- drain once more before answering
+    // "nothing more will arrive", or that marker's packets wait for ever.
+    const auto drained_idle = [this] {
+        if (!worker_.WorkerIdle()) return false;
+        if (arbiter_.hasPending()) worker_.TryDrainGuarded();
+        progress_idle_.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    };
+    const uint64_t seen = worker_.SealCount();
+    worker_.TryDrainGuarded();
+    if (drained_idle()) return true;
+    progress_waits_.fetch_add(1, std::memory_order_relaxed);
+    {
+        ps2r::ee::TickProfile::Scope scope(ps2r::ee::TickProfile::Vu1Wait);
+        worker_.EnterSyncWait();
+        worker_.WaitIdleOrSeal(kPollNs, seen);
+        worker_.LeaveSyncWait();
+    }
+    worker_.TryDrainGuarded();
+    return drained_idle();
 }
 
 bool MtvuSync::DeferOn() const { return worker_.IsRunning(); }

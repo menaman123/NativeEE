@@ -83,6 +83,16 @@ public:
     // programs (MtvuBackpressure drop mode). Off = the bytes/frames park.
     void SetKickDrop(bool on) { backpressure_.SetDropMode(on); }
     bool KickDrop() const { return backpressure_.DropMode(); }
+    // Whether FrameSync defers the boundary (an ordered arbiter slot + one
+    // drain; the EE starts frame N+1 while the worker finishes N -- the hook
+    // the arbiter was built with sees the slot in stream position) or ends the
+    // frame with the terminal Sync(SceGsSyncV) (every queued span finished
+    // before the boundary runs: the frames lane stays keyed by boundary). On =
+    // the first title's play composition; a title whose game waits for its own
+    // GS FINISH before the vblank gains nothing from the deferral and keeps
+    // its presents complete with it off.
+    void SetDeferBoundaries(bool on) { defer_boundaries_ = on; }
+    bool DeferBoundaries() const { return defer_boundaries_; }
     // A genuine present of the boundary's frame (the runahead's consumer side).
     void NotePresented();
     // Savestate quiesce: Sync(Other), then the pipeline and the arbiter run
@@ -146,5 +156,6 @@ private:
     uint64_t terminal_syncs_ = 0;
     uint64_t quiesce_laps_ = 0;
     uint64_t mirrors_ = 0;
+    bool defer_boundaries_ = true;
     std::unique_ptr<Vif1Gate> vif1_gate_;
 };

@@ -75,7 +75,7 @@ void MtvuStack::FrameSync(uint32_t seq, uint64_t now_ns) {
         worker_.SubmitFrameMark();
         backpressure_.NoteFrameSync(worker_.FrameLag());
     }
-    if (sync_.DeferOn() && worker_.IsRunning()) {
+    if (defer_boundaries_ && sync_.DeferOn() && worker_.IsRunning()) {
         // Deferred boundary: an ordered slot behind every marker and packet of
         // the frame, then one non-blocking pass -- the sealed prefix (and the
         // boundary itself when nothing unsealed precedes it) is delivered now;
@@ -164,6 +164,8 @@ std::string MtvuStack::Census() const {
          "/" + std::to_string(backpressure_.StallValveHits()) + ",quiesce_laps=" + std::to_string(quiesce_laps_) +
          ",mirrors=" + std::to_string(mirrors_) +
          ",kick_drop=" + (backpressure_.DropMode() ? "on" : "off") +
+         ",defer=" + (defer_boundaries_ ? "on" : "off") +
+         ",idle_waits=" + std::to_string(sync_.ProgressWaits()) + "/" + std::to_string(sync_.ProgressIdle()) +
          ",drop=" + std::to_string(backpressure_.DropFrames()) + "/" + std::to_string(backpressure_.DropSegments()) + "/" +
          std::to_string(backpressure_.DropEpisodes()) + "/" + std::to_string(backpressure_.DropValveFrames()) +
          ",kicks_dropped=" + std::to_string(worker_.DroppedKicks()) + ",lag_max=" + std::to_string(backpressure_.LagMaxFrames()) +

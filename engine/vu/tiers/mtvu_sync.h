@@ -60,6 +60,28 @@ public:
     // Opportunistic EE-side drains of the sealed prefix (no wait).
     void TryEagerDrain();
     void TryParkDrain();
+    // The dispatch-point drain: whatever the arbiter holds that is ready -- a
+    // sealed marker OR plain EE-side slots (PATH3 packets, a FIFO-window
+    // DIRECT) queued while the worker thread exists -- reaches the GS on this
+    // thread (no wait). TryEagerDrain's hint covers sealed markers only; an
+    // EE-produced packet behind no marker has no hint and its FINISH would
+    // otherwise wait for the next unconditional drain.
+    void TryDrainPending();
+    // The idle EE's wait on the worker: a BLOCKING kernel wait that found no
+    // other READY guest thread while segments are in flight has nothing to run
+    // until the worker's output reaches the GS (the FINISH / SIGNAL a VIF1
+    // chain carries wakes the waiter through the INTC handler) -- the
+    // console's idle loop taking the interrupt the VU1-fed GS raises. Drains
+    // the sealed prefix, then parks until the worker idles or a newer seal
+    // lands (kPollNs at most), then drains again. Returns true when the worker
+    // is idle after the drain (nothing more will arrive from it: block for
+    // real); false = progress was delivered and the worker still runs (the
+    // caller re-checks its interrupts and calls again). Immediate (true) when
+    // the worker is down, on the worker thread, or nested inside a drain.
+    // Booked as `vu1wait`; counted (ProgressWaits / ProgressIdle).
+    bool WaitProgress();
+    uint64_t ProgressWaits() const { return progress_waits_.load(std::memory_order_relaxed); }
+    uint64_t ProgressIdle() const { return progress_idle_.load(std::memory_order_relaxed); }
     // Frame boundaries are deferred: the worker runs.
     bool DeferOn() const;
 
@@ -77,4 +99,6 @@ private:
     GifArbiter& arbiter_;
     std::atomic<uint64_t> sync_count_[static_cast<size_t>(SyncSite::Count)];
     std::atomic<uint64_t> skipped_count_[static_cast<size_t>(SyncSite::Count)];
+    std::atomic<uint64_t> progress_waits_{0};
+    std::atomic<uint64_t> progress_idle_{0};
 };
