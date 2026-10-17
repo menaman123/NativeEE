@@ -263,8 +263,13 @@ void TargetRefresher::ReadMirrorBand(uint32_t fbp, Psm mode, uint32_t bw, uint32
 
 void TargetRefresher::RefreshAlphaMerge(RenderTarget& t, int y0, int y1, uint32_t bw) {
     // CT32 / CT24: RGB from the attachment, alpha from the committed mirror's
-    // stored byte (PS2 0x80 = 1.0 -> GPU 0xFF), addressed at the TARGET width
-    // (`bw` = WalkBufferWidth(t, CT32), the stride the band was read at).
+    // stored byte VERBATIM (the stored-alpha convention: the attachment holds the
+    // GS alpha byte as local memory does, 0..0xFF; a PSMT8H read of the buffer
+    // indexes with exactly that byte), addressed at the TARGET width (`bw` =
+    // WalkBufferWidth(t, CT32), the stride the band was read at). Pixels the main
+    // route drew since this target's bytes last reached the mirror keep the
+    // attachment's alpha: local memory is older there (GS User's Manual: one
+    // memory, the later write owns the byte).
     const int w = t.identity.width, h = y1 - y0, s = t.identity.scale;
     pixels_.assign(static_cast<size_t>(w) * s * h * s * 4, 0);
     be_.Readback(t.views.color, render::Rect{0, y0 * s, w * s, h * s}, pixels_.data(), size_t(w) * s * 4);
@@ -281,9 +286,14 @@ void TargetRefresher::RefreshAlphaMerge(RenderTarget& t, int y0, int y1, uint32_
     linear_.assign(static_cast<size_t>(w) * h * 4, 0);
     Swizzle::VramToLinear(mirror_.data(), Swizzle::Buffer{Psm::CT32, t.identity.fbp / PsmLayout::kBlockBytes, bw},
                           Swizzle::Rect{0, uint32_t(y0), uint32_t(w), uint32_t(h)}, linear_.data(), size_t(w) * 4);
-    for (size_t i = 0, n = size_t(w) * h; i < n; ++i) {
-        const uint32_t a2 = uint32_t(linear_[i * 4 + 3]) * 2u;
-        pixels_[i * 4 + 3] = uint8_t(std::min<uint32_t>(a2, 255u));
+    const LogicalRect& newer = t.coherence.main_drawn_since_deposit;
+    for (int y = 0; y < h; ++y) {
+        const bool row_newer = !newer.Empty() && y0 + y >= newer.y0 && y0 + y < newer.y1;
+        for (int x = 0; x < w; ++x) {
+            if (row_newer && x >= newer.x0 && x < newer.x1) continue;
+            const size_t i = size_t(y) * w + x;
+            pixels_[i * 4 + 3] = linear_[i * 4 + 3];
+        }
     }
     UploadRows(t, y0, y1, pixels_.data());
 }

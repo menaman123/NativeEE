@@ -100,15 +100,26 @@ void VertexKick::AssembleStrip(bool draw) {
         return;
     }
     if (strip_count_ % 2 == 0) {
-        draw_buffer_.push_back(q0);
-        draw_buffer_.push_back(q1);
-        draw_buffer_.push_back(q2);
+        const VertexRec tri[3] = {q0, q1, q2};
+        PushPrimitive(tri, 3);
     } else {
-        draw_buffer_.push_back(q1);
-        draw_buffer_.push_back(q0);
-        draw_buffer_.push_back(q2);
+        const VertexRec tri[3] = {q1, q0, q2};
+        PushPrimitive(tri, 3);
     }
     strip_count_++;
+}
+
+// IIP = 0: the colour of the vertex that completes the primitive (the last of the
+// n) is the primitive's colour (GS User's Manual 3.4.1 flat shading); fog, z and
+// the texture coordinates stay per vertex.
+void VertexKick::PushPrimitive(const VertexRec* v, int n) {
+    const bool flat = !regs_->prim.gouraud && n > 1;
+    const VertexRec& last = v[n - 1];
+    for (int i = 0; i < n; ++i) {
+        VertexRec out = v[i];
+        if (flat) { out.r = last.r; out.g = last.g; out.b = last.b; out.a = last.a; }
+        draw_buffer_.push_back(out);
+    }
 }
 
 void VertexKick::Assemble(const VertexRec& v, bool draw) {
@@ -142,25 +153,19 @@ void VertexKick::FlushPrimitive() {
             vertex_queue_.clear();
             break;
         case kLine:
-            draw_buffer_.push_back(vertex_queue_[0]);
-            draw_buffer_.push_back(vertex_queue_[1]);
+            PushPrimitive(vertex_queue_.data(), 2);
             vertex_queue_.clear();
             break;
         case kLineStrip:
-            draw_buffer_.push_back(vertex_queue_[0]);
-            draw_buffer_.push_back(vertex_queue_[1]);
+            PushPrimitive(vertex_queue_.data(), 2);
             vertex_queue_.erase(vertex_queue_.begin());
             break;
         case kTriangle:
-            draw_buffer_.push_back(vertex_queue_[0]);
-            draw_buffer_.push_back(vertex_queue_[1]);
-            draw_buffer_.push_back(vertex_queue_[2]);
+            PushPrimitive(vertex_queue_.data(), 3);
             vertex_queue_.clear();
             break;
         case kTriangleFan:
-            draw_buffer_.push_back(vertex_queue_[0]);
-            draw_buffer_.push_back(vertex_queue_[1]);
-            draw_buffer_.push_back(vertex_queue_[2]);
+            PushPrimitive(vertex_queue_.data(), 3);
             vertex_queue_.erase(vertex_queue_.begin() + 1);
             break;
         case kSprite:

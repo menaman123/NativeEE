@@ -764,14 +764,17 @@ void RefreshFromVram() {
 
 
 // The refresh arms read the COMMITTED mirror: CT32 keeps the attachment RGB and
-// takes alpha from the mirror byte (x2 capped 255); CT16 decodes the 5551 image,
-// rows under a newer EE upload keep the attachment; a pending deposit shadow is
-// never observed; the tail stamps the voucher and clears the aliased pages.
+// takes alpha from the mirror byte VERBATIM (the stored-alpha convention) except
+// where the main route drew since the target's bytes last reached the mirror;
+// CT16 decodes the 5551 image, rows under a newer EE upload keep the attachment;
+// a pending deposit shadow is never observed; the tail stamps the voucher and
+// clears the aliased pages.
 void RefreshArms() {
     World w;
     TargetRefresher rf(w.be, w.vram, w.cache);
     RenderTarget& t = w.cache.GetOrCreate(0x100000, 64, 64, 0x00, 0);
     t.AfterDraw(MakeDraw(0x100000, 64, 0x00), Drew(0, 0, 64, 64), 1, 1);
+    t.coherence.main_drawn_since_deposit.Reset();   // the draw's bytes reached the mirror
     FillColor(w.be, t, 0x11, 0x22, 0x33, 0xFF);
     // Mirror alpha 0x40 at (5,9); the pending shadow says 0x7F there (a staged,
     // uncommitted deposit) -- the merge must read the mirror.
@@ -786,16 +789,28 @@ void RefreshArms() {
     rf.RefreshFromVram(t, 0, 64, 0);
     const uint8_t* px = &w.be.At(t.views.color).rgba[(9 * 64 + 5) * 4];
     CHECK(px[0] == 0x11 && px[1] == 0x22 && px[2] == 0x33);   // RGB from the attachment
-    CHECK(px[3] == 0x80);                                      // 0x40 * 2 from the MIRROR, not 0x7F * 2
+    CHECK(px[3] == 0x40);                                      // the MIRROR's byte verbatim, not 0x7F, not 2x
     const uint8_t* px2 = &w.be.At(t.views.color).rgba[(0 * 64 + 0) * 4];
     CHECK(px2[3] == 0x00);                                     // mirror alpha 0 elsewhere
     CHECK(t.coherence.vram_coherent_class == 1);
     CHECK(!w.cache.AliasPages().AnyAliased(0x100000, 64 * 64 * 4));
-    // Cap: mirror alpha 0x90 -> 255.
+    // The whole byte range survives (0x90 > 0x80 is a legal GS alpha, no cap).
     const uint8_t word2[4] = {0, 0, 0, 0x90};
     w.vram.WriteStream(PsmLayout::PixelByteAddress(Psm::CT32, 1, 1, 0x100000 / 256, 1), word2, 4);
     rf.RefreshFromVram(t, 0, 64, 0);
-    CHECK(w.be.At(t.views.color).rgba[(1 * 64 + 1) * 4 + 3] == 0xFF);
+    CHECK(w.be.At(t.views.color).rgba[(1 * 64 + 1) * 4 + 3] == 0x90);
+    // The later writer owns the byte: a main-route draw over rows 8..16 x 0..32 after
+    // the deposit keeps the attachment's alpha there; everything else imports.
+    FillColor(w.be, t, 0x11, 0x22, 0x33, 0x25);
+    t.AfterDraw(MakeDraw(0x100000, 64, 0x00), Drew(0, 8, 32, 16), 1, 2);
+    rf.RefreshFromVram(t, 0, 64, 0);
+    CHECK(w.be.At(t.views.color).rgba[(9 * 64 + 5) * 4 + 3] == 0x25);     // drawn since: kept
+    CHECK(w.be.At(t.views.color).rgba[(9 * 64 + 40) * 4 + 3] == 0x00);    // same row, outside: imported
+    CHECK(w.be.At(t.views.color).rgba[(1 * 64 + 1) * 4 + 3] == 0x90);     // other rows: imported
+    CHECK(w.be.At(t.views.color).rgba[(9 * 64 + 5) * 4 + 0] == 0x11);     // RGB always the attachment's
+    // A writeback of the target's own bytes resets the rect: the next import takes the mirror.
+    w.cache.SyncDrawn(t, 0);
+    CHECK(t.coherence.main_drawn_since_deposit.Empty());
     // A scoped band stamps no voucher.
     t.coherence.vram_coherent_class = 0;
     rf.RefreshFromVram(t, 0, 8, 0);
@@ -852,6 +867,7 @@ void RefreshBandStride() {
         TargetRefresher rf(w.be, w.vram, w.cache);
         RenderTarget& t = w.cache.GetOrCreate(0x100000, 64, 64, 0x00, 0);
         t.AfterDraw(MakeDraw(0x100000, 128, 0x00), Drew(0, 0, 64, 64), 1, 1);
+        t.coherence.main_drawn_since_deposit.Reset();
         CHECK(t.identity.render_fbw == 128 && t.identity.width == 64);
         FillColor(w.be, t, 0x11, 0x22, 0x33, 0xFF);
         pattern(w.vram, 0x100000, 4 * 8192, 7);
@@ -864,7 +880,7 @@ void RefreshBandStride() {
             for (int x = 0; x < 64; ++x) {
                 uint8_t m[4];
                 w.vram.ReadMirror(PsmLayout::PixelByteAddress(Psm::CT32, x, y, 0x100000 / 256, 64 / 64), 4, m);
-                const uint8_t want = uint8_t(std::min<uint32_t>(uint32_t(m[3]) * 2u, 255u));
+                const uint8_t want = m[3];
                 const uint8_t* px = &w.be.At(t.views.color).rgba[(y * 64 + x) * 4];
                 if (px[0] != 0x11 || px[1] != 0x22 || px[2] != 0x33 || px[3] != want) ++bad;
             }
@@ -909,6 +925,7 @@ void RefreshBandStride() {
         TargetRefresher rf(w.be, w.vram, w.cache);
         RenderTarget& t = w.cache.GetOrCreate(0x300000, 128, 64, 0x00, 0);
         t.AfterDraw(MakeDraw(0x300000, 128, 0x00), Drew(0, 0, 128, 64), 1, 1);
+        t.coherence.main_drawn_since_deposit.Reset();
         FillColor(w.be, t, 1, 2, 3, 0xFF);
         pattern(w.vram, 0x300000, 4 * 8192, 5);
         rf.RefreshFromVram(t, 32, 64, 0);
@@ -917,7 +934,7 @@ void RefreshBandStride() {
             for (int x = 0; x < 128; ++x) {
                 uint8_t m[4];
                 w.vram.ReadMirror(PsmLayout::PixelByteAddress(Psm::CT32, x, y, 0x300000 / 256, 2), 4, m);
-                if (w.be.At(t.views.color).rgba[(y * 128 + x) * 4 + 3] != uint8_t(std::min<uint32_t>(uint32_t(m[3]) * 2u, 255u))) ++bad;
+                if (w.be.At(t.views.color).rgba[(y * 128 + x) * 4 + 3] != m[3]) ++bad;
             }
         CHECK(bad == 0);
     }

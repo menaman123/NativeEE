@@ -10,6 +10,7 @@ add_library(ps2r_gs_hle_classrdr STATIC
     sequence_recipe.cpp
     draw_pipeline.cpp
     draw_route_trace.cpp
+    target_dump.cpp
     skinned_renderer.cpp
     world_tristrip_renderer.cpp
     stencil_composite_renderer.cpp

@@ -119,7 +119,8 @@ foreach(pair
         "Gs_Inv01_FirstKickTmeSnapshot;inv01" "Gs_Inv02_SetterFlushesPending;inv02"
         "Gs_Inv28_IdentityStamp;inv28" "Gs_Inv32_DitherInMergeKey;inv32"
         "Gs_Inv38_RoundSpriteNormalise;inv38" "Gs_Inv40_Tex1KSignExtended;inv40" "GsRegistersDecodeVectors;decode"
-        "GsVertexKickSequences;kick" "GsStateFacadeEmitsDrawIr;facade" "GsPrivRegsJobsAndReset;priv")
+        "GsVertexKickSequences;kick" "GsVertexKickFlatShading;flat" "GsStateFacadeEmitsDrawIr;facade"
+        "GsPrivRegsJobsAndReset;priv")
     list(GET pair 0 tname)
     list(GET pair 1 arg)
     add_test(NAME ${tname} COMMAND test_gs_state ${arg})

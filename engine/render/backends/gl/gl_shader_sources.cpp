@@ -850,14 +850,18 @@ void main() {
         // Read destination color from RT copy (PCSX2: sample_from_rt)
         vec4 RT = texelFetch(u_rt_texture, ivec2(gl_FragCoord.xy), 0);
 
-        // Convert to PS2 color space [0, 255] for the blend math
-        vec3 Cs = result.rgb * 255.0;
-        // Alpha must be in PS2 scale: 0-128 maps to 0.0-1.0.
-        // result.a is in GL normalized [0,1] where PS2 128 = 128/255 ≈ 0.502.
-        // Convert: As_ps2 = result.a * (255.0/128.0), clamped to [0,1].
-        float As = clamp(result.a * (255.0 / 128.0), 0.0, 1.0);
-        vec3 Cd = RT.rgb * 255.0;
-        float Ad = clamp(RT.a * (255.0 / 128.0), 0.0, 1.0);
+        // The GS equation is INTEGER arithmetic (GS User's Manual 3.6.2):
+        //     Cv = ((A - B) * C >> 7) + D
+        // with A, B, D the 8-bit colours and C the alpha BYTE (As, Ad or FIX; 0x80 =
+        // 1.0). The product's low 7 bits are dropped by the shift -- floor, never
+        // round-to-nearest (62 * 2 >> 7 = 0: the FIX=2 "G[0] := G[6]" pass of the
+        // colour-grade mask chain reads bit 6 and nothing else). Every operand is
+        // taken as its integer byte first so the float product is exact.
+        vec3 Cs = floor(result.rgb * 255.0 + 0.5);
+        // As in alpha-byte units, saturating at 0x80 (the pipeline's factor convention).
+        float As = min(floor(result.a * 255.0 + 0.5), 128.0);
+        vec3 Cd = floor(RT.rgb * 255.0 + 0.5);
+        float Ad = min(floor(RT.a * 255.0 + 0.5), 128.0);
 
         // Select A
         vec3 A_val;
@@ -871,11 +875,11 @@ void main() {
         else if (u_blend_b == 1) B_val = Cd;
         else B_val = vec3(0.0);
 
-        // Select C (scalar alpha multiplier)
+        // Select C (the alpha byte; FIX arrives as FIX / 128)
         float C_val;
         if (u_blend_c == 0) C_val = As;
         else if (u_blend_c == 1) C_val = Ad;
-        else C_val = u_fix_alpha;
+        else C_val = floor(u_fix_alpha * 128.0 + 0.5);
 
         // Select D
         vec3 D_val;
@@ -883,8 +887,9 @@ void main() {
         else if (u_blend_d == 1) D_val = Cd;
         else D_val = vec3(0.0);
 
-        // PS2 blend: (A - B) * C + D
-        vec3 blended = (A_val - B_val) * C_val + D_val;
+        // PS2 blend: ((A - B) * C >> 7) + D -- the shift floors the signed product
+        // (an integer product over a power of two is exact in float).
+        vec3 blended = floor((A_val - B_val) * C_val / 128.0) + D_val;
 
         // [S8-WRAPBLEND] COLCLAMP applies to the raw blend RESULT.
         // COLCLAMP=1: saturate to [0,255] (legacy behavior, unchanged).
@@ -896,7 +901,7 @@ void main() {
         if (u_colclamp != 0) {
             result.rgb = clamp(blended, vec3(0.0), vec3(255.0)) / 255.0;
         } else {
-            result.rgb = mod(floor(blended + 0.5), 256.0) / 255.0;
+            result.rgb = mod(blended, 256.0) / 255.0;
         }
         // Alpha: source alpha passes through (PS2 writes As to framebuffer)
     } else if (u_blend_enabled == 0) {

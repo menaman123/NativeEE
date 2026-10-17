@@ -36,6 +36,7 @@
 #include "engine/gs/hle/classrdr/draw_route_trace.h"
 #include "engine/gs/hle/classrdr/sequence_materializer.h"
 #include "engine/gs/hle/classrdr/sequence_recipe.h"
+#include "engine/gs/hle/classrdr/target_dump.h"
 #include "engine/gs/hle/ir/draw_ir.h"
 #include "engine/gs/hle/present/crtc_classifier.h"
 #include "engine/gs/hle/present/presenter.h"
@@ -189,6 +190,9 @@ public:
     void EmitCounters(std::FILE* f) const;
     // The per-draw lowering record of the last completed frame (diagnostics only).
     const DrawRouteTrace& RouteTrace() const { return route_trace_; }
+    // The one-target colour-image readback around a frame's draws (diagnostics
+    // only; armed at a lockstep frame boundary, see target_dump.h).
+    TargetDump& Dump() { return target_dump_; }
     // An owned pass's publication (Finish called by its scene) recorded in the
     // same per-frame route sequence as the pipeline's own draws (owner none: its
     // texture is a private image, not a PS2 source) -- the draw's position
@@ -199,6 +203,7 @@ public:
 
 private:
     DrawRouteTrace route_trace_;
+    TargetDump target_dump_;
     void FrameEndGrab(bool ee_frame_end, Frame* out);
     void SameBufferPreDrawFlush(const DrawIr& ir);
     void MarkCompositeConsumption(const DrawIr& ir);

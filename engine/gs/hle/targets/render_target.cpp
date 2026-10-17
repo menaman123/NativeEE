@@ -217,6 +217,7 @@ void RenderTarget::AfterDraw(const DrawIr& ir, const render::DrawResult& res,
         c.valid_rect.ExpandToInclude(bx0, by0, bx1, by1);
         if (drawn) {
             c.drawn_since_sync.Union(dx0, dy0, dx1, dy1);
+            c.main_drawn_since_deposit.Union(dx0, dy0, dx1, dy1);
             ExtendCdDirty(c.cd_copy, dx0, dy0, dx1, dy1);
             if (views.alt16.id) {
                 // The companion no longer mirrors rows the main route wrote; a

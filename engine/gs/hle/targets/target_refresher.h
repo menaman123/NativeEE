@@ -25,9 +25,11 @@
 //     nothing in this class refreshes a live target from an upload).
 //   * RefreshFromVram: import a row band of the target's buffer from the COMMITTED
 //     mirror, per render PSM. CT32 / CT24: an ALPHA-ONLY merge -- RGB stays what
-//     the attachment holds, the alpha byte comes from the mirror scaled to the GPU
-//     domain (x2 capped 255), addressed at the target width (the PSMT8H index lane
-//     lives in that byte). CT16: the full 5551 image decoded from the mirror at the
+//     the attachment holds, the alpha byte comes from the mirror VERBATIM (the
+//     stored-alpha convention; the PSMT8H index lane lives in that byte), addressed
+//     at the target width; pixels the main route drew since the target's bytes last
+//     reached the mirror (CoherenceState::main_drawn_since_deposit) keep the
+//     attachment's alpha -- local memory is older there. CT16: the full 5551 image decoded from the mirror at the
 //     render FBW, except rows whose pages carry an EE upload newer than the job's
 //     epoch, which keep the attachment bytes. CT16S: no 16S writeback exists, so
 //     the mirror is never authoritative -- bookkeeping only. The tail authors the

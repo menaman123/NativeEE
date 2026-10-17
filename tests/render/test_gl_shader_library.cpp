@@ -47,9 +47,16 @@ static const uint64_t kVertHash = 0x36951d472cb1a88cull;
 // (the sampled-texel inverse halving, the PSMT8H index halving and the final x2
 // "GL convention" rescale are gone; the Z32N serve passes the byte), and the fixed-
 // function blend factor min(2 As, 255) / 255 travels on the dual-source output
-// `frag_factor` (index 1; pinned by test_gl_alpha_convention). Every other arm's
+// `frag_factor` (index 1; pinned by test_gl_alpha_convention); then
+// (0xf2f8f81b48c9a6f8) E191, the sw-blend block as the GS INTEGER equation
+// Cv = ((A - B) * C >> 7) + D (GS User's Manual 3.6.2): the operands are taken as
+// their integer bytes (floor(x * 255 + 0.5)), C is the alpha byte (As / Ad
+// saturating at 0x80, FIX as the byte), `blended = floor((A - B) * C / 128) + D`
+// (the shift FLOORS the signed product -- PCSX2's SW modulate16 / pmulhw and its
+// HW trunc agree), and the wrap arm is `mod(blended, 256)` instead of a rounded
+// float product (pinned exactly by test_sw_blend_integer). Every other arm's
 // text is unchanged; re-pin only together with a reviewed shader change.
-static const uint64_t kFragHash = 0xf2f8f81b48c9a6f8ull;
+static const uint64_t kFragHash = 0xbf9fc06acc084cf5ull;
 static const uint64_t kScanoutVertHash = 0x8823cded4f383d15ull;
 static const uint64_t kScanoutFragHash = 0x5d955137d32b0c78ull;
 // The stencil-composite sources (OLD s9_composite_native.inc:53-215 k_s9_* texts).

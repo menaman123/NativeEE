@@ -246,6 +246,9 @@ uint32_t ReadbackEngine::EncodeColorRows(RenderTarget& t, VramImage& vram, uint6
         alias_->MarkCpuDirty(span_lo, span_hi - span_lo);
         alias_->MarkAliased(span_lo, span_hi - span_lo);
     }
+    // The target's own bytes reached the mirror: the main image is no newer than
+    // local memory until it draws again.
+    if (fbp == t.identity.fbp) t.coherence.main_drawn_since_deposit.Reset();
     return static_cast<uint32_t>(rw) * rh;
 }
 
@@ -297,6 +300,8 @@ uint32_t ReadbackEngine::DepositAlt16Lane(render::Backend& be, RenderTarget& t, 
         alias_->MarkCpuDirty(span_lo, span_hi - span_lo);
         alias_->MarkAliased(span_lo, span_hi - span_lo);
     }
+    // The companion's lane bytes are now the newest in local memory.
+    t.coherence.main_drawn_since_deposit.Reset();
     return static_cast<uint32_t>(rw) * rh;
 }
 

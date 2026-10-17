@@ -62,9 +62,12 @@ bool DrawPipeline::ArmZsrc(const DrawIr& ir, render::DrawParams* params) {
 
 bool DrawPipeline::Draw(const DrawIr& ir, const char* name_override) {
     bool native = false;
+    const bool dump = target_dump_.Armed();
+    if (dump) target_dump_.OnPreDraw(ir, *d_.cache, *d_.be, draw_seq_);
     if (d_.registry) native = d_.registry->Dispatch(*this, ir, name_override);
     if (!native) DrawGeneric(ir);
     if (d_.registry) d_.registry->ClearCurrentClass();
+    if (dump) target_dump_.OnPostDraw(ir, *d_.cache, *d_.be, draw_seq_);
     return native;
 }
 
@@ -212,6 +215,7 @@ void DrawPipeline::OnSyncAll() {
 
 void DrawPipeline::FrameEndGrab(bool ee_frame_end, Frame* out) {
     route_trace_.OnFrameEnd();
+    target_dump_.OnFrameEnd();
     if (d_.resolver) d_.resolver->Trace().OnFrameEnd();
     if (ee_frame_end) d_.presenter->MarkEeFrameEnd();
     d_.cache->FlushPending(PendingRtSyncLedger::Reason::Present, 0, 0, /*reader_pages_only=*/true);
@@ -245,6 +249,7 @@ void DrawPipeline::OnFrameEndGrabOnly(bool ee_frame_end, Frame* out) {
 
 void DrawPipeline::OnOwnedFrameEnd(bool ee_frame_end, uint32_t source_key) {
     route_trace_.OnFrameEnd();
+    target_dump_.OnFrameEnd();
     if (d_.resolver) d_.resolver->Trace().OnFrameEnd();
     if (ee_frame_end) d_.presenter->MarkEeFrameEnd();
     d_.presenter->RecordOwnedPresent(source_key);

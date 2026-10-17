@@ -14,7 +14,10 @@
 // output; a non-drawing kick resets parity), TriangleFan 3 (keep first and last),
 // Sprite 2 expanded to two triangles (tl tr bl, tr br bl) after corner
 // normalisation (x/s/u and y/t/v of the two corners ordered min,max) with z, fog
-// and colour taken flat from the second vertex. The corners are NOT snapped to
+// and colour taken flat from the second vertex. PRIM.IIP = 0 (flat shading, 3.2.1
+// / 3.4.1): the RGBA of the vertex whose kick completes the primitive (the last
+// one -- PCSX2's "provoking last vertex") is applied to the whole line / triangle;
+// IIP = 1 keeps every vertex's own colour (Gouraud, interpolated downstream). The corners are NOT snapped to
 // pixel centres (VertexKickQuirks::round_sprite_mode 1 = normalise only, the peak
 // configuration; 0 = leave the corners as kicked).
 //
@@ -71,6 +74,8 @@ private:
     void AssembleStrip(bool draw);
     void FlushPrimitive();
     void EmitSprite();
+    // Push one assembled primitive; flat shading copies the last vertex's RGBA.
+    void PushPrimitive(const VertexRec* v, int n);
     static int Needed(uint8_t prim);
 
     GsRegisters* regs_;

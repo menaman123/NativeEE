@@ -18,6 +18,7 @@ ps2r_render_test(test_gl_alpha_convention)
 target_link_libraries(test_gl_alpha_convention PRIVATE ps2r_gs_hle_texsrc ps2r_gs_format)
 ps2r_render_test(test_gl_present)
 ps2r_render_test(test_blend_equation_pin)
+ps2r_render_test(test_sw_blend_integer)
 ps2r_render_test(test_s9_stencil_smoke)
 ps2r_render_test(test_inherited_uniforms)
 ps2r_render_test(test_texture_filter)
@@ -79,6 +80,9 @@ set_tests_properties(Render_Present PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 # plus the MODULATE 0x80=1.0 convention and the texel-alpha chain feeding As (sample pixels).
 add_test(NAME Render_BlendEquationPin COMMAND test_blend_equation_pin)
 set_tests_properties(Render_BlendEquationPin PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+# The shader blend arm's integer equation ((A - B) * C >> 7 floors the signed product).
+add_test(NAME Render_SwBlendInteger COMMAND test_sw_blend_integer)
+set_tests_properties(Render_SwBlendInteger PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 
 # 6E'': the stencil-composite primitives on a real context -- D24S8 surface, ClearStencil,
 # one strip's three passes (StripCount + two const quads), the 32 materialise quads

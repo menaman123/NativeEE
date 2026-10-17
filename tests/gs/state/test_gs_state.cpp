@@ -507,6 +507,56 @@ static void KickSeqs() {
     CHECK(sink.draws.back().tex.fst, "fst recorded from the UV recency flag");
 }
 
+// Flat shading (GS User's Manual 3.4.1, PRIM.IIP = 0): the primitive takes the RGBA
+// of the vertex whose kick completes it -- the LAST vertex (PCSX2: provoking last
+// vertex) -- for triangles, strips (both parities), fans and lines; IIP = 1 keeps
+// each vertex's own colour. The colour-grade mask chain's light-volume strips are
+// flat strips whose triangles alternate G = 2 / G = 254 on their completing vertex.
+static void FlatShading() {
+    GsState gs;
+    CaptureSink sink;
+    gs.SetSink(&sink);
+    auto last = [&]() -> const std::vector<VertexRec>& { return sink.draws.back().verts; };
+    auto color = [&](float x, float y, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+        gs.WriteRegister(0x01, Rgbaq(r, g, b, a, 1.0f));
+        KickAt(gs, x, y);
+    };
+    auto rgba_is = [](const VertexRec& v, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+        return v.r == r && v.g == g && v.b == b && v.a == a;
+    };
+    // Flat strip: triangle 0 completes at vertex 2 (G = 254), triangle 1 at vertex 3 (G = 2).
+    gs.WriteRegister(0x00, Prim(4, 0, 0, 0, 1, 0, 0, 0));
+    color(0, 0, 0, 2, 0, 30); color(1, 0, 0, 2, 0, 238); color(0, 1, 0, 254, 0, 164); color(1, 1, 0, 2, 0, 77);
+    gs.KickBoundary();
+    CHECK(last().size() == 6, "flat strip: two triangles");
+    bool ok = true;
+    for (int i = 0; i < 3; ++i) ok = ok && rgba_is(last()[i], 0, 254, 0, 164);
+    for (int i = 3; i < 6; ++i) ok = ok && rgba_is(last()[i], 0, 2, 0, 77);
+    CHECK(ok, "flat strip: every vertex carries the completing vertex's RGBA (both parities)");
+    CHECK(VertsXy(last(), {{0, 0}, {1, 0}, {0, 1}, {0, 1}, {1, 0}, {1, 1}}), "flat strip: positions untouched");
+    // Gouraud strip: colours stay per vertex.
+    gs.WriteRegister(0x00, Prim(4, 1, 0, 0, 1, 0, 0, 0));
+    color(0, 0, 0, 2, 0, 30); color(1, 0, 0, 2, 0, 238); color(0, 1, 0, 254, 0, 164);
+    gs.KickBoundary();
+    CHECK(rgba_is(last()[0], 0, 2, 0, 30) && rgba_is(last()[1], 0, 2, 0, 238) && rgba_is(last()[2], 0, 254, 0, 164),
+          "gouraud strip: per-vertex colours kept");
+    // Flat triangle list, fan and line: the last vertex's colour.
+    gs.WriteRegister(0x00, Prim(3, 0, 0, 0, 0, 0, 0, 0));
+    color(0, 0, 1, 1, 1, 1); color(1, 0, 2, 2, 2, 2); color(0, 1, 3, 3, 3, 3);
+    gs.KickBoundary();
+    CHECK(rgba_is(last()[0], 3, 3, 3, 3) && rgba_is(last()[1], 3, 3, 3, 3) && rgba_is(last()[2], 3, 3, 3, 3), "flat triangle");
+    gs.WriteRegister(0x00, Prim(5, 0, 0, 0, 0, 0, 0, 0));
+    color(0, 0, 1, 1, 1, 1); color(1, 0, 2, 2, 2, 2); color(1, 1, 3, 3, 3, 3); color(0, 1, 4, 4, 4, 4);
+    gs.KickBoundary();
+    CHECK(last().size() == 6 && rgba_is(last()[0], 3, 3, 3, 3) && rgba_is(last()[2], 3, 3, 3, 3) &&
+              rgba_is(last()[3], 4, 4, 4, 4) && rgba_is(last()[5], 4, 4, 4, 4),
+          "flat fan: each triangle takes its completing vertex's colour");
+    gs.WriteRegister(0x00, Prim(1, 0, 0, 0, 0, 0, 0, 0));
+    color(0, 0, 1, 1, 1, 1); color(1, 0, 2, 2, 2, 2);
+    gs.KickBoundary();
+    CHECK(rgba_is(last()[0], 2, 2, 2, 2) && rgba_is(last()[1], 2, 2, 2, 2), "flat line");
+}
+
 // Façade bridge (G-C1): the register-op stream and the lifted draw-IR stream of
 // the same packet drive GsState to identical DrawIr sequences.
 // Invariant 40: TEX1.K (bits 43:32) is a SIGNED 12-bit s7.4 LOD parameter (GS User's
@@ -746,6 +796,7 @@ int main(int argc, char** argv) {
     if (c == "inv40" || c == "all") Inv40();
     if (c == "decode" || c == "all") DecodeRegs();
     if (c == "kick" || c == "all") KickSeqs();
+    if (c == "flat" || c == "all") FlatShading();
     if (c == "facade" || c == "all") {
         FacadeEmitsDrawIr();
         LibraryDrawSubmission();
