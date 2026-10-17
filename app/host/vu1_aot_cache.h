@@ -23,9 +23,12 @@
 // thread runs Vu1AotVerifier over the image's cases, publishes the status to
 // the tier (the next kick goes native or stays on the fallback) and appends
 // the manifest row. The frame never waits: the live unit runs the fallback
-// tier until the verdict lands. Everything is in-process; no compiler, no
-// generated file: the specialised tables are built from the image at the
-// first native kick (engine/vu/vu1_aot/vu1_aot_tier.h).
+// tier until the verdict lands. The specialised tables are built from the
+// image at the first native kick (engine/vu/vu1_aot/vu1_aot_tier.h); when a
+// Vu1AotBuilder is attached (SetBuilder), every image judged Verified -- by
+// this run's verifier or by the manifest -- is handed to it with its corpus,
+// and the builder's generated code replaces the block functions once it has
+// passed the same gate (app/host/vu1_aot_builder.h).
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -42,6 +45,8 @@ struct Vu1Case;
 class VuUnit;
 
 namespace ps2r::app {
+
+class Vu1AotBuilder;
 
 class Vu1AotCache {
 public:
@@ -68,6 +73,8 @@ public:
     // start the verifier thread. False when the root cannot be created
     // (`note` says why); the tier then simply runs its fallback everywhere.
     bool Open(std::string* note);
+    // The code generator to feed with verified images (before Open; may be null).
+    void SetBuilder(Vu1AotBuilder* builder) { builder_ = builder; }
     // Stop the verifier (the queued images are judged first, bounded by the
     // caller's patience: `drain` = finish the queue; false = drop it) and
     // uninstall the observer.
@@ -110,11 +117,12 @@ private:
     void LoadCorpusDir(const std::string& dir, std::map<uint64_t, Image>& images);
     void Enqueue(uint64_t image_hash, std::vector<std::unique_ptr<Vu1Case>> cases);
     void VerifierMain();
-    void Judge(uint64_t image_hash, const std::vector<std::unique_ptr<Vu1Case>>& cases);
+    void Judge(uint64_t image_hash, std::vector<std::unique_ptr<Vu1Case>> cases);
     void AppendManifest(const ManifestRow& r);
 
     Vu1AotTier& tier_;
     Settings settings_;
+    Vu1AotBuilder* builder_ = nullptr;
     std::map<uint64_t, Image> images_;   // the collector's view (the observer's thread)
     mutable std::mutex mu_;              // the queue, the census, the manifest file
     std::condition_variable cv_;

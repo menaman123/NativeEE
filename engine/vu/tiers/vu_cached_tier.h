@@ -88,17 +88,12 @@ public:
     // MFIR/RGET/LQI/SQI)? Otherwise its D-instantiations would be copies.
     static bool LowerKindReadsDest(uint8_t lower_kind);
 
-private:
-    VuCachedProgram* Lookup(VuUnit& unit);
-    void DecodeProgram(const VuUnit& unit, VuCachedProgram& prog) const;
-    void Loop(VuUnit& unit, uint32_t pc, const VuCachedProgram& prog, uint64_t cycle_limit);
-    // The two words of one bundle in issue order (the interpreter's hazards).
-    void ExecBundle(VuUnit& unit, const VuDecodedSlot& s, uint32_t pc, bool& branch_taken, uint32_t& branch_target);
-    void ExecUpperFast(VuUnit& unit, const VuDecodedSlot& s);
-    void ExecLowerFast(VuUnit& unit, const VuDecodedSlot& s, uint32_t pc, bool& branch_taken, uint32_t& branch_target);
-    // The body of one kind, the kind a compile-time constant (the inner
-    // dispatch folds away); the tables above are built from these. `D` is the
-    // dest mask as a constant (0..15) or -1 = read the slot's field at run time.
+    // The bodies themselves (vu_cached_tier_exec.inl): one template per kind,
+    // the kind a compile-time constant (the inner dispatch folds away); the
+    // tables above are built from these. `D` is the dest mask as a constant
+    // (0..15) or -1 = read the slot's field at run time. Public because the AOT
+    // generator's emitted blocks (engine/vu/vu1_aot/) call them directly with a
+    // `static constexpr` slot: ONE source text for every tier, nothing re-implemented.
     template <uint8_t K, int D = -1>
     static void ExecUpperK(VuInterpreterTier& g, VuUnit& u, const VuDecodedSlot& s);
     template <uint8_t K, int D = -1>
@@ -109,6 +104,14 @@ private:
     static void ExecUpperFmac(VuUnit& unit, const VuDecodedSlot& s);
     template <uint8_t K, int D>
     static void ExecUpperAcc(VuUnit& unit, const VuDecodedSlot& s);
+private:
+    VuCachedProgram* Lookup(VuUnit& unit);
+    void DecodeProgram(const VuUnit& unit, VuCachedProgram& prog) const;
+    void Loop(VuUnit& unit, uint32_t pc, const VuCachedProgram& prog, uint64_t cycle_limit);
+    // The two words of one bundle in issue order (the interpreter's hazards).
+    void ExecBundle(VuUnit& unit, const VuDecodedSlot& s, uint32_t pc, bool& branch_taken, uint32_t& branch_target);
+    void ExecUpperFast(VuUnit& unit, const VuDecodedSlot& s);
+    void ExecLowerFast(VuUnit& unit, const VuDecodedSlot& s, uint32_t pc, bool& branch_taken, uint32_t& branch_target);
     void DrainAll(VuUnit& unit);
 
     static const std::array<UpperFn, VUK_U_COUNT> kUpperTable;
@@ -123,3 +126,5 @@ private:
     std::vector<std::unique_ptr<VuCachedProgram>> table_;
     VuCachedProgram* current_ = nullptr;
 };
+
+#include "engine/vu/tiers/vu_cached_tier_exec.inl"

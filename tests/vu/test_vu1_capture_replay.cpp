@@ -12,6 +12,11 @@
 //   test_vu1_capture_replay <case.bin> --block      the block tier
 //   test_vu1_capture_replay <case.bin> --aot        the AOT tier, the image assumed verified
 //   test_vu1_capture_replay --bench N [--cached|--block|--aot] <case.bin>...
+//   ... --aot --native <dir>                        the AOT tier WITH the generated library of each
+//                                                   case's image loaded from <dir>/<image hash>.O1.<dylib|so>
+//                                                   (then .O2, then the bare name)
+//                                                   (built by test_vu1_aot_native --keep <dir>/..; SKIP 77
+//                                                   when a case's library is missing)
 //                                                   microbenchmark: every case replayed N times on ONE
 //                                                   unit, 5 rounds, the fastest round reported (registers
 //                                                   and data memory restored before each replay, the image
@@ -29,6 +34,10 @@
 #include <vector>
 
 #include "engine/gif/gif_arbiter.h"
+#include "engine/platform/host/platform.h"
+#include "engine/vu/vu1_aot/vu1_aot_emitter.h"
+#include "engine/vu/vu1_aot/vu1_aot_exports.h"
+#include "engine/vu/vu1_aot/vu1_aot_verifier.h"
 #include "engine/gif/gif_parser.h"
 #include "engine/gif/gif_regs.h"
 #include "engine/gs/hle/ir/register_op_stream.h"
@@ -84,6 +93,47 @@ void SetMode(VuUnit& vu, VuTierMode mode) {
     vu.dispatch().aot().set_assume_verified(mode == VuTierMode::Aot);
 }
 
+// --native <dir>: the generated library of a case's image, <dir>/<hash16>.<ext>, loaded once
+// per image and its exports handed to the unit's AOT tier (installed at the next kick).
+std::string g_native_dir;
+std::vector<ps2r::host::DynamicLibrary> g_native_libs;
+bool InstallNativeFor(VuUnit& vu, const Vu1Case& c) {
+    if (g_native_dir.empty()) return true;
+    const uint64_t hash = Vu1AotVerifier::ImageHashOf(c);
+    if (vu.dispatch().aot().native_exports(hash) != nullptr) return true;
+    // <dir>/<hash>.O1.<ext>, then .O2, then the bare name.
+    const std::string base = g_native_dir + "/" + Vu1AotEmitter::Hex16(hash);
+    const std::string ext = ps2r::host::DynamicLibraryExtension();
+    std::string path = base + ".O1." + ext;
+    ps2r::host::DynamicLibrary lib;
+    std::string err;
+    bool opened = ps2r::host::DynamicLibraryOpen(&lib, path.c_str(), &err);
+    if (!opened) {
+        path = base + ".O2." + ext;
+        opened = ps2r::host::DynamicLibraryOpen(&lib, path.c_str(), &err);
+    }
+    if (!opened) {
+        path = base + "." + ext;
+        opened = ps2r::host::DynamicLibraryOpen(&lib, path.c_str(), &err);
+    }
+    if (!opened) {
+        std::printf("SKIP: no generated library for image %s (%s: %s)\n", Vu1AotEmitter::Hex16(hash).c_str(), path.c_str(), err.c_str());
+        return false;
+    }
+    using EntryFn = const Vu1AotImageExports* (*)();
+    const EntryFn entry = reinterpret_cast<EntryFn>(ps2r::host::DynamicLibrarySymbol(lib, Vu1AotEmitter::EntrySymbol(hash).c_str()));
+    const Vu1AotImageExports* ex = entry ? entry() : nullptr;
+    if (ex == nullptr || ex->abi_version != kVu1AotAbiVersion || ex->slot_size != sizeof(VuDecodedSlot) || ex->image_hash != hash) {
+        std::printf("SKIP: %s is not a usable library for image %s\n", path.c_str(), Vu1AotEmitter::Hex16(hash).c_str());
+        ps2r::host::DynamicLibraryClose(lib);
+        return false;
+    }
+    g_native_libs.push_back(lib);
+    vu.dispatch().aot().SetNativeExports(hash, ex);
+    std::printf("native library %s: %u blocks\n", path.c_str(), ex->block_count);
+    return true;
+}
+
 // --bench: N replays of every case on one unit; the mean ns per replay and per bundle, then the aggregate.
 int RunBench(const std::vector<std::string>& files, int n, VuTierMode mode) {
     constexpr int kRounds = 5;
@@ -103,6 +153,7 @@ int RunBench(const std::vector<std::string>& files, int n, VuTierMode mode) {
             return 77;
         }
         vu.LoadCase(c);  // the image hash + decode happen once: the game's kicks find the image resident
+        if (!InstallNativeFor(vu, c)) return 77;
         vu.Execute(c.start_pc);
         rig.arbiter.drain();
         rig.sink.Clear();
@@ -136,11 +187,14 @@ int RunBench(const std::vector<std::string>& files, int n, VuTierMode mode) {
                 total_bundles > 0 ? total_ns / total_bundles : 0.0, total_ns > 0 ? total_bundles * 1e3 / total_ns : 0.0);
     if (mode == VuTierMode::Block || mode == VuTierMode::Aot) {
         const VuBlockTier::Stats& bs = vu.dispatch().block().stats();
-        std::printf("bench block stats blocks_run=%llu ops_static=%llu ops_model=%llu blocks_built=%llu ops/block=%.2f static=%.1f%%\n",
+        const uint64_t ops_all = bs.ops_static + bs.ops_model + bs.ops_native;
+        std::printf("bench block stats blocks_run=%llu ops_static=%llu ops_model=%llu ops_native=%llu blocks_native=%llu blocks_built=%llu ops/block=%.2f static=%.1f%% native=%.1f%%\n",
                     static_cast<unsigned long long>(bs.blocks_run), static_cast<unsigned long long>(bs.ops_static),
-                    static_cast<unsigned long long>(bs.ops_model), static_cast<unsigned long long>(bs.blocks_built),
-                    bs.blocks_run ? static_cast<double>(bs.ops_static + bs.ops_model) / static_cast<double>(bs.blocks_run) : 0.0,
-                    (bs.ops_static + bs.ops_model) ? 100.0 * static_cast<double>(bs.ops_static) / static_cast<double>(bs.ops_static + bs.ops_model) : 0.0);
+                    static_cast<unsigned long long>(bs.ops_model), static_cast<unsigned long long>(bs.ops_native),
+                    static_cast<unsigned long long>(bs.blocks_native), static_cast<unsigned long long>(bs.blocks_built),
+                    bs.blocks_run ? static_cast<double>(ops_all) / static_cast<double>(bs.blocks_run) : 0.0,
+                    ops_all ? 100.0 * static_cast<double>(bs.ops_static) / static_cast<double>(ops_all) : 0.0,
+                    ops_all ? 100.0 * static_cast<double>(bs.ops_native) / static_cast<double>(ops_all) : 0.0);
     }
     return 0;
 }
@@ -162,6 +216,7 @@ int main(int argc, char** argv) {
         else if (a == "--block") block = true;
         else if (a == "--aot") aot = true;
         else if (a == "--bench" && i + 1 < argc) bench = std::atoi(argv[++i]);
+        else if (a == "--native" && i + 1 < argc) g_native_dir = argv[++i];
         else files.push_back(a);
     }
     const VuTierMode mode = aot ? VuTierMode::Aot : block ? VuTierMode::Block : cached ? VuTierMode::Cached : VuTierMode::Interp;
@@ -200,6 +255,7 @@ int main(int argc, char** argv) {
     VuUnit vu(1, &rig.arbiter);
     vu.LoadCase(c);
     SetMode(vu, mode);
+    if (!InstallNativeFor(vu, c)) return 77;
     vu.Execute(c.start_pc);
     rig.arbiter.drain();
     const GsPacketDiff::Stream s = GsPacketDiff::Decode(rig.sink.kicks());

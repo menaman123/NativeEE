@@ -74,12 +74,30 @@ add_test(NAME DisplaySequenceSchedule COMMAND test_display_sequence)
 # cache on the same root is seeded from the manifest without re-verifying, another build
 # id re-verifies, and a kick of a new image is collected (quota 1), judged and runs native.
 add_executable(test_vu1_aot_cache test_vu1_aot_cache.cpp
-    "${CMAKE_SOURCE_DIR}/app/host/vu1_aot_cache.cpp")
-target_include_directories(test_vu1_aot_cache PRIVATE ${CMAKE_SOURCE_DIR})
+    "${CMAKE_SOURCE_DIR}/app/host/vu1_aot_cache.cpp"
+    "${CMAKE_SOURCE_DIR}/app/host/vu1_aot_builder.cpp")
+target_include_directories(test_vu1_aot_cache PRIVATE ${CMAKE_SOURCE_DIR} ${PS2R_GENERATED_DIR})
 target_compile_options(test_vu1_aot_cache PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(test_vu1_aot_cache PRIVATE ps2r_vu)
 add_test(NAME Vu1AotCacheManifest COMMAND test_vu1_aot_cache)
 set_tests_properties(Vu1AotCacheManifest PROPERTIES TIMEOUT 60)
+
+# Vu1AotNativeCorpus: the GENERATED code against the interpreter over a corpus. For every
+# image of the given case directories: Vu1AotBuilder emits the image's blocks as C++ (into
+# a temp root under the build dir), compiles them with the host toolchain, loads the
+# library and re-verifies every case native vs interpreter (Vu1AotVerifier with the
+# exports installed). The emitted text is also checked structurally (one function per
+# block, a constexpr slot per op, the exports table). SKIP 77 when no C++ compiler is
+# found on the host or no corpus directory is given, so CI without a toolchain stays
+# green; `--keep <dir>` leaves the libraries for the bench (test_vu1_capture_replay --native).
+add_executable(test_vu1_aot_native test_vu1_aot_native.cpp
+    "${CMAKE_SOURCE_DIR}/app/host/vu1_aot_builder.cpp")
+add_dependencies(test_vu1_aot_native vu1_aot_prelude_stage)
+target_include_directories(test_vu1_aot_native PRIVATE ${CMAKE_SOURCE_DIR} ${PS2R_GENERATED_DIR})
+target_compile_options(test_vu1_aot_native PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(test_vu1_aot_native PRIVATE ps2r_vu)
+add_test(NAME Vu1AotNativeCorpus COMMAND test_vu1_aot_native ${PS2R_OG_ROOT}/vutrace_cases2)
+set_tests_properties(Vu1AotNativeCorpus PROPERTIES TIMEOUT 1800 SKIP_RETURN_CODE 77)
 set_tests_properties(ControlsBindingsPressToBind PROPERTIES TIMEOUT 60)
 
 # RootFirstRunExtract (CHARTER 2 C2, Bernoulli): the first-run extraction on the actual play binary

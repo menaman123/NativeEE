@@ -18,10 +18,22 @@
 // by the composition root through the kick observer below and persisted under
 // the user data dir with the manifest (app/host/vu1_aot_cache.*: image hash,
 // engine build id, corpus hash, status). Nothing is generated under the source
-// tree: the "compiled native function" of an image is its specialised block
-// table, built in memory from the image at first kick, and the cache holds
-// the verification verdicts so a verified image goes native at its first
-// kick of the next run.
+// tree: the first native form of an image is its specialised block table,
+// built in memory from the image at first kick; the cache holds the
+// verification verdicts (so a verified image goes native at its first kick of
+// the next run) and, under the user data dir only, the generated libraries of
+// the second form below.
+//
+// Above the specialised table sits the OPTIONAL generated code: once an image
+// is Verified, Vu1AotBuilder (the composition root) emits one C++ function per
+// block (Vu1AotEmitter: the block tier's RunOps with every slot a compile-time
+// constant through these same bodies), compiles it with a host toolchain found
+// at run time, loads the library, re-verifies the loaded functions on the
+// image's corpus with the same gate, and hands the exports table to this tier
+// (SetNativeExports). The VU thread installs the functions on the image's
+// blocks at its next kick (InstallNative: never from another thread); the loop
+// calls a block's function instead of RunOps. No compiler on the host = this
+// step never happens and the specialised table is the native tier.
 //
 // Tier order: HLE (the title's library, if any; the dispatch's hook) -> AOT
 // (verified) -> the fallback. The status map is written by the verifier
@@ -33,6 +45,7 @@
 #include <unordered_map>
 
 #include "engine/vu/tiers/vu_block_tier.h"
+#include "engine/vu/vu1_aot/vu1_aot_exports.h"
 
 class VuUnit;
 class VuInterpreterTier;
@@ -48,6 +61,8 @@ public:
         uint64_t native_bundles = 0;   // bundles retired on the native path
         uint64_t native_ns = 0;        // wall time of the native runs (steady clock around Execute)
         uint64_t specialized = 0;      // programs whose table was re-resolved (once per image per table life)
+        uint64_t native_installs = 0;  // exports tables installed on a program's blocks
+        uint64_t native_blocks = 0;    // block functions installed (sum over installs)
     };
 
     // The kick observer: every kick of an image that is not Verified (the
@@ -62,6 +77,20 @@ public:
 
     // The status map (thread-safe: the verifier publishes from another thread).
     void SetStatus(uint64_t image_hash, Status status);
+    // The generated code of an image (thread-safe: the builder publishes from
+    // another thread; the table and its library must outlive this tier's use of
+    // them, or be withdrawn with null first). Installed on the VU thread at the
+    // image's next Verified kick; a table whose blocks disagree with the live
+    // block structure is refused there (nothing installed, `native_refused`).
+    void SetNativeExports(uint64_t image_hash, const Vu1AotImageExports* exports);
+    const Vu1AotImageExports* native_exports(uint64_t image_hash) const;
+    size_t native_images() const;
+    uint64_t native_refused() const { return native_refused_; }
+    // Install `ex` on the program's blocks (building the ones it names that do
+    // not exist yet). False = a block of the table does not match the program
+    // (pc past the image, op count differs): nothing is installed. Called on the
+    // thread that runs the unit; public for the verifier leg and the tests.
+    bool InstallNative(VuBlockProgram& prog, const Vu1AotImageExports& ex);
     Status status(uint64_t image_hash) const;
     size_t images() const;
     size_t verified() const;
@@ -90,10 +119,13 @@ private:
     VuInterpreterTier& generic_;
     mutable std::mutex mu_;
     std::unordered_map<uint64_t, Status> status_;
+    std::unordered_map<uint64_t, const Vu1AotImageExports*> native_;
     std::atomic<uint32_t> epoch_{0};   // bumped by SetStatus: the memo below re-reads the map
     uint64_t memo_hash_ = 0;
     uint32_t memo_epoch_ = ~0u;
     Status memo_status_ = Status::Unverified;
+    const Vu1AotImageExports* memo_native_ = nullptr;
+    uint64_t native_refused_ = 0;
     bool assume_verified_ = false;
     Fallback fallback_ = Fallback::Block;
     KickObserver observer_ = nullptr;

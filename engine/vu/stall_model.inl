@@ -3,7 +3,7 @@
 #include "engine/platform/host/platform.h"
 
 template <uint8_t M>
-void StallModel::ApplyBody(const VuDecodedSlot& s, VUregs& regs, FlagPipeline& pipes) {
+PS2R_FORCE_INLINE void StallModel::ApplyBody(const VuDecodedSlot& s, VUregs& regs, FlagPipeline& pipes) {
     constexpr bool kDyn = (M & kDynamic) != 0;
     uint64_t& cycle = pipes.cycle();
 
@@ -51,7 +51,7 @@ void StallModel::ApplyBody(const VuDecodedSlot& s, VUregs& regs, FlagPipeline& p
 }
 
 template <uint8_t M>
-void StallModel::ApplySpec(const VuDecodedSlot& s, VUregs& regs, FlagPipeline& pipes) {
+PS2R_FORCE_INLINE void StallModel::ApplySpec(const VuDecodedSlot& s, VUregs& regs, FlagPipeline& pipes) {
     ApplyBody<static_cast<uint8_t>(M & ~kDynamic)>(s, regs, pipes);
 }
 

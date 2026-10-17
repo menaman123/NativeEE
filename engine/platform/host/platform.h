@@ -230,6 +230,14 @@ int ProcessId();
 // child is spawned and the parent exits with its status, which is the nearest the OS has.
 // Returns only on failure.
 int ExecReplaceProcess(const char* image, char* const argv[]);
+// Run a child image to completion and wait for it: `argv` is the child's own vector
+// (argv[0] = the image name); `search_path` resolves `image` on the PATH the way the shell
+// would (posix_spawnp / the CRT's spawn search) -- the one way the engine reaches a tool it
+// does not know the location of without reading the environment itself. The child's stdout
+// and stderr are gathered into *output (when non-null). Returns the exit status (0..255),
+// -1 when the child could not be started (errno-shaped failure), -2 when it died on a signal.
+// Used by the VU1 AOT builder to drive the host compiler; nothing of the game runs through it.
+int ProcessRun(const char* image, char* const argv[], bool search_path, std::string* output);
 // Resident footprint in bytes as the platform's own memory tool reports it (the peak_mb
 // census row): phys_footprint on Darwin, VmRSS on Linux, PagefileUsage+WorkingSet on Win32.
 uint64_t ProcessFootprintBytes();
@@ -253,6 +261,15 @@ void SetCurrentThreadName(const char* name);
 // Pin the calling thread to the OS's interactive class: USER_INTERACTIVE QoS on Darwin,
 // SCHED_OTHER nice -5 where permitted on Linux (best effort), ABOVE_NORMAL on Win32.
 void PinCurrentThreadInteractive();
+
+// --- dynamic libraries (dlopen / LoadLibrary): the VU1 AOT builder's generated image
+//     libraries. A handle stays open until Close; symbols are the library's C names. ---
+struct DynamicLibrary { void* handle = nullptr; };
+bool DynamicLibraryOpen(DynamicLibrary* out, const char* path, std::string* err);
+void* DynamicLibrarySymbol(DynamicLibrary lib, const char* name);
+void DynamicLibraryClose(DynamicLibrary lib);
+// The platform's shared-library file extension ("dylib" | "so" | "dll").
+const char* DynamicLibraryExtension();
 
 // --- clocks ---
 uint64_t MonotonicNowNs();   // the steady clock the TimeDomain samples

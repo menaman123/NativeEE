@@ -23,6 +23,40 @@ void Vu1AotTier::SetStatus(uint64_t image_hash, Status status) {
     epoch_.fetch_add(1, std::memory_order_release);
 }
 
+void Vu1AotTier::SetNativeExports(uint64_t image_hash, const Vu1AotImageExports* exports) {
+    std::lock_guard<std::mutex> lock(mu_);
+    if (exports == nullptr) native_.erase(image_hash);
+    else native_[image_hash] = exports;
+    epoch_.fetch_add(1, std::memory_order_release);
+}
+
+const Vu1AotImageExports* Vu1AotTier::native_exports(uint64_t image_hash) const {
+    std::lock_guard<std::mutex> lock(mu_);
+    const auto it = native_.find(image_hash);
+    return it == native_.end() ? nullptr : it->second;
+}
+
+size_t Vu1AotTier::native_images() const {
+    std::lock_guard<std::mutex> lock(mu_);
+    return native_.size();
+}
+
+bool Vu1AotTier::InstallNative(VuBlockProgram& prog, const Vu1AotImageExports& ex) {
+    if (ex.abi_version != kVu1AotAbiVersion || ex.slot_size != sizeof(VuDecodedSlot) || ex.image_hash != prog.hash) return false;
+    const size_t n_slots = prog.slots.size();
+    for (uint32_t i = 0; i < ex.block_count; ++i) {
+        const Vu1AotBlockExport& b = ex.blocks[i];
+        if ((b.pc & 7u) != 0 || (b.pc >> 3) >= n_slots || b.fn == nullptr) return false;
+        const VuBlock* blk = block_.BlockAt(prog, b.pc);
+        if (blk->ops.size() != b.n_ops) return false;
+    }
+    for (uint32_t i = 0; i < ex.block_count; ++i) block_.BlockAt(prog, ex.blocks[i].pc)->native = ex.blocks[i].fn;
+    prog.native = &ex;
+    ++stats_.native_installs;
+    stats_.native_blocks += ex.block_count;
+    return true;
+}
+
 Vu1AotTier::Status Vu1AotTier::status(uint64_t image_hash) const {
     std::lock_guard<std::mutex> lock(mu_);
     const auto it = status_.find(image_hash);
@@ -58,11 +92,18 @@ double Vu1AotTier::native_ns_per_bundle() const {
 }
 
 // The per-kick status read: one compare when the hash and the map epoch are
-// the memo's; the map (under its lock) otherwise.
+// the memo's; the maps (under their lock) otherwise. The memo carries the
+// image's exports pointer too.
 Vu1AotTier::Status Vu1AotTier::Lookup(uint64_t image_hash) {
     const uint32_t epoch = epoch_.load(std::memory_order_acquire);
     if (image_hash == memo_hash_ && epoch == memo_epoch_) return memo_status_;
-    memo_status_ = status(image_hash);
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        const auto it = status_.find(image_hash);
+        memo_status_ = it == status_.end() ? Status::Unverified : it->second;
+        const auto nt = native_.find(image_hash);
+        memo_native_ = nt == native_.end() ? nullptr : nt->second;
+    }
     memo_hash_ = image_hash;
     memo_epoch_ = epoch;
     return memo_status_;
@@ -75,11 +116,25 @@ void Vu1AotTier::Execute(VuUnit& unit, uint32_t start_pc) {
         return;
     }
     VuBlockProgram* prog = block_.Acquire(unit);
-    const Status st = assume_verified_ ? Status::Verified : Lookup(prog->hash);
+    const Status looked = Lookup(prog->hash);  // (the memo also carries the exports: read even when assumed)
+    const Status st = assume_verified_ ? Status::Verified : looked;
     if (st == Status::Verified) {
         if (prog->resolve != &Vu1AotTier::ResolveSpecialized) {
             block_.SetResolver(*prog, &Vu1AotTier::ResolveSpecialized);
             ++stats_.specialized;
+        }
+        // The generated code, once the builder has published it (and withdrawn:
+        // the blocks go back to RunOps). A refused table is dropped from the map
+        // so this is not retried every kick.
+        if (prog->native != memo_native_) {
+            if (memo_native_ == nullptr) {
+                VuBlockTier::ClearNative(*prog);
+            } else if (!InstallNative(*prog, *memo_native_)) {
+                VuBlockTier::ClearNative(*prog);
+                ++native_refused_;
+                SetNativeExports(prog->hash, nullptr);
+                memo_native_ = nullptr;
+            }
         }
         const uint64_t before = block_.bundles();
         const auto t0 = std::chrono::steady_clock::now();
@@ -93,6 +148,7 @@ void Vu1AotTier::Execute(VuUnit& unit, uint32_t start_pc) {
     // Not verified (yet): the collector sees the kick, the fallback runs it.
     // A table specialised under an earlier verdict goes back to the dynamic bodies.
     if (prog->resolve != nullptr) block_.SetResolver(*prog, nullptr);
+    if (prog->native != nullptr) VuBlockTier::ClearNative(*prog);
     if (observer_ != nullptr) observer_(observer_user_, unit, start_pc, prog->hash, st);
     ++stats_.fallback_kicks;
     if (fallback_ == Fallback::Interp) generic_.Run(unit, start_pc);

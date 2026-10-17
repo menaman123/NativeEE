@@ -82,8 +82,17 @@ struct VuBlockOp {
 // unless it would wrap past the image end: it is the same bundle whether the
 // branch is taken or not, its own branch / E bit are ignored and it does not
 // advance TPC. `fall` / `jump` are the successor blocks, resolved on first
-// use (the program owns every block).
+// use (the program owns every block). `native`, when set, is the GENERATED
+// function for this block (engine/vu/vu1_aot/: RunOps over these very ops with
+// every slot a compile-time constant); the loop calls it instead of RunOps when
+// the block runs whole (not cut by the cycle cap) and keeps every other duty --
+// successor, TPC, delay slot, yield, sled -- for itself.
 struct VuBlock {
+    // Runs the whole block from its entry pc (the merged delay slot included);
+    // the branch op's verdict lands in `taken` / `target`; returns the ops
+    // executed (< ops.size() only on an XTOP yield, left flagged on the unit).
+    using NativeFn = int (*)(VuUnit& unit, VuInterpreterTier& g, bool& taken, uint32_t& target);
+
     uint32_t pc = 0;            // entry byte address
     int n_body = 0;             // ops up to and including the terminal
     int branch_idx = -1;        // op whose branch verdict counts (the terminal when it is a branch kind)
@@ -92,6 +101,7 @@ struct VuBlock {
     int32_t static_target = -1; // B / BAL / IBxx: the target address; -1 = JR / JALR (read at run time)
     VuBlock* fall = nullptr;    // the block after this one (fall-through / after the delay slot)
     VuBlock* jump = nullptr;    // the block at `static_target`
+    NativeFn native = nullptr;  // the generated function, or null = RunOps over `ops`
     std::vector<VuBlockOp> ops;
 };
 
@@ -109,6 +119,7 @@ struct VuBlockProgram {
     uint64_t exec_count = 0;
     uint64_t bundles = 0;
     VuBlockOpResolver resolve = nullptr;             // null = VuBlockTier::ResolveOp
+    const void* native = nullptr;                    // the exports table installed on the blocks (the AOT tier's marker)
     std::vector<VuDecodedSlot> slots;                // one per 8-byte bundle of the unit's micro memory
     std::vector<VuBlock*> block_at;                  // slot -> its block, null = none yet
     std::vector<std::unique_ptr<VuBlock>> blocks;
@@ -131,6 +142,8 @@ public:
         uint64_t blocks_built = 0;
         uint64_t runs = 0;          // programs run (one steady-clock pair each: the census's ns per bundle)
         uint64_t run_ns = 0;        // wall time inside Run
+        uint64_t blocks_native = 0; // block executions through a generated function
+        uint64_t ops_native = 0;    // ops run inside generated functions
     };
 
     // `generic` supplies the drain and the GENERIC bodies through the cached tier's tables.
@@ -152,6 +165,21 @@ public:
     // block built so far (the schedule is recomputed: it depends on the slots
     // only). Blocks built later use it too.
     void SetResolver(VuBlockProgram& prog, VuBlockOpResolver resolve);
+    // Drop every block's generated function (the program runs RunOps again).
+    static void ClearNative(VuBlockProgram& prog);
+
+    // The structural half, usable on a SCRATCH program away from any unit (the
+    // AOT generator decodes an image from a corpus case and builds the blocks it
+    // emits with the very rules the live table uses): the decode of `bytes` of
+    // micro memory into `prog` (slots, classes, an empty block table) and the
+    // block entered at slot `slot_idx` (built if absent; a program owns it).
+    static void DecodeImage(const uint8_t* micro, size_t bytes, VuBlockProgram& prog);
+    static VuBlock* BuildBlock(VuBlockProgram& prog, size_t slot_idx);
+    // VF00 = (0,0,0,1), VI00 = 0 after a bundle that may have written them.
+    static void PinHardwired(VUregs& regs);
+    // The stall model's compiled class mask for a static stall class (the
+    // StallModel::k* bits), or -1 = the dynamic body (class 0 / unknown).
+    static int StallClassMask(uint8_t cls);
 
     uint64_t cycle_cap() const { return cycle_cap_; }
     void set_cycle_cap(uint64_t cap) { cycle_cap_ = cap; }
@@ -178,7 +206,6 @@ public:
 
 private:
     VuBlockProgram* Lookup(VuUnit& unit);
-    void DecodeProgram(const VuUnit& unit, VuBlockProgram& prog) const;
     VuBlock* Build(VuBlockProgram& prog, size_t slot_idx);
     // The run proper: the per-run unit state, the loop, the program's bundle count.
     void Run(VuUnit& unit, uint32_t pc, VuBlockProgram& prog, uint64_t cycle_limit);
@@ -202,3 +229,5 @@ private:
     std::vector<std::unique_ptr<VuBlockProgram>> table_;
     VuBlockProgram* current_ = nullptr;
 };
+
+#include "engine/vu/tiers/vu_block_tier.inl"

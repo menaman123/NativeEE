@@ -26,14 +26,6 @@ uint32_t Le32(const uint8_t* p) {
 
 constexpr int kNopSledBundles = 4;  // four all-zero bundles end the run (uninitialised micro memory)
 
-inline void PinHardwired(VUregs& regs) {
-    regs.VF[0].x = 0.0f;
-    regs.VF[0].y = 0.0f;
-    regs.VF[0].z = 0.0f;
-    regs.VF[0].w = 1.0f;
-    regs.VI[0] = 0;
-}
-
 // The stall model entries as plain functions (one per static class; the
 // dynamic body for class 0): what an op's `stall` pointer resolves to.
 template <uint8_t M>
@@ -42,27 +34,29 @@ void StallSpec(StallModel& m, const VuDecodedSlot& s, VUregs& regs, FlagPipeline
 }
 void StallDynamic(StallModel& m, const VuDecodedSlot& s, VUregs& regs, FlagPipeline& pipes) { m.Apply(s, regs, pipes); }
 
+// The entry for a class: the ApplySpec instantiation of its mask (the
+// StallClassMask table), the dynamic body for class 0 / unknown.
 VuBlockOp::StallFn StallFnForClass(uint8_t cls) {
     using S = StallModel;
-    switch (cls) {
-        case 1: return &StallSpec<S::kLower | S::kRd | S::kWr1>;
-        case 2: return &StallSpec<S::kLower | S::kRd | S::kWr2>;
-        case 3: return &StallSpec<S::kLower | S::kRd>;
-        case 4: return &StallSpec<S::kLower | S::kWr1>;
-        case 5: return &StallSpec<S::kLower | S::kWr2>;
-        case 6: return &StallSpec<S::kLower>;
-        case 7: return &StallSpec<S::kRd | S::kWr1>;
-        case 8: return &StallSpec<S::kRd>;
-        case 9: return &StallSpec<S::kWr1>;
-        case 10: return &StallSpec<0>;
-        case 11: return &StallSpec<S::kLower | S::kRd | S::kWr1 | S::kIaluWr>;
-        case 12: return &StallSpec<S::kLower | S::kRd | S::kIaluWr>;
-        case 13: return &StallSpec<S::kLower | S::kWr1 | S::kIaluWr>;
-        case 14: return &StallSpec<S::kLower | S::kIaluWr>;
-        case 15: return &StallSpec<S::kLower | S::kBranch>;
-        case 16: return &StallSpec<S::kLower | S::kBranch | S::kRd>;
-        case 17: return &StallSpec<S::kLower | S::kBranch | S::kWr1>;
-        case 18: return &StallSpec<S::kLower | S::kBranch | S::kRd | S::kWr1>;
+    switch (VuBlockTier::StallClassMask(cls)) {
+        case S::kLower | S::kRd | S::kWr1: return &StallSpec<S::kLower | S::kRd | S::kWr1>;
+        case S::kLower | S::kRd | S::kWr2: return &StallSpec<S::kLower | S::kRd | S::kWr2>;
+        case S::kLower | S::kRd: return &StallSpec<S::kLower | S::kRd>;
+        case S::kLower | S::kWr1: return &StallSpec<S::kLower | S::kWr1>;
+        case S::kLower | S::kWr2: return &StallSpec<S::kLower | S::kWr2>;
+        case S::kLower: return &StallSpec<S::kLower>;
+        case S::kRd | S::kWr1: return &StallSpec<S::kRd | S::kWr1>;
+        case S::kRd: return &StallSpec<S::kRd>;
+        case S::kWr1: return &StallSpec<S::kWr1>;
+        case 0: return &StallSpec<0>;
+        case S::kLower | S::kRd | S::kWr1 | S::kIaluWr: return &StallSpec<S::kLower | S::kRd | S::kWr1 | S::kIaluWr>;
+        case S::kLower | S::kRd | S::kIaluWr: return &StallSpec<S::kLower | S::kRd | S::kIaluWr>;
+        case S::kLower | S::kWr1 | S::kIaluWr: return &StallSpec<S::kLower | S::kWr1 | S::kIaluWr>;
+        case S::kLower | S::kIaluWr: return &StallSpec<S::kLower | S::kIaluWr>;
+        case S::kLower | S::kBranch: return &StallSpec<S::kLower | S::kBranch>;
+        case S::kLower | S::kBranch | S::kRd: return &StallSpec<S::kLower | S::kBranch | S::kRd>;
+        case S::kLower | S::kBranch | S::kWr1: return &StallSpec<S::kLower | S::kBranch | S::kWr1>;
+        case S::kLower | S::kBranch | S::kRd | S::kWr1: return &StallSpec<S::kLower | S::kBranch | S::kRd | S::kWr1>;
         default: return &StallDynamic;
     }
 }
@@ -82,6 +76,31 @@ bool WriteHitsRead(const VuDecodedSlot& w, const VuDecodedSlot& s) {
 VuBlockTier::VuBlockTier(VuInterpreterTier& generic, uint64_t cycle_cap) : generic_(generic), cycle_cap_(cycle_cap) {}
 
 // ---- the static facts ------------------------------------------------------
+
+int VuBlockTier::StallClassMask(uint8_t cls) {
+    using S = StallModel;
+    switch (cls) {
+        case 1: return S::kLower | S::kRd | S::kWr1;
+        case 2: return S::kLower | S::kRd | S::kWr2;
+        case 3: return S::kLower | S::kRd;
+        case 4: return S::kLower | S::kWr1;
+        case 5: return S::kLower | S::kWr2;
+        case 6: return S::kLower;
+        case 7: return S::kRd | S::kWr1;
+        case 8: return S::kRd;
+        case 9: return S::kWr1;
+        case 10: return 0;
+        case 11: return S::kLower | S::kRd | S::kWr1 | S::kIaluWr;
+        case 12: return S::kLower | S::kRd | S::kIaluWr;
+        case 13: return S::kLower | S::kWr1 | S::kIaluWr;
+        case 14: return S::kLower | S::kIaluWr;
+        case 15: return S::kLower | S::kBranch;
+        case 16: return S::kLower | S::kBranch | S::kRd;
+        case 17: return S::kLower | S::kBranch | S::kWr1;
+        case 18: return S::kLower | S::kBranch | S::kRd | S::kWr1;
+        default: return -1;
+    }
+}
 
 bool VuBlockTier::IsTerminal(const VuDecodedSlot& s) {
     if (s.e_bit || s.is_nop_pair) return true;
@@ -147,18 +166,18 @@ void VuBlockTier::Schedule(VuBlockOp* ops, size_t n) {
 
 // ---- the program table -----------------------------------------------------
 
-void VuBlockTier::DecodeProgram(const VuUnit& unit, VuBlockProgram& prog) const {
-    const Vu1State& st = unit.state();
-    const size_t n_slots = static_cast<size_t>(st.mem_mask + 1) / 8;
+void VuBlockTier::DecodeImage(const uint8_t* micro, size_t bytes, VuBlockProgram& prog) {
+    const size_t n_slots = bytes / 8;
     prog.slots.resize(n_slots);
     for (size_t i = 0; i < n_slots; ++i) {
-        prog.slots[i] = VuDecoder::DecodeVuSlot(Le32(st.micro + i * 8), Le32(st.micro + i * 8 + 4));
+        prog.slots[i] = VuDecoder::DecodeVuSlot(Le32(micro + i * 8), Le32(micro + i * 8 + 4));
     }
     VuDecodedSlot* slots = prog.slots.data();
     SpanClassifier::ComputeRunLenTouchHw(slots, n_slots);  // touch_hw (run_len is unused here)
     SpanClassifier::ComputeStallClasses(slots, n_slots);
     prog.block_at.assign(n_slots, nullptr);
     prog.blocks.clear();
+    prog.native = nullptr;
 }
 
 VuBlockProgram* VuBlockTier::Acquire(VuUnit& unit) { return Lookup(unit); }
@@ -200,13 +219,15 @@ VuBlockProgram* VuBlockTier::Lookup(VuUnit& unit) {
     prog->hash = h;
     prog->generation = gen;
     prog->exec_count = 1;
-    DecodeProgram(unit, *prog);
+    const Vu1State& dst = unit.state();
+    DecodeImage(dst.micro, static_cast<size_t>(dst.mem_mask + 1), *prog);
     current_ = prog.get();
     table_.push_back(std::move(prog));
     return current_;
 }
 
-VuBlock* VuBlockTier::Build(VuBlockProgram& prog, size_t slot_idx) {
+VuBlock* VuBlockTier::BuildBlock(VuBlockProgram& prog, size_t slot_idx) {
+    if (VuBlock* have = prog.block_at[slot_idx]) return have;
     std::unique_ptr<VuBlock> blk(new VuBlock());
     blk->pc = static_cast<uint32_t>(slot_idx * 8);
     const size_t n_slots = prog.slots.size();
@@ -252,14 +273,23 @@ VuBlock* VuBlockTier::Build(VuBlockProgram& prog, size_t slot_idx) {
     VuBlock* raw = blk.get();
     prog.block_at[slot_idx] = raw;
     prog.blocks.push_back(std::move(blk));
-    ++stats_.blocks_built;
     return raw;
+}
+
+VuBlock* VuBlockTier::Build(VuBlockProgram& prog, size_t slot_idx) {
+    ++stats_.blocks_built;
+    return BuildBlock(prog, slot_idx);
 }
 
 VuBlock* VuBlockTier::BlockAt(VuBlockProgram& prog, uint32_t pc) {
     const size_t idx = pc >> 3;
     VuBlock* b = prog.block_at[idx];
     return b != nullptr ? b : Build(prog, idx);
+}
+
+void VuBlockTier::ClearNative(VuBlockProgram& prog) {
+    for (auto& blk : prog.blocks) blk->native = nullptr;
+    prog.native = nullptr;
 }
 
 void VuBlockTier::SetResolver(VuBlockProgram& prog, VuBlockOpResolver resolve) {
@@ -318,6 +348,8 @@ void VuBlockTier::FoldStats(const Stats& acc) {
     stats_.blocks_run += acc.blocks_run;
     stats_.ops_static += acc.ops_static;
     stats_.ops_model += acc.ops_model;
+    stats_.blocks_native += acc.blocks_native;
+    stats_.ops_native += acc.ops_native;
 }
 
 template <bool kSched>
@@ -504,9 +536,20 @@ void VuBlockTier::Loop(VuUnit& unit, uint32_t pc, VuBlockProgram& prog, uint64_t
         ++acc.blocks_run;
         bool taken = false;
         uint32_t target = 0;
-        const int done = n > kWarmupOps + kMinStaticOps - 1
-                             ? RunOps<true>(unit, ops, n, pc, blk->branch_idx, taken, target, acc)
-                             : RunOps<false>(unit, ops, n, pc, blk->branch_idx, taken, target, acc);
+        int done;
+        if (blk->native != nullptr && !cut) {
+            // The generated function: the block's RunOps with the slots folded.
+            // It leaves the loop's bookkeeping (bundles, the last bundle's pc) here.
+            done = blk->native(unit, generic_, taken, target);
+            bundles_ += static_cast<uint64_t>(done);
+            if (done > 0) st.cur_bundle_pc = pc + 8u * static_cast<uint32_t>(done - 1);
+            ++acc.blocks_native;
+            acc.ops_native += static_cast<uint64_t>(done);
+        } else {
+            done = n > kWarmupOps + kMinStaticOps - 1
+                       ? RunOps<true>(unit, ops, n, pc, blk->branch_idx, taken, target, acc)
+                       : RunOps<false>(unit, ops, n, pc, blk->branch_idx, taken, target, acc);
+        }
         cycle_limit -= static_cast<uint64_t>(done);
         if (st.xtop_exit_requested) {
             const int idx = done - 1;

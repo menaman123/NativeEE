@@ -27,10 +27,18 @@ tier dispatch (`VuTierDispatch`, mode + HLE-library consult) and the MTVU worker
   Block, Aot}` and the two hook slots; `Block` / `Aot` run VU1 on that tier and VU0 on the cached tier. `Aot` is the
   generic run-time recompiler of `engine/vu/vu1_aot/` (owned here as the `aot_` member: a verified image on its
   (kind, dest)-specialised block table, every other image on the AOT tier's fallback).
-- `vu_block_tier` also carries the AOT tier's hook: `VuBlockProgram::resolve` (a `VuBlockOpResolver`, null = `ResolveOp`),
-  `SetResolver(prog, fn)` (re-resolves the built blocks, recomputes the schedule) and `ExecuteAcquired(unit, pc, prog)`.
-- `vu_cached_tier_exec.cpp`'s body templates take `D` (the dest mask, -1 = dynamic): `UpperFastFnD / LowerFastFnD` are
-  the (kind, dest) tables the AOT resolver installs; the dynamic tables are the `D = -1` instantiations (byte-identical).
+- `vu_block_tier` also carries the AOT tier's hooks: `VuBlockProgram::resolve` (a `VuBlockOpResolver`, null = `ResolveOp`),
+  `SetResolver(prog, fn)` (re-resolves the built blocks, recomputes the schedule), `ExecuteAcquired(unit, pc, prog)`, and
+  `VuBlock::native` (a `VuBlock::NativeFn`: the GENERATED function for the block -- `RunOps` over its ops with every slot a
+  compile-time constant, emitted by `engine/vu/vu1_aot/Vu1AotEmitter`; the loop calls it instead of `RunOps` when the
+  block runs whole and keeps the successor / TPC / delay-slot / yield / sled duties; `ClearNative`). The structural half
+  is static and unit-free for the generator: `DecodeImage(micro, bytes, prog)`, `BuildBlock(prog, slot)`,
+  `StallClassMask(cls)` (the ONE class -> mask table), `PinHardwired` (inline, `vu_block_tier.inl`).
+- `vu_cached_tier_exec.inl` holds the body templates (`ExecUpperK<K, D>` / `ExecLowerK<K, D>` and the two FMAC
+  families), public and `PS2R_FORCE_INLINE`, included from `vu_cached_tier.h`: `D` is the dest mask (-1 = dynamic);
+  `UpperFastFnD / LowerFastFnD` (`vu_cached_tier_exec.cpp`) are the (kind, dest) tables the AOT resolver installs, the
+  dynamic tables are the `D = -1` instantiations (byte-identical), and a generated block calls the templates directly
+  with a `static constexpr` slot (one source text for all three).
 - `mtvu_settings.h` — `MtvuSettings {enabled=true, depth_frames=2}` (types-only; mirrors the Config keys `engine.mtvu` /
   `engine.mtvu_depth`, copied by the composition root; deterministic profile `{false, 2}`).
 - `mtvu_clock.h/.cpp` — `MtvuClock` (virtual `NowNs()`, default = the process steady clock via `ps2r::Park::NowNs`;

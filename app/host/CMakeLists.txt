@@ -30,6 +30,7 @@ add_library(ps2r_app_host STATIC
     leg_closer.cpp
     mtvu_stack.cpp
     vu1_aot_cache.cpp
+    vu1_aot_builder.cpp
     shutdown_ladder.cpp
     shutdown_census.cpp
     subsystem_census.cpp
@@ -48,6 +49,7 @@ add_library(ps2r_app_host STATIC
     session_workers.cpp
 )
 target_include_directories(ps2r_app_host PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(ps2r_app_host PRIVATE ${PS2R_GENERATED_DIR})   # vu1_aot_paths.h (the builder's defaults)
 target_compile_options(ps2r_app_host PRIVATE -Wall -Wextra -Werror)
 # iop_arm.h (the play/oracle seam) #errors without this definition. This tree builds only
 # the PLAY shape (no IOP linked); a title that links ps2r_iop_models would override it.
@@ -67,7 +69,13 @@ endif()
 # The binary. PS2R_TITLE_ID / PS2R_TITLE_DIR are empty when no title is configured; main.cpp
 # reports that rather than attempting a boot it cannot complete.
 add_executable(nativeee main.cpp ${PS2R_BUILD_ID_CPP})
-add_dependencies(nativeee generate_build_id)
+add_dependencies(nativeee generate_build_id vu1_aot_prelude_stage)
+# The VU1 AOT builder's generated image libraries resolve the engine's symbols (the GENERIC
+# bodies, the flag pipeline, the kick) against this executable at load: macOS exports them by
+# default (and the library is linked with -undefined dynamic_lookup); Linux needs -rdynamic.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(nativeee PRIVATE -rdynamic)
+endif()
 target_include_directories(nativeee PRIVATE ${CMAKE_SOURCE_DIR})
 target_compile_options(nativeee PRIVATE -Wall -Wextra -Werror)
 target_compile_definitions(nativeee PRIVATE PS2R_TITLE_ID="${PS2R_TITLE}")

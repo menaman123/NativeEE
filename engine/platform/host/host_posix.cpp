@@ -12,9 +12,11 @@
 #include <filesystem>
 #include <fcntl.h>
 #include <pthread.h>
+#include <spawn.h>
 #include <strings.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #if defined(__APPLE__)
@@ -32,6 +34,8 @@
 #endif
 
 #include "engine/platform/posix/fiber_posix.h"
+
+extern char** environ;
 
 namespace ps2r::host {
 
@@ -100,6 +104,69 @@ int ProcessId() { return static_cast<int>(::getpid()); }
 int ExecReplaceProcess(const char* image, char* const argv[]) {
     if (image && *image) ::execv(image, argv);
     return ::execvp(argv[0], argv);
+}
+
+int ProcessRun(const char* image, char* const argv[], bool search_path, std::string* output) {
+    int pipefd[2] = {-1, -1};
+    if (output != nullptr && ::pipe(pipefd) != 0) return -1;
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    if (output != nullptr) {
+        posix_spawn_file_actions_adddup2(&actions, pipefd[1], STDOUT_FILENO);
+        posix_spawn_file_actions_adddup2(&actions, pipefd[1], STDERR_FILENO);
+        posix_spawn_file_actions_addclose(&actions, pipefd[0]);
+        posix_spawn_file_actions_addclose(&actions, pipefd[1]);
+    }
+    pid_t pid = 0;
+    const char* exe = (image && *image) ? image : argv[0];
+    const int rc = search_path ? ::posix_spawnp(&pid, exe, &actions, nullptr, argv, environ)
+                               : ::posix_spawn(&pid, exe, &actions, nullptr, argv, environ);
+    posix_spawn_file_actions_destroy(&actions);
+    if (output != nullptr) ::close(pipefd[1]);
+    if (rc != 0) {
+        if (output != nullptr) ::close(pipefd[0]);
+        errno = rc;
+        return -1;
+    }
+    if (output != nullptr) {
+        char buf[4096];
+        for (;;) {
+            const ssize_t n = ::read(pipefd[0], buf, sizeof buf);
+            if (n > 0) output->append(buf, static_cast<size_t>(n));
+            else if (n == 0 || errno != EINTR) break;
+        }
+        ::close(pipefd[0]);
+    }
+    int status = 0;
+    while (::waitpid(pid, &status, 0) < 0) {
+        if (errno != EINTR) return -1;
+    }
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    return -2;
+}
+
+bool DynamicLibraryOpen(DynamicLibrary* out, const char* path, std::string* err) {
+    void* h = ::dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    if (h == nullptr) {
+        if (err) {
+            const char* e = ::dlerror();
+            *err = e ? e : "dlopen failed";
+        }
+        return false;
+    }
+    out->handle = h;
+    return true;
+}
+void* DynamicLibrarySymbol(DynamicLibrary lib, const char* name) { return lib.handle ? ::dlsym(lib.handle, name) : nullptr; }
+void DynamicLibraryClose(DynamicLibrary lib) {
+    if (lib.handle) ::dlclose(lib.handle);
+}
+const char* DynamicLibraryExtension() {
+#if defined(__APPLE__)
+    return "dylib";
+#else
+    return "so";
+#endif
 }
 
 uint64_t ProcessFootprintBytes() {

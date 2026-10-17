@@ -1,6 +1,8 @@
 // Vu1AotCache -- manifest, corpus, collector, verifier thread (see the header).
 #include "app/host/vu1_aot_cache.h"
 
+#include "app/host/vu1_aot_builder.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -179,8 +181,14 @@ bool Vu1AotCache::Open(std::string* note) {
     size_t queued = 0;
     for (auto& kv : images_) {
         Image& img = kv.second;
-        if (judged.count(kv.first) != 0) {
+        const auto jt = judged.find(kv.first);
+        if (jt != judged.end()) {
             img.queued = true;  // nothing more to collect or judge for it
+            // A verified image goes to the code generator with its corpus (the
+            // library on disk is reused, else emitted and compiled, then re-verified).
+            if (builder_ != nullptr && jt->second.status == Vu1AotTier::Status::Verified && !img.cases.empty()) {
+                builder_->Submit(kv.first, std::move(img.cases), {});
+            }
             img.cases.clear();
             continue;
         }
@@ -282,11 +290,11 @@ void Vu1AotCache::VerifierMain() {
             job = std::move(queue_.front());
             queue_.erase(queue_.begin());
         }
-        Judge(job.image, job.cases);
+        Judge(job.image, std::move(job.cases));
     }
 }
 
-void Vu1AotCache::Judge(uint64_t image_hash, const std::vector<std::unique_ptr<Vu1Case>>& cases) {
+void Vu1AotCache::Judge(uint64_t image_hash, std::vector<std::unique_ptr<Vu1Case>> cases) {
     std::vector<const Vu1Case*> ptrs;
     ptrs.reserve(cases.size());
     for (const auto& c : cases) ptrs.push_back(c.get());
@@ -316,6 +324,9 @@ void Vu1AotCache::Judge(uint64_t image_hash, const std::vector<std::unique_ptr<V
              static_cast<unsigned long long>(r.corpus_hash),
              static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()) / 1000.0,
              r.divergence.empty() ? "" : " divergence=", r.divergence.c_str());
+    // Verified: the code generator takes the corpus (and the block pcs the
+    // native legs built, the JR / JALR targets among them).
+    if (r.identical && builder_ != nullptr) builder_->Submit(image_hash, std::move(cases), r.block_pcs);
 }
 
 // ---- the census ----------------------------------------------------------------

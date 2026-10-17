@@ -2,6 +2,7 @@
 // in the header.
 #include "engine/vu/vu1_aot/vu1_aot_verifier.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
@@ -10,6 +11,7 @@
 #include "engine/gif/gif_regs.h"
 #include "engine/gif/null_gs_sink.h"
 #include "engine/vu/tiers/vu_tier_dispatch.h"
+#include "engine/vu/vu1_aot/vu1_aot_exports.h"
 #include "engine/vu/vu1_case.h"
 #include "engine/vu/vu_image_hash.h"
 #include "engine/vu/vu_unit.h"
@@ -66,7 +68,7 @@ uint64_t Vu1AotVerifier::CorpusHashOf(const std::vector<const Vu1Case*>& cases) 
 // with every image assumed verified (native) or on the interpreter, the
 // arbiter drained into a null sink (the identity is judged on the kicked bytes
 // at the submit tap; the parse only keeps the arbiter's contract).
-void Vu1AotVerifier::RunLeg(const Vu1Case& c, bool native, Outcome& out) {
+void Vu1AotVerifier::RunLeg(const Vu1Case& c, bool native, const Vu1AotImageExports* exports, Outcome& out, Result& r) {
     NullGsSink null_sink;
     GifRegs gif_regs;
     GifParser parser(null_sink, gif_regs);
@@ -79,8 +81,19 @@ void Vu1AotVerifier::RunLeg(const Vu1Case& c, bool native, Outcome& out) {
     settings.vu1_mode = native ? VuTierMode::Aot : VuTierMode::Interp;
     settings.hle_enabled = false;
     vu.dispatch().aot().set_assume_verified(native);
+    if (native && exports != nullptr) vu.dispatch().aot().SetNativeExports(r.image_hash, exports);
     vu.Execute(c.start_pc);
     arbiter.drain();
+    if (native) {
+        // The blocks this run built (the generator's seeds: JR / JALR targets
+        // included) and the generated-code census.
+        if (const VuBlockProgram* prog = vu.dispatch().block().Acquire(vu)) {
+            for (const auto& b : prog->blocks) r.block_pcs.push_back(b->pc);
+        }
+        const VuBlockTier::Stats& bs = vu.dispatch().block().stats();
+        r.native_blocks += bs.blocks_native;
+        r.native_ops += bs.ops_native;
+    }
     std::memcpy(&out.regs, &vu.regs(), sizeof(VUregs));
     std::memcpy(out.data, vu.state().data, Vu1Case::kDataSize);
     out.cycle = vu.cycle();
@@ -142,7 +155,7 @@ bool Vu1AotVerifier::Same(const Outcome& a, const Outcome& b, std::string& field
     return true;
 }
 
-Vu1AotVerifier::Result Vu1AotVerifier::Verify(const std::vector<const Vu1Case*>& cases) {
+Vu1AotVerifier::Result Vu1AotVerifier::Verify(const std::vector<const Vu1Case*>& cases, const Vu1AotImageExports* native) {
     Result r;
     r.cases = cases.size();
     if (cases.empty()) {
@@ -161,8 +174,8 @@ Vu1AotVerifier::Result Vu1AotVerifier::Verify(const std::vector<const Vu1Case*>&
     // The two outcomes are 2 x ~17 KB: heap-held, reused across cases.
     std::vector<Outcome> legs(2);
     for (size_t i = 0; i < cases.size(); ++i) {
-        RunLeg(*cases[i], true, legs[0]);
-        RunLeg(*cases[i], false, legs[1]);
+        RunLeg(*cases[i], true, native, legs[0], r);
+        RunLeg(*cases[i], false, nullptr, legs[1], r);
         r.bundles += legs[0].bundles;
         std::string field;
         if (!Same(legs[0], legs[1], field)) {
@@ -170,6 +183,8 @@ Vu1AotVerifier::Result Vu1AotVerifier::Verify(const std::vector<const Vu1Case*>&
             return r;
         }
     }
+    std::sort(r.block_pcs.begin(), r.block_pcs.end());
+    r.block_pcs.erase(std::unique(r.block_pcs.begin(), r.block_pcs.end()), r.block_pcs.end());
     r.identical = true;
     return r;
 }

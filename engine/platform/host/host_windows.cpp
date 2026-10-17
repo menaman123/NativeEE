@@ -144,6 +144,61 @@ int ExecReplaceProcess(const char* image, char* const argv[]) {
     std::exit(static_cast<int>(status));
 }
 
+int ProcessRun(const char* image, char* const argv[], bool search_path, std::string* output) {
+    // The CRT's spawn family: _P_WAIT returns the child's exit status; the PATH search is
+    // _spawnvp's. Output capture: the child's stdout/stderr are redirected into a temporary
+    // file through the inheritable handles of _dup2 (the CRT has no pipe-to-string spawn).
+    const char* exe = (image && *image) ? image : argv[0];
+    int saved_out = -1, saved_err = -1, tmp_fd = -1;
+    char tmp_path[MAX_PATH] = {};
+    if (output != nullptr) {
+        char tmp_dir[MAX_PATH] = {};
+        if (GetTempPathA(MAX_PATH, tmp_dir) == 0 || GetTempFileNameA(tmp_dir, "ps2", 0, tmp_path) == 0) return -1;
+        tmp_fd = _open(tmp_path, _O_RDWR | _O_BINARY, _S_IREAD | _S_IWRITE);
+        if (tmp_fd < 0) return -1;
+        saved_out = _dup(_fileno(stdout));
+        saved_err = _dup(_fileno(stderr));
+        _dup2(tmp_fd, _fileno(stdout));
+        _dup2(tmp_fd, _fileno(stderr));
+    }
+    const intptr_t status = search_path ? _spawnvp(_P_WAIT, exe, const_cast<const char* const*>(argv))
+                                        : _spawnv(_P_WAIT, exe, const_cast<const char* const*>(argv));
+    if (output != nullptr) {
+        _dup2(saved_out, _fileno(stdout));
+        _dup2(saved_err, _fileno(stderr));
+        _close(saved_out);
+        _close(saved_err);
+        _lseek(tmp_fd, 0, SEEK_SET);
+        char buf[4096];
+        for (;;) {
+            const int n = _read(tmp_fd, buf, sizeof buf);
+            if (n <= 0) break;
+            output->append(buf, static_cast<size_t>(n));
+        }
+        _close(tmp_fd);
+        DeleteFileA(tmp_path);
+    }
+    if (status == -1) return -1;
+    return static_cast<int>(status) & 0xFF;
+}
+
+bool DynamicLibraryOpen(DynamicLibrary* out, const char* path, std::string* err) {
+    HMODULE h = LoadLibraryA(path);
+    if (h == nullptr) {
+        if (err) *err = "LoadLibrary failed: " + std::to_string(GetLastError());
+        return false;
+    }
+    out->handle = reinterpret_cast<void*>(h);
+    return true;
+}
+void* DynamicLibrarySymbol(DynamicLibrary lib, const char* name) {
+    return lib.handle ? reinterpret_cast<void*>(GetProcAddress(reinterpret_cast<HMODULE>(lib.handle), name)) : nullptr;
+}
+void DynamicLibraryClose(DynamicLibrary lib) {
+    if (lib.handle) FreeLibrary(reinterpret_cast<HMODULE>(lib.handle));
+}
+const char* DynamicLibraryExtension() { return "dll"; }
+
 uint64_t ProcessFootprintBytes() {
     PROCESS_MEMORY_COUNTERS_EX pmc{};
     pmc.cb = sizeof pmc;
