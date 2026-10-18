@@ -33,6 +33,7 @@ add_library(ps2r_app_host STATIC
     mtvu_stack.cpp
     vu1_aot_cache.cpp
     vu1_aot_builder.cpp
+    vu1_aot_pack.cpp
     shutdown_ladder.cpp
     shutdown_census.cpp
     subsystem_census.cpp
@@ -51,7 +52,8 @@ add_library(ps2r_app_host STATIC
     session_workers.cpp
 )
 target_include_directories(ps2r_app_host PUBLIC ${CMAKE_SOURCE_DIR})
-target_include_directories(ps2r_app_host PRIVATE ${PS2R_GENERATED_DIR})   # vu1_aot_paths.h (the builder's defaults)
+target_include_directories(ps2r_app_host PRIVATE ${PS2R_GENERATED_DIR})   # vu1_aot_paths.h (the builder's defaults), vu1_aot_abi_key.h
+add_dependencies(ps2r_app_host vu1_aot_prelude_stage)   # the generated key header precedes the builder's compile
 target_compile_options(ps2r_app_host PRIVATE -Wall -Wextra -Werror)
 # iop_arm.h (the play/oracle seam) #errors without this definition. This tree builds only
 # the PLAY shape (no IOP linked); a title that links ps2r_iop_models would override it.

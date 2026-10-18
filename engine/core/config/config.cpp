@@ -181,6 +181,7 @@ const std::vector<Field>& Fields() {
         STR_FIELD("engine.vu1_aot_corpus", engine.vu1_aot_corpus),
         ENUM_FIELD("engine.vu1_aot_fallback", engine.vu1_aot_fallback, kVu1AotFb),
         INT_FIELD("engine.vu1_aot_opt", engine.vu1_aot_opt),
+        STR_FIELD("engine.vu1_aot_pack", engine.vu1_aot_pack),
         STR_FIELD("engine.vu1_aot_prelude", engine.vu1_aot_prelude),
         BOOL_FIELD("engine.vu1_aot_verify", engine.vu1_aot_verify),
         ENUM_FIELD("engine.vu1_mode", engine.vu1_mode, kVu1),
@@ -322,13 +323,15 @@ bool ExcludedFromFingerprint(const std::string& key) {
     // drop): nothing the title executes or an image carries changes with it.
     // engine.vu1_aot_corpus is a path to oracle data (where the AOT tier's
     // verifier reads its cases): the tiers are the identity on what executes.
-    // engine.vu1_aot_codegen / _compiler / _prelude / _opt choose the host
-    // toolchain of the generated code, which is verified the identity before
-    // it runs: nothing the title executes changes with them.
+    // engine.vu1_aot_codegen / _compiler / _prelude / _opt / _pack choose the
+    // host toolchain (or the shipped pack) of the generated code, which is
+    // verified the identity before it runs: nothing the title executes changes
+    // with them.
     return key.compare(0, 8, "harness.") == 0 || key.compare(0, 6, "paths.") == 0 || key.compare(0, 5, "diag.") == 0 ||
            key == "meta.profile" || key == "meta.source_fingerprint" || key == "save.restore_mode" ||
            key == "engine.mtvu_kick_drop" || key == "engine.vu1_aot_corpus" || key == "engine.vu1_aot_codegen" ||
-           key == "engine.vu1_aot_compiler" || key == "engine.vu1_aot_prelude" || key == "engine.vu1_aot_opt";
+           key == "engine.vu1_aot_compiler" || key == "engine.vu1_aot_prelude" || key == "engine.vu1_aot_opt" ||
+           key == "engine.vu1_aot_pack";
 }
 
 }  // namespace

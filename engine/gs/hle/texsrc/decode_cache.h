@@ -22,6 +22,7 @@
 #include <list>
 #include <unordered_map>
 
+#include "engine/gs/vram/page_occupancy.h"
 #include "engine/render/backend.h"
 
 namespace ps2r {
@@ -49,7 +50,8 @@ public:
     void L1Insert(uint64_t key, render::SurfaceId tex, int w, int h, uint32_t fp_start,
                   uint32_t fp_size);
     // Drop L1 entries whose footprint overlaps [start, start+size); a surface L2
-    // still records survives the eviction.
+    // still records survives the eviction. The per-page ledger (`l1_pages_`) says
+    // in O(pages) whether any entry can overlap; the exact scan runs only then.
     void EvictInRange(uint32_t start, uint32_t size);
     size_t L1Size() const { return l1_.size(); }
     bool L1Contains(uint64_t key) const { return l1_.count(key) != 0; }
@@ -88,6 +90,7 @@ private:
 
     render::Backend& be_;
     std::unordered_map<uint64_t, L1Entry> l1_;
+    PageOccupancy l1_pages_;   // every L1 entry's footprint, by page
     uint64_t tick_ = 0;
     std::unordered_map<uint64_t, L2Entry> l2_;
     std::list<uint64_t> lru_;   // front = most recent

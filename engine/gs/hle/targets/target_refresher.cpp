@@ -47,6 +47,7 @@ void TargetRefresher::UploadDirect(uint32_t vram_addr, int w, int h, const uint8
             return;
         }
         be_.DestroySurface(it->second.tex);
+        uploaded_pages_.Remove(it->second.vram_addr, it->second.size_bytes);
         uploaded_.erase(it);
     }
     EnforceUploadedBudget();
@@ -63,6 +64,7 @@ void TargetRefresher::UploadDirect(uint32_t vram_addr, int w, int h, const uint8
     u.size_bytes = footprint ? footprint : static_cast<uint32_t>(w) * h * 4;
     u.last_use = ++tick_;
     uploaded_[vram_addr] = u;
+    uploaded_pages_.Add(u.vram_addr, u.size_bytes);
     PublishSpans();
 }
 
@@ -74,6 +76,7 @@ void TargetRefresher::EnforceUploadedBudget() {
         for (auto it = uploaded_.begin(); it != uploaded_.end(); ++it)
             if (it->second.last_use < victim->second.last_use) victim = it;
         be_.DestroySurface(victim->second.tex);
+        uploaded_pages_.Remove(victim->second.vram_addr, victim->second.size_bytes);
         uploaded_.erase(victim);
     }
 }
@@ -95,13 +98,16 @@ const TargetRefresher::Uploaded* TargetRefresher::FindUploaded(uint32_t tbp) {
 }
 
 void TargetRefresher::EvictUploadedInRange(uint32_t start, uint32_t size) {
-    if (size == 0 || uploaded_.empty()) return;
+    // The page ledger first: no record on these pages = nothing to scan (the common
+    // draw: a frame buffer region holding no uploaded asset).
+    if (size == 0 || uploaded_.empty() || !uploaded_pages_.AnyIn(start, size)) return;
     bool changed = false;
     for (auto it = uploaded_.begin(); it != uploaded_.end();) {
         const Uploaded& u = it->second;
         const bool overlap = u.vram_addr < start + size && start < u.vram_addr + u.size_bytes;
         if (overlap) {
             be_.DestroySurface(u.tex);
+            uploaded_pages_.Remove(u.vram_addr, u.size_bytes);
             it = uploaded_.erase(it);
             changed = true;
         } else {

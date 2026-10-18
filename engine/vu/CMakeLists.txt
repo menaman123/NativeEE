@@ -40,6 +40,7 @@ add_library(ps2r_vu STATIC
     vu1_aot/vu1_aot_tier.cpp
     vu1_aot/vu1_aot_verifier.cpp
     vu1_aot/vu1_aot_emitter.cpp
+    vu1_aot/vu1_aot_abi_key.cpp
     tiers/mtvu_clock.cpp
     tiers/runahead_guard.cpp
     tiers/mtvu_backpressure.cpp
@@ -77,11 +78,15 @@ set(_ps2r_vu1_aot_defines "")
 if(PS2R_SIMD)
     list(APPEND _ps2r_vu1_aot_defines --define=PS2R_SIMD=1)
 endif()
+# The staging also writes the closure's ABI KEY (vu1_aot_abi_key.h: kVu1AotAbiKey, see
+# the script) -- content-derived, so unchanged VU sources keep the key across rebuilds
+# and the generated libraries (the user cache, a shipped pack) stay valid.
 add_custom_target(vu1_aot_prelude_stage
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/vu1_aot_stage_prelude.py
             --compiler ${CMAKE_CXX_COMPILER} --root ${CMAKE_SOURCE_DIR} --out ${PS2R_VU1_AOT_PRELUDE_DIR}
+            --key-header ${PS2R_GENERATED_DIR}/vu1_aot_abi_key.h
             ${_ps2r_vu1_aot_defines}
-    BYPRODUCTS ${PS2R_VU1_AOT_PRELUDE_DIR}/MANIFEST.txt
+    BYPRODUCTS ${PS2R_VU1_AOT_PRELUDE_DIR}/MANIFEST.txt ${PS2R_GENERATED_DIR}/vu1_aot_abi_key.h
     COMMENT "Staging the VU1 AOT prelude headers")
 unset(_ps2r_vu1_aot_defines)
 file(WRITE "${PS2R_GENERATED_DIR}/vu1_aot_paths.h"

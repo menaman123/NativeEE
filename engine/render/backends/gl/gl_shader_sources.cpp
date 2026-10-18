@@ -1260,6 +1260,26 @@ void main() {
                       float((word >> 24) & 0xFF)) / 255.0;
 }
 )";
+// The 16-bit companion refresh (Backend::kCopyPack5551): per physical texel of the
+// destination rect, the source texel through Truncate32To16 then Expand16To32 --
+// 5-bit truncation, bit-replicated widening, alpha bit (>= 0x80) -> 0xFF / 0x00. The
+// same bytes the CPU route (Readback -> TexaExpand -> Upload) produced, with no
+// GPU -> CPU round trip. unit 0 = the source image; the NDC triangle, scissored.
+const char* const kPack5551FragSrc = R"(
+#version 410 core
+
+uniform sampler2D u_texture;
+out vec4 frag_color;
+
+void main() {
+    ivec2 p = ivec2(gl_FragCoord.xy);
+    ivec4 b = ivec4(texelFetch(u_texture, p, 0) * 255.0 + 0.5);
+    ivec3 c5 = b.rgb >> 3;
+    ivec3 c8 = (c5 << 3) | (c5 >> 2);
+    int a = (b.a >= 128) ? 255 : 0;
+    frag_color = vec4(vec3(c8), float(a)) / 255.0;
+}
+)";
 // Constant-colour NDC triangle for the stencil-masked quads.
 const char* const kConstVertSrc = R"(
 #version 410 core
@@ -1285,6 +1305,7 @@ const char* GlShaderSources::StencilInvertFragment() { return kStencilInvertFrag
 const char* GlShaderSources::ConstVertex() { return kConstVertSrc; }
 const char* GlShaderSources::ConstFragment() { return kConstFragSrc; }
 const char* GlShaderSources::HalfwordShuffleFragment() { return kHalfwordShuffleFragSrc; }
+const char* GlShaderSources::Pack5551Fragment() { return kPack5551FragSrc; }
 
 }  // namespace render
 }  // namespace ps2r

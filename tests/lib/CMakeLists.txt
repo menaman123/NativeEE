@@ -24,7 +24,7 @@ target_link_libraries(ps2r_gsdl_reader PUBLIC ps2r_gs_ir)
 add_library(ps2r_fake_backend STATIC fake_backend.cpp)
 target_include_directories(ps2r_fake_backend PUBLIC ${CMAKE_SOURCE_DIR})
 target_compile_options(ps2r_fake_backend PRIVATE -Wall -Wextra -Werror)
-target_link_libraries(ps2r_fake_backend PUBLIC ps2r_render ps2r_gs_ir)
+target_link_libraries(ps2r_fake_backend PUBLIC ps2r_render ps2r_gs_ir ps2r_gs_format)
 
 # ps2r_iso9660_image: the synthetic ISO9660 writer (plain 2048 / raw 2352) the
 # disc-verification vectors and RootFirstRunExtract build their fake disc with;

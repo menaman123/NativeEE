@@ -33,6 +33,7 @@ struct Caps {
     bool depth_sample = false;       // depth attachment sampleable as a texture
     bool texture_barrier = false;
     bool compute = false;
+    bool copy_pack5551 = false;      // CopyRect honours kCopyPack5551 (a GPU pass); false = the caller's CPU route
 };
 
 struct SurfaceId {
@@ -194,6 +195,13 @@ public:
     virtual void ClearStencil(SurfaceId stencil, uint8_t value) = 0;
     virtual void DrawConstQuad(SurfaceId color, SurfaceId stencil, const Rect& scissor,
                                uint32_t rgba, bool write_alpha, const StencilState& st) = 0;
+    // Copy `src_rect` of `src` to `dst_rect` of `dst` (same size, physical texels).
+    // `transform` kCopyPlain = the bytes as they are; kCopyPack5551 = every texel
+    // through the 16-bit round trip (TexaExpand::Truncate32To16 then Expand16To32:
+    // 5-bit channels replicated, alpha bit -> 0x00 / 0xFF) -- the 16-bit companion
+    // refresh, on the GPU; a backend without the pass falls back to the plain copy.
+    static constexpr uint32_t kCopyPlain = 0;
+    static constexpr uint32_t kCopyPack5551 = 1;
     virtual void CopyRect(SurfaceId src, const Rect& src_rect, SurfaceId dst,
                           const Rect& dst_rect, uint32_t transform) = 0;
     // Synchronous readback of `rect` (physical texels), rows bottom-up as the

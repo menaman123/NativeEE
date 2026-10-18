@@ -46,6 +46,7 @@
 #include "engine/gs/hle/ir/draw_ir.h"
 #include "engine/gs/hle/targets/render_target.h"
 #include "engine/gs/hle/targets/render_target_cache.h"
+#include "engine/gs/vram/page_occupancy.h"
 #include "engine/gs/vram/vram_image.h"
 #include "engine/render/backend.h"
 
@@ -123,6 +124,7 @@ private:
     VramImage& vram_;
     RenderTargetCache& targets_;
     std::unordered_map<uint32_t, Uploaded> uploaded_;
+    PageOccupancy uploaded_pages_;      // every uploaded record's footprint, by page
     uint64_t tick_ = 0;
     std::vector<uint8_t> mirror_;       // 4 MiB committed-mirror scratch
     std::vector<uint8_t> pixels_;       // attachment rows (RGBA8)

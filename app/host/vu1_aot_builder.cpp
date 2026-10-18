@@ -13,6 +13,7 @@
 #include "engine/vu/vu1_aot/vu1_aot_emitter.h"
 #include "engine/vu/vu1_aot/vu1_aot_verifier.h"
 #include "engine/vu/vu1_case.h"
+#include "vu1_aot_abi_key.h"
 #include "vu1_aot_paths.h"
 
 namespace ps2r::app {
@@ -173,32 +174,88 @@ bool Vu1AotBuilder::StageInclude(const std::string& prelude_dir, const std::stri
 
 // ---- open / close -------------------------------------------------------------
 
+// The shipped pack: Settings::pack_dir, else next to the executable; accepted when
+// its manifest names this engine's ABI key and this host's platform.
+void Vu1AotBuilder::OpenPack() {
+    pack_dir_.clear();
+    if (!settings_.search_pack) return;
+    const std::string dir = settings_.pack_dir.empty() ? Vu1AotPack::DefaultDir() : settings_.pack_dir;
+    if (dir.empty()) return;
+    std::string err;
+    Vu1AotPack::Manifest m;
+    if (!Vu1AotPack::Read(dir, &m, &err)) {
+        if (!settings_.pack_dir.empty()) PS2R_LOG(HOST, Warn, "[VU1-AOT] pack %s: %s", dir.c_str(), err.c_str());
+        return;
+    }
+    if (m.abi != abi_key_) {
+        PS2R_LOG(HOST, Warn, "[VU1-AOT] pack %s ignored: built for %s, this engine is %s", dir.c_str(), m.abi.c_str(), abi_key_.c_str());
+        return;
+    }
+    if (m.platform != Vu1AotPack::PlatformToken()) {
+        PS2R_LOG(HOST, Warn, "[VU1-AOT] pack %s ignored: platform %s, this host is %s", dir.c_str(), m.platform.c_str(),
+                 Vu1AotPack::PlatformToken());
+        return;
+    }
+    pack_ = std::move(m);
+    pack_dir_ = dir;
+}
+
 bool Vu1AotBuilder::Open(std::string* note) {
     if (open_) return true;
-    if (!FindCompiler(settings_.compiler, settings_.search_defaults, &compiler_, &compiler_version_)) {
-        if (note) {
-            *note = "vu1_aot codegen: no C++ compiler found (tried " +
-                    (settings_.compiler.empty() ? std::string("engine.vu1_aot_compiler=<unset>") : settings_.compiler) +
-                    (settings_.search_defaults ? std::string(", the engine's own, /usr/bin/clang++, c++, g++, clang++ on the PATH") : std::string()) +
-                    ") -- the specialised tier stays";
-        }
-        return false;
+    abi_key_ = kVu1AotAbiKey;
+    std::string no_compiler_why;
+    if (settings_.compiler == "none") {
+        // The loader-only shape (engine.vu1_aot_compiler=none): no toolchain is probed or run;
+        // libraries come from the shipped pack or the cache alone -- a player who wants no
+        // compile on this machine, and the test of what a host without a compiler gets.
+        compiler_.clear();
+        compiler_version_.clear();
+        no_compiler_why = "engine.vu1_aot_compiler=none";
+    } else if (!FindCompiler(settings_.compiler, settings_.search_defaults, &compiler_, &compiler_version_)) {
+        compiler_.clear();
+        compiler_version_.clear();
+        no_compiler_why = "no C++ compiler found (tried " +
+                          (settings_.compiler.empty() ? std::string("engine.vu1_aot_compiler=<unset>") : settings_.compiler) +
+                          (settings_.search_defaults ? std::string(", the engine's own, /usr/bin/clang++, c++, g++, clang++ on the PATH")
+                                                     : std::string()) +
+                          ")";
     }
     std::error_code ec;
-    fs::create_directories(BuildDir(settings_.root, settings_.build_id), ec);
-    include_dir_ = IncludeDir(settings_.root, settings_.build_id);
-    const std::string prelude = settings_.prelude_dir.empty() ? std::string(kVu1AotPreludeStageDir) : settings_.prelude_dir;
-    std::string err;
-    if (!fs::exists(fs::path(include_dir_) / "MANIFEST.txt", ec) && !StageInclude(prelude, include_dir_, &err)) {
-        if (note) *note = "vu1_aot codegen: " + err + " -- the specialised tier stays";
+    fs::create_directories(BuildDir(settings_.root, abi_key_), ec);
+    include_dir_ = IncludeDir(settings_.root, abi_key_);
+    if (!compiler_.empty()) {
+        const std::string prelude = settings_.prelude_dir.empty() ? std::string(kVu1AotPreludeStageDir) : settings_.prelude_dir;
+        std::string err;
+        if (!fs::exists(fs::path(include_dir_) / "MANIFEST.txt", ec) && !StageInclude(prelude, include_dir_, &err)) {
+            // A compiler with nothing to include is no compiler.
+            compiler_.clear();
+            compiler_version_.clear();
+            no_compiler_why = err;
+        }
+    }
+    OpenPack();
+    // Anything a run without a compiler could still load: the pack, or a library an
+    // earlier run compiled into the cache.
+    bool cache_has_libs = false;
+    if (compiler_.empty()) {
+        const std::string ext = std::string(".O") + std::to_string(settings_.opt_level) + "." + ps2r::host::DynamicLibraryExtension();
+        for (const auto& e : fs::directory_iterator(BuildDir(settings_.root, abi_key_), ec)) {
+            const std::string name = e.path().filename().string();
+            if (name.size() > ext.size() && name.compare(name.size() - ext.size(), ext.size(), ext) == 0) { cache_has_libs = true; break; }
+        }
+    }
+    if (compiler_.empty() && pack_dir_.empty() && !cache_has_libs) {
+        if (note) *note = "vu1_aot codegen: " + no_compiler_why + ", no shipped pack, no cached library -- the specialised tier stays";
         return false;
     }
     stop_.store(false);
     for (int i = 0; i < settings_.workers; ++i) workers_.emplace_back([this] { WorkerMain(); });
     open_ = true;
     if (note) {
-        *note = "vu1_aot codegen: compiler=" + compiler_ + " (" + compiler_version_ + ") opt=O" + std::to_string(settings_.opt_level) +
-                " include=" + include_dir_ + " workers=" + std::to_string(settings_.workers);
+        *note = "vu1_aot codegen: abi=" + abi_key_ + " compiler=" + (compiler_.empty() ? "none (" + no_compiler_why + ")" : compiler_ + " (" + compiler_version_ + ")") +
+                " opt=O" + std::to_string(settings_.opt_level) + " cache=" + BuildDir(settings_.root, abi_key_) +
+                " pack=" + (pack_dir_.empty() ? std::string("none") : pack_dir_ + " (" + std::to_string(pack_.rows.size()) + " images)") +
+                " workers=" + std::to_string(settings_.workers);
     }
     return true;
 }
@@ -225,7 +282,8 @@ void Vu1AotBuilder::Submit(uint64_t image_hash, std::vector<std::unique_ptr<Vu1C
     j.image = image_hash;
     j.cases = std::move(cases);
     j.seeds = std::move(seed_pcs);
-    j.cached = fs::exists(LibraryPath(settings_.root, settings_.build_id, image_hash, settings_.opt_level), ec);
+    j.cached = fs::exists(LibraryPath(settings_.root, abi_key_, image_hash, settings_.opt_level), ec) ||
+               (!pack_dir_.empty() && Vu1AotPack::Find(pack_, image_hash) != nullptr);
     {
         std::lock_guard<std::mutex> lock(mu_);
         // Libraries already on disk first (a load, no compile), then the images
@@ -319,7 +377,7 @@ bool Vu1AotBuilder::Load(uint64_t image, const std::string& path, Library* out, 
     else if (ex->abi_version != kVu1AotAbiVersion) why = "abi " + std::to_string(ex->abi_version) + " != " + std::to_string(kVu1AotAbiVersion);
     else if (ex->slot_size != sizeof(VuDecodedSlot)) why = "slot size " + std::to_string(ex->slot_size);
     else if (ex->image_hash != image) why = "image hash mismatch";
-    else if (ex->engine_build == nullptr || settings_.build_id != ex->engine_build) why = "engine build mismatch";
+    else if (ex->engine_build == nullptr || abi_key_ != ex->engine_build) why = "abi key mismatch (" + std::string(ex->engine_build ? ex->engine_build : "null") + ")";
     else if (ex->block_count == 0 || ex->blocks == nullptr) why = "empty table";
     if (!why.empty()) {
         ps2r::host::DynamicLibraryClose(lib);
@@ -332,104 +390,139 @@ bool Vu1AotBuilder::Load(uint64_t image, const std::string& path, Library* out, 
     return true;
 }
 
-Vu1AotBuilder::Built Vu1AotBuilder::BuildOne(uint64_t image, const std::vector<const Vu1Case*>& cases,
-                                             const std::vector<uint32_t>& seeds) {
-    Built b;
-    const std::string lib_path = LibraryPath(settings_.root, settings_.build_id, image, settings_.opt_level);
-    const std::string src_path = SourcePath(settings_.root, settings_.build_id, image);
-    std::error_code ec;
-    b.cached = fs::exists(lib_path, ec);
-    if (!b.cached) {
-        // 1. The blocks: the cases' entries, the seeds (JR / JALR targets the
-        //    verifier's native legs built -- gathered here when none were given)
-        //    and their structural closure, on a scratch program decoded from the
-        //    image the cases carry.
-        std::vector<uint32_t> entries(seeds);
-        if (entries.empty()) {
-            const Vu1AotVerifier::Result pre = Vu1AotVerifier::Verify(cases);
-            entries = pre.block_pcs;
-        }
-        for (const Vu1Case* c : cases) entries.push_back(c->start_pc & VuBlockTier::kPcMask);
-        VuBlockProgram scratch;
-        VuBlockTier::DecodeImage(cases[0]->micro_mem, Vu1Case::kMicroSize, scratch);
-        scratch.hash = image;
-        const std::vector<uint32_t> pcs = Vu1AotEmitter::ReachableBlocks(scratch, entries, 8192);
-        Vu1AotEmitter::Options opt;
-        opt.engine_build = settings_.build_id;
-        opt.note = "corpus cases: " + std::to_string(cases.size()) + "; compiler: " + compiler_version_ + "; -O" +
-                   std::to_string(settings_.opt_level);
-        const Vu1AotEmitter::Output out = Vu1AotEmitter::Emit(scratch, pcs, opt);
-        b.blocks = out.blocks;
-        b.ops = out.ops;
-        if (!WriteFile(src_path, out.source)) {
-            b.status = "compile_failed";
-            b.reason = "cannot write " + src_path;
-            return b;
-        }
-        // 2. The host compiler.
-        std::string log;
-        if (!Compile(src_path, lib_path, &log, &b.compile_ns)) {
-            WriteFile(BuildDir(settings_.root, settings_.build_id) + "/" + Vu1AotEmitter::Hex16(image) + ".log", log);
-            b.status = "compile_failed";
-            b.reason = FirstLine(log);
-            PS2R_LOG(HOST, Warn, "[VU1-AOT] image %s: compile failed (%s)", Vu1AotEmitter::Hex16(image).c_str(), b.reason.c_str());
-            return b;
-        }
-        if (!settings_.keep_source) fs::remove(src_path, ec);
-    }
-    // 3. Load and check the table.
+// Load `path`, check the table, run the gate on the loaded code, publish. False
+// leaves `b` describing the failure (load_failed | refused); the caller decides
+// what happens to the file (a pack library is never touched).
+bool Vu1AotBuilder::LoadAndPublish(uint64_t image, const std::string& path, const std::vector<const Vu1Case*>& cases, const char* source,
+                                   Built* b) {
     Library lib;
     std::string err;
-    if (!Load(image, lib_path, &lib, &err)) {
-        b.status = "load_failed";
-        b.reason = err;
-        fs::remove(lib_path, ec);  // a stale or foreign artefact: rebuilt next time
-        PS2R_LOG(HOST, Warn, "[VU1-AOT] image %s: load failed (%s)", Vu1AotEmitter::Hex16(image).c_str(), err.c_str());
-        return b;
+    if (!Load(image, path, &lib, &err)) {
+        b->status = "load_failed";
+        b->reason = err;
+        PS2R_LOG(HOST, Warn, "[VU1-AOT] image %s: load failed (%s) [%s %s]", Vu1AotEmitter::Hex16(image).c_str(), err.c_str(), source,
+                 path.c_str());
+        return false;
     }
-    b.blocks = lib.exports->block_count;
-    if (b.ops == 0) {
-        for (uint32_t i = 0; i < lib.exports->block_count; ++i) b.ops += lib.exports->blocks[i].n_ops;
-    }
-    // 4. The gate again, on the loaded code.
+    b->blocks = lib.exports->block_count;
+    b->ops = 0;
+    for (uint32_t i = 0; i < lib.exports->block_count; ++i) b->ops += lib.exports->blocks[i].n_ops;
+    // The gate again, on the loaded code.
     const uint64_t t0 = NowNs();
     const Vu1AotVerifier::Result r = Vu1AotVerifier::Verify(cases, lib.exports);
-    b.verify_ns = NowNs() - t0;
+    b->verify_ns = NowNs() - t0;
     if (!r.identical) {
-        b.status = "refused";
-        b.reason = r.divergence;
+        b->status = "refused";
+        b->reason = r.divergence;
         ps2r::host::DynamicLibraryClose(lib.lib);
-        fs::remove(lib_path, ec);
-        PS2R_LOG(HOST, Warn, "[VU1-AOT] image %s: generated code REFUSED (%s); artefact deleted",
-                 Vu1AotEmitter::Hex16(image).c_str(), r.divergence.c_str());
-        return b;
+        PS2R_LOG(HOST, Warn, "[VU1-AOT] image %s: generated code REFUSED (%s) [%s %s]", Vu1AotEmitter::Hex16(image).c_str(),
+                 r.divergence.c_str(), source, path.c_str());
+        return false;
     }
     if (r.native_blocks == 0) {
         // Loaded, identical, but no block of the table was ever entered: the
         // library is useless for this corpus; keep it (harmless) and say so.
-        b.reason = "no generated block entered";
+        b->reason = "no generated block entered";
     }
-    // 5. Publish: the tier installs at the image's next kick.
+    // Publish: the tier installs at the image's next kick.
     {
         std::lock_guard<std::mutex> lock(mu_);
         libraries_.push_back(lib);
     }
     tier_.SetNativeExports(image, lib.exports);
-    b.exports = lib.exports;
-    b.status = "native";
+    b->exports = lib.exports;
+    b->status = "native";
+    b->source = source;
     PS2R_LOG(HOST, Info,
              "[VU1-AOT] image %s native: blocks=%u ops=%llu %s compile=%.0f ms verify=%.0f ms (%zu cases, %llu native block runs)",
-             Vu1AotEmitter::Hex16(image).c_str(), b.blocks, static_cast<unsigned long long>(b.ops), b.cached ? "cached" : "compiled",
-             static_cast<double>(b.compile_ns) / 1e6, static_cast<double>(b.verify_ns) / 1e6, cases.size(),
+             Vu1AotEmitter::Hex16(image).c_str(), b->blocks, static_cast<unsigned long long>(b->ops), source,
+             static_cast<double>(b->compile_ns) / 1e6, static_cast<double>(b->verify_ns) / 1e6, cases.size(),
              static_cast<unsigned long long>(r.native_blocks));
+    return true;
+}
+
+Vu1AotBuilder::Built Vu1AotBuilder::BuildOne(uint64_t image, const std::vector<const Vu1Case*>& cases,
+                                             const std::vector<uint32_t>& seeds) {
+    Built b;
+    std::error_code ec;
+    // 1. The shipped pack (read-only: a library that fails is skipped, never deleted).
+    if (!pack_dir_.empty()) {
+        if (const Vu1AotPack::Row* row = Vu1AotPack::Find(pack_, image)) {
+            const std::string path = Vu1AotPack::LibraryPath(pack_dir_, image, row->opt);
+            if (fs::exists(path, ec)) {
+                if (LoadAndPublish(image, path, cases, "pack", &b)) return b;
+                std::lock_guard<std::mutex> lock(mu_);
+                ++census_.pack_rejected;
+            }
+        }
+    }
+    // 2. The user cache.
+    const std::string lib_path = LibraryPath(settings_.root, abi_key_, image, settings_.opt_level);
+    const std::string src_path = SourcePath(settings_.root, abi_key_, image);
+    if (fs::exists(lib_path, ec)) {
+        b = Built{};
+        b.cached = true;
+        if (LoadAndPublish(image, lib_path, cases, "cache", &b)) return b;
+        fs::remove(lib_path, ec);   // a stale or foreign artefact: rebuilt below / next time
+        if (compiler_.empty()) return b;
+    }
+    // 3. The builder.
+    if (compiler_.empty()) {
+        b = Built{};
+        b.status = "no_compiler";
+        b.reason = "no library in the pack or the cache and no compiler";
+        return b;
+    }
+    b = Built{};
+    // The blocks: the cases' entries, the seeds (JR / JALR targets the verifier's
+    // native legs built -- gathered here when none were given) and their structural
+    // closure, on a scratch program decoded from the image the cases carry.
+    std::vector<uint32_t> entries(seeds);
+    if (entries.empty()) {
+        const Vu1AotVerifier::Result pre = Vu1AotVerifier::Verify(cases);
+        entries = pre.block_pcs;
+    }
+    for (const Vu1Case* c : cases) entries.push_back(c->start_pc & VuBlockTier::kPcMask);
+    VuBlockProgram scratch;
+    VuBlockTier::DecodeImage(cases[0]->micro_mem, Vu1Case::kMicroSize, scratch);
+    scratch.hash = image;
+    const std::vector<uint32_t> pcs = Vu1AotEmitter::ReachableBlocks(scratch, entries, 8192);
+    Vu1AotEmitter::Options opt;
+    opt.engine_build = abi_key_;
+    opt.note = "corpus cases: " + std::to_string(cases.size()) + "; engine build: " + settings_.build_id + "; compiler: " +
+               compiler_version_ + "; -O" + std::to_string(settings_.opt_level);
+    const Vu1AotEmitter::Output out = Vu1AotEmitter::Emit(scratch, pcs, opt);
+    b.blocks = out.blocks;
+    b.ops = out.ops;
+    if (!WriteFile(src_path, out.source)) {
+        b.status = "compile_failed";
+        b.reason = "cannot write " + src_path;
+        return b;
+    }
+    // The host compiler.
+    std::string log;
+    if (!Compile(src_path, lib_path, &log, &b.compile_ns)) {
+        WriteFile(BuildDir(settings_.root, abi_key_) + "/" + Vu1AotEmitter::Hex16(image) + ".log", log);
+        b.status = "compile_failed";
+        b.reason = FirstLine(log);
+        PS2R_LOG(HOST, Warn, "[VU1-AOT] image %s: compile failed (%s)", Vu1AotEmitter::Hex16(image).c_str(), b.reason.c_str());
+        return b;
+    }
+    if (!settings_.keep_source) fs::remove(src_path, ec);
+    if (!LoadAndPublish(image, lib_path, cases, "compiled", &b)) {
+        fs::remove(lib_path, ec);   // refused or unloadable: the artefact goes
+        return b;
+    }
     return b;
 }
 
 void Vu1AotBuilder::Fold(const Built& b) {
     std::lock_guard<std::mutex> lock(mu_);
-    if (b.cached) ++census_.cached;
+    if (b.source == "pack") ++census_.pack;
+    else if (b.cached) ++census_.cached;
     else if (b.compile_ns != 0) ++census_.compiled;
-    if (b.status == "compile_failed") ++census_.compile_failed;
+    if (b.status == "no_compiler") ++census_.no_compiler;
+    else if (b.status == "compile_failed") ++census_.compile_failed;
     else if (b.status == "load_failed") ++census_.load_failed;
     else if (b.status == "refused") ++census_.refused;
     else if (b.status == "native") {
@@ -443,14 +536,17 @@ void Vu1AotBuilder::Fold(const Built& b) {
 
 void Vu1AotBuilder::AppendRow(uint64_t image, const Built& b) {
     std::error_code ec;
-    const std::string dir = BuildDir(settings_.root, settings_.build_id);
+    const std::string dir = BuildDir(settings_.root, abi_key_);
     fs::create_directories(dir, ec);
-    std::string row = "image=" + Vu1AotEmitter::Hex16(image) + " status=" + b.status + " compiler=" + Token(compiler_version_) +
+    std::string row = "image=" + Vu1AotEmitter::Hex16(image) + " status=" + b.status + " compiler=" + Token(compiler_version_.empty() ? "none" : compiler_version_) +
                       " opt=" + std::to_string(settings_.opt_level) + " blocks=" + std::to_string(b.blocks) + " ops=" +
                       std::to_string(b.ops) + " compile_ms=" + std::to_string(b.compile_ns / 1000000u) + " verify_ms=" +
                       std::to_string(b.verify_ns / 1000000u) + " cached=" + (b.cached ? "1" : "0");
-    const std::string lib_path = LibraryPath(settings_.root, settings_.build_id, image, settings_.opt_level);
+    const std::string lib_path = b.source == "pack" && !pack_dir_.empty()
+                                     ? Vu1AotPack::LibraryPath(pack_dir_, image, Vu1AotPack::Find(pack_, image) ? Vu1AotPack::Find(pack_, image)->opt : settings_.opt_level)
+                                     : LibraryPath(settings_.root, abi_key_, image, settings_.opt_level);
     row += " bytes=" + std::to_string(fs::exists(lib_path, ec) ? static_cast<unsigned long long>(fs::file_size(lib_path, ec)) : 0ull);
+    if (!b.source.empty()) row += " source=" + b.source;
     if (!b.reason.empty()) row += " reason=" + b.reason;
     std::lock_guard<std::mutex> lock(mu_);
     if (std::FILE* f = std::fopen((dir + "/native.txt").c_str(), "a")) {
@@ -470,7 +566,9 @@ Vu1AotBuilder::Census Vu1AotBuilder::census() const {
 std::string Vu1AotBuilder::CensusRow() const {
     const Census c = census();
     const Vu1AotTier::Stats& s = tier_.stats();
-    return "compiler:" + Token(compiler_version_) + ":opt:" + std::to_string(settings_.opt_level) + ":jobs:" + std::to_string(c.jobs) +
+    return "compiler:" + Token(compiler_version_.empty() ? "none" : compiler_version_) + ":abi:" + abi_key_ + ":opt:" +
+           std::to_string(settings_.opt_level) + ":jobs:" + std::to_string(c.jobs) + ":pack:" + std::to_string(c.pack) +
+           ":pack_rejected:" + std::to_string(c.pack_rejected) + ":no_compiler:" + std::to_string(c.no_compiler) +
            ":cached:" + std::to_string(c.cached) + ":compiled:" + std::to_string(c.compiled) + ":native:" + std::to_string(c.native) +
            ":refused:" + std::to_string(c.refused) + ":compile_failed:" + std::to_string(c.compile_failed) + ":load_failed:" +
            std::to_string(c.load_failed) + ":pending:" + std::to_string(c.pending) + ":compile_ms:" +

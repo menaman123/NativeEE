@@ -39,7 +39,8 @@ corpus case = not verified. Generated code passes the same gate a second time, i
 sees it; a library that diverges is refused and deleted. The corpus is the engine's capture format (`Vu1Case`),
 collected at first run by the composition root's `app/host/vu1_aot_cache.*` through the tier's kick observer and
 kept under the user data dir with the manifest of verdicts (keyed by image hash + engine build token), so a
-verified image is native from its first kick of the next run and a new engine build re-verifies everything.
+verified image is native from its first kick of the next run and a new engine build re-verifies everything (the
+generated LIBRARIES are keyed by the ABI key below instead, so they survive a rebuild that leaves the VU alone).
 
 ## Files
 | File | Class | Notes |
@@ -49,12 +50,16 @@ verified image is native from its first kick of the next run and a new engine bu
 | `vu1_aot_emitter.h/.cpp` | `Vu1AotEmitter` | `ReachableBlocks(prog, entry_pcs, cap)`, `Emit(prog, block_pcs, {engine_build, note}) -> {source, entry_symbol, blocks, ops}`, `EmitBlock`, `EmitSlot` (every field by name in a constexpr lambda), `EntrySymbol(hash)` = `vu1_aot_exports_<16 hex>`. Pure: strings out, no files |
 | `vu1_aot_exports.h` | PODs | the library ABI: `Vu1AotBlockExport {pc, n_ops, fn}`, `Vu1AotImageExports {abi_version, slot_size, image_hash, engine_build, compiler, block_count, blocks}`, `kVu1AotAbiVersion` |
 | `vu1_aot_prelude.h` | -- | the ONE include of a generated TU; its include closure (22 engine headers, listed by the compiler's `-MM`) is staged by `tools/vu1_aot_stage_prelude.py` into `<build>/vu1_aot_prelude/` and copied under the cache by the builder |
+| `vu1_aot_abi_key.h/.cpp` | `Vu1AotAbiKey` | `Compute(prelude_dir, defines)` / `ComputeForThisBuild` -> `abi-<16 hex>`: SHA-256 over the staged closure (MANIFEST order: relpath, `\n`, bytes, `\0`) + sorted `define=NAME=VAL` lines -- the identity a generated library is binary-compatible with. The staging script writes the same key into `<build>/generated/vu1_aot_abi_key.h` (`kVu1AotAbiKey`); the libraries, the cache dir and a shipped pack are keyed by it (a rebuild with the same VU sources keeps them); `tests/app/test_vu1_aot_pack` pins python == C++ |
 
 Composition side: `app/host/vu1_aot_cache.h/.cpp` (manifest, corpus dirs, collector, verifier thread, the run.meta
-`vu1_aot=` row), `app/host/vu1_aot_builder.h/.cpp` (toolchain discovery, emit / compile / load / re-verify / publish,
-`native.txt`, the run.meta `vu1_aot_codegen=` row). Config: `engine.vu1_mode=aot`, `engine.vu1_aot_corpus=<dir>`,
-`engine.vu1_aot_verify=on|off`, `engine.vu1_aot_fallback=block|interp`, `engine.vu1_aot_codegen=on|off`,
-`engine.vu1_aot_compiler=<c++>`, `engine.vu1_aot_prelude=<dir>`, `engine.vu1_aot_opt=1|2`.
+`vu1_aot=` row), `app/host/vu1_aot_builder.h/.cpp` (toolchain discovery, the per-image search shipped pack -> user cache
+-> emit / compile; load / re-verify / publish, `native.txt`, the run.meta `vu1_aot_codegen=` row),
+`app/host/vu1_aot_pack.h/.cpp` (the pre-built pack's manifest `pack.txt` + library paths, the default location next to the
+executable, the platform token). `tools/vu1_aot_pack` builds / checks a pack from a corpus. Config: `engine.vu1_mode=aot`,
+`engine.vu1_aot_corpus=<dir>`, `engine.vu1_aot_verify=on|off`, `engine.vu1_aot_fallback=block|interp`,
+`engine.vu1_aot_codegen=on|off`, `engine.vu1_aot_compiler=<c++>|none`, `engine.vu1_aot_prelude=<dir>`,
+`engine.vu1_aot_opt=1|2`, `engine.vu1_aot_pack=<dir>`.
 
 ## The generated code (one block, abridged)
 ```cpp

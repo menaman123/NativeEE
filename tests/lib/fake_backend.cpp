@@ -4,12 +4,17 @@
 #include <algorithm>
 #include <cmath>
 
+#include "engine/gs/format/texa_expand.h"
 #include "engine/gs/hle/ir/draw_ir.h"
 
 namespace ps2r {
 namespace test {
 
-render::Caps FakeBackend::QueryCaps() const { return render::Caps{4096, false, true, true, false, false}; }
+render::Caps FakeBackend::QueryCaps() const {
+    render::Caps c{4096, false, true, true, false, false, false};
+    c.copy_pack5551 = copy_pack5551;
+    return c;
+}
 
 render::SurfaceId FakeBackend::CreateSurface(const render::SurfaceDesc& d) {
     Surface s;
@@ -137,14 +142,25 @@ void FakeBackend::DrawConstQuad(render::SurfaceId color, render::SurfaceId stenc
 }
 
 void FakeBackend::CopyRect(render::SurfaceId src, const render::Rect& sr, render::SurfaceId dst,
-                           const render::Rect& dr, uint32_t) {
+                           const render::Rect& dr, uint32_t transform) {
     if (!Has(src) || !Has(dst)) return;
+    ++copy_rects;
+    const bool pack = transform == render::Backend::kCopyPack5551;
+    if (pack) ++pack_copies;
     const Surface& a = surfaces_[src.id];
     Surface& b = surfaces_[dst.id];
     for (int y = 0; y < sr.h && y < dr.h; ++y)
-        for (int x = 0; x < sr.w && x < dr.w; ++x)
-            std::memcpy(&b.rgba[(size_t(dr.y + y) * b.desc.width + size_t(dr.x + x)) * 4],
-                        &a.rgba[(size_t(sr.y + y) * a.desc.width + size_t(sr.x + x)) * 4], 4);
+        for (int x = 0; x < sr.w && x < dr.w; ++x) {
+            uint8_t* d = &b.rgba[(size_t(dr.y + y) * b.desc.width + size_t(dr.x + x)) * 4];
+            const uint8_t* s = &a.rgba[(size_t(sr.y + y) * a.desc.width + size_t(sr.x + x)) * 4];
+            if (!pack) {
+                std::memcpy(d, s, 4);
+                continue;
+            }
+            const uint32_t word = uint32_t(s[0]) | (uint32_t(s[1]) << 8) | (uint32_t(s[2]) << 16) | (uint32_t(s[3]) << 24);
+            const uint32_t out = gs::TexaExpand::Expand16To32(gs::TexaExpand::Truncate32To16(word));
+            d[0] = uint8_t(out); d[1] = uint8_t(out >> 8); d[2] = uint8_t(out >> 16); d[3] = uint8_t(out >> 24);
+        }
 }
 
 void FakeBackend::Readback(render::SurfaceId id, const render::Rect& r, void* out, size_t stride) {

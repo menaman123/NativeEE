@@ -21,6 +21,7 @@ public:
     static const char* ConstVertex();
     static const char* ConstFragment();
     static const char* HalfwordShuffleFragment();
+    static const char* Pack5551Fragment();
 };
 
 }  // namespace render

@@ -278,6 +278,40 @@ void Inv12() {
     t.coherence.alt16_stale.Union(-8, 60, 80, 90);
     t.RefreshAlt16FromMain(w.be);
     CHECK(t.coherence.alt16_stale.Empty());
+    // E251: a backend with the kCopyPack5551 pass refreshes through CopyRect (no
+    // Readback, no Upload) and the companion holds the SAME bytes the CPU route
+    // produced -- a pseudo-random main image, both routes over the same stale rect.
+    for (int y = 0; y < 64; ++y)
+        for (int x = 0; x < 64; ++x) {
+            const uint32_t h = static_cast<uint32_t>(x * 73856093) ^ static_cast<uint32_t>(y * 19349663) ^ 0x5bd1e995u;
+            w.be.SetPixel(t.views.color, x, y, uint8_t(h), uint8_t(h >> 8), uint8_t(h >> 16), uint8_t(h >> 24));
+        }
+    t.coherence.alt16_stale.Reset();
+    t.coherence.alt16_stale.Union(3, 5, 61, 59);
+    const int readbacks_before = w.be.readbacks, uploads_before = w.be.uploads;
+    t.RefreshAlt16FromMain(w.be);                       // the CPU route
+    const std::vector<uint8_t> cpu = w.be.At(t.views.alt16).rgba;
+    CHECK(w.be.readbacks == readbacks_before + 1 && w.be.uploads == uploads_before + 1);
+    CHECK(w.be.pack_copies == 0);
+    const uint64_t seq_cpu = t.coherence.alt_author_seq;
+    for (uint8_t& b : w.be.At(t.views.alt16).rgba) b = 0xA5;   // scramble the companion
+    w.be.copy_pack5551 = true;
+    t.coherence.alt16_stale.Union(3, 5, 61, 59);
+    t.RefreshAlt16FromMain(w.be);                       // the GPU route
+    CHECK(w.be.pack_copies == 1);
+    CHECK(w.be.readbacks == readbacks_before + 1 && w.be.uploads == uploads_before + 1);   // no readback / upload
+    CHECK(t.coherence.alt_author_seq == seq_cpu + 1 && t.views.alt16_has_content);
+    const std::vector<uint8_t>& gpu = w.be.At(t.views.alt16).rgba;
+    bool same = true;
+    for (int y = 5; y < 59 && same; ++y)
+        for (int x = 3; x < 61; ++x)
+            if (std::memcmp(&cpu[(size_t(y) * 64 + x) * 4], &gpu[(size_t(y) * 64 + x) * 4], 4) != 0) { same = false; break; }
+    CHECK(same);
+    bool outside_untouched = true;
+    for (int x = 0; x < 64; ++x)
+        if (gpu[(size_t(2) * 64 + x) * 4] != 0xA5) outside_untouched = false;   // row 2: outside the stale rect
+    CHECK(outside_untouched);
+    w.be.copy_pack5551 = false;
 }
 
 // Item 3: the main route's valid rect is the UNCLAMPED triangle bbox, its drawn

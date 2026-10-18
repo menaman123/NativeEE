@@ -96,6 +96,15 @@ void RenderTarget::RefreshAlt16FromMain(render::Backend& be) {
     coherence.alt_author_seq++;
     const int s = identity.scale;
     render::Rect pr{r.x0 * s, r.y0 * s, (r.x1 - r.x0) * s, (r.y1 - r.y0) * s};
+    if (be.QueryCaps().copy_pack5551) {
+        // 5551 pack then unpack on the GPU (Backend::kCopyPack5551): the companion
+        // holds what a 16-bit read of the main buffer would see (5-bit channels
+        // replicated, alpha bit -> 0 / 255) -- the same bytes as the CPU route
+        // below, without the glReadPixels pipeline drain per refresh.
+        be.CopyRect(views.color, pr, views.alt16, pr, render::Backend::kCopyPack5551);
+        views.alt16_has_content = true;
+        return;
+    }
     std::vector<uint8_t> px(static_cast<size_t>(pr.w) * pr.h * 4);
     const size_t stride = static_cast<size_t>(pr.w) * 4;
     be.Readback(views.color, pr, px.data(), stride);

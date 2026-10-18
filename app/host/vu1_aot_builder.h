@@ -9,21 +9,33 @@
 // on this class's worker thread(s), never on the game or VU thread; a step that
 // fails leaves the specialised tier running (and a refused library is deleted).
 //
-//   <user_data>/vu1_aot/<build>/include/                 the staged prelude headers (MANIFEST.txt lists them)
-//   <user_data>/vu1_aot/<build>/<image>.cpp              the generated TU
-//   <user_data>/vu1_aot/<build>/<image>.O<n>.<dylib|so|dll>   the compiled library at -O<n> (reused on the next run)
-//   <user_data>/vu1_aot/<build>/<image>.log              the compiler's output when it failed
-//   <user_data>/vu1_aot/<build>/native.txt               one row per image this build judged:
-//        image=<16 hex> status=native|refused|compile_failed|load_failed compiler=<token> opt=<n>
-//        blocks=<n> ops=<n> compile_ms=<n> verify_ms=<n> bytes=<n> cached=0|1 [reason=<text>]
+//   <user_data>/vu1_aot/<abi key>/include/               the staged prelude headers (MANIFEST.txt lists them)
+//   <user_data>/vu1_aot/<abi key>/<image>.cpp            the generated TU
+//   <user_data>/vu1_aot/<abi key>/<image>.O<n>.<dylib|so|dll>   the compiled library at -O<n> (reused on the next run)
+//   <user_data>/vu1_aot/<abi key>/<image>.log            the compiler's output when it failed
+//   <user_data>/vu1_aot/<abi key>/native.txt             one row per image this build judged:
+//        image=<16 hex> status=native|refused|compile_failed|load_failed|no_compiler compiler=<token> opt=<n>
+//        blocks=<n> ops=<n> compile_ms=<n> verify_ms=<n> bytes=<n> cached=0|1 source=pack|cache|compiled [reason=<text>]
 //
-// Generated code and libraries live ONLY here (never under the tree or beside
-// the binary); every artefact is keyed by image hash AND engine build (a new
-// build is a new directory). The toolchain: engine.vu1_aot_compiler, else the
-// compiler that built the engine (vu1_aot_paths.h), else /usr/bin/clang++,
-// c++, g++, clang++ on the PATH -- each probed with `--version` through the
-// platform's spawn (the engine reads no environment). No compiler = Open
-// returns false with a one-line note and nothing else happens.
+// Generated code and libraries are WRITTEN only here (never under the tree);
+// every artefact is keyed by image hash AND the engine's VU1 AOT ABI KEY
+// (kVu1AotAbiKey, engine/vu/vu1_aot/vu1_aot_abi_key.h: a content hash of the
+// prelude closure the TU compiles against -- unchanged VU sources keep the
+// libraries across engine rebuilds; the exports table carries the same key and
+// Load refuses a library built for another). The search order per image:
+//   1. the SHIPPED PACK (app/host/vu1_aot_pack.h): Settings::pack_dir, else the
+//      directory of the executable + "/vu1_aot_pack"; accepted when its abi key
+//      and platform match; read-only (a library that fails to load or diverges
+//      is skipped, never deleted);
+//   2. the user cache above (a library this or an earlier run compiled);
+//   3. the builder: emit + compile with the host toolchain.
+// The toolchain: engine.vu1_aot_compiler, else the compiler that built the
+// engine (vu1_aot_paths.h), else /usr/bin/clang++, c++, g++, clang++ on the
+// PATH -- each probed with `--version` through the platform's spawn (the engine
+// reads no environment). No compiler: Open still succeeds when a pack or a
+// cached library can supply code (the loader half runs; an image with neither
+// is recorded `no_compiler` and stays on the specialised tier); Open returns
+// false with a one-line note only when nothing could ever produce a library.
 //
 // macOS note (hardened runtime): a locally built, unsigned nativeee loads the
 // unsigned library it just compiled; a notarised release build would need the
@@ -42,6 +54,7 @@
 #include <thread>
 #include <vector>
 
+#include "app/host/vu1_aot_pack.h"
 #include "engine/platform/host/platform.h"
 #include "engine/vu/vu1_aot/vu1_aot_exports.h"
 #include "engine/vu/vu1_aot/vu1_aot_tier.h"
@@ -55,16 +68,21 @@ public:
     struct Settings {
         std::string root;            // <user_data>/vu1_aot
         std::string build_id;        // g_build_id
-        std::string compiler;        // engine.vu1_aot_compiler ("" = the search above)
+        std::string compiler;        // engine.vu1_aot_compiler ("" = the search above; "none" = no compiler, loader only)
         bool search_defaults = true; // false = try `compiler` only (the no-compiler test path)
         std::string prelude_dir;     // the staged prelude tree ("" = the build's)
+        std::string pack_dir;        // engine.vu1_aot_pack ("" = next to the executable)
+        bool search_pack = true;     // false = never look for a shipped pack (tests)
         int opt_level = 2;           // -O2 | -O1
         int workers = 1;             // worker threads (1..2)
         bool keep_source = true;     // leave <image>.cpp beside the library
     };
     struct Census {
         uint64_t jobs = 0;           // images submitted
-        uint64_t cached = 0;         // libraries found on disk (no compile)
+        uint64_t pack = 0;           // libraries loaded from the shipped pack
+        uint64_t pack_rejected = 0;  // pack libraries that failed to load or diverged (skipped, kept)
+        uint64_t no_compiler = 0;    // images with no library anywhere and no compiler to make one
+        uint64_t cached = 0;         // libraries found in the user cache (no compile)
         uint64_t compiled = 0;       // TUs compiled this run
         uint64_t compile_failed = 0;
         uint64_t load_failed = 0;    // dlopen / symbol / table mismatch
@@ -79,8 +97,9 @@ public:
     // One image's outcome (the synchronous path's return).
     struct Built {
         const Vu1AotImageExports* exports = nullptr;  // null = not native (see `status` / `reason`)
-        std::string status;                          // native | refused | compile_failed | load_failed | no_cases
+        std::string status;                          // native | refused | compile_failed | load_failed | no_cases | no_compiler
         std::string reason;
+        std::string source;                          // pack | cache | compiled (native only)
         uint32_t blocks = 0;
         uint64_t ops = 0;
         uint64_t compile_ns = 0;
@@ -113,6 +132,12 @@ public:
     Census census() const;
     const std::string& compiler() const { return compiler_; }
     const std::string& compiler_version() const { return compiler_version_; }
+    bool has_compiler() const { return !compiler_.empty(); }
+    // The ABI key the libraries are keyed by (kVu1AotAbiKey unless Settings::build_id
+    // names a test key -- see Open).
+    const std::string& abi_key() const { return abi_key_; }
+    // The shipped pack in use ("" = none).
+    const std::string& pack_dir() const { return pack_dir_; }
 
     // Paths and the toolchain line (public for the test).
     static std::string BuildDir(const std::string& root, const std::string& build_id);
@@ -142,6 +167,11 @@ private:
 
     void WorkerMain();
     Built BuildOne(uint64_t image, const std::vector<const Vu1Case*>& cases, const std::vector<uint32_t>& seeds);
+    // Load + re-verify `path` for `image`; publishes on success (Built::status native).
+    // `source` names where the library came from; a failure never deletes a pack library.
+    bool LoadAndPublish(uint64_t image, const std::string& path, const std::vector<const Vu1Case*>& cases, const char* source,
+                        Built* b);
+    void OpenPack();
     bool Compile(const std::string& src, const std::string& out, std::string* log, uint64_t* ns);
     bool Load(uint64_t image, const std::string& path, Library* out, std::string* err);
     void AppendRow(uint64_t image, const Built& b);
@@ -151,7 +181,10 @@ private:
     Settings settings_;
     std::string compiler_;
     std::string compiler_version_;
+    std::string abi_key_;
     std::string include_dir_;
+    std::string pack_dir_;           // the accepted shipped pack ("" = none)
+    Vu1AotPack::Manifest pack_;
     mutable std::mutex mu_;
     std::condition_variable cv_;
     std::vector<Job> queue_;

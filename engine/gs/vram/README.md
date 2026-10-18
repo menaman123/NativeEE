@@ -33,3 +33,5 @@
 ## Reader rule (P8.21-A)
 
 `ReadView` overlays the pending shadow only where `CommitDeposits` would apply it (`upload_epoch <= shadow_epoch`): a page stamped by a newer EE transfer shows the transferred bytes. Pin `Gs_Inv39_ViewHonoursNewerWriter` (BUG-082).
+
+`page_occupancy.{h,cpp}` -- `PageOccupancy`: per-page counters (512 x 8 KiB, modulo the 4 MiB image, wrap-aware) of the byte ranges a record set covers; `Add` / `Remove` / `AnyIn(start, size)`. The eviction-by-range filters that used to scan every record per committed draw (DecodeCache L1, TargetRefresher's uploaded textures) ask it first and scan only when a record can overlap -- conservative by construction (page sets are a superset of both exact overlap predicates), pinned by `test_vram_image pageocc` (perf60 E250).

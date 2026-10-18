@@ -112,6 +112,14 @@ public:
         uint64_t l2l_ee_served = 0, l2l_snapshot_served = 0, l2l_stale_frames = 0, l2l_stale_max = 0, l2l_unserved = 0;
         uint64_t snapshots = 0;       // completed-frame snapshots the consumer published
         uint64_t presenter_work = 0;  // PostPresenterWork records queued (the re-view's per-edge jobs)
+        // The producer's two in-Push waits (perf60 census): the lockstep wait for the record's
+        // consumption and the ring-room wait (pipelined without frame skip), counts and wall time.
+        uint64_t lockstep_waits = 0, lockstep_wait_us = 0;
+        uint64_t room_waits = 0, room_wait_us = 0;
+        // The consumer thread's own time inside the next sink, by record kind (ns): the
+        // per-draw cost of the GS pipeline independent of the game's pace.
+        uint64_t deliver_draw_ns = 0, deliver_frame_ns = 0, deliver_other_ns = 0;
+        uint64_t delivered_draws = 0;
     };
 
     // `mirror_target`: the consumer-side VramImage the EE's logged calls are

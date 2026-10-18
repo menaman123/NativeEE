@@ -90,7 +90,9 @@ add_test(NAME DisplaySequenceSchedule COMMAND test_display_sequence)
 # id re-verifies, and a kick of a new image is collected (quota 1), judged and runs native.
 add_executable(test_vu1_aot_cache test_vu1_aot_cache.cpp
     "${CMAKE_SOURCE_DIR}/app/host/vu1_aot_cache.cpp"
-    "${CMAKE_SOURCE_DIR}/app/host/vu1_aot_builder.cpp")
+    "${CMAKE_SOURCE_DIR}/app/host/vu1_aot_builder.cpp"
+    "${CMAKE_SOURCE_DIR}/app/host/vu1_aot_pack.cpp")
+add_dependencies(test_vu1_aot_cache vu1_aot_prelude_stage)
 target_include_directories(test_vu1_aot_cache PRIVATE ${CMAKE_SOURCE_DIR} ${PS2R_GENERATED_DIR})
 target_compile_options(test_vu1_aot_cache PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(test_vu1_aot_cache PRIVATE ps2r_vu)
@@ -106,13 +108,29 @@ set_tests_properties(Vu1AotCacheManifest PROPERTIES TIMEOUT 60)
 # found on the host or no corpus directory is given, so CI without a toolchain stays
 # green; `--keep <dir>` leaves the libraries for the bench (test_vu1_capture_replay --native).
 add_executable(test_vu1_aot_native test_vu1_aot_native.cpp
-    "${CMAKE_SOURCE_DIR}/app/host/vu1_aot_builder.cpp")
+    "${CMAKE_SOURCE_DIR}/app/host/vu1_aot_builder.cpp"
+    "${CMAKE_SOURCE_DIR}/app/host/vu1_aot_pack.cpp")
 add_dependencies(test_vu1_aot_native vu1_aot_prelude_stage)
 target_include_directories(test_vu1_aot_native PRIVATE ${CMAKE_SOURCE_DIR} ${PS2R_GENERATED_DIR})
 target_compile_options(test_vu1_aot_native PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(test_vu1_aot_native PRIVATE ps2r_vu)
 add_test(NAME Vu1AotNativeCorpus COMMAND test_vu1_aot_native ${PS2R_OG_ROOT}/vutrace_cases2)
 set_tests_properties(Vu1AotNativeCorpus PROPERTIES TIMEOUT 1800 SKIP_RETURN_CODE 77)
+
+# The pre-built VU1 library pack (app/host/vu1_aot_pack.h, tools/vu1_aot_pack): the manifest
+# grammar, the generated ABI key == the C++ computation, and -- with a corpus and a compiler --
+# a pack built from one image served native by a builder WITHOUT a compiler (SKIP 77 otherwise).
+add_executable(test_vu1_aot_pack test_vu1_aot_pack.cpp
+    "${CMAKE_SOURCE_DIR}/app/host/vu1_aot_builder.cpp"
+    "${CMAKE_SOURCE_DIR}/app/host/vu1_aot_pack.cpp")
+add_dependencies(test_vu1_aot_pack vu1_aot_prelude_stage)
+target_include_directories(test_vu1_aot_pack PRIVATE ${CMAKE_SOURCE_DIR} ${PS2R_GENERATED_DIR})
+target_compile_options(test_vu1_aot_pack PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(test_vu1_aot_pack PRIVATE ps2r_vu)
+add_test(NAME Vu1AotPackManifest COMMAND test_vu1_aot_pack)
+set_tests_properties(Vu1AotPackManifest PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
+add_test(NAME Vu1AotPackRoundTrip COMMAND test_vu1_aot_pack ${PS2R_OG_ROOT}/vutrace_cases2)
+set_tests_properties(Vu1AotPackRoundTrip PROPERTIES TIMEOUT 600 SKIP_RETURN_CODE 77)
 set_tests_properties(ControlsBindingsPressToBind PROPERTIES TIMEOUT 60)
 
 # RootFirstRunExtract (CHARTER 2 C2, Bernoulli): the first-run extraction on the actual play binary

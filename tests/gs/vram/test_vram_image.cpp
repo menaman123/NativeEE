@@ -6,10 +6,12 @@
 #include <string>
 #include <vector>
 
+#include "engine/gs/vram/page_occupancy.h"
 #include "engine/gs/vram/page_record.h"
 #include "engine/gs/vram/vram_image.h"
 #include "engine/gs/vram/vram_op_log.h"
 
+using ps2r::gs::PageOccupancy;
 using ps2r::gs::PageRecord;
 using ps2r::gs::VramImage;
 using ps2r::gs::VramOpLog;
@@ -508,6 +510,77 @@ static void NoBytesRuns() {
     }
 }
 
+
+// PageOccupancy: the eviction filter's ledger is conservative against BOTH exact
+// overlap predicates the record sets use -- the DecodeCache's wrap-aware test on
+// the unwrapped 8 MiB line and the TargetRefresher's plain interval test -- over a
+// deterministic pseudo-random population of footprints (including ranges that
+// wrap the 4 MiB image and ranges of 4 MiB or more); Add / Remove keep the counts
+// exact; an empty ledger answers false without a fold.
+static void PageOcc() {
+    static constexpr uint64_t kVram = 4ull * 1024u * 1024u;
+    auto wrap_overlap = [](uint32_t s0, uint32_t n0, uint32_t s1, uint32_t n1) {
+        const uint64_t a0 = s0 % kVram, a1 = a0 + std::min<uint64_t>(n0, kVram);
+        const uint64_t b0 = s1 % kVram, b1 = b0 + std::min<uint64_t>(n1, kVram);
+        return (a0 < b1 && b0 < a1) || (a0 + kVram < b1) || (b0 + kVram < a1);
+    };
+    auto plain_overlap = [](uint32_t s0, uint32_t n0, uint32_t s1, uint32_t n1) {
+        return uint64_t(s1) < uint64_t(s0) + n0 && uint64_t(s0) < uint64_t(s1) + n1;
+    };
+    uint32_t seed = 0x9E3779B9u;
+    auto rnd = [&seed]() { seed = seed * 1664525u + 1013904223u; return seed; };
+    struct Rec { uint32_t start, size; };
+    std::vector<Rec> live;
+    PageOccupancy occ;
+    CHECK(occ.Empty() && !occ.AnyIn(0, kVram), "empty ledger: AnyIn false");
+    for (int i = 0; i < 48; ++i) {
+        Rec r;
+        r.start = rnd() % kVram;
+        const uint32_t pick = rnd() % 8;
+        r.size = pick == 0 ? 0x10000u * (1 + rnd() % 80) : pick == 1 ? kVram + rnd() % 0x20000 : 0x100u * (1 + rnd() % 4096);
+        if (pick == 2) r.start = kVram - 0x1000 - rnd() % 0x2000;   // straddles the wrap
+        occ.Add(r.start, r.size);
+        live.push_back(r);
+    }
+    CHECK(occ.Live() == 48, "48 records live");
+    int queries = 0, filtered = 0;
+    for (int q = 0; q < 4000; ++q) {
+        const uint32_t qs = rnd() % kVram;
+        const uint32_t qn = (q % 3 == 0) ? 8192u * (1 + rnd() % 64) : 0x40u * (1 + rnd() % 2048);
+        bool any_wrap = false, any_plain = false;
+        for (const Rec& r : live) {
+            any_wrap = any_wrap || wrap_overlap(qs, qn, r.start, r.size);
+            any_plain = any_plain || plain_overlap(qs, qn, r.start, r.size);
+        }
+        const bool filter = occ.AnyIn(qs, qn);
+        ++queries;
+        if (!filter) ++filtered;
+        if ((any_wrap || any_plain) && !filter) CHECK(false, "AnyIn false where an exact predicate overlaps (false negative)");
+        // Remove some and re-add others along the way: the counts stay exact.
+        if (q % 97 == 0 && !live.empty()) {
+            const size_t k = rnd() % live.size();
+            occ.Remove(live[k].start, live[k].size);
+            live.erase(live.begin() + static_cast<long>(k));
+        }
+        if (q % 131 == 0) {
+            Rec r{static_cast<uint32_t>(rnd() % kVram), 0x100u * (1 + rnd() % 2048)};
+            occ.Add(r.start, r.size);
+            live.push_back(r);
+        }
+    }
+    CHECK(occ.Live() == live.size(), "live count follows Add / Remove");
+    CHECK(filtered > 0, "the ledger filters some queries");
+    for (const Rec& r : live) occ.Remove(r.start, r.size);
+    CHECK(occ.Empty() && !occ.AnyIn(0, kVram), "all removed: empty, AnyIn false");
+    occ.Add(0, 0);
+    CHECK(occ.Empty(), "an empty footprint adds nothing");
+    occ.Add(kVram - 8192, 16384);    // the last page and the first
+    CHECK(occ.AnyIn(0, 16) && occ.AnyIn(kVram - 1, 1) && !occ.AnyIn(8192, 8192), "a wrapping footprint marks both ends only");
+    occ.Clear();
+    CHECK(occ.Empty(), "Clear empties");
+    std::printf("pageocc: %d queries, %d filtered\n", queries, filtered);
+}
+
 int main(int argc, char** argv) {
     const std::string c = argc > 1 ? argv[1] : "all";
     if (c == "inv04" || c == "all") Inv04();
@@ -522,6 +595,7 @@ int main(int argc, char** argv) {
     if (c == "inv39" || c == "all") Inv39();
     if (c == "viewsig" || c == "all") ViewSig();
     if (c == "oplog" || c == "all") OpLogReplay();
+    if (c == "pageocc" || c == "all") PageOcc();
     std::printf("test_vram_image %s: %d checks, %d failures\n", c.c_str(), g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

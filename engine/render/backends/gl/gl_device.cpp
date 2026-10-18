@@ -148,6 +148,7 @@ Caps GlDevice::QueryCaps() const {
     c.depth_sample = true;
     c.texture_barrier = false;
     c.compute = false;
+    c.copy_pack5551 = shaders_.Pack5551Program() != 0;
     return c;
 }
 
@@ -492,14 +493,40 @@ DrawResult GlDevice::Draw(const gs::DrawIr& ir, const gs::TextureSource& tex,
     return executor_->Draw(ir, tex, params);
 }
 
-// glCopyTexSubImage2D from the source attachment into the destination texture
-// (transform 0 = plain copy; other values are reserved).
+// kCopyPlain: glCopyTexSubImage2D from the source attachment into the destination
+// texture. kCopyPack5551: the pack program over the NDC triangle into the
+// destination's framebuffer, scissored to dst_rect, sampling the source at the
+// same physical texel (the rects coincide for the companion refresh; a shifted
+// rect falls back to the plain copy -- the pass has no offset).
 void GlDevice::CopyRect(SurfaceId src, const Rect& src_rect, SurfaceId dst, const Rect& dst_rect,
                         uint32_t transform) {
-    (void)transform;
     const GlSurface* s = Surface(src);
     const GlSurface* d = Surface(dst);
     if (!s || !d || !s->fbo || src_rect.w <= 0 || src_rect.h <= 0) return;
+    if (transform == kCopyPack5551 && d->fbo && s->tex && shaders_.Pack5551Program() &&
+        src_rect.x == dst_rect.x && src_rect.y == dst_rect.y) {
+        EndDrawRun();
+        state_.BindFb(GL_FRAMEBUFFER, d->fbo);
+        state_.Viewport(0, 0, static_cast<int>(d->desc.width), static_cast<int>(d->desc.height));
+        state_.Enable(GL_SCISSOR_TEST);
+        state_.Scissor(dst_rect.x, dst_rect.y, dst_rect.w, dst_rect.h);
+        state_.Disable(GL_BLEND);
+        state_.Disable(GL_DEPTH_TEST);
+        state_.DepthMask(false);
+        state_.ColorMask(true, true, true, true);
+        state_.ActiveTexture(GL_TEXTURE0);
+        state_.BindTex2D(s->tex);
+        state_.UseProgram(shaders_.Pack5551Program());
+        state_.BindVertexArray(const_vao_);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        state_.BindVertexArray(0);
+        state_.UseProgram(0);
+        state_.BindTex2D(0);
+        state_.DepthMask(true);
+        state_.Enable(GL_DEPTH_TEST);
+        state_.Disable(GL_SCISSOR_TEST);
+        return;
+    }
     state_.BindFb(GL_READ_FRAMEBUFFER, s->fbo);
     state_.ActiveTexture(GL_TEXTURE0);
     state_.BindTex2D(d->tex);

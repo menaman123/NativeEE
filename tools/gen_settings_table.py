@@ -76,6 +76,7 @@ ROWS = [
     ("engine.vu1_aot_corpus", "str", "", "=", "-"),
     ("engine.vu1_aot_fallback", "enum(block|interp)", "block", "=", "-"),
     ("engine.vu1_aot_opt", "int", "2", "=", "-"),
+    ("engine.vu1_aot_pack", "str", "", "=", "-"),
     ("engine.vu1_aot_prelude", "str", "", "=", "-"),
     ("engine.vu1_aot_verify", "bool", "on", "=", "-"),
     ("engine.vu1_mode", "enum(hle|cached|interp|block|aot)", "cached", "=", "PS2_VU_MODE"),

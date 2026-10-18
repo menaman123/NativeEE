@@ -81,11 +81,12 @@ bool GlShaderLibrary::Build(GlUniformCache& uniforms) {
 // PS2 vertex program (their sampler units bound once), the constant quad pair.
 bool GlShaderLibrary::BuildStencilPrograms() {
     struct Prog { const char* vs; const char* fs; uint32_t* out; };
-    const Prog progs[4] = {
+    const Prog progs[5] = {
         {VertexSource(), GlShaderSources::StencilStripFragment(), &strip_program_},
         {VertexSource(), GlShaderSources::StencilInvertFragment(), &invert_program_},
         {GlShaderSources::ConstVertex(), GlShaderSources::ConstFragment(), &const_program_},
         {VertexSource(), GlShaderSources::HalfwordShuffleFragment(), &halfword_program_},
+        {GlShaderSources::ConstVertex(), GlShaderSources::Pack5551Fragment(), &pack5551_program_},
     };
     for (const Prog& p : progs) {
         GLuint vs = CompileShader(GL_VERTEX_SHADER, p.vs);
@@ -124,6 +125,9 @@ bool GlShaderLibrary::BuildStencilPrograms() {
     const GLint rt_h = glGetUniformLocation(halfword_program_, "u_rt_texture");
     if (src_h >= 0) glUniform1i(src_h, 0);
     if (rt_h >= 0) glUniform1i(rt_h, 1);
+    glUseProgram(pack5551_program_);
+    const GLint src_p = glGetUniformLocation(pack5551_program_, "u_texture");
+    if (src_p >= 0) glUniform1i(src_p, 0);
     glUseProgram(0);
     return true;
 }
@@ -135,6 +139,7 @@ void GlShaderLibrary::Destroy() {
     if (invert_program_) { glDeleteProgram(invert_program_); invert_program_ = 0; }
     if (const_program_) { glDeleteProgram(const_program_); const_program_ = 0; }
     if (halfword_program_) { glDeleteProgram(halfword_program_); halfword_program_ = 0; }
+    if (pack5551_program_) { glDeleteProgram(pack5551_program_); pack5551_program_ = 0; }
     sloc_ = GlStencilLocations{};
     loc_ = GlUniformLocations{};
     scanout_tex_loc_ = -1;

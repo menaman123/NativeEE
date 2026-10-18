@@ -63,6 +63,7 @@ public:
     uint32_t StencilInvertProgram() const { return invert_program_; }
     uint32_t ConstProgram() const { return const_program_; }
     uint32_t HalfwordShuffleProgram() const { return halfword_program_; }
+    uint32_t Pack5551Program() const { return pack5551_program_; }
     const GlStencilLocations& StencilLocations() const { return sloc_; }
 
     static const char* VertexSource();
@@ -84,6 +85,7 @@ private:
     uint32_t invert_program_ = 0;
     uint32_t const_program_ = 0;
     uint32_t halfword_program_ = 0;
+    uint32_t pack5551_program_ = 0;
     GlStencilLocations sloc_;
     int scanout_tex_loc_ = -1;
     GlUniformLocations loc_;

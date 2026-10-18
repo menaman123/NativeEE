@@ -5,7 +5,7 @@
 
 ## Contents (stage 6C; lib `ps2r_render_gl`, `find_package(OpenGL)`, `GL_SILENCE_DEPRECATION` public)
 
-- `gl_device.h/.cpp` -- `GlDevice : render::Backend` (surfaces = texture [+ fbo], pool-backed plain textures, dummy texture on units 1-4, sync readback, immediate staging API, scanout quad present, run brackets) + `GlDeviceSettings{scale=1}` + the `GlSurface` record.
+- `gl_device.h/.cpp` -- `GlDevice : render::Backend` (surfaces = texture [+ fbo], pool-backed plain textures, dummy texture on units 1-4, sync readback, immediate staging API, scanout quad present, run brackets; `CopyRect(kCopyPack5551)` = the Pack5551 program over the NDC triangle into the destination FBO, scissored -- the 16-bit companion refresh without a GPU -> CPU round trip; `Caps::copy_pack5551` advertises it) + `GlDeviceSettings{scale=1}` + the `GlSurface` record.
 - `gl_shader_library.h/.cpp` -- `GlShaderLibrary` (compile/link, `GlUniformLocations` table, sampler unit priming) ; `gl_shader_sources.h/.cpp` -- `GlShaderSources`: the ONE copy of the GLSL text (baseline arm: `GSMIP_AAF 1`, `S83_IDXSCALE 1` after `#version`).
 - `gl_uniform_cache.h/.cpp` -- `GlUniformCache` (per-location value shadow, 1i/1f/2f/2i/3f/4f).
 - `gl_state_cache.h/.cpp` -- `GlStateCache` (bind + fixed-function shadows, delete-reverts-to-0).

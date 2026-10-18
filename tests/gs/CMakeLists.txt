@@ -155,7 +155,7 @@ foreach(pair
         "Gs_Inv08_SingleWriterMirror;inv08" "Gs_Inv16_ReadFootprintPreciseBits;inv16"
         "Gs_Inv22_ZeroStaleAtSave;inv22" "Gs_Inv36_AliasRefreshPageClear;inv36"
         "Gs_Inv39_ViewHonoursNewerWriter;inv39" "Gs_VramViewSignature;viewsig"
-        "Gs_VramOpLogReplay;oplog")
+        "Gs_VramOpLogReplay;oplog" "Gs_VramPageOccupancy;pageocc")
     list(GET pair 0 tname)
     list(GET pair 1 arg)
     add_test(NAME ${tname} COMMAND test_vram_image ${arg})

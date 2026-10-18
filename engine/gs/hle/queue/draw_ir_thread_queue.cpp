@@ -4,6 +4,8 @@
 #include <chrono>
 #include <cstring>
 
+#include "engine/core/log/log.h"
+
 namespace ps2r {
 namespace gs {
 
@@ -35,6 +37,25 @@ void DrawIrThreadQueue::Stop() {
     thread_.join();
     std::lock_guard<std::mutex> lk(mu_);
     running_ = false;
+    PS2R_LOG(PERF, Info,
+             "gs queue: policy=%s frame_skip=%d enqueued=%llu consumed=%llu frames=%llu dropped=%llu max_depth=%llu "
+             "lockstep_waits=%llu/%llu us room_waits=%llu/%llu us syncs=%llu/%llu us ordered_waits=%llu/%llu us frame_waits=%llu",
+             policy_ == Policy::Lockstep ? "lockstep" : "pipelined", frame_skip_ ? 1 : 0,
+             static_cast<unsigned long long>(n_.enqueued), static_cast<unsigned long long>(n_.consumed),
+             static_cast<unsigned long long>(n_.frames), static_cast<unsigned long long>(n_.frames_dropped),
+             static_cast<unsigned long long>(n_.max_depth), static_cast<unsigned long long>(n_.lockstep_waits),
+             static_cast<unsigned long long>(n_.lockstep_wait_us), static_cast<unsigned long long>(n_.room_waits),
+             static_cast<unsigned long long>(n_.room_wait_us), static_cast<unsigned long long>(n_.syncs),
+             static_cast<unsigned long long>(n_.sync_wait_us), static_cast<unsigned long long>(n_.ordered_waits),
+             static_cast<unsigned long long>(n_.ordered_wait_us), static_cast<unsigned long long>(n_.frame_waits));
+    const uint64_t presented = n_.frames > n_.frames_dropped ? n_.frames - n_.frames_dropped : 0;
+    PS2R_LOG(PERF, Info,
+             "gs consumer: draws=%llu draw_ms=%llu (%.2f us/draw) frame_ms=%llu (%.2f ms/presented frame) other_ms=%llu",
+             static_cast<unsigned long long>(n_.delivered_draws), static_cast<unsigned long long>(n_.deliver_draw_ns / 1000000u),
+             n_.delivered_draws ? static_cast<double>(n_.deliver_draw_ns) / 1e3 / static_cast<double>(n_.delivered_draws) : 0.0,
+             static_cast<unsigned long long>(n_.deliver_frame_ns / 1000000u),
+             presented ? static_cast<double>(n_.deliver_frame_ns) / 1e6 / static_cast<double>(presented) : 0.0,
+             static_cast<unsigned long long>(n_.deliver_other_ns / 1000000u));
 }
 
 // ---- producer side ----------------------------------------------------------------
@@ -146,7 +167,13 @@ void DrawIrThreadQueue::Push(Record&& r) {
         } else {
             r.frame = frames_pushed_ + 1;
         }
-        if (!frame_skip_) WaitDoneLocked(lk, [this] { return ring_.size() < capacity_; });
+        if (!frame_skip_ && ring_.size() >= capacity_) {
+            const auto t0 = std::chrono::steady_clock::now();
+            WaitDoneLocked(lk, [this] { return ring_.size() < capacity_; });
+            n_.room_waits++;
+            n_.room_wait_us += static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count());
+        }
         ring_.push_back(std::move(r));
         my_seq = ++enqueued_;
         n_.enqueued = enqueued_;
@@ -156,7 +183,13 @@ void DrawIrThreadQueue::Push(Record&& r) {
     if (wake) cv_work_.notify_one();
     if (policy_ == Policy::Lockstep) {
         std::unique_lock<std::mutex> lk(mu_);
-        WaitDoneLocked(lk, [this, my_seq] { return consumed_ >= my_seq; });
+        if (consumed_ < my_seq) {
+            const auto t0 = std::chrono::steady_clock::now();
+            WaitDoneLocked(lk, [this, my_seq] { return consumed_ >= my_seq; });
+            n_.lockstep_waits++;
+            n_.lockstep_wait_us += static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count());
+        }
     }
 }
 
@@ -424,24 +457,31 @@ void DrawIrThreadQueue::PublishSnapshot(uint64_t frame) {
 
 void DrawIrThreadQueue::ThreadMain() {
     if (on_thread_start_) on_thread_start_();
+    // The consumer's own time per record (deliver_*_ns): one clock read per record --
+    // the end of a record is the start of the next unless the thread slept in between.
+    auto t0 = std::chrono::steady_clock::now();
     for (;;) {
         Record r;
         bool faulted;
         {
             std::unique_lock<std::mutex> lk(mu_);
+            bool slept = false;
             while (!stop_ && ring_.empty() && presenter_work_.empty()) {
                 consumer_sleeping_ = true;
                 cv_work_.wait(lk);
                 consumer_sleeping_ = false;
+                slept = true;
                 last_idle_ns_.store(std::chrono::duration_cast<std::chrono::nanoseconds>(
                     std::chrono::steady_clock::now().time_since_epoch()).count(), std::memory_order_relaxed);
             }
+            if (slept) t0 = std::chrono::steady_clock::now();
             if (!presenter_work_.empty()) {
                 // The presenter's job: ahead of the backlog, between two records.
                 std::function<bool()> work = std::move(presenter_work_.front());
                 presenter_work_.pop_front();
                 lk.unlock();
                 try { work(); } catch (...) {}
+                t0 = std::chrono::steady_clock::now();
                 continue;
             }
             if (ring_.empty()) return;   // stop_ with nothing left: drained
@@ -461,11 +501,17 @@ void DrawIrThreadQueue::ThreadMain() {
             }
         }
         if (faulted && r.kind == Kind::Work && r.done) r.done->set_value(false);   // dropped: its waiter resolves
+        const auto t1 = std::chrono::steady_clock::now();
+        const uint64_t ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+        t0 = t1;
         bool wake;
         {
             std::lock_guard<std::mutex> lk(mu_);
             ++consumed_;
             n_.consumed = consumed_;
+            if (r.kind == Kind::Draw) { n_.deliver_draw_ns += ns; ++n_.delivered_draws; }
+            else if (r.kind == Kind::Frame || r.kind == Kind::FrameDropped) n_.deliver_frame_ns += ns;
+            else n_.deliver_other_ns += ns;
             if (r.kind == Kind::Frame || r.kind == Kind::FrameDropped) ++frames_consumed_;
             wake = done_waiters_ > 0;
         }

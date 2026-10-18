@@ -150,12 +150,16 @@ struct EngineConfig {
     // The generated-code step above the specialised tier (Vu1AotBuilder): on
     // = a verified image's blocks are emitted as C++, compiled with the host
     // toolchain found at run time and loaded once re-verified; the compiler
-    // ("" = /usr/bin/clang++, then c++ / g++ / clang++ on the PATH), the
-    // staged prelude include root ("" = the build's), the -O level (2 or 1).
+    // ("" = /usr/bin/clang++, then c++ / g++ / clang++ on the PATH; "none" =
+    // never compile: the shipped pack / the cache alone), the staged prelude
+    // include root ("" = the build's), the -O level (2 or 1).
     bool           vu1_aot_codegen = true;
     std::string    vu1_aot_compiler;
     std::string    vu1_aot_prelude;
     int            vu1_aot_opt = 2;
+    // The pre-built library pack (app/host/vu1_aot_pack.h) the loader tries
+    // before the user cache and the compiler ("" = <executable dir>/vu1_aot_pack).
+    std::string    vu1_aot_pack;
     bool    mtvu = true;
     int     mtvu_depth = 2;
     // The clock contract's KICK DROP (play mode): the game thread never parks

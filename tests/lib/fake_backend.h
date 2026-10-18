@@ -51,6 +51,10 @@ public:
     void SetPixel(render::SurfaceId id, int x, int y, uint8_t r, uint8_t g, uint8_t b, uint8_t a);
     void SetDepth(render::SurfaceId id, int x, int y, float d);
 
+    // Backend::kCopyPack5551 through CopyRect: advertised through QueryCaps when set
+    // (the CPU fold of TexaExpand, so a test can compare the two refresh routes).
+    bool copy_pack5551 = false;
+    int copy_rects = 0, pack_copies = 0;
     int creates = 0, destroys = 0, clears = 0, uploads = 0, readbacks = 0, draws = 0, presents = 0;
     int level_uploads = 0, mip_finishes = 0, last_level = 0, last_level_w = 0, last_level_h = 0;
     int last_mip_authored = 0;
