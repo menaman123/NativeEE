@@ -168,6 +168,7 @@ void GlShaderLibrary::LookupLocations() {
     loc_.atst = L("u_atst");
     loc_.aref = L("u_aref");
     loc_.afail = L("u_afail");
+    loc_.afail_pass = L("u_afail_pass");
     loc_.date = L("u_date");
     loc_.datm = L("u_datm");
     loc_.fog_enabled = L("u_fog_enabled");

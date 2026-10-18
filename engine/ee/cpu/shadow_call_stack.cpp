@@ -20,7 +20,17 @@ bool ShadowCallStack::Push(uint32_t func_addr, uint32_t ra) { return ee_call_sta
 
 void ShadowCallStack::Pop() { ee_call_stack_pop(); }
 
-bool ShadowCallStack::Complete() { return !rejected_push && omitted_scopes == 0 && Depth() <= 128; }
+// A rejected push can only be LIVE while the stack is full (a frame refused at
+// the cap stays unrecorded until it returns; its own callees are refused the
+// same way and the depth stays at the cap). Once the depth is below the cap,
+// every live frame was recorded: the overflow latch then names a past
+// saturation (a deep recursion that returned), not a hole in the live chain.
+bool ShadowCallStack::Complete() {
+    const uint32_t depth = Depth();
+    return (!rejected_push || depth < kCapacity) && omitted_scopes == 0 && depth <= kCapacity;
+}
+bool ShadowCallStack::PushRejected() { return rejected_push; }
+uint32_t ShadowCallStack::OmittedScopes() { return omitted_scopes; }
 void ShadowCallStack::RejectedPush() { rejected_push = true; }
 void ShadowCallStack::StackEmptied() { rejected_push = false; }
 ShadowCallStack::OmittedScope::OmittedScope(bool omitted) : omitted_(omitted) {

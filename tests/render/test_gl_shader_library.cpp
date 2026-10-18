@@ -54,9 +54,15 @@ static const uint64_t kVertHash = 0x36951d472cb1a88cull;
 // saturating at 0x80, FIX as the byte), `blended = floor((A - B) * C / 128) + D`
 // (the shift FLOORS the signed product -- PCSX2's SW modulate16 / pmulhw and its
 // HW trunc agree), and the wrap arm is `mod(blended, 256)` instead of a rounded
-// float product (pinned exactly by test_sw_blend_integer). Every other arm's
-// text is unchanged; re-pin only together with a reviewed shader change.
-static const uint64_t kFragHash = 0xbf9fc06acc084cf5ull;
+// float product (pinned exactly by test_sw_blend_integer); then
+// (0xbf9fc06acc084cf5) E270, the alpha test's two populations: `u_afail_pass`
+// (0 every fragment / 1 the passing pixels / 2 the failing pixels) selects the
+// population of a pass, the test block only discards (KEEP's failing pixels and the
+// other population of a split pass) and no longer alters result.a -- AFAIL's
+// FB_ONLY / ZB_ONLY / RGB_ONLY are the executor's second-pass write masks (pinned by
+// test_gl_alpha_fail_split). Every other arm's text is unchanged; re-pin only
+// together with a reviewed shader change.
+static const uint64_t kFragHash = 0x2fed4c5eae774b7aull;
 static const uint64_t kScanoutVertHash = 0x8823cded4f383d15ull;
 static const uint64_t kScanoutFragHash = 0x5d955137d32b0c78ull;
 // The stencil-composite sources (OLD s9_composite_native.inc:53-215 k_s9_* texts).
@@ -117,7 +123,7 @@ int main() {
         {"u_blend_a", L.blend_a}, {"u_blend_b", L.blend_b}, {"u_blend_c", L.blend_c}, {"u_blend_d", L.blend_d},
         {"u_fix_alpha", L.fix_alpha}, {"u_blend_enabled", L.blend_enabled}, {"u_tfx", L.tfx}, {"u_tcc", L.tcc},
         {"u_fba", L.fba}, {"u_colclamp", L.colclamp}, {"u_scanmsk", L.scanmsk}, {"u_ate", L.ate},
-        {"u_atst", L.atst}, {"u_aref", L.aref}, {"u_afail", L.afail}, {"u_date", L.date}, {"u_datm", L.datm},
+        {"u_atst", L.atst}, {"u_aref", L.aref}, {"u_afail", L.afail}, {"u_afail_pass", L.afail_pass}, {"u_date", L.date}, {"u_datm", L.datm},
         {"u_fog_enabled", L.fog_enabled}, {"u_fogcol", L.fogcol}, {"u_tex_size", L.tex_size},
         {"u_uv_scale", L.uv_scale}, {"u_uv_mode", L.uv_mode}, {"u_sw_blend", L.sw_blend},
         {"u_rt_texture", L.rt_sampler}, {"u_flip_v", L.flip_v}, {"u_fbmsk16_en", L.fbmsk16_en},

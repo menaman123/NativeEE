@@ -45,6 +45,15 @@ public:
     // Host lifecycle fact, never a saved game value. A clockless boot import
     // may rebase owner deadlines; a restored clock must retain them exactly.
     bool Restored() const { return restored_; }
+    // A cold restore across harness shapes (a slot taken in a paced windowed
+    // run, --load-state headless or unpaced): the HOST pacing policy -- the tick
+    // source's bypass selection (Realtime vs Freerun) and the pacer release (a
+    // host pacer bound) -- is the running process's, not the image's: Validate
+    // admits a differing selection and Restore keeps the live one (the boundary
+    // sequencer re-latches the domain's bypass from the live source at every
+    // tick advance anyway, boundary_sequencer.cpp). Off by default: a live
+    // in-process restore keeps the exact check.
+    void SetAcceptHostPolicy(bool accept) { accept_host_policy_ = accept; }
 
 private:
     EmuDomain& domain_;
@@ -52,6 +61,7 @@ private:
     TickSync& ticks_;
     const std::string providers_;
     bool restored_ = false;
+    bool accept_host_policy_ = false;
 };
 
 } // namespace ps2r::app

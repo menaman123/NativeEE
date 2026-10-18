@@ -9,6 +9,7 @@
 #pragma once
 
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 #include "engine/iop/iop_context.h"
@@ -35,6 +36,7 @@ public:
     void sceUsbdMultiIsochronousTransfer(IopContext& ctx);   // int (pipe, request, cb, arg) -> kNoDevice (idx 18)
 
     const std::vector<uint32_t>& Drivers() const { return drivers_; }
+    void SetDrivers(std::vector<uint32_t> drivers) { drivers_ = std::move(drivers); }   // savestate restore
 
 private:
     IopMemory* mem_;   // the bus's RAM (a device's descriptors would be written here)

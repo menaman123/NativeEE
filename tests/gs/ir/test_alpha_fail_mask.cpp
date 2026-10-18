@@ -5,7 +5,9 @@
 // ZB_ONLY no colour (the Z-clear idiom: a frame-covering sprite with ATST NEVER /
 // AFAIL ZB_ONLY must leave the frame buffer untouched), RGB_ONLY no alpha and no
 // depth; every per-pixel ATST (LESS .. NOTEQUAL) is reported non-uniform with
-// everything writable, whatever AFAIL says.
+// everything writable, whatever AFAIL says -- and SplitsPopulations names exactly the
+// per-pixel draws whose failing pixels still write (AFAIL != KEEP), FailingPixels their
+// mask (the same table the NEVER arm applies).
 #include <cstdio>
 
 #include "engine/gs/hle/ir/alpha_fail_mask.h"
@@ -76,6 +78,22 @@ int main() {
         const auto r = AlphaFailMask::Compute(Test(true, AlphaFailMask::kAtstNever, AlphaFailMask::kAfailRgbOnly));
         CHECK(r.uniform && r.write_rgb && !r.write_alpha && !r.write_depth, "RGB_ONLY: rgb yes, alpha/depth no (%d%d%d)",
               r.write_rgb, r.write_alpha, r.write_depth);
+    }
+    // The two-population split: per-pixel ATST with an AFAIL that still writes.
+    for (uint8_t atst = 0; atst < 8; ++atst)
+        for (uint8_t afail = 0; afail < 4; ++afail) {
+            const bool per_pixel = atst != AlphaFailMask::kAtstNever && atst != AlphaFailMask::kAtstAlways;
+            const bool want = per_pixel && afail != AlphaFailMask::kAfailKeep;
+            CHECK(AlphaFailMask::SplitsPopulations(Test(true, atst, afail)) == want, "SplitsPopulations atst %u afail %u",
+                  atst, afail);
+            CHECK(!AlphaFailMask::SplitsPopulations(Test(false, atst, afail)), "ATE off never splits (atst %u afail %u)",
+                  atst, afail);
+        }
+    for (uint8_t afail = 0; afail < 4; ++afail) {
+        const auto f = AlphaFailMask::FailingPixels(afail);
+        const auto n = AlphaFailMask::Compute(Test(true, AlphaFailMask::kAtstNever, afail));
+        CHECK(f.uniform && f.write_rgb == n.write_rgb && f.write_alpha == n.write_alpha && f.write_depth == n.write_depth,
+              "FailingPixels(%u) == the NEVER arm", afail);
     }
     std::printf("AlphaFailMask: %d checks, %d failures -> %s\n", g_checks, g_failures, g_failures ? "FAIL" : "PASS");
     return g_failures ? 1 : 0;

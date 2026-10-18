@@ -28,6 +28,7 @@ add_library(ps2r_app_host STATIC
     savestate_slots.cpp
     session_capture.cpp
     session_relaunch.cpp
+    cold_restore.cpp
     live_restore_gate.cpp
     leg_closer.cpp
     mtvu_stack.cpp

@@ -26,6 +26,9 @@ ps2r_iop_test(test_fiber_guard FiberGuardPage)
 # thread's current-context record stays its own across the migration.
 ps2r_iop_test(test_fiber_migrate FiberHostMigration)
 ps2r_iop_test(test_module_table IopModuleTable)
+# The IOPH section of a hosted IOP (modules the EE loads at run time): the cold --load-state
+# round trip into a fresh composition and the live F8 re-restore over the same objects.
+ps2r_iop_test(test_iop_host_section IopHostSection)
 ps2r_iop_test(test_sif_rpc_bridge SifRpcBridge)
 # Title tests (the recompiled STREAM.IRX is GENERATED at build time from the user's disc,
 # TitleInputs): registered only when ps2r_title_stream_irx exists; a STATUS line otherwise.

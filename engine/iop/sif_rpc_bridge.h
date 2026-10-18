@@ -85,6 +85,9 @@ public:
 
     uint64_t Submitted() const;
     uint64_t Completed() const;
+    // Savestate restore: drops every queued body and the parked EE-wait tid (a
+    // restored image is taken with no round trip in flight). The totals stay.
+    void ResetQueues();
     uint64_t Stalls() const { return stalls_.load(std::memory_order_acquire); }
 
 private:

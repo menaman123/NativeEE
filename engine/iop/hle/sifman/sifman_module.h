@@ -48,6 +48,7 @@ public:
     static constexpr uint64_t kIntrCompletionUs = 50;
 
     uint32_t NextDmaId() const { return next_dma_id_; }
+    void SetNextDmaId(uint32_t id) { next_dma_id_ = id ? id : 1; }   // savestate restore
     uint64_t BytesCopied() const { return bytes_copied_; }
     uint64_t DmaStatPolls() const { return dma_stat_polls_; }
 

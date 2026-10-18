@@ -49,6 +49,9 @@ public:
     bool Release(std::string_view lib);
 
     const Library* Find(std::string_view lib) const;
+    // Every library whose entries are GUEST export tables (RegisterGuestTable): what a
+    // savestate section records and re-registers; the HLE-bodied ones are the boot's.
+    std::vector<const Library*> GuestLibraries() const;
     // The bound entry (lib, index), or nullptr (unknown library or index, or an unbound slot).
     const Entry* FindEntry(std::string_view lib, uint32_t index) const;
     size_t LibraryCount() const { return libs_.size(); }

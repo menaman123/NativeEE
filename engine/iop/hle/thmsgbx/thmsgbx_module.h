@@ -35,6 +35,7 @@ public:
     void ReferMbxStatus(IopContext& ctx);     // int (mbx, MbxStatus*) -> 0
 
     int Created() const { return created_; }
+    void SetCreated(int n) { created_ = n < 0 ? 0 : n; }   // savestate restore
 
 private:
     IopModuleTable& table_;

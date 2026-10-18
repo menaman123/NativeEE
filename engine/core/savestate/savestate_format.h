@@ -84,6 +84,7 @@ constexpr uint32_t TAG_SDRX = Tag('S', 'D', 'R', 'X');  // SPU2 block transfers 
 constexpr uint32_t TAG_MCHL = Tag('M', 'C', 'H', 'L');  // memory-card HLE statics
 constexpr uint32_t TAG_IOPM = Tag('I', 'O', 'P', 'M');  // IOP RAM (2 MB) + IOP statics
 constexpr uint32_t TAG_SNDC = Tag('S', 'N', 'D', 'C');  // host sound core (SPU RAM + voices)
+constexpr uint32_t TAG_IOPH = Tag('I', 'O', 'P', 'H');  // a hosted IOP: RAM + kernel tables + module/library/RPC records
 
 #pragma pack(push, 1)
 struct FileHeader {

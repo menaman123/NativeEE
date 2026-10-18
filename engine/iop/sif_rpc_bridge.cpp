@@ -147,4 +147,11 @@ void SifRpcBridge::NotifyEeReply() {
     }
 }
 
+void SifRpcBridge::ResetQueues() {
+    std::lock_guard<std::mutex> lk(m_);
+    for (auto& kv : queues_) kv.second.bodies.clear();
+    ee_wait_tid_.store(0, std::memory_order_release);
+    cv_.notify_all();
+}
+
 }  // namespace ps2r::iop

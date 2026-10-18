@@ -39,6 +39,7 @@ public:
     void PollSema(IopContext& ctx);
 
     int NextSid() const { return next_sid_; }
+    void SetNextSid(int sid) { next_sid_ = (sid >= 0 && sid < kMaxSemas) ? sid : 0; }   // savestate restore
     uint64_t HostWaitCount() const { return host_waits_.load(std::memory_order_relaxed); }
     uint64_t ErrorCount() const { return errors_.load(std::memory_order_relaxed); }
 

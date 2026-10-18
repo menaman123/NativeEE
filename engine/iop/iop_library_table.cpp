@@ -83,4 +83,16 @@ std::string IopLibraryTable::UnresolvedCensus() const {
     return out;
 }
 
+std::vector<const IopLibraryTable::Library*> IopLibraryTable::GuestLibraries() const {
+    std::vector<const Library*> out;
+    for (const auto& kv : libs_) {
+        const Library& lib = kv.second;
+        bool guest = !lib.entries.empty();
+        for (const Entry& e : lib.entries)
+            if (e.hle) { guest = false; break; }
+        if (guest) out.push_back(&lib);
+    }
+    return out;
+}
+
 }  // namespace ps2r::iop

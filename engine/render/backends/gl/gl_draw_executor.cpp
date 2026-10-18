@@ -167,7 +167,24 @@ DrawResult GlDrawExecutor::Draw(const gs::DrawIr& ir, const gs::TextureSource& t
     dev_.Vertices().BindForDraw(st);
     s.first = dev_.Vertices().Upload(scratch_.data(), s.tri_verts);
     ColorMaskState(ir, s);
-    glDrawArrays(GL_TRIANGLES, s.first, static_cast<GLsizei>(s.tri_verts));
+    // A per-pixel alpha test whose AFAIL still updates something (GS User's Manual,
+    // TEST register): the passing pixels write per FBMSK / ZMSK, the failing ones per
+    // AFAIL -- GL has no per-fragment depth mask, so the two populations are two
+    // passes of the same geometry, the shader keeping one population each
+    // (u_afail_pass) and the pass's write masks carrying its arm. The passing pass
+    // runs first (it writes Z; the failing pass under FB_ONLY / RGB_ONLY does not).
+    if (gs::AlphaFailMask::SplitsPopulations(ir.raster.test)) {
+        u.Set1i(L.afail_pass, 1);
+        glDrawArrays(GL_TRIANGLES, s.first, static_cast<GLsizei>(s.tri_verts));
+        Step fail = s;
+        fail.afail = gs::AlphaFailMask::FailingPixels(ir.raster.test.afail);
+        u.Set1i(L.afail_pass, 2);
+        DepthState(ir, p, fail);
+        ColorMaskState(ir, fail);
+        glDrawArrays(GL_TRIANGLES, s.first, static_cast<GLsizei>(s.tri_verts));
+    } else {
+        glDrawArrays(GL_TRIANGLES, s.first, static_cast<GLsizei>(s.tri_verts));
+    }
     // Masks return to their open defaults after every draw, so any raw GL pass
     // that follows (clear, refresh, present) inherits writable colour and depth.
     st.ColorMask(true, true, true, true);
@@ -555,6 +572,7 @@ void GlDrawExecutor::RegisterUniforms(const gs::DrawIr& ir, const DrawParams& p)
     u.Set1i(L.atst, r.test.atst);
     u.Set1i(L.aref, r.test.aref);
     u.Set1i(L.afail, r.test.afail);
+    u.Set1i(L.afail_pass, 0);   // every fragment; Draw's two-pass split re-sets it per pass
     u.Set1i(L.date, r.test.date ? 1 : 0);
     u.Set1i(L.datm, r.test.datm ? 1 : 0);
     u.Set1i(L.fog_enabled, ir.fog ? 1 : 0);

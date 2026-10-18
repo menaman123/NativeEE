@@ -11,8 +11,13 @@ AlphaFailMask::Result AlphaFailMask::Compute(const DrawIr::Test& t) {
         return r;
     }
     if (t.atst != kAtstNever) return r;   // per-pixel outcome: not settled here
-    r.uniform = true;   // every pixel fails: AFAIL names what is still updated
-    switch (t.afail) {
+    return FailingPixels(t.afail);        // every pixel fails: AFAIL names what is still updated
+}
+
+AlphaFailMask::Result AlphaFailMask::FailingPixels(uint8_t afail) {
+    Result r;
+    r.uniform = true;
+    switch (afail) {
         case kAfailFbOnly:
             r.write_depth = false;
             break;
@@ -32,6 +37,10 @@ AlphaFailMask::Result AlphaFailMask::Compute(const DrawIr::Test& t) {
             break;
     }
     return r;
+}
+
+bool AlphaFailMask::SplitsPopulations(const DrawIr::Test& t) {
+    return t.ate && t.atst != kAtstNever && t.atst != kAtstAlways && t.afail != kAfailKeep;
 }
 
 }  // namespace gs

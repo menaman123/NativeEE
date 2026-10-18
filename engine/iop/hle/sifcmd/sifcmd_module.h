@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <utility>
 #include <vector>
 
 #include "engine/iop/iop_context.h"
@@ -97,6 +98,21 @@ public:
     const IopContext* LoopContext(int tid) const;
     int QueueTid(uint32_t queue) const;
     uint64_t OtherDataBytes() const { return other_data_bytes_; }
+
+    // The registration state as a savestate section carries it: the queue ->
+    // thread bindings (sceSifSetRpcQueue), the server records (sceSifRegisterRpc)
+    // and the first queue's thread.
+    struct State {
+        int rpc_queue_tid = 0;
+        std::vector<std::pair<uint32_t, int>> queues;   // queue descriptor, tid
+        std::vector<ServerRecord> servers;
+    };
+    State ExportState() const;
+    // Savestate restore: replaces the bindings and records (the parked loop
+    // contexts are forgotten -- the kernel's threads were reset) and, when
+    // `notify`, hands every record to the registrar as sceSifRegisterRpc does, so
+    // the composition's EE-facing servers exist for the restored ids.
+    void ImportState(const State& state, bool notify);
 
 private:
     IopModuleTable& table_;

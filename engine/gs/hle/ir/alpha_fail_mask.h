@@ -9,7 +9,11 @@
 // all of them, ATST = ALWAYS (1) passes all of them (as does ATE = 0). For those the
 // AFAIL arm is a per-draw write mask that composes with FBMSK / ZMSK -- the GS idiom
 // "fail every pixel, Z only" is a Z clear, "fail every pixel, frame buffer only" a
-// colour-only pass. Every other ATST is per pixel and stays with the shader.
+// colour-only pass. Every other ATST is per pixel: the draw then has TWO populations,
+// the passing pixels (FBMSK / ZMSK writes) and the failing ones (the AFAIL mask), which
+// a renderer without a per-fragment depth mask draws as two passes (`SplitsPopulations`,
+// `FailingPixels`); AFAIL KEEP alone needs no second pass (its failing pixels write
+// nothing: the shader discards them).
 #pragma once
 
 #include "engine/gs/hle/ir/draw_ir.h"
@@ -34,6 +38,11 @@ public:
     // writable; all-fail (ATST = NEVER) applies AFAIL; a per-pixel ATST is reported
     // non-uniform with everything writable (the shader decides per fragment).
     static Result Compute(const DrawIr::Test& t);
+    // The write mask of the pixels that FAIL the test under `afail` (uniform = true).
+    static Result FailingPixels(uint8_t afail);
+    // A per-pixel ATST (not NEVER / ALWAYS, ATE on) whose AFAIL is not KEEP: the failing
+    // pixels still update something, under a mask the passing pixels do not share.
+    static bool SplitsPopulations(const DrawIr::Test& t);
 };
 
 }  // namespace gs

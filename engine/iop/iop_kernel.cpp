@@ -518,6 +518,12 @@ int IopKernel::StartPeriodicTimerAtUs(uint64_t first_due_us, uint64_t period_us,
     return id;
 }
 
+std::optional<uint64_t> IopKernel::TimerDueUs(int id) const {
+    for (const Timer& t : timers_)
+        if (t.id == id && t.running) return t.due_us;
+    return std::nullopt;
+}
+
 void IopKernel::StopTimer(int id) {
     std::lock_guard<std::mutex> lk(inject_mutex_);
     injections_.push_back([this, id] {
@@ -719,6 +725,99 @@ void IopKernel::ReconcileThreadFromFlags(int tid, bool sleeping, bool terminated
 void IopKernel::DropPendingEvents() {
     std::lock_guard<std::recursive_mutex> lk(dispatch_mutex_);
     events_.clear();
+}
+
+uint32_t IopKernel::ThreadInitialPriority(int tid) const {
+    if (tid <= 0 || tid >= kMaxThreads) return 0;
+    return threads_[tid].initial_priority;
+}
+
+int IopKernel::ThreadWakeupPending(int tid) const {
+    if (tid <= 0 || tid >= kMaxThreads) return 0;
+    return threads_[tid].wakeup_pending;
+}
+
+void IopKernel::SetThreadWakeupPending(int tid, int tokens) {
+    if (tid <= 0 || tid >= kMaxThreads || tokens < 0) return;
+    threads_[tid].wakeup_pending = tokens;
+}
+
+int32_t IopKernel::SemaMaxCount(int sid) const {
+    if (sid < 0 || sid >= kMaxSemas) return 0;
+    return semas_[sid].max_count;
+}
+
+bool IopKernel::SemaPrioOrder(int sid) const {
+    if (sid < 0 || sid >= kMaxSemas) return false;
+    return semas_[sid].prio_order;
+}
+
+bool IopKernel::EventFlagActive(int ef) const {
+    if (ef < 0 || ef >= static_cast<int>(event_flags_.size())) return false;
+    return event_flags_[ef].active;
+}
+
+bool IopKernel::EventFlagMulti(int ef) const {
+    if (ef < 0 || ef >= static_cast<int>(event_flags_.size())) return false;
+    return event_flags_[ef].multi;
+}
+
+void IopKernel::RestoreEventFlag(int ef, bool active, bool multi, uint32_t value) {
+    if (ef < 0 || ef >= 4096) return;
+    if (ef >= static_cast<int>(event_flags_.size())) event_flags_.resize(static_cast<size_t>(ef) + 1);
+    EventFlagRec& rec = event_flags_[ef];
+    rec.active = active;
+    rec.multi = multi;
+    rec.value = value;
+    rec.waiters.clear();
+}
+
+bool IopKernel::MbxActive(int mbx) const {
+    if (mbx < 0 || mbx >= static_cast<int>(mbxs_.size())) return false;
+    return mbxs_[mbx].active;
+}
+
+std::vector<void*> IopKernel::MbxMessages(int mbx) const {
+    std::vector<void*> out;
+    if (mbx < 0 || mbx >= static_cast<int>(mbxs_.size())) return out;
+    std::queue<void*> copy = mbxs_[mbx].messages;
+    while (!copy.empty()) {
+        out.push_back(copy.front());
+        copy.pop();
+    }
+    return out;
+}
+
+void IopKernel::RestoreMbx(int mbx, bool active, const std::vector<void*>& messages) {
+    if (mbx < 0 || mbx >= 4096) return;
+    if (mbx >= static_cast<int>(mbxs_.size())) mbxs_.resize(static_cast<size_t>(mbx) + 1);
+    MbxRec& rec = mbxs_[mbx];
+    rec.active = active;
+    rec.messages = std::queue<void*>();
+    for (void* m : messages) rec.messages.push(m);
+    rec.waiters.clear();
+}
+
+void IopKernel::ResetForRestore() {
+    std::lock_guard<std::recursive_mutex> lk(dispatch_mutex_);
+    for (int tid = 1; tid < kMaxThreads; tid++) UnregisterThread(tid);
+    for (int sid = 0; sid < kMaxSemas; sid++) {
+        Sema& s = semas_[sid];
+        s.active = false;
+        s.count = 0;
+        s.max_count = 0;
+        s.prio_order = false;
+        s.waiters.clear();
+    }
+    event_flags_.clear();
+    mbxs_.clear();
+    events_.clear();
+    timers_.clear();
+    {
+        std::lock_guard<std::mutex> ilk(inject_mutex_);
+        injections_.clear();
+    }
+    unparked_.store(0, std::memory_order_release);
 }
 
 void IopKernel::Shutdown() {

@@ -13,6 +13,12 @@ void RpcRouter::RegisterServer(uint32_t server_id, Server& server, const char* n
     servers_.push_back(ServerRow{server_id, &server, name});
 }
 
+std::vector<uint32_t> RpcRouter::ServerIds() const {
+    std::vector<uint32_t> ids;
+    for (const ServerRow& r : servers_) ids.push_back(r.server_id);
+    return ids;
+}
+
 const RpcRouter::Server* RpcRouter::FindServer(uint32_t server_id) const {
     for (const ServerRow& r : servers_)
         if (r.server_id == server_id) return r.server;

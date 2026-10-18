@@ -15,6 +15,7 @@ ps2r_render_test(test_gl_state_cache)
 ps2r_render_test(test_gl_device_smoke)
 ps2r_render_test(test_gl_raster_rule)
 ps2r_render_test(test_gl_alpha_convention)
+ps2r_render_test(test_gl_alpha_fail_split)
 target_link_libraries(test_gl_alpha_convention PRIVATE ps2r_gs_hle_texsrc ps2r_gs_format)
 ps2r_render_test(test_gl_present)
 ps2r_render_test(test_blend_equation_pin)
@@ -70,6 +71,11 @@ set_tests_properties(Render_RasterRule PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 7
 # The ONE alpha convention: TEXA'd CT16 texels, the dual-source As factor, the stored byte.
 add_test(NAME Render_AlphaConvention COMMAND test_gl_alpha_convention)
 set_tests_properties(Render_AlphaConvention PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+
+# The per-pixel alpha test's two populations: AFAIL FB_ONLY / RGB_ONLY / ZB_ONLY / KEEP write
+# masks for the failing pixels, FBMSK / ZMSK for the passing ones, As untouched by the test.
+add_test(NAME Render_AlphaFailSplit COMMAND test_gl_alpha_fail_split)
+set_tests_properties(Render_AlphaFailSplit PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 
 # Window-pixel pins: logical content crop, orientation, allocation scale and
 # failure before clear/swap. Includes the unchanged full-image present mapping.

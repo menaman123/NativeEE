@@ -74,6 +74,8 @@ public:
     const std::vector<ModuleEntry>& Modules() const { return modules_; }
     const ModuleEntry* FindModule(const std::string& name) const;
     size_t ModuleCount() const { return modules_.size(); }
+    // Savestate restore: drops the rows past `count` (the rows a restored image re-registers).
+    void TruncateModules(size_t count);
     // Comma-separated "name:version" list in registration order (run.meta iop_modules=).
     std::string ModulesCensus() const;
 

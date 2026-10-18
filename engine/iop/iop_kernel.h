@@ -112,6 +112,9 @@ public:
     // at or below now fires in the next Dispatch pass), then every period.
     int  StartPeriodicTimerAtUs(uint64_t first_due_us, uint64_t period_us, std::function<bool()> beat);
     void StopTimer(int id);
+    // The next due (kernel-clock microseconds) of a running timer; nullopt when
+    // unknown / stopped / still queued as an injection (a savestate section's phase).
+    std::optional<uint64_t> TimerDueUs(int id) const;
 
     // -- dispatch ----------------------------------------------------------------
     struct DispatchResult {
@@ -130,7 +133,28 @@ public:
     State ThreadState(int tid) const;
     WaitKind ThreadWaitKind(int tid) const;
     bool ThreadRegistered(int tid) const;
+    uint32_t ThreadInitialPriority(int tid) const;   // the priority RegisterThread gave (StartThread's reset value)
+    int ThreadWakeupPending(int tid) const;          // banked WakeupThread tokens
+    void SetThreadWakeupPending(int tid, int tokens);
     void ReconcileThreadFromFlags(int tid, bool sleeping, bool terminated);
+    // -- the object tables as a savestate section reads / rebuilds them --------------
+    int32_t SemaMaxCount(int sid) const;
+    bool SemaPrioOrder(int sid) const;
+    int EventFlagCount() const { return static_cast<int>(event_flags_.size()); }
+    bool EventFlagActive(int ef) const;
+    bool EventFlagMulti(int ef) const;
+    // Installs event flag `ef` (the table grows to hold it) with no waiters.
+    void RestoreEventFlag(int ef, bool active, bool multi, uint32_t value);
+    int MbxCount() const { return static_cast<int>(mbxs_.size()); }
+    bool MbxActive(int mbx) const;
+    std::vector<void*> MbxMessages(int mbx) const;   // queued tokens, FIFO order
+    // Installs message box `mbx` (the table grows to hold it) with the queued tokens and no waiters.
+    void RestoreMbx(int mbx, bool active, const std::vector<void*>& messages);
+    // Savestate restore of a whole kernel: every thread terminated and unregistered
+    // (their coroutines destroyed -- never the running one), every semaphore deleted,
+    // the event-flag / message-box tables emptied, every timer and deferred event
+    // dropped, the injection queue cleared. The clock and the id counters stay.
+    void ResetForRestore();
     // Savestate restore: queued deferred events are in-flight hardware ops of the
     // pre-load world and are dropped (periodic timers stay armed).
     void DropPendingEvents();

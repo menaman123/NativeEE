@@ -25,7 +25,7 @@ struct GlUniformLocations {
     int blend_a = -1, blend_b = -1, blend_c = -1, blend_d = -1, fix_alpha = -1, blend_enabled = -1;
     int tfx = -1, tcc = -1, fba = -1, colclamp = -1, scanmsk = -1;
     int zte = -1, ztst = -1;
-    int ate = -1, atst = -1, aref = -1, afail = -1, date = -1, datm = -1;
+    int ate = -1, atst = -1, aref = -1, afail = -1, afail_pass = -1, date = -1, datm = -1;
     int fog_enabled = -1, fogcol = -1;
     int tex_size = -1, uv_scale = -1, uv_mode = -1;
     int sw_blend = -1, rt_sampler = -1, flip_v = -1;

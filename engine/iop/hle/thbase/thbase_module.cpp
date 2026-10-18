@@ -199,6 +199,7 @@ void ThbaseModule::StartThread(IopContext& ctx) {
 }
 
 bool ThbaseModule::ArmBody(int ktid, uint32_t arg, const GuestFunction& body) {
+    arg_[ktid] = arg;
     const uint32_t entry = entry_[ktid];
     const ThreadLayout layout = layout_;
     const uint32_t gp = gp_[ktid] ? gp_[ktid] : layout.gp;
@@ -320,6 +321,46 @@ void ThbaseModule::USec2SysClock(IopContext& ctx) {
         mem_.Write<uint32_t>(dest + 4, static_cast<uint32_t>(ticks >> 32));
     }
     ctx.gpr[2] = 0;
+}
+
+ThbaseModule::ThreadRecord ThbaseModule::ExportThread(int tid) const {
+    ThreadRecord r;
+    if (tid <= 0 || tid >= kMaxThreads) return r;
+    r.entry = entry_[tid];
+    r.gp = gp_[tid];
+    r.stack_base = stack_base_[tid];
+    r.stack_size = stack_size_[tid];
+    r.arg = arg_[tid];
+    r.started = started_[tid];
+    return r;
+}
+
+bool ThbaseModule::RestoreThreadRecord(int tid, const ThreadRecord& record, uint32_t initial_priority, uint32_t priority) {
+    if (tid <= 0 || tid >= kMaxThreads || record.entry == 0) return false;
+    IopKernel& k = table_.Kernel();
+    if (k.ThreadRegistered(tid)) return false;   // live: the kernel was not reset
+    if (!k.RegisterThread(tid, initial_priority)) return false;
+    entry_[tid] = record.entry;
+    gp_[tid] = record.gp;
+    stack_base_[tid] = record.stack_base;
+    stack_size_[tid] = record.stack_size;
+    arg_[tid] = record.arg;
+    started_[tid] = false;
+    if (tid >= next_tid_) next_tid_ = tid + 1;
+    if (!record.started) return true;
+    GuestFunction body = resolve_ ? resolve_(record.entry) : GuestFunction{};
+    if (!body) return false;
+    started_[tid] = ArmBody(tid, record.arg, body);
+    if (started_[tid] && priority > 0 && priority <= 126 && k.ThreadPriority(tid) != priority) k.ChangePriority(tid, priority);
+    return started_[tid];
+}
+
+void ThbaseModule::ResetRecords() {
+    for (int tid = 0; tid < kMaxThreads; tid++) {
+        entry_[tid] = gp_[tid] = stack_base_[tid] = stack_size_[tid] = arg_[tid] = 0;
+        started_[tid] = false;
+    }
+    next_tid_ = 1;
 }
 
 }  // namespace ps2r::iop::hle

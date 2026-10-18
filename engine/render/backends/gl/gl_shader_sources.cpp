@@ -164,6 +164,8 @@ uniform int u_ate;           // Alpha test enable
 uniform int u_atst;          // Alpha test method: 0=NEVER,1=ALWAYS,2=LESS,3=LEQUAL,4=EQUAL,5=GEQUAL,6=GREATER,7=NOTEQUAL
 uniform int u_aref;          // Alpha reference value (0-255)
 uniform int u_afail;         // Alpha fail action: 0=KEEP,1=FB_ONLY,2=ZB_ONLY,3=RGB_ONLY
+uniform int u_afail_pass;    // Population this pass draws: 0=every fragment (the static arms),
+                             // 1=the pixels that PASS the alpha test, 2=the pixels that FAIL it
 
 // Destination alpha test params (PS2 TEST register)
 uniform int u_date;          // Destination alpha test enable
@@ -760,33 +762,15 @@ void main() {
             alpha_pass = (alpha_int != u_aref);  // NOTEQUAL
         }
 
-        if (!alpha_pass) {
-            // AFAIL controls what happens when the alpha test fails:
-            // 0=KEEP: discard entirely (no FB or ZB write)
-            // 1=FB_ONLY: write FB but not ZB (handled via depth mask on CPU side)
-            // 2=ZB_ONLY: write ZB but not FB (handled via color mask on CPU side)
-            // 3=RGB_ONLY: write RGB but not A or ZB
-            // For KEEP (most common), discard the fragment entirely.
-            // For other modes, we'd need multi-pass or stencil tricks.
-            // For now, implement KEEP (discard) which covers the vast majority
-            // of game usage. FB_ONLY/ZB_ONLY/RGB_ONLY are rare edge cases.
-            if (u_afail == 0) {
-                discard;
-            }
-            // AFAIL=1 (FB_ONLY): let the fragment through but depth write is
-            // disabled on the CPU side when this case is detected.
-            // AFAIL=2 (ZB_ONLY): would need to zero out color output.
-            // AFAIL=3 (RGB_ONLY): would need to mask alpha channel.
-            // These are handled approximately for now.
-            if (u_afail == 2) {
-                // ZB_ONLY: suppress color write by outputting transparent
-                result = vec4(0.0);
-            }
-            if (u_afail == 3) {
-                // RGB_ONLY: keep RGB but zero alpha to suppress alpha write
-                result.a = 0.0;
-            }
-        }
+        // The two populations the GS writes differently (AFAIL names what a FAILING
+        // pixel still updates; a PASSING one updates per FBMSK / ZMSK). KEEP drops the
+        // failing pixels here; FB_ONLY / ZB_ONLY / RGB_ONLY are drawn as two passes by
+        // the executor -- u_afail_pass selects the population of this pass and the
+        // GL write masks of the pass carry the AFAIL arm -- so the fragment's colour and
+        // alpha (the blend's As) are never altered by the test.
+        if (!alpha_pass && u_afail == 0) discard;
+        if (u_afail_pass == 1 && !alpha_pass) discard;
+        if (u_afail_pass == 2 && alpha_pass) discard;
     }
 
     // --- PS2 Destination Alpha Test (TEST register: DATE, DATM) ---

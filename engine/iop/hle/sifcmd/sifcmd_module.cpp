@@ -180,4 +180,22 @@ void SifcmdModule::sceSifSendCmd(IopContext& ctx) {
 
 void SifcmdModule::isceSifSendCmd(IopContext& ctx) { sceSifSendCmd(ctx); }
 
+SifcmdModule::State SifcmdModule::ExportState() const {
+    State s;
+    s.rpc_queue_tid = rpc_queue_tid_;
+    for (const auto& q : queue_tids_) s.queues.emplace_back(q.first, q.second);
+    s.servers = servers_;
+    return s;
+}
+
+void SifcmdModule::ImportState(const State& state, bool notify) {
+    rpc_queue_tid_ = state.rpc_queue_tid;
+    queue_tids_.clear();
+    for (const auto& q : state.queues) queue_tids_[q.first] = q.second;
+    servers_ = state.servers;
+    loop_ctx_.clear();
+    if (!notify || !registrar_) return;
+    for (const ServerRecord& r : servers_) registrar_(r);
+}
+
 }  // namespace ps2r::iop::hle

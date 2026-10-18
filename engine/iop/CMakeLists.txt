@@ -20,6 +20,7 @@ add_library(ps2r_iop STATIC
     sif_rpc_bridge.cpp
     iop_module_table.cpp
     savestate/iopm_section.cpp
+    savestate/iop_host_section.cpp
     hle/sysmem/sysmem_module.cpp
     hle/intrman/intrman_module.cpp
     hle/stdio/stdio_module.cpp

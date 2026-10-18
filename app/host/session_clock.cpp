@@ -105,9 +105,10 @@ bool SessionClock::Validate(const Snapshot& state, std::string& error) const {
     // The bypass selection is the tick SOURCE's mode (Freerun/Warp); the
     // domain only latches it at its first TickAdvance, which a --load-state
     // restore precedes -- compare the selection, not the latch.
-    const bool live_bypass = source_.Bypass();
+    const bool live_bypass = accept_host_policy_ ? state.domain.bypass : source_.Bypass();
+    const bool live_pacer_release = accept_host_policy_ ? state.domain.pacer_release : domain_.PacerRelease();
     if (state.providers != providers_ || state.domain.pin != domain_.RegimePin() ||
-        state.domain.bypass != live_bypass || state.domain.pacer_release != domain_.PacerRelease()) {
+        state.domain.bypass != live_bypass || state.domain.pacer_release != live_pacer_release) {
         // Name the differing selection: the owner that must agree is explicit.
         std::string which;
         if (state.providers != providers_) which += " providers(saved=" + state.providers + ",live=" + providers_ + ")";
@@ -130,7 +131,12 @@ bool SessionClock::Restore(const Snapshot& state, std::string& error) {
         error = "Clock restore requires stopped tick execution.";
         return false;
     }
+    const bool live_bypass = source_.Bypass(), live_pacer_release = domain_.PacerRelease();
     if (!domain_.Restore(state.domain, state.raw_tick)) return false;
+    if (accept_host_policy_) {
+        domain_.SetBypass(live_bypass);
+        domain_.SetPacerRelease(live_pacer_release);
+    }
     source_.ResetForRestore(state.raw_tick);
     restored_ = true;
     return true;

@@ -66,6 +66,22 @@ public:
     ps2r::IopRestoredTimerDue RestoredTimerDue() const { return restored_due_; }
     // Savestate restore: a hard timer the image records as freed is stopped.
     void ReleaseHardTimer(int id);
+    // One hard timer's descriptor as a savestate section carries it (ids 1..4).
+    struct TimerRecord {
+        bool allocated = false, running = false;
+        uint32_t handler = 0, arg = 0, compare = 0, gp = 0;
+        // The beat's phase: kernel-clock microseconds from the record's instant to
+        // the next due (0 = unknown: the restored-timer due rule applies instead).
+        uint64_t remaining_us = 0;
+    };
+    TimerRecord ExportTimer(int id) const;
+    // Savestate restore of one record: the timer is released first (a live beat
+    // stopped), then, when allocated, its descriptor is installed and -- when the
+    // record says running -- the beat re-armed with the RECORDED $gp at the
+    // recorded phase (first due = now + remaining_us, clamped to one period), or
+    // under the restored-timer due rule when the record has no phase. Returns
+    // true when a beat was armed.
+    bool RestoreTimerRecord(int id, const TimerRecord& record);
 
     bool Running(int id) const;
     int KernelTimerId(int id) const;
@@ -83,6 +99,7 @@ private:
     HardTimer* Timer(uint32_t id);
     const HardTimer* Timer(uint32_t id) const;
     bool Arm(HardTimer* t, bool due_now);   // the periodic beat StartHardTimer arms (first due now, or now + period)
+    bool ArmAt(HardTimer* t, uint64_t first_due_us);   // the same beat with an explicit first due
 
     IopModuleTable& table_;
     FunctionResolver resolve_;

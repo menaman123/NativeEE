@@ -35,6 +35,10 @@ int IopModuleTable::RegisterModule(const ModuleEntry& entry) {
     return static_cast<int>(modules_.size()) - 1;
 }
 
+void IopModuleTable::TruncateModules(size_t count) {
+    if (count < modules_.size()) modules_.resize(count);
+}
+
 const IopModuleTable::ModuleEntry* IopModuleTable::FindModule(const std::string& name) const {
     for (const ModuleEntry& m : modules_)
         if (m.name == name) return &m;
