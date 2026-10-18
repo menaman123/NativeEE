@@ -55,6 +55,13 @@ public:
         // Optional application frame owner. False means unselected only.
         // A selected failure must throw; never replay the retained presenter.
         std::function<bool(bool ee_frame_end, DrawPipeline::Frame*)> owned_frame = {};
+        // Optional: whether anyone will read the boundary's display grab (the
+        // frames lane, a frame dump, a screenshot). Unset = always grab (the
+        // harness contract). When set and false, OnFrame presents without the
+        // grab -- the full-target readback (a GPU pipeline drain per frame) and
+        // its hash are the lane's cost, not a player's -- and LastFrame reads
+        // grabbed = false for that boundary.
+        std::function<bool()> grab_wanted = {};
     };
     struct Counters {
         uint64_t draws = 0, jobs = 0, frames = 0;
@@ -64,6 +71,7 @@ public:
         uint64_t presents = 0;          // frames whose present ran (a scanout base was known)
         uint64_t grab_empty = 0;        // frames with no grabbable target
         uint64_t forgotten_frames = 0;  // ForgetLastFrame calls (the live restore)
+        uint64_t grabs_skipped = 0;     // boundaries presented without a grab (grab_wanted false)
     };
 
     DrawIrQueueConsumer(DrawPipeline& pipe, Hooks hooks);

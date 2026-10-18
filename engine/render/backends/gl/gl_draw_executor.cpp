@@ -175,14 +175,17 @@ DrawResult GlDrawExecutor::Draw(const gs::DrawIr& ir, const gs::TextureSource& t
     // runs first (it writes Z; the failing pass under FB_ONLY / RGB_ONLY does not).
     if (gs::AlphaFailMask::SplitsPopulations(ir.raster.test)) {
         u.Set1i(L.afail_pass, 1);
+        dev_.CensusMut().draw_calls++;
         glDrawArrays(GL_TRIANGLES, s.first, static_cast<GLsizei>(s.tri_verts));
         Step fail = s;
         fail.afail = gs::AlphaFailMask::FailingPixels(ir.raster.test.afail);
         u.Set1i(L.afail_pass, 2);
         DepthState(ir, p, fail);
         ColorMaskState(ir, fail);
+        dev_.CensusMut().draw_calls++;
         glDrawArrays(GL_TRIANGLES, s.first, static_cast<GLsizei>(s.tri_verts));
     } else {
+        dev_.CensusMut().draw_calls++;
         glDrawArrays(GL_TRIANGLES, s.first, static_cast<GLsizei>(s.tri_verts));
     }
     // Masks return to their open defaults after every draw, so any raw GL pass
@@ -248,7 +251,8 @@ DrawResult GlDrawExecutor::DrawStripCount(const gs::DrawIr& ir, const gs::Textur
     s.first = dev_.Vertices().Upload(scratch_.data(), s.tri_verts);
     st.ColorMask(false, false, false, false);
     GlDevice::ApplyStencil(p.stencil_state);
-    glDrawArrays(GL_TRIANGLES, s.first, static_cast<GLsizei>(s.tri_verts));
+    dev_.CensusMut().draw_calls++;
+        glDrawArrays(GL_TRIANGLES, s.first, static_cast<GLsizei>(s.tri_verts));
     GlDevice::ResetStencil();
     st.ColorMask(true, true, true, true);
     st.DepthMask(true);
@@ -287,7 +291,8 @@ DrawResult GlDrawExecutor::DrawInvert(const gs::DrawIr& ir, const gs::TextureSou
     dev_.Vertices().BindForDraw(st);
     s.first = dev_.Vertices().Upload(scratch_.data(), s.tri_verts);
     st.ColorMask(true, true, true, true);
-    glDrawArrays(GL_TRIANGLES, s.first, static_cast<GLsizei>(s.tri_verts));
+    dev_.CensusMut().draw_calls++;
+        glDrawArrays(GL_TRIANGLES, s.first, static_cast<GLsizei>(s.tri_verts));
     st.DepthMask(true);
     return MakeResult(ir, p, s);
 }
@@ -327,6 +332,8 @@ DrawResult GlDrawExecutor::DrawHalfwordShuffle(const gs::DrawIr& ir, const gs::T
     st.BindFb(GL_READ_FRAMEBUFFER, fbo);
     st.ActiveTexture(GL_TEXTURE1);
     st.BindTex2D(copy->tex);
+    dev_.CensusMut().copies++;
+    dev_.CensusMut().copy_bytes += static_cast<uint64_t>(p.target_w) * p.target_h * sc * sc * 4u;
     glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, p.target_w * sc, p.target_h * sc);
     if (p.cd_copy) CdCopyPolicy::Invalidate(*p.cd_copy);
     st.ActiveTexture(GL_TEXTURE0);
@@ -349,6 +356,7 @@ DrawResult GlDrawExecutor::DrawHalfwordShuffle(const gs::DrawIr& ir, const gs::T
     for (int i = 0; i < 6; ++i) { scratch_[i].x = xs[i]; scratch_[i].y = ys[i]; scratch_[i].q = 1.f; }
     dev_.Vertices().BindForDraw(st);
     const int first = dev_.Vertices().Upload(scratch_.data(), 6);
+    dev_.CensusMut().draw_calls++;
     glDrawArrays(GL_TRIANGLES, first, 6);
     st.DepthMask(true);
     st.Enable(GL_DEPTH_TEST);
@@ -395,6 +403,7 @@ void GlDrawExecutor::FrameClear(const DrawParams& p) {
         st.ColorMask(true, true, true, true);
         bits |= GL_COLOR_BUFFER_BIT;
     }
+    dev_.CensusMut().clears++;
     glClear(bits);
 }
 
@@ -646,6 +655,9 @@ void GlDrawExecutor::CdCopy(const DrawParams& p, Step& s) {
     st.BindTex2D(copy->tex);
     if (!skip) {
         const int sc = s.scale;
+        const int pw = (cw > 0 && ch > 0) ? cw : p.target_w, ph = (cw > 0 && ch > 0) ? ch : p.target_h;
+        dev_.CensusMut().copies++;
+        dev_.CensusMut().copy_bytes += static_cast<uint64_t>(pw) * ph * sc * sc * 4u;
         if (cw > 0 && ch > 0)
             glCopyTexSubImage2D(GL_TEXTURE_2D, 0, cx * sc, cy * sc, cx * sc, cy * sc, cw * sc, ch * sc);
         else
@@ -677,8 +689,16 @@ void GlDrawExecutor::BlendState(const gs::DrawIr& ir, const DrawParams& p, Step&
     const GlUniformLocations& L = dev_.Shaders().Locations();
     const auto& a = ir.raster.alpha;
     s.sw_blend_active = false;
+    // FBA (FBA register: bit 7 OR-ed into the alpha WRITTEN, GS User's Manual
+    // 3.6.3) is applied by the fragment program to its stored-alpha output on
+    // every route, and the fixed-function arm's alpha factor is the SECOND output
+    // (frag_factor, the pre-FBA As), so an FBA draw whose ALPHA tuple has an exact
+    // fixed-function form needs no destination copy: it blends like any other
+    // matched draw. A tuple without an exact form keeps the shader blend (the
+    // OLD route for every FBA draw).
+    const bool fba_sw = ir.raster.fba && !BlendFfMap::Map(a.a, a.b, a.c, a.d).matched;
     if (ir.alpha_blend &&
-        (s.using_rt || ir.raster.fba || s.fbmsk16_exact || s.fbmsk32_exact || s.wrap_route) &&
+        (s.using_rt || fba_sw || s.fbmsk16_exact || s.fbmsk32_exact || s.wrap_route) &&
         !s.route_rt_blend) {
         s.needs_rt_copy = true;
         CdCopy(p, s);

@@ -19,10 +19,16 @@ GlDevice::GlDevice(const GlDeviceSettings& settings) : settings_(settings) {}
 
 GlDevice::~GlDevice() { Shutdown(); }
 
+const CallCensus* GlDevice::Census() const {
+    census_.buffer_maps = vertices_.Maps();   // the stream keeps its own count
+    return &census_;
+}
+
 bool GlDevice::Init(std::function<void()> swap) {
     Shutdown();
     swap_ = std::move(swap);
     state_.InvalidateAll();
+    state_.SetCensus(&census_);
     if (!shaders_.Build(uniforms_)) return false;
     if (!vertices_.Init(state_)) return false;
 
@@ -293,7 +299,7 @@ void GlDevice::Clear(SurfaceId color, SurfaceId depth, uint32_t rgba, float z, u
         glClearDepth(static_cast<double>(z));
         bits |= GL_DEPTH_BUFFER_BIT;
     }
-    if (bits) glClear(bits);
+    if (bits) { census_.clears++; glClear(bits); }
 }
 
 void GlDevice::Upload(SurfaceId id, const Rect& rect, const void* bytes, size_t stride) {
@@ -325,6 +331,8 @@ void GlDevice::Upload(SurfaceId id, const Rect& rect, const void* bytes, size_t 
         glTexSubImage2D(GL_TEXTURE_2D, 0, rect.x, rect.y, rect.w, rect.h, ext, type,
                         bytes);
     }
+    census_.uploads++;
+    census_.upload_bytes += static_cast<uint64_t>(rect.w) * static_cast<uint64_t>(rect.h) * bpp;
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     state_.BindTex2D(0);
 }
@@ -335,6 +343,8 @@ void GlDevice::UploadLevel(SurfaceId id, int level, int w, int h, const void* rg
     state_.ActiveTexture(GL_TEXTURE0);
     state_.BindTex2D(it->second.tex);
     glTexImage2D(GL_TEXTURE_2D, level, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    census_.uploads++;
+    census_.upload_bytes += static_cast<uint64_t>(w) * static_cast<uint64_t>(h) * 4u;
     state_.BindTex2D(0);
 }
 
@@ -359,6 +369,8 @@ void GlDevice::FinishMipChain(SurfaceId id, int authored_levels, bool synthesize
             state_.BindFb(GL_READ_FRAMEBUFFER, fbo);
             glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, s.tex,
                                    authored_levels);
+            census_.readbacks++;
+            census_.readback_bytes += cur.size();
             glReadPixels(0, 0, cw, ch, GL_RGBA, GL_UNSIGNED_BYTE, cur.data());
             state_.BindFb(GL_READ_FRAMEBUFFER, 0);
             state_.DeleteFramebuffers(1, &fbo);
@@ -451,6 +463,7 @@ void GlDevice::ClearStencil(SurfaceId stencil, uint8_t value) {
     state_.Disable(GL_SCISSOR_TEST);
     glStencilMask(0xFF);
     glClearStencil(value);
+    census_.clears++;
     glClear(GL_STENCIL_BUFFER_BIT);
 }
 
@@ -478,6 +491,7 @@ void GlDevice::DrawConstQuad(SurfaceId color, SurfaceId stencil, const Rect& sci
                 ((rgba >> 24) & 0xFF) / 255.0f);
     state_.BindVertexArray(const_vao_);
     ApplyStencil(st);
+    census_.draw_calls++;
     glDrawArrays(GL_TRIANGLES, 0, 3);
     ResetStencil();
     state_.BindVertexArray(0);
@@ -518,6 +532,7 @@ void GlDevice::CopyRect(SurfaceId src, const Rect& src_rect, SurfaceId dst, cons
         state_.BindTex2D(s->tex);
         state_.UseProgram(shaders_.Pack5551Program());
         state_.BindVertexArray(const_vao_);
+        census_.draw_calls++;
         glDrawArrays(GL_TRIANGLES, 0, 3);
         state_.BindVertexArray(0);
         state_.UseProgram(0);
@@ -530,6 +545,8 @@ void GlDevice::CopyRect(SurfaceId src, const Rect& src_rect, SurfaceId dst, cons
     state_.BindFb(GL_READ_FRAMEBUFFER, s->fbo);
     state_.ActiveTexture(GL_TEXTURE0);
     state_.BindTex2D(d->tex);
+    census_.copies++;
+    census_.copy_bytes += static_cast<uint64_t>(src_rect.w) * static_cast<uint64_t>(src_rect.h) * 4u;
     glCopyTexSubImage2D(GL_TEXTURE_2D, 0, dst_rect.x, dst_rect.y, src_rect.x, src_rect.y, src_rect.w,
                         src_rect.h);
     state_.BindTex2D(0);
@@ -553,6 +570,8 @@ void GlDevice::Readback(SurfaceId id, const Rect& rect, void* out, size_t stride
     }
     const size_t bpp = depth ? 4 : 4;
     glPixelStorei(GL_PACK_ROW_LENGTH, stride ? static_cast<GLint>(stride / bpp) : 0);
+    census_.readbacks++;
+    census_.readback_bytes += static_cast<uint64_t>(rect.w) * static_cast<uint64_t>(rect.h) * bpp;
     if (depth)
         glReadPixels(rect.x, rect.y, rect.w, rect.h, GL_DEPTH_COMPONENT, GL_FLOAT, out);
     else
@@ -627,6 +646,7 @@ void GlDevice::Present(const ScanoutDesc& desc) {
     state_.Disable(GL_SCISSOR_TEST);
     state_.ColorMask(true, true, true, true);
     glClearColor(0.f, 0.f, 0.f, 1.f);
+    census_.clears++;
     glClear(GL_COLOR_BUFFER_BIT);
     if (s && s->tex) {
         const int vw = desc.dst.w > 0 ? desc.dst.w : window_w_;
@@ -648,6 +668,7 @@ void GlDevice::Present(const ScanoutDesc& desc) {
         state_.BindArrayBuffer(scanout_vbo_);
         glBufferSubData(GL_ARRAY_BUFFER,0,sizeof(quad),quad);
         state_.BindVertexArray(scanout_vao_);
+        census_.draw_calls++;
         glDrawArrays(GL_TRIANGLES, 0, 6);
         glBindSampler(0,0); // the next draw observes only its own texture parameters
         state_.BindVertexArray(0);
@@ -660,6 +681,8 @@ void GlDevice::Present(const ScanoutDesc& desc) {
         // (the display quad at its offset, black around it), bottom-up.
         presented_.assign(static_cast<size_t>(capture_w) * capture_h * 4, 0);
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        census_.readbacks++;
+        census_.readback_bytes += presented_.size();
         glReadPixels(0, 0, capture_w, capture_h, GL_RGBA, GL_UNSIGNED_BYTE, presented_.data());
         presented_w_ = capture_w;
         presented_h_ = capture_h;

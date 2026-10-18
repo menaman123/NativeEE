@@ -1,6 +1,8 @@
 // gs/hle/classrdr/draw_pipeline.cpp -- the per-draw order and the job entry points.
 #include "engine/gs/hle/classrdr/draw_pipeline.h"
 
+#include <chrono>
+
 #include "engine/gs/hle/classrdr/texture_shuffle_snap.h"
 #include "engine/gs/hle/targets/target_dims.h"
 
@@ -95,14 +97,26 @@ void DrawPipeline::MarkCompositeConsumption(const DrawIr& ir) {
 
 render::DrawResult DrawPipeline::DrawGeneric(const DrawIr& ir) { return DrawGeneric(ir, PrepareOptions()); }
 
+uint64_t DrawPipeline::NowNs() {
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+            .count());
+}
+
 render::DrawResult DrawPipeline::DrawGeneric(const DrawIr& ir, const PrepareOptions& opt) {
     render::DrawResult res;
     Prepared pr;
+    // The draw's cost bracket (the route trace's attribution): the census is a
+    // snapshot by value (the backend's own counters move under the bracket).
+    const uint64_t t0 = NowNs();
+    const render::CallCensus* census = d_.be->Census();
+    const render::CallCensus c0 = census ? *census : render::CallCensus{};
     if (!Prepare(ir, &pr, opt)) return res;
     // 6. draw.
     res = d_.be->Draw(ir, pr.src, pr.params);
     Finish(ir, pr, res);
-    route_trace_.Note(ir, pr.src, res, static_cast<uint32_t>(draw_seq_));
+    const DrawRouteTrace::Cost cost = DrawRouteTrace::Cost::Delta(census ? &c0 : nullptr, census, NowNs() - t0);
+    route_trace_.Note(ir, pr.src, res, static_cast<uint32_t>(draw_seq_), cost);
     return res;
 }
 
@@ -214,7 +228,9 @@ void DrawPipeline::OnSyncAll() {
 }
 
 void DrawPipeline::FrameEndGrab(bool ee_frame_end, Frame* out) {
-    route_trace_.OnFrameEnd();
+    frame_end_t0_ = NowNs();
+    const render::CallCensus* census = d_.be->Census();
+    frame_end_census_ = census ? *census : render::CallCensus{};
     target_dump_.OnFrameEnd();
     if (d_.resolver) d_.resolver->Trace().OnFrameEnd();
     if (ee_frame_end) d_.presenter->MarkEeFrameEnd();
@@ -237,14 +253,29 @@ void DrawPipeline::FrameEndGrab(bool ee_frame_end, Frame* out) {
     }
 }
 
+// The frame end's cost closes the route trace's frame (the grab, the reader-band
+// flush, the display deposit and the present all land in cost_frame_end).
+void DrawPipeline::CloseFrameTrace() {
+    const render::CallCensus* census = d_.be->Census();
+    const uint64_t now = NowNs();
+    route_trace_.NotePresent(d_.presenter->LastPresent(), d_.cache->Ledger());
+    route_trace_.OnFrameEnd(
+        DrawRouteTrace::Cost::Delta(census ? &frame_end_census_ : nullptr, census, now - frame_end_t0_),
+        DrawRouteTrace::Cost::Delta(census ? &frame_start_census_ : nullptr, census, now - frame_start_t0_));
+    frame_start_t0_ = now;
+    if (census) frame_start_census_ = *census;
+}
+
 void DrawPipeline::OnFrameEnd(bool ee_frame_end, const CrtcClassifier::Snapshot& crtc, Frame* out) {
     FrameEndGrab(ee_frame_end, out);
     d_.presenter->Present(*d_.vram, *d_.layout, crtc, gfx_epoch_, window_w_, window_h_);
+    CloseFrameTrace();
 }
 
 void DrawPipeline::OnFrameEndGrabOnly(bool ee_frame_end, Frame* out) {
     FrameEndGrab(ee_frame_end, out);
     d_.presenter->PresentBlank(window_w_, window_h_);
+    CloseFrameTrace();
 }
 
 void DrawPipeline::OnOwnedFrameEnd(bool ee_frame_end, uint32_t source_key) {

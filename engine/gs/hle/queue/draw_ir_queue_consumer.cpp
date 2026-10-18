@@ -99,7 +99,9 @@ void DrawIrQueueConsumer::OnFrame(const JobRec& vsync) {
     // the last boundary's frame stays LastFrame().
     // The grab lands in the consumer-owned scratch and is published under the
     // lock (a concurrent LastFrameCopy reader never sees a vector mid-write).
-    auto* grab = vsync.arg1 == 2 ? nullptr : &scratch_;
+    const bool wanted = !hooks_.grab_wanted || hooks_.grab_wanted();
+    auto* grab = (vsync.arg1 == 2 || !wanted) ? nullptr : &scratch_;
+    if (!wanted) n_.grabs_skipped++;
     if (hooks_.owned_frame && hooks_.owned_frame(vsync.arg1 == 1, grab)) {
         presentable = true;
     } else {
@@ -115,10 +117,15 @@ void DrawIrQueueConsumer::OnFrame(const JobRec& vsync) {
                          : 0;
         std::lock_guard<std::mutex> lk(frame_mu_);
         std::swap(frame_, scratch_);
+    } else if (!wanted) {
+        // No grab this boundary: the published frame says so (a reader that
+        // wants pixels asked for none).
+        std::lock_guard<std::mutex> lk(frame_mu_);
+        frame_ = DrawPipeline::Frame{};
     }
     n_.frames++;
     if (presentable) n_.presents++;
-    if (!frame_.grabbed) n_.grab_empty++;
+    if (wanted && !frame_.grabbed) n_.grab_empty++;
 }
 
 DrawPipeline::Frame DrawIrQueueConsumer::LastFrameCopy() const {

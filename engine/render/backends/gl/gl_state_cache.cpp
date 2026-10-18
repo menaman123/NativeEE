@@ -41,6 +41,7 @@ void GlStateCache::BindFb(uint32_t target, uint32_t fbo) {
         if (fbo_read_ == fbo) return;
         fbo_read_ = fbo;
     }
+    if (census_) census_->framebuffer_binds++;
     glBindFramebuffer(target, fbo);
 }
 
@@ -63,11 +64,13 @@ void GlStateCache::ActiveTexture(uint32_t unit_enum) {
 
 void GlStateCache::BindTex2D(uint32_t tex) {
     if (active_unit_ < 0) {
+        if (census_) census_->texture_binds++;
         glBindTexture(GL_TEXTURE_2D, tex);
         return;
     }
     if (tex2d_[active_unit_] == tex) return;
     tex2d_[active_unit_] = tex;
+    if (census_) census_->texture_binds++;
     glBindTexture(GL_TEXTURE_2D, tex);
 }
 
@@ -118,6 +121,7 @@ void GlStateCache::DeleteTextures(int n, const uint32_t* ids) {
 void GlStateCache::UseProgram(uint32_t prog) {
     if (program_ == prog) { skips_++; return; }
     program_ = prog;
+    if (census_) census_->program_binds++;
     glUseProgram(prog);
 }
 

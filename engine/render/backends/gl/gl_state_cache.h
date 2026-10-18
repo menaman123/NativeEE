@@ -16,6 +16,8 @@
 #include <utility>
 #include <vector>
 
+#include "engine/render/backend.h"
+
 namespace ps2r {
 namespace render {
 
@@ -56,6 +58,8 @@ public:
     void DeleteVertexArrays(int n, const uint32_t* ids);
 
     uint64_t Skips() const { return skips_; }
+    // The census the issued binds are counted into (null = none).
+    void SetCensus(CallCensus* census) { census_ = census; }
 
 private:
     struct TexParamBucket {
@@ -89,6 +93,7 @@ private:
     int scissor_box_[4] = {0, 0, 0, 0};
     uint32_t vao_ = kUnknown;
     uint64_t skips_ = 0;
+    CallCensus* census_ = nullptr;
 };
 
 }  // namespace render

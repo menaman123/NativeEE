@@ -156,6 +156,29 @@ struct DrawResult {
     Rect write_rect;                 // bbox_all ∩ scissor ∩ target, logical, half-open
 };
 
+// The backend's call census (diagnostics only; never consulted by a draw): one
+// counter per class of API call the backend ISSUED (a call its state shadow
+// skipped is not counted), monotonic over the backend's life. A reader takes two
+// snapshots and subtracts. `readbacks` are the GPU -> host pixel reads (each a
+// full pipeline drain on an immediate-mode API), `copies` the attachment ->
+// texture copies, `uploads` the host -> texture transfers (bytes as handed to the
+// API), `buffer_maps` the vertex-stream maps, `draw_calls` every rasterising call
+// (draws, quads, presents).
+struct CallCensus {
+    uint64_t draw_calls = 0;
+    uint64_t texture_binds = 0;
+    uint64_t program_binds = 0;
+    uint64_t framebuffer_binds = 0;
+    uint64_t readbacks = 0;
+    uint64_t readback_bytes = 0;
+    uint64_t copies = 0;
+    uint64_t copy_bytes = 0;
+    uint64_t uploads = 0;
+    uint64_t upload_bytes = 0;
+    uint64_t buffer_maps = 0;
+    uint64_t clears = 0;
+};
+
 // Surface preserves retained callers' sampling. Owned presentation declares
 // its window filter explicitly; this never changes a draw texture's sampler.
 enum class PresentationFilter : uint8_t { Surface, Nearest, Linear };
@@ -219,6 +242,8 @@ public:
     // draw, scanout or mirror input. A backend without a window reads false.
     virtual void ArmPresentCapture(bool) {}
     virtual bool ReadPresented(std::vector<uint8_t>*, int*, int*) { return false; }
+    // The call census (diagnostics; null = the backend keeps none).
+    virtual const CallCensus* Census() const { return nullptr; }
     virtual void BeginFrame() = 0;
     virtual void EndFrame() = 0;
 };

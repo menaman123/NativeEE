@@ -134,6 +134,8 @@ public:
     const TextureFilterCensus& FilterCensus() const { return filter_census_; }
     TextureFilterCensus& FilterCensus() { return filter_census_; }
     const GlSurface* Surface(SurfaceId id) const;
+    const CallCensus* Census() const override;
+    CallCensus& CensusMut() { return census_; }
     // Default-framebuffer size Present falls back to when ScanoutDesc.dst is empty.
     void SetWindowSize(int w, int h);
 
@@ -184,6 +186,7 @@ private:
     int max_anisotropy_ = 1;
     std::shared_ptr<const TextureFilterSelection> texture_filter_;
     TextureFilterCensus filter_census_;
+    mutable CallCensus census_;
 };
 
 }  // namespace render

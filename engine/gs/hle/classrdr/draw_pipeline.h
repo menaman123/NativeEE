@@ -204,7 +204,13 @@ public:
 private:
     DrawRouteTrace route_trace_;
     TargetDump target_dump_;
+    static uint64_t NowNs();
     void FrameEndGrab(bool ee_frame_end, Frame* out);
+    void CloseFrameTrace();
+    uint64_t frame_end_t0_ = 0;                 // the frame end's cost bracket (route trace)
+    render::CallCensus frame_end_census_;
+    uint64_t frame_start_t0_ = 0;               // the whole frame's bracket (previous frame end -> this one)
+    render::CallCensus frame_start_census_;
     void SameBufferPreDrawFlush(const DrawIr& ir);
     void MarkCompositeConsumption(const DrawIr& ir);
 
