@@ -195,7 +195,7 @@ static void TestAttackMonotonic() {
     float l, r;
     uint16_t prev = 0;
     bool rose = false;
-    for (int i = 0; i < 2000; i++) {
+    for (int i = 0; i < 2000 && v.Phase() == ps2r::sound::EnvPhase::Attack; i++) {
         v.Step(RamData(ram), l, r);
         const uint16_t e = v.Envx();
         CHECK(e >= prev);
@@ -239,13 +239,14 @@ static void TestRekeyRestarts() {
     CHECK(v.Keyed());
 }
 
-// 11. Volume gains scale output; sweep mode (bit15) keeps the current gain.
+// 11. Volume gains scale output (0x3FFF = full scale; 0x7FFF is the phase-inverted near-zero of the
+// signed register); a sweep write (bit15) ramps from the current gain, never jumps.
 static void TestVolumeMapping() {
     TestRam ram;
     PutBlock(ram, 0x8000, 7, 0);
     Voice v;
     ProgramBasic(v, 0x8000);
-    v.SetVolL(0x7FFF);                 // full
+    v.SetVolL(0x3FFF);                 // full
     v.SetVolR(0x0000);                 // silent
     v.KeyOn();
     float l, r;
@@ -276,10 +277,10 @@ static void TestSilenceHardStop() {
     CHECK(l == 0.0f && r == 0.0f);
 }
 
-// VOLX readback scale: a fixed volume write F presents as the
-// hardware current level 2*F (clamped to 0x7FFF). STREAM.IRX's music ramp
-// stepper (module FUN_00010d28) compares VOLX against target*2 — this scale
-// is what lets the ramp converge and background music become audible.
+// VOLX readback: a fixed volume write F presents as the hardware's current level,
+// the signed 16-bit value F << 1 (0x3FFF -> 0x7FFE; 0x7FFF -> 0xFFFE, the inverted
+// phase one step below zero). STREAM.IRX's music ramp stepper (module FUN_00010d28)
+// compares VOLX against target*2 — this scale is what lets the ramp converge.
 static void TestVolxReadbackScale() {
     Voice v;
     v.SetVolL(0);
@@ -289,8 +290,9 @@ static void TestVolxReadbackScale() {
     CHECK(v.VolxL() == 0x2E62 * 2);          // readback = 2x fixed value
     v.SetVolL(0x3FFF);                       // max game volume
     CHECK(v.VolxL() == 0x3FFF * 2);
-    v.SetVolL(0x7FFF);                       // full-scale fixed write clamps
-    CHECK(v.VolxL() == 0x7FFF);
+    v.SetVolL(0x7FFF);                       // bit 14 set: negative (phase-inverted) level -2
+    CHECK(v.VolxL() == 0xFFFE);
+    CHECK(Voice::FixedVolumeLevel(0x7FFF) == -2);
 }
 
 // Volume sweep (bit15 register): an upward sweep (the module's

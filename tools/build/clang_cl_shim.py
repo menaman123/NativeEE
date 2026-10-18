@@ -43,7 +43,11 @@ import subprocess
 import sys
 import tempfile
 
-ACCEPTED_F_CLANG_CL = {"-fno-strict-aliasing", "-fstrict-aliasing", "-fwrapv", "-fcolor-diagnostics",
+# Flags clang-cl's own front end accepts RAW on every LLVM release in use. -fwrapv and -fno-strict-aliasing
+# are NOT here on purpose: clang-cl 18 (Ubuntu 24.04; the LLVM Visual Studio 2022 bundles) rejects them raw
+# ("unknown argument ignored in clang-cl" -- fatal under -Werror) while clang 21+ accepts them; /clang:<flag> is
+# valid on every release, so they take the verbatim route below (ctest PlatformClangClShimContract on both).
+ACCEPTED_F_CLANG_CL = {"-fstrict-aliasing", "-fcolor-diagnostics",
                        "-fno-color-diagnostics", "-fsanitize", "-fno-sanitize", "-fdiagnostics-color",
                        "-fms-compatibility", "-fms-extensions", "-fstandalone-debug", "-flto", "-fprofile",
                        "-fsplit-lto-unit", "-fdiagnostics-absolute-paths", "-fdiagnostics-parseable-fixits",
@@ -192,7 +196,8 @@ def selftest():
     check("-Wextra" in m and "-Werror" in m and "-Wno-unused-variable" in m, "-Wextra/-Werror/-Wno-* pass through")
     check("/O2" in m and "-O2" not in m, "-O2 -> /O2")
     check("/clang:-ffp-contract=off" in m, "-ffp-contract=off -> /clang:-ffp-contract=off (the FP contract is kept, not dropped)")
-    check("-fno-strict-aliasing" in m and "-fwrapv" in m, "-fno-strict-aliasing / -fwrapv accepted by clang-cl: unchanged")
+    check("/clang:-fno-strict-aliasing" in m and "/clang:-fwrapv" in m and "-fwrapv" not in m,
+          "-fno-strict-aliasing / -fwrapv -> /clang: (clang-cl 18 rejects them raw under -Werror; 21 accepts; /clang: is valid on both)")
     check(m[-7:] == ["/showIncludes", "/Fo", "x.obj", "/c", "x.cpp", "-DFOO=1", "-Ipath"], "cl-style and -D/-I arguments untouched, order kept")
     check(map_clang_cl(["-std=c++17"]) == ["/std:c++17"], "-std=c++17 -> /std:c++17")
     check(map_clang_cl(["-include", "pch.h"]) == ["/FI", "pch.h"] and map_clang_cl(["-includepch.h"]) == ["/FI", "pch.h"], "-include -> /FI")

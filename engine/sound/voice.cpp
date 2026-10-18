@@ -1,91 +1,96 @@
 #include "engine/sound/voice.h"
 
-#include <cmath>
+#include <algorithm>
 
 namespace ps2r::sound {
 
 namespace {
 
-float AttackStep(uint32_t rate7) {
-    if (rate7 == 0) return 1.0f;
-    const float samples = 4.0f * std::pow(2.0f, static_cast<float>(rate7) / 4.0f);
-    return 1.0f / samples;
-}
+// ADSR1 / ADSR2 bit fields (the SPU2 register layout).
+int AttackMode(uint16_t a1) { return (a1 >> 15) & 1; }
+int AttackShift(uint16_t a1) { return (a1 >> 10) & 0x1F; }
+int AttackStep(uint16_t a1) { return (a1 >> 8) & 0x3; }
+int DecayShift(uint16_t a1) { return (a1 >> 4) & 0xF; }
+int SustainLevel(uint16_t a1) { return a1 & 0xF; }
+int SustainMode(uint16_t a2) { return (a2 >> 15) & 1; }
+int SustainDecrease(uint16_t a2) { return (a2 >> 14) & 1; }
+int SustainShift(uint16_t a2) { return (a2 >> 8) & 0x1F; }
+int SustainStep(uint16_t a2) { return (a2 >> 6) & 0x3; }
+int ReleaseMode(uint16_t a2) { return (a2 >> 5) & 1; }
+int ReleaseShift(uint16_t a2) { return a2 & 0x1F; }
 
-float DecayStep(uint32_t rate4) {
-    if (rate4 == 0) return 1.0f;
-    const float samples = 4.0f * std::pow(2.0f, static_cast<float>(rate4));
-    return 1.0f / samples;
-}
-
-float ReleaseStep(uint32_t rate5) {
-    if (rate5 == 0) return 0.25f;
-    const float samples = 4.0f * std::pow(2.0f, static_cast<float>(rate5) / 2.0f);
-    return 1.0f / samples;
-}
+constexpr uint16_t kPitchMax = 0x3FFF;
 
 }  // namespace
 
-float Voice::VolumeGain(uint16_t reg, float current) {
-    if (reg & 0x8000) return current;
-    return static_cast<float>(reg & 0x7FFF) / 32767.0f;
-}
-
-void Voice::SetVolL(uint16_t v) {
-    if (v & 0x8000) {
-        swp_l_ = v;
-        return;
+int32_t Voice::RateStep(bool exponential, bool decrease, int shift, int step, int32_t level, uint32_t& counter,
+                        int32_t floor, int32_t ceiling) {
+    uint32_t counter_inc = 0x8000u >> std::max(0, shift - 11);
+    int32_t level_inc = step * (1 << std::max(0, 11 - shift));
+    if (exponential) {
+        if (!decrease && level > 0x6000) counter_inc >>= 2;
+        if (decrease) level_inc = static_cast<int16_t>((level_inc * level) >> 15);
     }
-    swp_l_ = 0;
-    vol_l_ = VolumeGain(v, vol_l_);
-}
-
-void Voice::SetVolR(uint16_t v) {
-    if (v & 0x8000) {
-        swp_r_ = v;
-        return;
+    if (counter_inc == 0) counter_inc = 1;
+    counter += counter_inc;
+    if (counter >= 0x8000u) {
+        counter = 0;
+        level = std::clamp(level + level_inc, floor, ceiling);
     }
-    swp_r_ = 0;
-    vol_r_ = VolumeGain(v, vol_r_);
+    return level;
 }
 
-uint16_t Voice::VolxL() const {
-    const float l = vol_l_ * 65534.0f;
-    return static_cast<uint16_t>(l >= 32767.0f ? 32767.0f : l);
+void Voice::SetLsax(uint32_t byte_addr) {
+    lsax_ = byte_addr & ~0xFu;
+    loop_mode_ = true;
 }
 
-uint16_t Voice::VolxR() const {
-    const float r = vol_r_ * 65534.0f;
-    return static_cast<uint16_t>(r >= 32767.0f ? 32767.0f : r);
+void Voice::SetVol(int ch, uint16_t v) {
+    vol_reg_[ch] = v;
+    if (!(v & 0x8000)) vol_[ch] = FixedVolumeLevel(v);
 }
 
-void Voice::SetAdsr1(uint16_t v) {
-    attack_step_ = AttackStep((v >> 8) & 0x7F);
-    decay_step_ = DecayStep((v >> 4) & 0x0F);
-    sustain_level_ = static_cast<float>(v & 0x0F) / 15.0f;
-}
-
-void Voice::SetAdsr2(uint16_t v) { release_step_ = ReleaseStep(v & 0x1F); }
-
-void Voice::AdvanceSweeps() {
-    if (swp_l_ == 0 && swp_r_ == 0) return;
-    auto step_one = [](uint16_t reg, float g) -> float {
-        const float d = 0.5f * AttackStep(reg & 0x7F);
-        if (reg & 0x2000) {   // decrease toward the floor
-            g -= d;
-            return g < 0.0f ? 0.0f : g;
+void Voice::AdvanceSweep(int ch) {
+    const uint16_t reg = vol_reg_[ch];
+    if (!(reg & 0x8000)) return;
+    const bool exp = (reg & 0x4000) != 0;
+    const bool decr = (reg & 0x2000) != 0;
+    const bool neg = (reg & 0x1000) != 0;   // the negative phase: the ramp runs in the inverted half
+    const int shift = (reg >> 2) & 0x1F;
+    const int step_field = reg & 0x3;
+    int32_t step = 7 - step_field;
+    if (decr) step = ~step;
+    uint32_t counter_inc = 0x8000u >> std::max(0, shift - 11);
+    int32_t level_inc = step * (1 << std::max(0, 11 - shift));
+    int32_t level = vol_[ch];
+    if (exp) {
+        if (!decr && level > 0x6000) counter_inc >>= 2;
+        if (decr) level_inc = static_cast<int16_t>((level_inc * level) >> 15);
+    }
+    // The all-ones rate (shift 0x1F, step 3) is the one genuinely infinite hold.
+    if (!(step_field == 3 && shift == 0x1F) && counter_inc == 0) counter_inc = 1;
+    if (!(exp && decr) && neg) level_inc = -level_inc;
+    vol_counter_[ch] += counter_inc;
+    if (vol_counter_[ch] < 0x8000u) return;
+    vol_counter_[ch] = 0;
+    int32_t lo = INT16_MIN, hi = INT16_MAX;
+    if (decr) {
+        lo = neg ? INT16_MIN : 0;
+        hi = neg ? 0 : INT16_MAX;
+        if (exp) {
+            lo = 0;
+            hi = INT16_MAX;
         }
-        g += d;               // increase toward the ceiling (2x fixed full scale)
-        return g > 0.5f ? 0.5f : g;
-    };
-    if (swp_l_) vol_l_ = step_one(swp_l_, vol_l_);
-    if (swp_r_) vol_r_ = step_one(swp_r_, vol_r_);
+    }
+    vol_[ch] = std::clamp(level + level_inc, lo, hi);
 }
 
 void Voice::KeyOn(const uint8_t* spu_ram) {
     nax_ = ssa_;
     phase_ = EnvPhase::Attack;
-    env_ = 0.0f;
+    env_ = 0;
+    env_counter_ = 0;
+    loop_mode_ = false;
     hist_ = VagDecoder::History{};
     block_valid_ = false;
     sample_idx_ = 0;
@@ -95,28 +100,37 @@ void Voice::KeyOn(const uint8_t* spu_ram) {
 }
 
 void Voice::KeyOff() {
-    if (phase_ != EnvPhase::Off) phase_ = EnvPhase::Release;
+    if (phase_ == EnvPhase::Off) return;
+    phase_ = EnvPhase::Release;
+    env_counter_ = 0;
+}
+
+void Voice::Stop() {
+    phase_ = EnvPhase::Off;
+    env_ = 0;
 }
 
 void Voice::Silence() {
-    phase_ = EnvPhase::Off;
-    env_ = 0.0f;
+    Stop();
     block_valid_ = false;
 }
 
 void Voice::Export(VoiceState& out) const {
-    out.vol_l = vol_l_;
-    out.vol_r = vol_r_;
+    out.vol_l = static_cast<float>(vol_[0]) / 32768.0f;
+    out.vol_r = static_cast<float>(vol_[1]) / 32768.0f;
     out.pitch = pitch_;
     out.ssa = ssa_;
     out.lsax = lsax_;
     out.nax = nax_;
     out.phase = static_cast<uint8_t>(phase_);
-    out.env = env_;
-    out.attack_step = attack_step_;
-    out.decay_step = decay_step_;
-    out.sustain_level = sustain_level_;
-    out.release_step = release_step_;
+    out.env = static_cast<float>(env_) / 32767.0f;
+    out.adsr1 = adsr1_;
+    out.adsr2 = adsr2_;
+    out.vol_reg_l = vol_reg_[0];
+    out.vol_reg_r = vol_reg_[1];
+    out.env_counter = env_counter_;
+    out.loop_mode = loop_mode_ ? 1 : 0;
+    out.reserved[0] = out.reserved[1] = out.reserved[2] = 0;
     out.hist_h1 = hist_.h1;
     out.hist_h2 = hist_.h2;
     for (int i = 0; i < VagDecoder::kBlockSamples; i++) out.block[i] = block_[i];
@@ -128,18 +142,21 @@ void Voice::Export(VoiceState& out) const {
 }
 
 void Voice::Import(const VoiceState& in) {
-    vol_l_ = in.vol_l;
-    vol_r_ = in.vol_r;
+    vol_[0] = std::clamp(static_cast<int32_t>(in.vol_l * 32768.0f), static_cast<int32_t>(INT16_MIN), static_cast<int32_t>(INT16_MAX));
+    vol_[1] = std::clamp(static_cast<int32_t>(in.vol_r * 32768.0f), static_cast<int32_t>(INT16_MIN), static_cast<int32_t>(INT16_MAX));
+    vol_counter_[0] = vol_counter_[1] = 0;
     pitch_ = in.pitch;
     ssa_ = in.ssa;
     lsax_ = in.lsax;
     nax_ = in.nax;
     phase_ = in.phase <= static_cast<uint8_t>(EnvPhase::Release) ? static_cast<EnvPhase>(in.phase) : EnvPhase::Off;
-    env_ = in.env;
-    attack_step_ = in.attack_step;
-    decay_step_ = in.decay_step;
-    sustain_level_ = in.sustain_level;
-    release_step_ = in.release_step;
+    env_ = std::clamp(static_cast<int32_t>(in.env * 32767.0f), 0, kEnvMax);
+    adsr1_ = in.adsr1;
+    adsr2_ = in.adsr2;
+    vol_reg_[0] = in.vol_reg_l;
+    vol_reg_[1] = in.vol_reg_r;
+    env_counter_ = in.env_counter < 0x8000u ? in.env_counter : 0;
+    loop_mode_ = in.loop_mode != 0;
     hist_.h1 = in.hist_h1;
     hist_.h2 = in.hist_h2;
     for (int i = 0; i < VagDecoder::kBlockSamples; i++) block_[i] = in.block[i];
@@ -156,33 +173,38 @@ void Voice::LoadBlock(const uint8_t* spu_ram) {
     block_flags_ = VagDecoder::DecodeBlock(spu_ram + nax_, hist_, block_);
     block_valid_ = true;
     sample_idx_ = 0;
-    if (block_flags_ & VagDecoder::kFlagLoopStart) lsax_ = nax_;
+    if ((block_flags_ & VagDecoder::kFlagLoopStart) && !loop_mode_) lsax_ = nax_;
 }
 
 void Voice::AdvanceEnvelope() {
     switch (phase_) {
         case EnvPhase::Attack:
-            env_ += attack_step_;
-            if (env_ >= 1.0f) {
-                env_ = 1.0f;
-                phase_ = (sustain_level_ >= 1.0f) ? EnvPhase::Sustain : EnvPhase::Decay;
+            env_ = RateStep(AttackMode(adsr1_) != 0, false, AttackShift(adsr1_), 7 - AttackStep(adsr1_), env_, env_counter_, 0, kEnvMax);
+            if (env_ >= kEnvMax) {
+                env_ = kEnvMax;
+                phase_ = EnvPhase::Decay;
+                env_counter_ = 0;
             }
             break;
-        case EnvPhase::Decay:
-            env_ -= decay_step_;
-            if (env_ <= sustain_level_) {
-                env_ = sustain_level_;
+        case EnvPhase::Decay: {
+            const int32_t target = (SustainLevel(adsr1_) + 1) << 11;
+            env_ = RateStep(true, true, DecayShift(adsr1_), -8, env_, env_counter_, 0, kEnvMax);
+            if (env_ <= target) {
                 phase_ = EnvPhase::Sustain;
+                env_counter_ = 0;
             }
             break;
-        case EnvPhase::Sustain:
+        }
+        case EnvPhase::Sustain: {
+            const bool decr = SustainDecrease(adsr2_) != 0;
+            const int step = decr ? ~(7 - SustainStep(adsr2_)) : 7 - SustainStep(adsr2_);
+            env_ = RateStep(SustainMode(adsr2_) != 0, decr, SustainShift(adsr2_), step, env_, env_counter_, 0, kEnvMax);
+            if (env_ <= 0) Stop();   // a sustain that decays to silence ends the voice
             break;
+        }
         case EnvPhase::Release:
-            env_ -= release_step_;
-            if (env_ <= 0.0f) {
-                env_ = 0.0f;
-                phase_ = EnvPhase::Off;
-            }
+            env_ = RateStep(ReleaseMode(adsr2_) != 0, true, ReleaseShift(adsr2_), -8, env_, env_counter_, 0, kEnvMax);
+            if (env_ <= 0) Stop();
             break;
         case EnvPhase::Off:
             break;
@@ -195,7 +217,7 @@ bool Voice::Step(const uint8_t* spu_ram, float& out_l, float& out_r) {
     if (phase_ == EnvPhase::Off) return false;
     bool endx = false;
     if (!block_valid_) LoadBlock(spu_ram);
-    frac_ += pitch_;
+    frac_ += std::min<uint32_t>(pitch_, kPitchMax);
     while (frac_ >= 0x1000) {
         frac_ -= 0x1000;
         prev_sample_ = block_[sample_idx_];
@@ -203,10 +225,12 @@ bool Voice::Step(const uint8_t* spu_ram, float& out_l, float& out_r) {
         if (sample_idx_ >= VagDecoder::kBlockSamples) {
             if (block_flags_ & VagDecoder::kFlagLoopEnd) {
                 endx = true;
+                last_end_repeat_ = (block_flags_ & VagDecoder::kFlagLoopRepeat) != 0;
                 nax_ = lsax_;
-                if (!(block_flags_ & VagDecoder::kFlagLoopRepeat)) {
-                    env_ = 0.0f;
-                    if (phase_ != EnvPhase::Release) phase_ = EnvPhase::Sustain;
+                if (!last_end_repeat_) {
+                    Stop();
+                    LoadBlock(spu_ram);
+                    return endx;
                 }
             } else {
                 nax_ += VagDecoder::kBlockBytes;
@@ -217,10 +241,11 @@ bool Voice::Step(const uint8_t* spu_ram, float& out_l, float& out_r) {
     const int32_t cur = block_[sample_idx_];
     const int32_t s = prev_sample_ + (((cur - prev_sample_) * static_cast<int32_t>(frac_)) >> 12);
     AdvanceEnvelope();
-    AdvanceSweeps();
-    const float sf = static_cast<float>(s) / 32768.0f * env_;
-    out_l = sf * vol_l_;
-    out_r = sf * vol_r_;
+    AdvanceSweep(0);
+    AdvanceSweep(1);
+    const float sf = static_cast<float>(s) / 32768.0f * (static_cast<float>(env_) / 32768.0f);
+    out_l = sf * (static_cast<float>(vol_[0]) / 32768.0f);
+    out_r = sf * (static_cast<float>(vol_[1]) / 32768.0f);
     return endx;
 }
 

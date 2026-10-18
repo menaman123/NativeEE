@@ -25,11 +25,26 @@
 //                             5 ENVX (read), 6 VOLXL, 7 VOLXR (read);
 //                             low byte = voice<<1 | core.
 //   core params   (bit 7 set): 9 MVOLL, 0xA MVOLR, 0xB EVOLL, 0xC EVOLR,
-//                             0xF BVOLL, 0x10 BVOLR (stored; MVOL audible).
+//                             0xD AVOLL, 0xE AVOLR, 0xF BVOLL, 0x10 BVOLR.
+//   MVOL is a volume register like a voice's (bit 15 clear: the 15 bits are the
+//   level << 1 as a signed 16-bit value, 0x3FFF = full scale; bit 15 set: a
+//   sweep on the SPU2 rate engine). EVOL / AVOL / BVOL are plain signed 16-bit
+//   gains over 0x8000 (0x7FFF = full scale). Routing follows the hardware: core
+//   0's mix (its voices through their VMIXL/VMIXR dry gates, the external audio
+//   input at BVOL) is clamped, scaled by MVOL0, fed to core 1 as its external
+//   input at AVOL1, summed with core 1's gated voices, clamped, scaled by MVOL1,
+//   then the host master gain.
 //   addresses     (entry>>8): 0x1D EEA (ignored), 0x20 SSA, 0x21 LSAX,
 //                             0x22 NAX (read).
-//   switches      (entry>>8): 0x15 KON, 0x16 KOFF, 0x17 ENDX (read latch;
-//                             any write clears the core's latch).
+//   switches      (entry>>8): 0x13 PMON, 0x14 NON, 0x15 KON, 0x16 KOFF,
+//                             0x17 ENDX (read latch; any write clears the
+//                             core's latch), 0x18 VMIXL, 0x19 VMIXEL, 0x1A
+//                             VMIXR, 0x1B VMIXER. Every switch but ENDX reads
+//                             back its last written value (the register file);
+//                             VMIXL/VMIXR gate each voice's dry output (the
+//                             SPU2's per-voice mix enables; all on after SdInit
+//                             as libsd leaves them); PMON / NON / the wet gates
+//                             are stored, not yet acted on.
 //
 // A key-on publishes its readbacks eagerly (NAX = the SSA shadow, ENVX = the
 // first attack step) so a poll between the KON and the next pump sees the
@@ -47,6 +62,7 @@ namespace ps2r::sound {
 class FmvPcmInput;
 class PcmSource;
 class VoiceSource;
+class VoiceTrace;
 
 class SpuCore {
 public:
@@ -55,8 +71,16 @@ public:
     static constexpr int kVoices = kCores * kVoicesPerCore;
     static constexpr int kCoreParams = 0x20;
     static constexpr uint32_t kSilenceBlockAddr = 0x5000;   // libsd's silence block
-    static constexpr int kBvoll = 0xF;    // core-attribute shadow index: external input volume L
+    static constexpr int kMvoll = 0x9;    // core-parameter shadow indices (the entry>>8 codes)
+    static constexpr int kMvolr = 0xA;
+    static constexpr int kEvoll = 0xB;
+    static constexpr int kEvolr = 0xC;
+    static constexpr int kAvoll = 0xD;    // core 1's external (core 0) input volume
+    static constexpr int kAvolr = 0xE;
+    static constexpr int kBvoll = 0xF;    // the sound-data (external audio) input volume L
     static constexpr int kBvolr = 0x10;   // external input volume R
+    static constexpr int kSwitchFirst = 0x13, kSwitchLast = 0x1C;
+    static constexpr int kSwVmixl = 0x18, kSwVmixel = 0x19, kSwVmixr = 0x1A, kSwVmixer = 0x1B;
 
     SpuCore();
 
@@ -97,11 +121,16 @@ public:
     // Attach / detach the FMV PCM source (nullptr = none; the default).
     void SetFmvInput(FmvPcmInput* input) { fmv_input_ = input; }
     FmvPcmInput* FmvInput() const { return fmv_input_; }
-    // The BVOLL/BVOLR fixed-volume gain: bit 15 (a sweep mode, never used for
-    // BVOL by the titles this models) falls back to unity, else the 15-bit
-    // linear value over 0x7FFF.
-    static float ExternalInputGain(uint32_t bvol_raw) {
-        return (bvol_raw & 0x8000) ? 1.0f : static_cast<float>(bvol_raw & 0x7FFF) / 32767.0f;
+    // The EVOL / AVOL / BVOL gain: the register is a signed 16-bit level over
+    // 0x8000 (0x7FFF = full scale, 0x8000.. = phase inverted), as the SPU2 reads it.
+    static float ExternalInputGain(uint32_t raw) {
+        return static_cast<float>(static_cast<int16_t>(static_cast<uint16_t>(raw))) / 32768.0f;
+    }
+    // The MVOL fixed level: the 15-bit field << 1 as a signed 16-bit value over 0x8000.
+    static float MasterRegisterGain(uint32_t raw) { return static_cast<float>(Voice::FixedVolumeLevel(static_cast<uint16_t>(raw))) / 32768.0f; }
+    // A switch's last written value (the register file); ENDX reads its latch.
+    uint32_t SwitchShadow(int core, int func) const {
+        return (func >= kSwitchFirst && func <= kSwitchLast) ? switch_shadow_[core & 1][func - kSwitchFirst].load(std::memory_order_relaxed) : 0;
     }
     float FmvGainL() const { return ExternalInputGain(core_param_shadow_[0][kBvoll].load(std::memory_order_relaxed)); }
     float FmvGainR() const { return ExternalInputGain(core_param_shadow_[0][kBvolr].load(std::memory_order_relaxed)); }
@@ -119,6 +148,14 @@ public:
     // Apply every queued command to the voices without mixing (the savestate
     // capture: the file carries what the next pump would have applied).
     void ApplyQueued();
+    // The passive event record (voice_trace.h); nullptr = none (the default). The
+    // owner keeps the trace alive while attached; the consumer thread writes it.
+    void SetTrace(VoiceTrace* trace) { trace_ = trace; }
+    VoiceTrace* Trace() const { return trace_; }
+    // 48 kHz frames mixed since construction (the trace's clock).
+    uint64_t FramesMixed() const { return frames_mixed_; }
+    // Producer side: an unmodelled libsd service, recorded by the trace in ring order.
+    void NoteUnmodelled(uint32_t ordinal, uint32_t arg) { ring_.Push(SoundCommand{SoundOp::TraceNote, ordinal, arg}); }
 
     uint8_t* SpuRam() { return spu_ram_.get(); }
     const uint8_t* SpuRam() const { return spu_ram_.get(); }
@@ -171,12 +208,15 @@ private:
     static uint32_t ReadbackNax(uint64_t w) { return static_cast<uint32_t>(w); }
 
     void ApplyCommand(const SoundCommand& cmd);
+    void ResetSwitchShadows();
+    void ResetRoutingDefaults();
+    void StepMasterSweeps();
     void PublishKeyOn(int vi);
     void ReleaseKeyOnHold(int vi);
     uint32_t EagerEnvx0(int vi) const;
 
     std::unique_ptr<uint8_t[]> spu_ram_;
-    CommandRing ring_;
+    mutable CommandRing ring_;   // mutable: the const readback paths record their reads for the trace
     Voice voices_[kVoices];
     std::atomic<uint64_t> readback_[kVoices] = {};
     std::atomic<uint32_t> volx_l_[kVoices] = {};
@@ -187,6 +227,11 @@ private:
     std::atomic<float> mvol_l_[kCores] = {};
     std::atomic<float> mvol_r_[kCores] = {};
     std::atomic<uint32_t> core_param_shadow_[kCores][kCoreParams] = {};
+    std::atomic<uint32_t> switch_shadow_[kCores][kSwitchLast - kSwitchFirst + 1] = {};
+    // The MVOL sweep state (consumer side): the live signed level per core / channel and its rate counter;
+    // a fixed write lands through mvol_l_/mvol_r_ (the gains the codec stores) and resets the sweep.
+    int32_t mvol_level_[kCores][2] = {};
+    uint32_t mvol_counter_[kCores][2] = {};
     std::atomic<uint32_t> handler_addr_[kCores] = {};
     std::atomic<uint32_t> handler_arg_[kCores] = {};
     std::atomic<float> master_{1.0f};
@@ -201,6 +246,11 @@ private:
     std::atomic<uint64_t> bvol_sets_nonzero_{0};
     std::atomic<uint32_t> bvol_peak_{0};
     uint64_t mix_calls_ = 0; // execution census, deliberately not snapshot state
+    VoiceTrace* trace_ = nullptr;
+    uint64_t frames_mixed_ = 0;
+    uint64_t trace_level_due_ = 0;
+    double trace_sq_l_[kVoices] = {};
+    double trace_sq_r_[kVoices] = {};
 };
 
 }  // namespace ps2r::sound

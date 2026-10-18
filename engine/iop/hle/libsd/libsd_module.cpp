@@ -36,14 +36,14 @@ void LibsdModule::Call(int ordinal, IopContext& ctx) {
     case 7:  core_.SetCoreAttr(a0, a1); break;               // SdSetCoreAttr(entry, value) -> 0
     case 8:  ProcBatch(a0, a1, a2); break;                   // SdProcBatch(batch, rets, num) -> 0
     case 9:  VoiceTrans(ctx); return;                        // SdVoiceTrans -> bytes moved
-    case 10: break;                                          // SdBlockTrans: no autodma model -> 0
+    case 10: core_.NoteUnmodelled(10, a0); break;            // SdBlockTrans: no autodma model -> 0
     case 11:                                                 // SdVoiceTransStatus(chan, flag) -> 1 idle
         RetireTransCompletion(static_cast<int>(a0 & 1));     // the poll delivers a pending completion
         v0 = static_cast<uint32_t>(core_.VoiceTransStatus(static_cast<int>(a0 & 1), static_cast<int>(a1)));
         break;
     case 12: break;                                          // SdBlockTransStatus -> 0 idle
-    case 13: break;                                          // SdSetEffectAttr -> 0 (no reverb)
-    case 14: break;                                          // SdClearEffectWorkArea -> 0
+    case 13: core_.NoteUnmodelled(13, a0); break;            // SdSetEffectAttr -> 0 (no reverb)
+    case 14: core_.NoteUnmodelled(14, a0); break;            // SdClearEffectWorkArea -> 0
     case 15:                                                 // SdSetTransIntrHandler(chan, fn, arg) -> 0
         core_.SetTransIntrHandler(static_cast<int>(a0 & 1), a1, a2);
         break;

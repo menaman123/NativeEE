@@ -24,6 +24,10 @@ enum class SoundOp : uint8_t {
     Kon,          // core in entry, voice mask in value
     Koff,         // core in entry, voice mask in value
     SilenceAll,   // SdInit / savestate restore
+    TraceSwitch,  // trace only: core|func<<8 in entry, value (a switch write the model does not act on)
+    TraceCoreAttr,// trace only: core|func<<8 in entry, value
+    TraceTransfer,// trace only: spu_addr in entry, size|mode<<24 in value
+    TraceNote,    // trace only: an unmodelled libsd service (entry = its ordinal, value = its first argument)
 };
 
 struct SoundCommand {

@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "tests/sound/mixer_voice_source.h"
 // MixerTickPump / SpuCoreSelftest / SoundRing: the tick-clocked pump over the
 // SPU2 core. Pins (1) the silence window: six 800-frame pumps of an idle core
@@ -56,6 +57,8 @@ static void KeyTestTone(SpuCore& core, uint32_t tone_addr) {
     core.SetParam(0x400, 0x0000);      // instant release
     core.SetParam(0x980, 0x3FFF);      // MVOLL core 0
     core.SetParam(0xA80, 0x3FFF);      // MVOLR core 0
+    core.SetParam(0x981, 0x3FFF);      // MVOLL core 1 (core 0 reaches the output through core 1)
+    core.SetParam(0xA81, 0x3FFF);      // MVOLR core 1
     core.SetSwitch(0x1500, 0x1);       // KON voice 0
 }
 
@@ -89,7 +92,7 @@ static void TestSelftestToneIsAudible() {
     KeyTestTone(core, 0x6000);
     // The eager publish: NAX reads SSA and ENVX the first attack step before any pump.
     CHECK(core.GetAddr(0x2200) == 0x6000);
-    CHECK(core.GetParam(0x500) == 0x1FFF);   // attack rate 0: the first step is 1/4 of full scale
+    CHECK(core.GetParam(0x500) == 0x3800);   // attack shift 0 step 0: the first rate step is 7 << 11
     CHECK(core.KonCount() == 1);
     std::vector<uint64_t> windows;
     AudioHasher hasher([&](uint64_t, uint64_t h) { windows.push_back(h); });
@@ -176,9 +179,15 @@ static void TestOwnedVoicePrecedesRetainedVoice() {
     mixer.SetVoiceSource(&source);
     const auto cursor = core.VoiceAt(0).Nax();
     mixer.Pump(1);
-    // Ordered core gains, then Movie input, then one master/clamp. The owned
-    // core-1 channel works even though that retained voice was never keyed.
-    CHECK(mixer.Output()[0] == 1.0f && mixer.Output()[1] == -0.875f);
+    // The SPU2 chain: core 0 (voice 0 + the movie input at BVOL) clamped, MVOL0, into
+    // core 1 at AVOL1 (full scale after SdInit), + voice 24, clamped, MVOL1, master. The
+    // owned core-1 channel works even though that retained voice was never keyed.
+    const float bvol = SpuCore::ExternalInputGain(0x7fff), avol = SpuCore::ExternalInputGain(0x7FFF);
+    const float c0l = std::clamp(0.75f + 0.5f * bvol, -1.0f, 1.0f) * 0.5f * avol;
+    const float c0r = std::clamp(-0.25f + -0.5f * bvol, -1.0f, 1.0f) * 0.75f * avol;
+    const float exp_l = std::clamp(std::clamp(-0.5f + c0l, -1.0f, 1.0f) * 0.25f * 2.0f, -1.0f, 1.0f);
+    const float exp_r = std::clamp(std::clamp(0.5f + c0r, -1.0f, 1.0f) * 0.5f * 2.0f, -1.0f, 1.0f);
+    CHECK(mixer.Output()[0] == exp_l && mixer.Output()[1] == exp_r);
     CHECK(source.ticks == 1 && source.owned == 2 && movie.Consumed() == 1);
     CHECK(core.VoiceAt(0).Nax() == cursor);
     source.silent = true;

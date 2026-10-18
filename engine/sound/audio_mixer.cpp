@@ -55,7 +55,10 @@ void AudioMixer::MixInto(float* stereo, int frames) {
         count_.movie_frames += movie_frames;
         if (movie_gain[0] != 0 || movie_gain[1] != 0) count_.audible_movie_frames += movie_frames;
         for (int frame = 0; frame < n; ++frame) {
-            float left = 0, right = 0;
+            // The SPU2 chain (SpuCore::MixInto, bit-exact): group 0 = core 0 (+ the movie input),
+            // clamped and scaled by its gain, enters core 1 as its external input at full scale;
+            // group 1's voices add, the sum is clamped and scaled by core 1's gain, then the master.
+            float core_l[kGroups] = {0, 0}, core_r[kGroups] = {0, 0};
             for (uint32_t channel = 0; channel < kGroups * kChannelsPerGroup; ++channel) {
                 float l = 0, r = 0;
                 if (!voices_.StepVoice(channel, l, r)) {
@@ -63,13 +66,17 @@ void AudioMixer::MixInto(float* stereo, int frames) {
                     continue;
                 }
                 ++count_.channel_samples;
-                left += l * gain.left[channel / kChannelsPerGroup];
-                right += r * gain.right[channel / kChannelsPerGroup];
+                core_l[channel / kChannelsPerGroup] += l;
+                core_r[channel / kChannelsPerGroup] += r;
             }
             if (frame < movie_frames) {
-                left += static_cast<float>(pcm[frame * 2]) / 32768.0f * movie_gain[0];
-                right += static_cast<float>(pcm[frame * 2 + 1]) / 32768.0f * movie_gain[1];
+                core_l[0] += static_cast<float>(pcm[frame * 2]) / 32768.0f * movie_gain[0];
+                core_r[0] += static_cast<float>(pcm[frame * 2 + 1]) / 32768.0f * movie_gain[1];
             }
+            const float ext_l = std::clamp(core_l[0], -1.0f, 1.0f) * gain.left[0] * kExternalInputGain;
+            const float ext_r = std::clamp(core_r[0], -1.0f, 1.0f) * gain.right[0] * kExternalInputGain;
+            const float left = std::clamp(core_l[1] + ext_l, -1.0f, 1.0f) * gain.left[1];
+            const float right = std::clamp(core_r[1] + ext_r, -1.0f, 1.0f) * gain.right[1];
             stereo[(base + frame) * 2] = std::clamp(left * gain.master, -1.0f, 1.0f);
             stereo[(base + frame) * 2 + 1] = std::clamp(right * gain.master, -1.0f, 1.0f);
         }
