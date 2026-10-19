@@ -280,6 +280,9 @@ bool ThreadManager::FinishCurrentThread(int tid, const std::shared_ptr<ThreadInf
     if (auto* fn = park_observer_.load(std::memory_order_acquire)) fn(tid, false);
     info->cv.notify_all();
     EeRunToken::Instance().GuestExit(tid);
+    // The exit released the token; an event queued since this thread's last drain, with
+    // every other thread parked, has no holder left to apply it: the queue re-pokes.
+    EeEventQueue::Instance().PokeIfOrphaned();
     t_incarnation = 0;
     return true;
 }
@@ -467,7 +470,7 @@ int ThreadManager::SleepThread() {
             std::unique_lock<std::mutex> lk(info->m);
             info->cv.wait(lk, [&] {
                 return info->wakeup_count > 0 || info->force_release.load() || info->terminated.load() ||
-                       EeEventQueue::Instance().HasPending() || !Running();
+                       EeEventQueue::Instance().ParkWakeDue() || !Running();
             });
         }
         NotePark(tid, false);
@@ -680,7 +683,7 @@ void ThreadManager::WaitWhileSuspended(const std::shared_ptr<ThreadInfo>& info) 
             EeEventQueue::ParkReg reg(&info->m, &info->cv);
             std::unique_lock<std::mutex> lk(info->m);
             info->cv.wait(lk, [&] {
-                return info->suspend_count == 0 || info->terminated.load() || EeEventQueue::Instance().HasPending() ||
+                return info->suspend_count == 0 || info->terminated.load() || EeEventQueue::Instance().ParkWakeDue() ||
                        !Running();
             });
         }

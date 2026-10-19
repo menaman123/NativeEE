@@ -1,9 +1,5 @@
 #include "engine/vu/tiers/mtvu_worker.h"
 
-#include <cstdlib>
-
-#include <cstdio>
-
 #include <chrono>
 #include <cstring>
 
@@ -242,14 +238,7 @@ void MtvuWorker::SealAndRetire(Segment& seg) {
         }
     }
     // Completion is published LAST.
-    const bool last = inflight_.fetch_sub(1, std::memory_order_release) == 1;
-    {   // TEMP-PIPE protocol trace (removed before the report)
-        static const bool proto_trace = std::getenv("NATIVEEE_PROTO_TRACE") != nullptr;
-        if (proto_trace && last)
-            std::fprintf(stderr, "proto: t=%llu worker-idle seals=%llu\n",
-                         (unsigned long long)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(),
-                         (unsigned long long)seal_count_.load(std::memory_order_relaxed));
-    }
+    inflight_.fetch_sub(1, std::memory_order_release);
 }
 
 void MtvuWorker::ProcessSegment(Segment& seg) {

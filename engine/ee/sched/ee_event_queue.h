@@ -88,6 +88,20 @@ public:
 
     // One relaxed load; safe inside cv predicates.
     bool HasPending() const { return pending_.load(std::memory_order_acquire); }
+    // The park predicate's clause (every kernel-object wait, the boundary's
+    // field park): a parked thread wakes for the queue only when it is the
+    // thread that will apply it -- no thread holds the token (a fully parked
+    // guest set: the poke above named this park), or this thread IS the holder
+    // (its own field park). A blocked thread never wakes for an event a holder
+    // will apply: such a wake made it READY with its condition unsatisfied -- a
+    // phantom in the ready table that changed the holder's "another thread is
+    // READY" decisions (an interrupt deferred, an observation point missed)
+    // and so the guest's schedule, by the host moment the event arrived.
+    bool ParkWakeDue() const;
+    // A holder released the token without applying what was queued since its
+    // last drain (a thread exit): with no holder left the poke is repeated so
+    // one parked thread wakes to apply it. No-op with a holder or nothing pending.
+    void PokeIfOrphaned();
 
     // Caller must hold the run token (DrainIfPendingOnHolder enforces it).
     // FIFO-applies every queued event through the installed applier with

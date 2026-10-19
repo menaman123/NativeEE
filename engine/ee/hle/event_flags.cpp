@@ -155,7 +155,7 @@ int EventFlags::Wait(int eid, uint32_t wait_bits, uint32_t mode, uint32_t* resul
             info->cv.wait(lk, [&] {
                 return (t && (t->released.load(std::memory_order_acquire) || t->force_release.load() ||
                               t->terminated.load())) ||
-                       info->deleted || EeEventQueue::Instance().HasPending() || !tm.Running();
+                       info->deleted || EeEventQueue::Instance().ParkWakeDue() || !tm.Running();
             });
             for (auto it = info->waitq.begin(); it != info->waitq.end(); ++it)
                 if (it->tid == tid) {

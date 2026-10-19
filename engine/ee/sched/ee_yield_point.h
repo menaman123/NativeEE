@@ -49,7 +49,12 @@
 // over it (counted idle_isrs). While the GS pipeline still owes deliveries
 // (`pipeline_wait`) the runner parks on their progress instead of passing a
 // field (counted idle_pipeline_waits): the FINISH in flight is the event the
-// sleeping threads wait for; and the field park itself ends on a queued
+// sleeping threads wait for -- and only once the pipeline owes nothing are the
+// device causes it LATCHED (Intc::RaiseDeferred) collected and taken (the idle
+// grant is an observation point: the set it collects is what the guest's own
+// submissions produce, never the prefix the pipeline happened to reach, so the
+// in-line and the drain-thread compositions take the interrupt on the same
+// thread at the same point); and the field park itself ends on a queued
 // foreign wake (BoundaryProtocol::Wait), in which case no field passed
 // (counted idle_wakes) and the runner re-evaluates. Never a PreemptPoint (the grant makes it a
 // no-op) and never a frame. Refused like a trip: unbound, nested, inhibited,

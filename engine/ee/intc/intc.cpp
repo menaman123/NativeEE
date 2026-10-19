@@ -7,9 +7,6 @@
 #include "engine/ee/sched/ee_run_token.h"
 
 #include <algorithm>
-#include <chrono>
-#include <cstdio>
-#include <cstdlib>
 #include <vector>
 
 Intc& Intc::Instance() {
@@ -81,12 +78,6 @@ void Intc::RaiseDeferred(int cause) {
     if (cause < 0 || cause >= kCount) return;
     deferred_.fetch_or(1u << cause, std::memory_order_acq_rel);
     deferred_raises_.fetch_add(1, std::memory_order_relaxed);
-    {   // TEMP-PIPE trace
-        static const bool tr = std::getenv("NATIVEEE_PIPE_TRACE") != nullptr;
-        if (tr) std::fprintf(stderr, "pipe: t=%lld latch cause=%d holder=%d owner=%d\n",
-            (long long)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(),
-            cause, EeRunToken::Instance().CurrentThreadHoldsToken() ? EeRunToken::Instance().CurrentTid() : -9, EeRunToken::Instance().OwnerTid());
-    }
     // A fully parked guest set has no observer: the no-op event's poke wakes
     // one park (the queue's policy names it) whose re-park's idle grant
     // collects; a holder collects at its own observation point.

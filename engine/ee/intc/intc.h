@@ -20,18 +20,19 @@
 //
 // The DEFERRED stage (RaiseDeferred / CollectDeferred) is for a cause an
 // asynchronous device pipeline produces -- the GS's SIGNAL / FINISH, reached
-// by a parser that runs behind a VU1 worker and a drain thread. Such a cause
-// is latched in `deferred_` (any thread) and enters STAT only when the holder
-// COLLECTS it at an observation point: a blocking kernel wait with no other
-// READY thread (the console's idle loop), the kernel idle, a field tick, a
-// frame boundary, a GS sync site. Never at a busy scheduling point (a syscall
-// entry the thread runs through, a wait another READY thread follows): there
-// the moment the pipeline happened to reach the register would decide which
-// guest instruction the interrupt lands behind -- host timing in the guest's
-// schedule (two guest threads trading a FINISH-driven semaphore replayed
-// three different ways). At an observation point the guest can make no
-// further progress on its own, so the collected set is a function of the
-// guest's own schedule and a pad log replays byte-identical.
+// by a parser that runs behind a VU1 worker and a drain thread, on a host
+// thread that is not the guest's. Such a cause is latched in `deferred_` (any
+// thread) and enters STAT only when the HOLDER collects it at a scheduling
+// point of its own (a syscall entry, a yield trip, the frame boundary, the
+// kernel idle, a completed GS sync): the handler then runs on the running
+// thread's context, as an in-place raise's would -- never on a parked thread
+// the latch happened to wake (the pre-fix drain thread: a FINISH applied on
+// four different threads' stacks). Where the collect point is an OBSERVATION
+// point (a blocking wait with no other READY thread, the kernel idle -- the
+// console's idle loop, where the guest can make no progress on its own) the
+// caller first waits for the pipeline to owe nothing, so the set collected
+// there is what the guest's submissions produce and no cause is left for an
+// idle grant on another thread.
 //
 // Handlers run through the installed GuestCall (the composition root binds
 // DispatchTable::Invoke; tests bind a model): $a0 = handler arg, $gp = its
@@ -76,7 +77,8 @@ public:
     void RaiseInPlace(int cause);
     // Deferred stage (header comment). Any thread: latches the cause and
     // enqueues the queue's kDeferredLatched no-op, whose poke wakes one thread
-    // of a fully parked guest set to collect it at its idle grant.
+    // of a fully parked guest set (the queue's deterministic rule) to collect
+    // it at its idle grant; with a holder nobody wakes, the holder collects.
     void RaiseDeferred(int cause);
     // Holder only: moves the latched causes into STAT (one edge each) and
     // returns them; 0 when nothing was latched or the caller is not the holder.

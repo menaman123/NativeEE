@@ -43,7 +43,7 @@ void BoundaryProtocol::Wait(uint64_t) {
         const uint64_t seen = tick_generation_;
         const uint32_t period_us = source_.PeriodUs() ? source_.PeriodUs() : TickSource::kBasePeriodUs;
         cv_.wait_for(lk, std::chrono::microseconds(period_us),
-                     [&] { return tick_generation_ != seen || queue.HasPending(); });
+                     [&] { return tick_generation_ != seen || queue.ParkWakeDue(); });
     }
     if (!is_guest_ || is_guest_()) ticks_.FirePending();
     queue.DrainIfPendingOnHolder();

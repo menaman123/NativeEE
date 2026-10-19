@@ -79,6 +79,19 @@ void EeEventQueue::PokeParks() {
     }
 }
 
+bool EeEventQueue::ParkWakeDue() const {
+    if (!pending_.load(std::memory_order_acquire)) return false;
+    EeRunToken& token = EeRunToken::Instance();
+    const int owner = token.OwnerTid();
+    return owner == EeRunToken::kNone || owner == token.CurrentTid();
+}
+
+void EeEventQueue::PokeIfOrphaned() {
+    if (!pending_.load(std::memory_order_acquire)) return;
+    if (EeRunToken::Instance().OwnerTid() != EeRunToken::kNone) return;
+    PokeParks();
+}
+
 void EeEventQueue::DrainOnToken() {
     // (b): applications take the direct bodies for the whole drain; nesting-safe
     // (a nested drain from a scheduling point inside an applied mutator restores

@@ -1,9 +1,5 @@
 #include "engine/ee/sched/ee_yield_point.h"
 
-#include <chrono>
-#include <cstdio>
-#include <cstdlib>
-
 #include "engine/ee/hle/alarms.h"
 #include "engine/ee/intc/ee_timers.h"
 #include "engine/ee/intc/intc.h"
@@ -83,8 +79,12 @@ void EeYieldPoint::RunField(CpuContext& ctx) {
     }
     if (deps_.alarms && deps_.domain) deps_.alarms->FireDue(deps_.domain->DomainTick());
     if (deps_.timers) deps_.timers->PumpAtBoundary(ctx);
-    // A field passed: an observation point for the device pipeline's latched
-    // causes (Intc::RaiseDeferred), taken with the field's own interrupts.
+    // A field passed: a scheduling point for the device pipeline's latched
+    // causes (Intc::RaiseDeferred) -- what is latched by now enters STAT and is
+    // taken with the field's own interrupts, as an in-place raise would have
+    // been pending here. (The idle path arrives with the pipeline quiescent;
+    // a yield trip takes what the pipeline has reached, as the inline drain's
+    // sealed prefix would have been.)
     if (deps_.intc) {
         if (deps_.intc->CollectDeferred()) ++census_.deferred_collects;
         census_.isrs += static_cast<uint64_t>(deps_.intc->DispatchPending(ctx, Intc::kSiteYield));
@@ -121,27 +121,28 @@ uint64_t EeYieldPoint::IdleWhileBlocked(CpuContext& ctx) {
         // A cause already pending (a queued foreign raise applied here) is taken
         // now, with no field: the handler's wakes run the election below.
         if (deps_.queue) deps_.queue->DrainIfPendingOnHolder();
-        if (deps_.intc && deps_.intc->CollectDeferred()) ++census_.deferred_collects;   // the idle loop's observation point
+        if (!(deps_.intc && deps_.intc->Pending())) {
+            // Deliveries in flight: park on their progress (bounded), then
+            // re-evaluate -- what they delivered may be pending or may have
+            // readied a thread. The latched device causes are collected only
+            // once the pipeline owes nothing (the observation point's rule:
+            // the set collected is then what the guest's own submissions
+            // produce, not what the pipeline happened to reach by now).
+            if (deps_.pipeline_wait && deps_.pipeline_wait()) {
+                ++census_.idle_pipeline_waits;
+                in_trip_ = false;
+                token.IdleRelease(tid);
+                continue;
+            }
+            if (deps_.intc && deps_.intc->CollectDeferred()) ++census_.deferred_collects;   // the idle loop's observation point
+        }
         if (deps_.intc && deps_.intc->Pending()) {
             ++census_.idle_isrs;
-            {   // TEMP-PIPE trace
-                static const bool tr = std::getenv("NATIVEEE_PIPE_TRACE") != nullptr;
-                if (tr) std::fprintf(stderr, "pipe: t=%lld idle-isr tid=%d stat=0x%x\n",
-                    (long long)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(), tid, deps_.intc->Stat());
-            }
             census_.isrs += static_cast<uint64_t>(deps_.intc->DispatchPending(ctx, Intc::kSiteYield));
             if (deps_.dispatch_dmac) deps_.dispatch_dmac(ctx);
             in_trip_ = false;
             token.IdleRelease(tid);
             break;
-        }
-        // Deliveries in flight: park on their progress (bounded), then re-evaluate
-        // -- what they delivered may be pending or may have readied a thread.
-        if (deps_.pipeline_wait && deps_.pipeline_wait()) {
-            ++census_.idle_pipeline_waits;
-            in_trip_ = false;
-            token.IdleRelease(tid);
-            continue;
         }
         // The field park may end early on a foreign wake (no tick fired): the
         // domain tick tells a field from a wake.

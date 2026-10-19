@@ -132,7 +132,7 @@ int Semaphores::Wait(int sid) {
             sema->cv.wait(lk, [&] {
                 return (info && (info->released.load(std::memory_order_acquire) || info->force_release.load() ||
                                  info->terminated.load())) ||
-                       sema->deleted || sema->count > 0 || EeEventQueue::Instance().HasPending() || !tm.Running();
+                       sema->deleted || sema->count > 0 || EeEventQueue::Instance().ParkWakeDue() || !tm.Running();
             });
             for (auto it = sema->waitq.begin(); it != sema->waitq.end(); ++it)
                 if (it->tid == tid) {
