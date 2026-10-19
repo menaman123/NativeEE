@@ -13,6 +13,7 @@ namespace test {
 render::Caps FakeBackend::QueryCaps() const {
     render::Caps c{4096, false, true, true, false, false, false};
     c.copy_pack5551 = copy_pack5551;
+    c.alpha_lane_write = alpha_lane_write;
     return c;
 }
 
@@ -55,10 +56,12 @@ void FakeBackend::Upload(render::SurfaceId id, const render::Rect& r, const void
     if (!Has(id)) return;
     Surface& s = surfaces_[id.id];
     const uint8_t* src = static_cast<const uint8_t*>(bytes);
-    if (!stride) stride = size_t(r.w) * 4;
+    const bool r8 = s.desc.format == render::SurfaceFormat::R8;   // one byte per texel, kept in the red lane
+    if (!stride) stride = size_t(r.w) * (r8 ? 1 : 4);
     for (int y = 0; y < r.h; ++y)
         for (int x = 0; x < r.w; ++x) {
             const auto index = size_t(r.y + y) * s.desc.width + size_t(r.x + x);
+            if (r8) { s.rgba[index * 4] = src[size_t(y) * stride + size_t(x)]; continue; }
             void* pixel = s.desc.format == render::SurfaceFormat::Depth32f
                 ? static_cast<void*>(&s.depth[index]) : static_cast<void*>(&s.rgba[index * 4]);
             std::memcpy(pixel, src + size_t(y) * stride + size_t(x) * 4, 4);
@@ -160,6 +163,23 @@ void FakeBackend::CopyRect(render::SurfaceId src, const render::Rect& sr, render
             const uint32_t word = uint32_t(s[0]) | (uint32_t(s[1]) << 8) | (uint32_t(s[2]) << 16) | (uint32_t(s[3]) << 24);
             const uint32_t out = gs::TexaExpand::Expand16To32(gs::TexaExpand::Truncate32To16(word));
             d[0] = uint8_t(out); d[1] = uint8_t(out >> 8); d[2] = uint8_t(out >> 16); d[3] = uint8_t(out >> 24);
+        }
+}
+
+void FakeBackend::WriteAlphaLane(render::SurfaceId dst, const render::Rect& dr, render::SurfaceId lane,
+                                 const render::Rect& exclude) {
+    if (!alpha_lane_write || !Has(dst) || !Has(lane)) return;
+    ++alpha_lane_writes;
+    Surface& d = surfaces_[dst.id];
+    const Surface& l = surfaces_[lane.id];
+    const int scale = std::max<int>(1, d.desc.scale);
+    const bool excl = exclude.w > 0 && exclude.h > 0;
+    for (int y = 0; y < dr.h; ++y)
+        for (int x = 0; x < dr.w; ++x) {
+            const int px = dr.x + x, py = dr.y + y;
+            if (excl && px >= exclude.x && px < exclude.x + exclude.w && py >= exclude.y && py < exclude.y + exclude.h) continue;
+            const size_t li = size_t(y / scale) * l.desc.width + size_t(x / scale);
+            d.rgba[(size_t(py) * d.desc.width + size_t(px)) * 4 + 3] = l.rgba[li * 4];
         }
 }
 

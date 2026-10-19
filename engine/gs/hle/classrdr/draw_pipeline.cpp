@@ -86,13 +86,20 @@ void DrawPipeline::SameBufferPreDrawFlush(const DrawIr& ir) {
     same_buffer_flushes_++;
 }
 
-// A draw into the scanout target that samples a DIFFERENT live target marks that
-// source as composite-consumed: its per-frame clear is keyed on the consumption.
-void DrawPipeline::MarkCompositeConsumption(const DrawIr& ir) {
-    if (!ir.tex_enabled) return;
+// A draw into the scanout target that samples a DIFFERENT live target's COLOUR in
+// its own class marks that source as composite-consumed: its per-frame clear is
+// keyed on the consumption. E330: a 16-bit or indexed VIEW of 32-bit content, or a
+// 16-bit FRAME over the scanout's 32-bit content (the companion route), is a channel
+// shuffle, not a composite -- a double-buffered title writes the DISPLAYED buffer
+// that way mid-frame (RenderTarget::IsCompositeRead).
+void DrawPipeline::MarkCompositeConsumption(const DrawIr& ir, bool alt16_route) {
+    if (!ir.tex_enabled || alt16_route) return;
     if (ir.raster.frame.fbp != d_.scanout->ScanoutFbp()) return;
     if (ir.tex.tbp == ir.raster.frame.fbp) return;
-    if (RenderTarget* src = d_.cache->Find(ir.tex.tbp)) src->MarkCompositeConsumed();
+    RenderTarget* src = d_.cache->Find(ir.tex.tbp);
+    if (!src) return;
+    if (!RenderTarget::IsCompositeRead(static_cast<uint8_t>(ir.tex.psm), src->identity.has_32bit_content)) return;
+    src->MarkCompositeConsumed();
 }
 
 render::DrawResult DrawPipeline::DrawGeneric(const DrawIr& ir) { return DrawGeneric(ir, PrepareOptions()); }
@@ -152,7 +159,7 @@ bool DrawPipeline::Prepare(const DrawIr& ir, Prepared* pr, const PrepareOptions&
     params.render_h = render_h;
     params.inherited_uniforms = opt.inherited_uniforms;
     ArmZsrc(ir, &params);
-    MarkCompositeConsumption(ir);
+    MarkCompositeConsumption(ir, params.alt16_route);
     // 5. texture (the caller's own source when it bypasses the resolver).
     TextureSource src;
     if (opt.resolve_texture) {

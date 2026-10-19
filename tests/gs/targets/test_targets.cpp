@@ -334,7 +334,7 @@ void DrawnRects() {
     CHECK(ds.x0 == 0 && ds.y0 == 2 && ds.x1 == 64 && ds.y1 == 10);        // tri bbox ∩ scissor
     CHECK(t.coherence.z_drawn_since_sync.y1 == 40);                        // Z: all vertices
     // The Cd-copy dirty union follows the drawn rect (both routes).
-    CHECK(t.coherence.cd_copy.dirty_y0 == 2 && t.coherence.cd_copy.dirty_y1 == 10);
+    CHECK(t.coherence.cd_copy.dirty.Union().y0 == 2 && t.coherence.cd_copy.dirty.Union().y1 == 10);
     // A draw entirely outside the scissor grows valid_rect only.
     render::DrawResult r2 = Drew(100, 100, 120, 120);
     r2.write_rect = render::Rect{};
@@ -353,13 +353,13 @@ void DrawnRects() {
         dg.bbox_tri[0] = 5.0f; dg.bbox_tri[1] = 5.0f; dg.bbox_tri[2] = 5.0f; dg.bbox_tri[3] = 30.0f;
         for (int i = 0; i < 4; ++i) dg.bbox_all[i] = dg.bbox_tri[i];
         dg.write_rect = render::Rect{5, 5, 0, 25};
-        const int cd_y1 = g.coherence.cd_copy.dirty_y1;
+        const int cd_y1 = g.coherence.cd_copy.dirty.Union().y1;
         g.AfterDraw(gd, dg, 4, 4);
         const LogicalRect& gv = g.coherence.valid_rect;
         CHECK(gv.x0 == 5 && gv.y0 == 5 && gv.x1 == 20 && gv.y1 == 30);
         const LogicalRect& gds = g.coherence.drawn_since_sync;
         CHECK(gds.x0 == 10 && gds.y0 == 10 && gds.x1 == 20 && gds.y1 == 20);
-        CHECK(g.coherence.cd_copy.dirty_y1 == cd_y1);
+        CHECK(g.coherence.cd_copy.dirty.Union().y1 == cd_y1);
         // On an EMPTY valid rect a degenerate assignment leaves it empty.
         RenderTarget& e = w.cache.GetOrCreate(0x100000, 64, 64, 0x00, 0);
         e.AfterDraw(MakeDraw(0x100000, 64, 0x00), dg, 5, 5);
@@ -664,6 +664,63 @@ void Inv37() {
     CHECK(p.do_frame_clear && p.clear_color && !d.coherence.cd_copy.valid);
 }
 
+// Invariant 38 (E330): the GS never clears a buffer by itself -- the engine's per-frame
+// clear stands in for the game's own clear at the START of a target's frame, so it fires
+// only on a frame-OPENING draw and a due clear waits for one. A 16-bit FRAME over 32-bit
+// content (the companion route) and a self-read (TEX0.TBP0 == FRAME.FBP) open nothing:
+// a double-buffered title writes its DISPLAYED buffer with exactly those mid-frame.
+void Inv38() {
+    World w;
+    render::DrawParams p;
+    // (a) The displayed 32-bit buffer touched mid-frame by a 16-bit shuffle: no clear, and
+    // the frame key is NOT consumed (an opening draw of the same frame still clears).
+    RenderTarget& t = w.cache.GetOrCreate(0x70000, 512, 224, 0x00, 0);
+    t.PrepareDraw(w.be, MakeDraw(0x70000, 512, 0x00), 10, 0x0, &p);
+    CHECK(p.do_frame_clear && !p.clear_color);        // frame 10 opens on a 32-bit draw (not the scanout)
+    t.AfterDraw(MakeDraw(0x70000, 512, 0x00), Drew(0, 0, 512, 224), 1, 1);   // 32-bit content committed
+    t.PrepareDraw(w.be, MakeDraw(0x70000, 512, 0x02), 11, 0x70000, &p);
+    CHECK(p.alt16_route);                             // the 16-bit view over 32-bit content
+    CHECK(!p.do_frame_clear);                         // E330: not an opening draw -> no clear of the displayed buffer
+    DrawIr self = MakeDraw(0x70000, 512, 0x00);
+    self.tex_enabled = true;
+    self.tex.tbp = 0x70000;
+    self.tex.psm = 0x1B;                              // the PSMT8H-of-FRAME post pass reads itself
+    t.PrepareDraw(w.be, self, 11, 0x70000, &p);
+    CHECK(!p.do_frame_clear);                         // a self-read opens nothing either
+    DrawIr other = MakeDraw(0x70000, 512, 0x00);
+    other.tex_enabled = true;
+    other.tex.tbp = 0x108000;                         // a textured scene draw
+    t.PrepareDraw(w.be, other, 11, 0x70000, &p);
+    CHECK(p.do_frame_clear && p.clear_color);         // the due clear fires on the first opening draw (scanout: colour too)
+    t.PrepareDraw(w.be, other, 11, 0x70000, &p);
+    CHECK(!p.do_frame_clear);                         // consumed
+    // (b) The pure rules.
+    CHECK(RenderTarget::FrameOpeningDraw(MakeDraw(0x0, 512, 0x00), false));
+    CHECK(!RenderTarget::FrameOpeningDraw(MakeDraw(0x0, 512, 0x02), true));
+    CHECK(!RenderTarget::FrameOpeningDraw(self, false));
+    CHECK(RenderTarget::FrameOpeningDraw(other, false));
+    // A composite reads the source's colour in its own class.
+    CHECK(RenderTarget::IsCompositeRead(0x00, true));     // CT32 read of 32-bit content
+    CHECK(RenderTarget::IsCompositeRead(0x01, true));     // CT24
+    CHECK(!RenderTarget::IsCompositeRead(0x02, true));    // a 16-bit VIEW of 32-bit content: a shuffle
+    CHECK(!RenderTarget::IsCompositeRead(0x0A, true));
+    CHECK(!RenderTarget::IsCompositeRead(0x1B, true));    // PSMT8H: a palette lookup of the alpha byte
+    CHECK(!RenderTarget::IsCompositeRead(0x24, true) && !RenderTarget::IsCompositeRead(0x2C, true));
+    CHECK(RenderTarget::IsCompositeRead(0x0A, false));    // CT16S read of a 16-bit accumulator (the Crash composite)
+    CHECK(RenderTarget::IsCompositeRead(0x02, false) && RenderTarget::IsCompositeRead(0x00, false));
+    CHECK(!RenderTarget::IsCompositeRead(0x13, false) && !RenderTarget::IsCompositeRead(0x14, false));
+    // (c) A consumption-keyed clear also waits for an opening draw.
+    RenderTarget& s2 = w.cache.GetOrCreate(0x0, 512, 224, 0x00, 0);
+    s2.PrepareDraw(w.be, MakeDraw(0x0, 512, 0x00), 20, 0x70000, &p);
+    CHECK(p.do_frame_clear);
+    s2.AfterDraw(MakeDraw(0x0, 512, 0x00), Drew(0, 0, 512, 224), 1, 1);
+    s2.MarkCompositeConsumed();
+    s2.PrepareDraw(w.be, MakeDraw(0x0, 512, 0x02), 20, 0x70000, &p);
+    CHECK(p.alt16_route && !p.do_frame_clear && s2.coherence.needs_frame_clear);
+    s2.PrepareDraw(w.be, MakeDraw(0x0, 512, 0x00), 20, 0x70000, &p);
+    CHECK(p.do_frame_clear && !s2.coherence.needs_frame_clear);
+}
+
 // Uploaded(addr) textures: exact key, containing span, in-place same-size replace,
 // re-create on a size change, evict-in-range, the 512 / 64 MiB budget before insert.
 void UploadedMap() {
@@ -878,6 +935,101 @@ void RefreshArms() {
     FillColor(w.be, s, 9, 9, 9, 9);
     rf.RefreshFromVram(s, 0, 128, 0);
     CHECK(w.be.At(s.views.color).rgba[(70 * 64 + 2) * 4] == 0xFF);
+}
+
+// The alias import's alpha merge has two routes and one result: with the backend's
+// alpha-lane pass (Caps::alpha_lane_write) the band's mirror alpha goes up as an R8
+// lane and a colour-masked write lands it -- no readback of the attachment, no RGBA
+// re-upload; without it the attachment is read back, merged and re-uploaded. Over a
+// pseudo-random attachment and mirror, with a main_drawn_since_deposit rect, a scoped
+// band and a whole-image import, the two routes leave byte-identical attachments
+// (RGB untouched, alpha = the mirror byte verbatim, the newer rect kept); the GPU
+// route's census counts it and performs no readback; a scale-2 target folds the
+// lane onto every physical texel of the logical pixel.
+void AlphaMergeRoutes() {
+    auto run = [](bool gpu, int scale, std::vector<uint8_t>* out, int* readbacks, int* uploads, uint64_t* merges_gpu) {
+        World w;
+        w.scale.SetFactor(scale);
+        w.be.alpha_lane_write = gpu;
+        TargetRefresher rf(w.be, w.vram, w.cache);
+        RenderTarget& t = w.cache.GetOrCreate(0x100000, 64, 96, 0x00, 0);
+        t.AfterDraw(MakeDraw(0x100000, 64, 0x00), Drew(0, 0, 64, 96), 1, 1);
+        t.coherence.main_drawn_since_deposit.Reset();
+        // Pseudo-random attachment (physical texels) and mirror words.
+        uint32_t seed = 0x1234567u;
+        auto rnd = [&seed]() { seed = seed * 1664525u + 1013904223u; return uint8_t(seed >> 24); };
+        test::FakeBackend::Surface& att = w.be.At(t.views.color);
+        for (uint8_t& b : att.rgba) b = rnd();
+        for (int y = 0; y < 96; ++y)
+            for (int x = 0; x < 64; ++x) {
+                const uint8_t word[4] = {rnd(), rnd(), rnd(), rnd()};
+                w.vram.WriteStream(PsmLayout::PixelByteAddress(Psm::CT32, uint32_t(x), uint32_t(y), 0x100000 / 256, 1), word, 4);
+            }
+        w.vram.SettleWrites();
+        // A main-route draw since the deposit over rows 20..40 x 8..48 keeps the attachment there.
+        t.AfterDraw(MakeDraw(0x100000, 64, 0x00), Drew(8, 20, 48, 40), 1, 2);
+        const int rb0 = w.be.readbacks, up0 = w.be.uploads;
+        rf.RefreshFromVram(t, 16, 64, 0);    // a scoped band
+        rf.RefreshFromVram(t, 0, 96, 0);     // the whole image
+        *readbacks = w.be.readbacks - rb0;
+        *uploads = w.be.uploads - up0;
+        *merges_gpu = rf.AlphaMergesGpu();
+        *out = w.be.At(t.views.color).rgba;
+    };
+    std::vector<uint8_t> cpu, gpu;
+    int rb_cpu = 0, up_cpu = 0, rb_gpu = 0, up_gpu = 0;
+    uint64_t mg_cpu = 0, mg_gpu = 0;
+    run(false, 1, &cpu, &rb_cpu, &up_cpu, &mg_cpu);
+    run(true, 1, &gpu, &rb_gpu, &up_gpu, &mg_gpu);
+    CHECK(cpu.size() == gpu.size() && cpu == gpu);        // byte-identical attachments
+    CHECK(rb_cpu == 2 && rb_gpu == 0);                    // the GPU route reads nothing back
+    CHECK(up_cpu == 2 && up_gpu == 2);                    // RGBA rows vs the R8 lane: one upload each
+    CHECK(mg_cpu == 0 && mg_gpu == 2);
+    // The merge's semantics on the GPU route alone: alpha = mirror byte, RGB kept, the newer rect kept.
+    {
+        World w;
+        w.be.alpha_lane_write = true;
+        TargetRefresher rf(w.be, w.vram, w.cache);
+        RenderTarget& t = w.cache.GetOrCreate(0x100000, 64, 64, 0x00, 0);
+        t.AfterDraw(MakeDraw(0x100000, 64, 0x00), Drew(0, 0, 64, 64), 1, 1);
+        t.coherence.main_drawn_since_deposit.Reset();
+        FillColor(w.be, t, 0x11, 0x22, 0x33, 0x25);
+        const uint8_t word[4] = {0xAA, 0xBB, 0xCC, 0x40};
+        w.vram.WriteStream(PsmLayout::PixelByteAddress(Psm::CT32, 5, 9, 0x100000 / 256, 1), word, 4);
+        w.vram.WriteStream(PsmLayout::PixelByteAddress(Psm::CT32, 40, 9, 0x100000 / 256, 1), word, 4);
+        t.AfterDraw(MakeDraw(0x100000, 64, 0x00), Drew(0, 8, 32, 16), 1, 2);
+        rf.RefreshFromVram(t, 0, 64, 0);
+        const uint8_t* kept = &w.be.At(t.views.color).rgba[(9 * 64 + 5) * 4];
+        const uint8_t* imported = &w.be.At(t.views.color).rgba[(9 * 64 + 40) * 4];
+        CHECK(kept[3] == 0x25 && imported[3] == 0x40);
+        CHECK(imported[0] == 0x11 && imported[1] == 0x22 && imported[2] == 0x33);
+        CHECK(w.be.At(t.views.color).rgba[(1 * 64 + 1) * 4 + 3] == 0x00);
+        CHECK(w.be.alpha_lane_writes == 1 && rf.AlphaMergesGpu() == 1 && rf.AlphaMergesCpu() == 0);
+        CHECK(t.coherence.vram_coherent_class == 1);
+    }
+    // Scale 2: every physical texel of a logical pixel takes that pixel's lane byte; RGB untouched.
+    {
+        World w;
+        w.scale.SetFactor(2);
+        w.be.alpha_lane_write = true;
+        TargetRefresher rf(w.be, w.vram, w.cache);
+        RenderTarget& t = w.cache.GetOrCreate(0x100000, 64, 64, 0x00, 0);
+        CHECK(t.identity.scale == 2);
+        t.AfterDraw(MakeDraw(0x100000, 64, 0x00), Drew(0, 0, 64, 64), 1, 1);
+        t.coherence.main_drawn_since_deposit.Reset();
+        test::FakeBackend::Surface& att = w.be.At(t.views.color);
+        for (size_t i = 0; i < att.rgba.size(); i += 4) { att.rgba[i] = uint8_t(i); att.rgba[i + 1] = 7; att.rgba[i + 2] = 9; att.rgba[i + 3] = 0x25; }
+        const uint8_t word[4] = {0, 0, 0, 0x77};
+        w.vram.WriteStream(PsmLayout::PixelByteAddress(Psm::CT32, 5, 9, 0x100000 / 256, 1), word, 4);
+        rf.RefreshFromVram(t, 0, 64, 0);
+        const uint32_t pw = att.desc.width;
+        for (int dy = 0; dy < 2; ++dy)
+            for (int dx = 0; dx < 2; ++dx) {
+                const uint8_t* px = &att.rgba[((9 * 2 + dy) * pw + (5 * 2 + dx)) * 4];
+                CHECK(px[3] == 0x77 && px[1] == 7 && px[2] == 9);
+            }
+        CHECK(att.rgba[((9 * 2) * pw + (6 * 2)) * 4 + 3] == 0x00);
+    }
 }
 
 // The band read and its de-swizzle walk share one page-row stride (track 1d review
@@ -1254,6 +1406,7 @@ int main(int argc, char** argv) {
     if (all || which == "inv10") Inv10();
     if (all || which == "inv11") Inv11();
     if (all || which == "inv12") Inv12();
+    if (all || which == "alphamerge") AlphaMergeRoutes();
     if (all || which == "inv13") Inv13_14();
     if (all || which == "inv14") Inv13_14();
     if (all || which == "inv20") Inv20();
@@ -1261,6 +1414,7 @@ int main(int argc, char** argv) {
     if (all || which == "inv24") Inv24();
     if (all || which == "inv35") Inv35();
     if (all || which == "inv37") Inv37();
+    if (all || which == "inv38") Inv38();
     if (all || which == "rects") DrawnRects();
     if (all || which == "authors") AuthorSeqs();
     if (all || which == "zsat") ZSaturate();

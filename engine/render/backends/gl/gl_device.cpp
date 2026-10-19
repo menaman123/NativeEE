@@ -155,6 +155,7 @@ Caps GlDevice::QueryCaps() const {
     c.texture_barrier = false;
     c.compute = false;
     c.copy_pack5551 = shaders_.Pack5551Program() != 0;
+    c.alpha_lane_write = shaders_.AlphaLaneProgram() != 0;
     return c;
 }
 
@@ -550,6 +551,43 @@ void GlDevice::CopyRect(SurfaceId src, const Rect& src_rect, SurfaceId dst, cons
     glCopyTexSubImage2D(GL_TEXTURE_2D, 0, dst_rect.x, dst_rect.y, src_rect.x, src_rect.y, src_rect.w,
                         src_rect.h);
     state_.BindTex2D(0);
+}
+
+// The alpha-lane program over the NDC triangle into the destination's framebuffer,
+// scissored to dst_rect, colour mask A only; the lane on unit 0.
+void GlDevice::WriteAlphaLane(SurfaceId dst, const Rect& dst_rect, SurfaceId lane, const Rect& exclude) {
+    const GlSurface* d = Surface(dst);
+    const GlSurface* l = Surface(lane);
+    if (!d || !l || !d->fbo || !l->tex || dst_rect.w <= 0 || dst_rect.h <= 0 || !shaders_.AlphaLaneProgram()) return;
+    EndDrawRun();
+    const GlStencilLocations& L = shaders_.StencilLocations();
+    state_.BindFb(GL_FRAMEBUFFER, d->fbo);
+    state_.Viewport(0, 0, static_cast<int>(d->desc.width), static_cast<int>(d->desc.height));
+    state_.Enable(GL_SCISSOR_TEST);
+    state_.Scissor(dst_rect.x, dst_rect.y, dst_rect.w, dst_rect.h);
+    state_.Disable(GL_BLEND);
+    state_.Disable(GL_DEPTH_TEST);
+    state_.DepthMask(false);
+    state_.ColorMask(false, false, false, true);
+    state_.ActiveTexture(GL_TEXTURE0);
+    state_.BindTex2D(l->tex);
+    state_.UseProgram(shaders_.AlphaLaneProgram());
+    if (L.lane_origin >= 0) glUniform2i(L.lane_origin, dst_rect.x, dst_rect.y);
+    if (L.lane_scale >= 0) glUniform1i(L.lane_scale, std::max<int>(1, d->desc.scale));
+    const bool excl = exclude.w > 0 && exclude.h > 0;
+    if (L.lane_exclude >= 0)
+        glUniform4i(L.lane_exclude, excl ? exclude.x : 0, excl ? exclude.y : 0, excl ? exclude.x + exclude.w : 0,
+                    excl ? exclude.y + exclude.h : 0);
+    state_.BindVertexArray(const_vao_);
+    census_.draw_calls++;
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    state_.BindVertexArray(0);
+    state_.UseProgram(0);
+    state_.BindTex2D(0);
+    state_.ColorMask(true, true, true, true);
+    state_.DepthMask(true);
+    state_.Enable(GL_DEPTH_TEST);
+    state_.Disable(GL_SCISSOR_TEST);
 }
 
 // Rows bottom-up (attachment order); colour RGBA8, depth float.

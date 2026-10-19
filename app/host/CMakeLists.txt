@@ -25,6 +25,7 @@ add_library(ps2r_app_host STATIC
     clock_census.cpp
     camera_track.cpp
     display_sequence.cpp
+    frame_pacer.cpp
     savestate_slots.cpp
     session_capture.cpp
     session_relaunch.cpp

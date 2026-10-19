@@ -83,6 +83,16 @@ target_include_directories(test_display_sequence PRIVATE ${CMAKE_SOURCE_DIR})
 target_compile_options(test_display_sequence PRIVATE -Wall -Wextra -Werror)
 add_test(NAME DisplaySequenceSchedule COMMAND test_display_sequence)
 
+# FramePacerCadence: video.frame_cap's pure pacer -- Hz60 admits at every field edge, Hz30 at
+# every other edge (a steady 33.3 ms train; a faster game's extra pictures superseded, a slower
+# game's missing ones held without re-anchoring), a late pump re-anchors once, Off admits at the
+# pump; the census row.
+add_executable(test_frame_pacer test_frame_pacer.cpp
+    "${CMAKE_SOURCE_DIR}/app/host/frame_pacer.cpp")
+target_include_directories(test_frame_pacer PRIVATE ${CMAKE_SOURCE_DIR})
+target_compile_options(test_frame_pacer PRIVATE -Wall -Wextra -Werror)
+add_test(NAME FramePacerCadence COMMAND test_frame_pacer)
+
 # Vu1AotCacheManifest: the AOT tier's persistent side on a temp root -- the manifest row
 # grammar round-trips, the build-id directory name is sanitised, a corpus on disk is
 # verified by the thread and its verdict published to the tier and persisted, a second

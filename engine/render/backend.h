@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "engine/gs/hle/ir/cd_dirty_set.h"
 #include "engine/render/surface_format.h"
 
 namespace ps2r {
@@ -34,6 +35,7 @@ struct Caps {
     bool texture_barrier = false;
     bool compute = false;
     bool copy_pack5551 = false;      // CopyRect honours kCopyPack5551 (a GPU pass); false = the caller's CPU route
+    bool alpha_lane_write = false;   // WriteAlphaLane is a GPU pass; false = the caller's CPU route
 };
 
 struct SurfaceId {
@@ -100,12 +102,14 @@ enum InheritedUniform : uint32_t {
 
 // Cd-copy tracker state a colour target owns (the shader-side blend reads the
 // destination from a copy of the attachment; the copy is refreshed lazily over
-// the union of the rectangles written since it was last taken). Half-open device
+// the rectangles written since it was last taken -- CdCopyPolicy). Half-open device
 // rectangles; last_route records which attachment (main 0 / alt16 companion 1)
 // the copy mirrors.
 struct CdCopyState {
     bool valid = false;
-    int32_t dirty_x0 = 0, dirty_y0 = 0, dirty_x1 = 0, dirty_y1 = 0;
+    // The rects written since the last copy (gs::CdDirtySet: the union and the rects
+    // themselves; CdCopyPolicy decides on them, the target's post-draw tail records them).
+    gs::CdDirtySet dirty;
     int8_t last_route = -1;
 };
 
@@ -227,6 +231,15 @@ public:
     static constexpr uint32_t kCopyPack5551 = 1;
     virtual void CopyRect(SurfaceId src, const Rect& src_rect, SurfaceId dst,
                           const Rect& dst_rect, uint32_t transform) = 0;
+    // Write ONLY the alpha channel of `dst` over `dst_rect` (physical texels) from
+    // the R8 surface `lane`: texel (x, y) of dst_rect takes lane texel ((x - dst_rect.x)
+    // / scale, (y - dst_rect.y) / scale) where `scale` = dst's physical / logical
+    // factor -- the lane is LOGICAL (one byte per logical texel of the rect); RGB is
+    // untouched; texels inside `exclude` (physical, half-open; w or h <= 0 = none)
+    // keep their alpha. The alias import's stored-alpha merge on the GPU (a byte
+    // round-trips exactly through UNORM8). A backend without the pass does nothing
+    // (Caps::alpha_lane_write false): the caller takes its CPU route.
+    virtual void WriteAlphaLane(SurfaceId, const Rect&, SurfaceId, const Rect&) {}
     // Synchronous readback of `rect` (physical texels), rows bottom-up as the
     // attachment stores them, RGBA8 (colour) or float (depth).
     virtual void Readback(SurfaceId id, const Rect& rect, void* out, size_t stride) = 0;

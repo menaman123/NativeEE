@@ -35,6 +35,8 @@ public:
                             const render::DrawParams& p) override;
     void CopyRect(render::SurfaceId src, const render::Rect& sr, render::SurfaceId dst,
                   const render::Rect& dr, uint32_t) override;
+    void WriteAlphaLane(render::SurfaceId dst, const render::Rect& dst_rect, render::SurfaceId lane,
+                        const render::Rect& exclude) override;
     void Readback(render::SurfaceId id, const render::Rect& r, void* out, size_t stride) override;
     render::FenceId BeginReadback(render::SurfaceId, const render::Rect&) override;
     bool PollReadback(render::FenceId, void*, size_t) override;
@@ -55,6 +57,10 @@ public:
     // (the CPU fold of TexaExpand, so a test can compare the two refresh routes).
     bool copy_pack5551 = false;
     int copy_rects = 0, pack_copies = 0;
+    // Backend::WriteAlphaLane: advertised through QueryCaps when set (the CPU form of
+    // the alpha-lane pass, so a test can compare the two alias-import routes).
+    bool alpha_lane_write = false;
+    int alpha_lane_writes = 0;
     int creates = 0, destroys = 0, clears = 0, uploads = 0, readbacks = 0, draws = 0, presents = 0;
     int level_uploads = 0, mip_finishes = 0, last_level = 0, last_level_w = 0, last_level_h = 0;
     int last_mip_authored = 0;

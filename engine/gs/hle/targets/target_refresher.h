@@ -29,7 +29,10 @@
 //     stored-alpha convention; the PSMT8H index lane lives in that byte), addressed
 //     at the target width; pixels the main route drew since the target's bytes last
 //     reached the mirror (CoherenceState::main_drawn_since_deposit) keep the
-//     attachment's alpha -- local memory is older there. CT16: the full 5551 image decoded from the mirror at the
+//     attachment's alpha -- local memory is older there. Two routes, one result:
+//     with Caps::alpha_lane_write the band's alpha bytes go up as an R8 lane and a
+//     colour-masked pass writes them (no readback, no RGBA re-upload: the GPU route);
+//     else the attachment is read back, merged on the CPU and re-uploaded. CT16: the full 5551 image decoded from the mirror at the
 //     render FBW, except rows whose pages carry an EE upload newer than the job's
 //     epoch, which keep the attachment bytes. CT16S: no 16S writeback exists, so
 //     the mirror is never authoritative -- bookkeeping only. The tail authors the
@@ -106,6 +109,9 @@ public:
     // The alias-refresh region of a frame draw (0 = none: not a colour frame, no
     // write enabled, or no width).
     static uint32_t AliasRegionBytes(const DrawIr& ir, int render_h);
+    // Census: alpha merges taken on the GPU route / on the CPU route.
+    uint64_t AlphaMergesGpu() const { return alpha_merges_gpu_; }
+    uint64_t AlphaMergesCpu() const { return alpha_merges_cpu_; }
 
 private:
     void EnforceUploadedBudget();
@@ -117,6 +123,11 @@ private:
     // at stride `bw` addresses, read into `mirror_` at their own offsets.
     void ReadMirrorBand(uint32_t fbp, Psm mode, uint32_t bw, uint32_t w, int y0, int y1);
     void RefreshAlphaMerge(RenderTarget& t, int y0, int y1, uint32_t bw);
+    // The GPU route of the merge: the band's alpha bytes (`linear_`'s alpha lane,
+    // w x h logical) through the R8 lane surface and the backend's alpha-lane write;
+    // false when the backend has no pass (the caller takes the CPU route).
+    bool AlphaMergeOnGpu(RenderTarget& t, int y0, int y1);
+    bool EnsureLane(int w, int h);
     void RefreshCt16(RenderTarget& t, int y0, int y1, uint32_t bw, uint64_t job_epoch, bool* absorbed);
     void UploadRows(RenderTarget& t, int y0, int y1, const uint8_t* rgba);
 
@@ -130,6 +141,10 @@ private:
     std::vector<uint8_t> pixels_;       // attachment rows (RGBA8)
     std::vector<uint8_t> scaled_;
     std::vector<uint8_t> linear_;       // the band's mirror rows, de-swizzled (CT16 halfwords / CT32 words)
+    std::vector<uint8_t> lane_;         // the band's alpha bytes (R8, logical)
+    render::SurfaceId lane_tex_;        // the R8 lane surface (grown to the largest band; 0 = none yet)
+    int lane_w_ = 0, lane_h_ = 0;
+    uint64_t alpha_merges_gpu_ = 0, alpha_merges_cpu_ = 0;
 };
 
 }  // namespace gs

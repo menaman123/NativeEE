@@ -1264,6 +1264,26 @@ void main() {
     frag_color = vec4(vec3(c8), float(a)) / 255.0;
 }
 )";
+// The alpha-lane write: the lane byte at the fragment's logical texel of the rect
+// (origin = the rect's physical corner, scale = physical / logical) becomes the
+// attachment's alpha; the colour mask keeps RGB; u_exclude's fragments discard.
+const char* const kAlphaLaneFragSrc = R"(
+#version 410 core
+
+uniform sampler2D u_lane;
+uniform ivec2 u_origin;
+uniform int u_scale;
+uniform ivec4 u_exclude;
+out vec4 frag_color;
+
+void main() {
+    ivec2 p = ivec2(gl_FragCoord.xy);
+    if (p.x >= u_exclude.x && p.x < u_exclude.z && p.y >= u_exclude.y && p.y < u_exclude.w) discard;
+    ivec2 l = (p - u_origin) / max(u_scale, 1);
+    float a = texelFetch(u_lane, l, 0).r;
+    frag_color = vec4(0.0, 0.0, 0.0, a);
+}
+)";
 // Constant-colour NDC triangle for the stencil-masked quads.
 const char* const kConstVertSrc = R"(
 #version 410 core
@@ -1290,6 +1310,7 @@ const char* GlShaderSources::ConstVertex() { return kConstVertSrc; }
 const char* GlShaderSources::ConstFragment() { return kConstFragSrc; }
 const char* GlShaderSources::HalfwordShuffleFragment() { return kHalfwordShuffleFragSrc; }
 const char* GlShaderSources::Pack5551Fragment() { return kPack5551FragSrc; }
+const char* GlShaderSources::AlphaLaneFragment() { return kAlphaLaneFragSrc; }
 
 }  // namespace render
 }  // namespace ps2r

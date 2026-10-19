@@ -81,12 +81,13 @@ bool GlShaderLibrary::Build(GlUniformCache& uniforms) {
 // PS2 vertex program (their sampler units bound once), the constant quad pair.
 bool GlShaderLibrary::BuildStencilPrograms() {
     struct Prog { const char* vs; const char* fs; uint32_t* out; };
-    const Prog progs[5] = {
+    const Prog progs[6] = {
         {VertexSource(), GlShaderSources::StencilStripFragment(), &strip_program_},
         {VertexSource(), GlShaderSources::StencilInvertFragment(), &invert_program_},
         {GlShaderSources::ConstVertex(), GlShaderSources::ConstFragment(), &const_program_},
         {VertexSource(), GlShaderSources::HalfwordShuffleFragment(), &halfword_program_},
         {GlShaderSources::ConstVertex(), GlShaderSources::Pack5551Fragment(), &pack5551_program_},
+        {GlShaderSources::ConstVertex(), GlShaderSources::AlphaLaneFragment(), &alpha_lane_program_},
     };
     for (const Prog& p : progs) {
         GLuint vs = CompileShader(GL_VERTEX_SHADER, p.vs);
@@ -128,6 +129,12 @@ bool GlShaderLibrary::BuildStencilPrograms() {
     glUseProgram(pack5551_program_);
     const GLint src_p = glGetUniformLocation(pack5551_program_, "u_texture");
     if (src_p >= 0) glUniform1i(src_p, 0);
+    sloc_.lane_origin = glGetUniformLocation(alpha_lane_program_, "u_origin");
+    sloc_.lane_scale = glGetUniformLocation(alpha_lane_program_, "u_scale");
+    sloc_.lane_exclude = glGetUniformLocation(alpha_lane_program_, "u_exclude");
+    glUseProgram(alpha_lane_program_);
+    const GLint lane_s = glGetUniformLocation(alpha_lane_program_, "u_lane");
+    if (lane_s >= 0) glUniform1i(lane_s, 0);
     glUseProgram(0);
     return true;
 }
@@ -140,6 +147,7 @@ void GlShaderLibrary::Destroy() {
     if (const_program_) { glDeleteProgram(const_program_); const_program_ = 0; }
     if (halfword_program_) { glDeleteProgram(halfword_program_); halfword_program_ = 0; }
     if (pack5551_program_) { glDeleteProgram(pack5551_program_); pack5551_program_ = 0; }
+    if (alpha_lane_program_) { glDeleteProgram(alpha_lane_program_); alpha_lane_program_ = 0; }
     sloc_ = GlStencilLocations{};
     loc_ = GlUniformLocations{};
     scanout_tex_loc_ = -1;

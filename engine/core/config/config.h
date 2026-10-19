@@ -36,6 +36,16 @@ enum class FullscreenMode : uint8_t { Windowed = 0, Fullscreen, Borderless };
 // regression (s7 vs s8 bisect; 60 clean). Default 60; the Display-page row is hidden
 // (MenuComposition) until Charter 3 item 6; the ini / --set / harness pins still take it.
 enum class RenderRate : uint8_t { Tick60 = 0, Display };
+// video.frame_cap: WHICH presenter fields show a NEW picture (the presented-frame
+// cadence a player sees; the game's logic tick stays 60 Hz by the clock contract
+// and no game tick is dropped -- a picture the cap does not show is superseded by
+// the next). `60` = a new picture at every 60 Hz field edge it is ready for (the
+// first title's shape); `30` = at every OTHER field edge, a steady 33.3 ms train
+// (a game producing 30..60 pictures per second shows every one at a fixed
+// cadence instead of a 1/2/3-field mixture); `off` = at the pump it arrives
+// (the consumer's own cadence, no field quantisation). Applied live from the
+// Display page (FramePacer); persisted.
+enum class FrameCap : uint8_t { Off = 0, Hz30, Hz60 };
 // video.texture_filter (Charter 2 A2): the player's filtering enhancement over
 // the textures the engine owns at load. `title` = the title's own TEX1 choice per
 // draw (point or bilinear, mip-nearest where it authored a chain) -- the
@@ -95,6 +105,7 @@ struct VideoConfig {
     bool         vsync = false;
     FullscreenMode fullscreen = FullscreenMode::Windowed;
     RenderRate   render_rate = RenderRate::Tick60;
+    FrameCap     frame_cap = FrameCap::Hz60;
     VideoBackend backend = VideoBackend::Gl;
     FitMode      fit_mode = FitMode::Fit;
     AspectSel    aspect = AspectSel::Auto;

@@ -19,6 +19,37 @@ TargetRefresher::TargetRefresher(render::Backend& be, VramImage& vram, RenderTar
 
 TargetRefresher::~TargetRefresher() {
     for (auto& kv : uploaded_) be_.DestroySurface(kv.second.tex);
+    if (lane_tex_.id) be_.DestroySurface(lane_tex_);
+}
+
+bool TargetRefresher::EnsureLane(int w, int h) {
+    if (lane_tex_.id && w <= lane_w_ && h <= lane_h_) return true;
+    if (lane_tex_.id) be_.DestroySurface(lane_tex_);
+    render::SurfaceDesc d;
+    d.width = static_cast<uint32_t>(std::max(w, lane_w_));
+    d.height = static_cast<uint32_t>(std::max(h, lane_h_));
+    d.format = render::SurfaceFormat::R8;
+    d.renderable = false;
+    d.scale = 1;
+    lane_tex_ = be_.CreateSurface(d);
+    lane_w_ = static_cast<int>(d.width);
+    lane_h_ = static_cast<int>(d.height);
+    return lane_tex_.id != 0;
+}
+
+bool TargetRefresher::AlphaMergeOnGpu(RenderTarget& t, int y0, int y1) {
+    if (!be_.QueryCaps().alpha_lane_write) return false;
+    const int w = t.identity.width, h = y1 - y0, s = t.identity.scale;
+    if (!EnsureLane(w, h)) return false;
+    lane_.resize(static_cast<size_t>(w) * h);
+    for (size_t i = 0, n = lane_.size(); i < n; ++i) lane_[i] = linear_[i * 4 + 3];
+    be_.Upload(lane_tex_, render::Rect{0, 0, w, h}, lane_.data(), static_cast<size_t>(w));
+    const LogicalRect& newer = t.coherence.main_drawn_since_deposit;
+    render::Rect exclude{};
+    if (!newer.Empty()) exclude = render::Rect{newer.x0 * s, newer.y0 * s, (newer.x1 - newer.x0) * s, (newer.y1 - newer.y0) * s};
+    be_.WriteAlphaLane(t.views.color, render::Rect{0, y0 * s, w * s, h * s}, lane_tex_, exclude);
+    ++alpha_merges_gpu_;
+    return true;
 }
 
 void TargetRefresher::PublishSpans() {
@@ -277,6 +308,16 @@ void TargetRefresher::RefreshAlphaMerge(RenderTarget& t, int y0, int y1, uint32_
     // attachment's alpha: local memory is older there (GS User's Manual: one
     // memory, the later write owns the byte).
     const int w = t.identity.width, h = y1 - y0, s = t.identity.scale;
+    // The band's CT32 words out of the mirror in one swizzle walk (Swizzle::
+    // VramToLinear is the per-pixel PsmLayout address, hoisted; the test pins the
+    // identity), then the alpha byte of every word.
+    linear_.assign(static_cast<size_t>(w) * h * 4, 0);
+    Swizzle::VramToLinear(mirror_.data(), Swizzle::Buffer{Psm::CT32, t.identity.fbp / PsmLayout::kBlockBytes, bw},
+                          Swizzle::Rect{0, uint32_t(y0), uint32_t(w), uint32_t(h)}, linear_.data(), size_t(w) * 4);
+    // The GPU route: the alpha lane up, a colour-masked pass writes it (the newer rect
+    // excluded in the shader); no readback, no RGBA re-upload.
+    if (AlphaMergeOnGpu(t, y0, y1)) return;
+    ++alpha_merges_cpu_;
     pixels_.assign(static_cast<size_t>(w) * s * h * s * 4, 0);
     be_.Readback(t.views.color, render::Rect{0, y0 * s, w * s, h * s}, pixels_.data(), size_t(w) * s * 4);
     if (s != 1) {
@@ -286,12 +327,6 @@ void TargetRefresher::RefreshAlphaMerge(RenderTarget& t, int y0, int y1, uint32_
                 std::memcpy(pixels_.data() + (size_t(y) * w + x) * 4,
                             pixels_.data() + (size_t(y) * s * w * s + size_t(x) * s) * 4, 4);
     }
-    // The band's CT32 words out of the mirror in one swizzle walk (Swizzle::
-    // VramToLinear is the per-pixel PsmLayout address, hoisted; the test pins the
-    // identity), then the alpha byte of every word.
-    linear_.assign(static_cast<size_t>(w) * h * 4, 0);
-    Swizzle::VramToLinear(mirror_.data(), Swizzle::Buffer{Psm::CT32, t.identity.fbp / PsmLayout::kBlockBytes, bw},
-                          Swizzle::Rect{0, uint32_t(y0), uint32_t(w), uint32_t(h)}, linear_.data(), size_t(w) * 4);
     const LogicalRect& newer = t.coherence.main_drawn_since_deposit;
     for (int y = 0; y < h; ++y) {
         const bool row_newer = !newer.Empty() && y0 + y >= newer.y0 && y0 + y < newer.y1;

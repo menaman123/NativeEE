@@ -89,6 +89,7 @@ const char* const kStartupNames[] = {"retained", "native"};
 const char* const kRestoreModeNames[] = {"live", "relaunch"};
 const char* const kFullscreenNames[] = {"windowed", "fullscreen", "borderless"};
 const char* const kRenderRateNames[] = {"60", "display"};
+const char* const kFrameCapNames[] = {"off", "30", "60"};
 
 const EnumTable kBackend{kBackendNames, 2};
 const EnumTable kFit{kFitNames, 5};
@@ -108,6 +109,7 @@ const EnumTable kStartup{kStartupNames, 2};
 const EnumTable kRestoreMode{kRestoreModeNames, 2};
 const EnumTable kFullscreen{kFullscreenNames, 3};
 const EnumTable kRenderRate{kRenderRateNames, 2};
+const EnumTable kFrameCap{kFrameCapNames, 3};
 
 bool Fail(std::string* err, const char* key, const std::string& v, const char* what) {
     if (err) *err = std::string(key) + ": bad " + what + " value '" + v + "'";
@@ -287,6 +289,7 @@ const std::vector<Field>& Fields() {
         INT_FIELD("video.custom_scale_pct", video.custom_scale_pct),
         ENUM_FIELD("video.fit_mode", video.fit_mode, kFit),
         INT_FIELD("video.fps_cap", video.fps_cap),
+        ENUM_FIELD("video.frame_cap", video.frame_cap, kFrameCap),
         ENUM_FIELD("video.fullscreen", video.fullscreen, kFullscreen),
         BOOL_FIELD("video.interp", video.interp),
         ENUM_FIELD("video.render_rate", video.render_rate, kRenderRate),

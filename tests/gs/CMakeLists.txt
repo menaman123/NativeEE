@@ -179,13 +179,15 @@ foreach(pair
         "Gs_Inv13_GrowOnlyRetagKeepsContent;inv13" "Gs_Inv14_ClassTagsSurviveGrow;inv14"
         "Gs_Inv20_ZAddressingUsesZLayout;inv20" "Gs_Inv23_ScaleOneIdentity;inv23"
         "Gs_Inv24_NativePins;inv24" "Gs_Inv35_MaskedWritebackKeepsBits;inv35"
-        "Gs_Inv37_ClearKeyedOnComposite;inv37" "Targets_DrawnRectsByRoute;rects"
+        "Gs_Inv37_ClearKeyedOnComposite;inv37" "Gs_Inv38_ClearOnlyOnFrameOpeningDraw;inv38"
+        "Targets_DrawnRectsByRoute;rects"
         "Targets_PerViewAuthorSeqs;authors" "Targets_ZSaturate;zsat"
         "Targets_SyncAllJob;syncall" "Targets_EncodeVetoes;vetoes"
         "Targets_DepositSpan;span" "Targets_UploadedTextureMap;uploaded"
         "Targets_EvictUnderDraw;evict"
         "Targets_RefreshFromVram;refresh" "Targets_VramLayoutQueries;layout"
         "Targets_RefreshArms;arms" "Targets_RefreshBandStride;stride" "Targets_AliasPreDraw;alias" "Targets_PendingLedger;ledger"
+        "Targets_AlphaMergeRoutes;alphamerge"
         "Targets_TargetDims;dims")
     list(GET pair 0 tname)
     list(GET pair 1 arg)

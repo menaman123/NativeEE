@@ -81,6 +81,11 @@ static void TestPeakDefaults() {
         CHECK(e.Set("video.render_rate", "display", &err) && e.video.render_rate == RenderRate::Display);
         CHECK(e.Set("video.render_rate", "60", &err) && e.video.render_rate == RenderRate::Tick60);
         CHECK(!e.Set("video.render_rate", "120", &err));
+        CHECK(e.video.frame_cap == FrameCap::Hz60);   // the presented-frame cadence: every field by default
+        CHECK(e.Set("video.frame_cap", "30", &err) && e.video.frame_cap == FrameCap::Hz30);
+        CHECK(e.Set("video.frame_cap", "off", &err) && e.video.frame_cap == FrameCap::Off);
+        CHECK(e.Set("video.frame_cap", "60", &err) && e.video.frame_cap == FrameCap::Hz60);
+        CHECK(!e.Set("video.frame_cap", "45", &err));
         std::string v;
         CHECK(e.Get("video.fullscreen", &v) && v == "fullscreen");
     }

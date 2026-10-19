@@ -182,6 +182,7 @@ ROWS = [
     ("video.custom_scale_pct", "int", "100", "=", "display.ini:custom_scale"),
     ("video.fit_mode", "enum(stretch|fit|fill|integer|custom)", "fit", "=", "display.ini:mode"),
     ("video.fps_cap", "int", "60", "0", "PS2_FPS_CAP"),
+    ("video.frame_cap", "enum(off|30|60)", "60", "=", "-"),
     ("video.fullscreen", "enum(windowed|fullscreen|borderless)", "windowed", "=", "-"),
     ("video.interp", "bool", "on", "off", "PS2_GS_INTERP"),
     ("video.render_rate", "enum(60|display)", "60", "=", "-"),

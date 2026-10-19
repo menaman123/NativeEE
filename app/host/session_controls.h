@@ -25,8 +25,9 @@ public:
         // video.fullscreen (0 windowed, 1 fullscreen, 2 borderless), video.scale
         // (0 = native window, 1..4), video.vsync (0/1), video.aspect (the
         // AspectSel order: 0 auto, 1 4:3, 2 16:9, 3 16:10, 4 21:9) and
-        // video.render_rate (0 = 60, 1 = display).
-        SetDisplayMode, SetScale, SetVSync, SetAspect, SetRenderRate,
+        // video.render_rate (0 = 60, 1 = display) and video.frame_cap (the presented-
+        // frame cadence: 0 off, 1 30, 2 60 -- FramePacer).
+        SetDisplayMode, SetScale, SetVSync, SetAspect, SetRenderRate, SetFrameCap,
         // The Display page's texture filtering rows (video.texture_filter: the
         // mode's index title|point|bilinear|trilinear; video.anisotropy: 1|2|4|8|16):
         // applied to the owned textures' samplers from the next draw, persisted.
@@ -72,6 +73,7 @@ public:
         int scale = 1;
         int aspect = 0;
         int render_rate = 0;
+        int frame_cap = 2;   // video.frame_cap's index (0 off, 1 30, 2 60)
         // video.texture_filter (the mode index) and video.anisotropy in force.
         int texture_filter = 0;
         int anisotropy = 1;

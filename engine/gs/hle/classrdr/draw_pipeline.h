@@ -212,7 +212,7 @@ private:
     uint64_t frame_start_t0_ = 0;               // the whole frame's bracket (previous frame end -> this one)
     render::CallCensus frame_start_census_;
     void SameBufferPreDrawFlush(const DrawIr& ir);
-    void MarkCompositeConsumption(const DrawIr& ir);
+    void MarkCompositeConsumption(const DrawIr& ir, bool alt16_route);
 
     Deps d_;
     int window_w_ = 640, window_h_ = 448;

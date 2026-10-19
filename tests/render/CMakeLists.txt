@@ -9,6 +9,7 @@ function(ps2r_render_test name)
 endfunction()
 
 ps2r_render_test(test_blend_ff_map)
+ps2r_render_test(test_cd_copy_policy)
 ps2r_render_test(test_vertex_convert)
 ps2r_render_test(test_gl_shader_library)
 ps2r_render_test(test_gl_state_cache)
@@ -40,6 +41,11 @@ set_tests_properties(ToolsGsf1ExportSelftest PROPERTIES TIMEOUT 60)
 add_test(NAME Render_BlendFfMapTable COMMAND test_blend_ff_map)
 add_test(NAME Gs_Inv34_ReverseSubtract COMMAND test_blend_ff_map)
 set_tests_properties(Render_BlendFfMapTable Gs_Inv34_ReverseSubtract PROPERTIES TIMEOUT 120)
+
+# The Cd-copy elision with the dirty-rect list: strips skip past the union, a copy drops the
+# rects inside its box, overflow falls back to the union, force_full / Invalidate clear.
+add_test(NAME Render_CdCopyPolicyList COMMAND test_cd_copy_policy)
+set_tests_properties(Render_CdCopyPolicyList PROPERTIES TIMEOUT 120)
 
 # G6: fused conversion == the straightforward reference loops (3 modes, random verts, bbox rules).
 add_test(NAME Render_VertexConvert COMMAND test_vertex_convert)

@@ -80,6 +80,7 @@ public:
                     const DrawParams& params) override;
     void CopyRect(SurfaceId src, const Rect& src_rect, SurfaceId dst, const Rect& dst_rect,
                   uint32_t transform) override;
+    void WriteAlphaLane(SurfaceId dst, const Rect& dst_rect, SurfaceId lane, const Rect& exclude) override;
     void Readback(SurfaceId id, const Rect& rect, void* out, size_t stride) override;
     FenceId BeginReadback(SurfaceId id, const Rect& rect) override;
     bool PollReadback(FenceId fence, void* out, size_t stride) override;

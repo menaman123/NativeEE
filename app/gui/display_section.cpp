@@ -39,6 +39,7 @@ void DisplaySection::Draw(SessionControls& controls, const SessionControls::Snap
     static const char* const kModes[] = {"Windowed", "Fullscreen", "Borderless"};
     static const char* const kAspects[] = {"Auto (window)", "4:3", "16:9", "16:10", "21:9"};
     static const char* const kRates[] = {"60 (one frame per game tick)", "Display rate"};
+    static const char* const kCaps[] = {"Off (as the game produces)", "30 (every other field, steady)", "60 (every field)"};
     static const char* const kScales[] = {"Native window", "1x", "2x", "3x", "4x"};
     static const char* const kFilters[] = {"Title (as the game set it)", "Point", "Bilinear", "Trilinear"};
     static const char* const kAniso[] = {"Off", "2x", "4x", "8x", "16x"};
@@ -48,6 +49,7 @@ void DisplaySection::Draw(SessionControls& controls, const SessionControls::Snap
         Combo(controls, snapshot, Action::SetAspect, "Aspect ratio", kAspects, 5, r.aspect);
         Combo(controls, snapshot, Action::SetScale, "Internal scale", kScales, 5, r.scale);
         Combo(controls, snapshot, Action::SetRenderRate, "Render rate", kRates, 2, r.render_rate);
+        Combo(controls, snapshot, Action::SetFrameCap, "Frame cap", kCaps, 3, r.frame_cap);
         bool vsync = r.vsync;
         ImGui::BeginDisabled(Busy(snapshot, Action::SetVSync) || snapshot.closing);
         if (ImGui::Checkbox("VSync", &vsync)) controls.Submit(Action::SetVSync, vsync ? 1 : 0);

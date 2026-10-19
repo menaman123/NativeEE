@@ -30,6 +30,9 @@ bool DisplaySequence::ModeOf(const std::string& mode, SessionControls::Action& a
     if (mode == "nooverlay") { action = Action::SetPerfOverlay; value = 0; return true; }
     if (mode == "rate60") { action = Action::SetRenderRate; value = 0; return true; }
     if (mode == "ratedisplay") { action = Action::SetRenderRate; value = 1; return true; }
+    if (mode == "capoff") { action = Action::SetFrameCap; value = 0; return true; }
+    if (mode == "cap30") { action = Action::SetFrameCap; value = 1; return true; }
+    if (mode == "cap60") { action = Action::SetFrameCap; value = 2; return true; }
     return false;
 }
 

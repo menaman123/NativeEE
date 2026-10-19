@@ -62,8 +62,24 @@ public:
                           uint64_t gfx_epoch);
 
     // The per-frame clear rule: composite-consumed targets clear when marked,
-    // others once per EE frame.
+    // others once per EE frame -- and only on a frame-OPENING draw (below): a clear
+    // that is due waits for one (PrepareDraw).
     bool WantsFrameClear(uint32_t ee_frame) const;
+    // E330 -- the GS never clears a buffer by itself (GS User's Manual 3.4.2 /
+    // 3.4.3: FRAME and ZBUF memory persist; only draws and transfers write them).
+    // The engine's per-frame clear stands in for the game's own clear at the START
+    // of a target's frame, so it may fire only on a draw that opens one: a FRAME
+    // write in the target's own colour class (never the 16-bit companion route over
+    // 32-bit content -- a channel shuffle) that does not read the target itself (a
+    // post-process). A double-buffered title writes its DISPLAYED buffer mid-frame
+    // with exactly those two draw classes; clearing there wiped the picture (colour)
+    // or the scene's Z (depth) half-way through a frame.
+    static bool FrameOpeningDraw(const DrawIr& ir, bool alt16_route);
+    // E330 -- a composite consumption reads the source's COLOUR in its own class: a
+    // 32-bit-content source must be read as PSMCT32 / 24; a 16-bit source as a 16-bit
+    // or 32-bit colour PSM; an indexed read (PSMT8H / T4HH / T4HL / T8 / T4) or a
+    // 16-bit view of 32-bit content is a shuffle or a palette lookup, not a composite.
+    static bool IsCompositeRead(uint8_t tex_psm, bool src_has_32bit_content);
 
     static bool Is16BitColor(uint32_t psm) { return psm == 0x02 || psm == 0x0A; }
     static bool Is32BitClass(uint32_t psm) { return psm == 0x00 || psm == 0x01; }

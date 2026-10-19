@@ -24,17 +24,8 @@ render::SurfaceDesc ColorDesc(const TargetIdentity& id, bool renderable) {
     return d;
 }
 
-void ExtendCdDirty(render::CdCopyState& cd, int x0, int y0, int x1, int y1) {
-    if (x1 <= x0 || y1 <= y0) return;
-    if (cd.dirty_x0 >= cd.dirty_x1 || cd.dirty_y0 >= cd.dirty_y1) {
-        cd.dirty_x0 = x0; cd.dirty_y0 = y0; cd.dirty_x1 = x1; cd.dirty_y1 = y1;
-        return;
-    }
-    cd.dirty_x0 = std::min(cd.dirty_x0, x0);
-    cd.dirty_y0 = std::min(cd.dirty_y0, y0);
-    cd.dirty_x1 = std::max(cd.dirty_x1, x1);
-    cd.dirty_y1 = std::max(cd.dirty_y1, y1);
-}
+// The Cd-copy tracker's dirty set (gs::CdDirtySet: the union + the rect list).
+void ExtendCdDirty(render::CdCopyState& cd, int x0, int y0, int x1, int y1) { cd.dirty.Extend(x0, y0, x1, y1); }
 
 }  // namespace
 
@@ -130,6 +121,17 @@ bool RenderTarget::WantsFrameClear(uint32_t ee_frame) const {
                                      : (coherence.last_clear_frame != ee_frame);
 }
 
+bool RenderTarget::FrameOpeningDraw(const DrawIr& ir, bool alt16_route) {
+    if (alt16_route) return false;
+    if (ir.tex_enabled && ir.tex.tbp == ir.raster.frame.fbp) return false;
+    return true;
+}
+
+bool RenderTarget::IsCompositeRead(uint8_t tex_psm, bool src_has_32bit_content) {
+    if (src_has_32bit_content) return Is32BitClass(tex_psm);
+    return Is16BitColor(tex_psm) || Is32BitClass(tex_psm);
+}
+
 void RenderTarget::MarkMaterialized(int x0, int y0, int x1, int y1, bool alt16,
                                     uint32_t frame_count, uint64_t gfx_epoch) {
     CoherenceState& c = coherence;
@@ -174,7 +176,9 @@ void RenderTarget::PrepareDraw(render::Backend& be, const DrawIr& ir, uint32_t e
         out->alt16 = views.alt16;
         out->alt16_route = true;
     }
-    out->do_frame_clear = WantsFrameClear(ee_frame);
+    // E330: a due clear fires on the first frame-OPENING draw only (the keys are
+    // consumed then, not before).
+    out->do_frame_clear = WantsFrameClear(ee_frame) && FrameOpeningDraw(ir, out->alt16_route);
     out->clear_color = false;
     if (out->do_frame_clear) {
         coherence.last_clear_frame = ee_frame;

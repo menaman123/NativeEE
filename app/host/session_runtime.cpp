@@ -85,6 +85,8 @@ void SessionRuntime::ConfigureDisplayRows(const DisplaySettings& seed) {
     effective_scale_.store(std::clamp(seed.scale, 1, 4));   // 0 (native) resolves on the first Publish
     aspect_setting_.store(std::clamp(seed.aspect, 0, 4));
     render_rate_.store(seed.render_rate != 0 ? 1 : 0);
+    FramePacer::Cap cap = FramePacer::Cap::Hz60;
+    if (FramePacer::CapOf(seed.frame_cap, cap)) { pacer_.SetCap(cap); frame_cap_.store(seed.frame_cap); }
     display_hz_ = std::clamp(seed.display_hz, 0, 1000);
     display_mode_.store(std::clamp(seed.display_mode, 0, 2));
     if (display_mode_.load() != window_.DisplayMode()) {
@@ -113,7 +115,7 @@ int SessionRuntime::PresentHz() const {
     return display > 0 ? display : 60;
 }
 
-void SessionRuntime::SetPresentObserver(std::function<void(std::chrono::steady_clock::time_point)> observer) {
+void SessionRuntime::SetPresentObserver(std::function<void(std::chrono::steady_clock::time_point, bool)> observer) {
     if (std::this_thread::get_id() != main_thread_) return;
     present_observer_ = std::move(observer);
 }
@@ -172,6 +174,7 @@ void SessionRuntime::Publish() {
     status_.scale = effective_scale_.load();
     status_.aspect = aspect_setting_.load();
     status_.render_rate = render_rate_.load();
+    status_.frame_cap = frame_cap_.load();
     if (aspect_) {
         aspect_->SetWindow(status_.window_width, status_.window_height);
         window_.SetPictureAspect(aspect_->Ratio());
@@ -358,6 +361,17 @@ void SessionRuntime::ProcessCommands() {
                 if (persist_) persist_("video.aspect", kAspects[request.value]);
                 break;
             }
+            case Action::SetFrameCap: {
+                FramePacer::Cap cap = FramePacer::Cap::Hz60;
+                ok = FramePacer::CapOf(request.value, cap);
+                if (ok) {
+                    pacer_.SetCap(cap);
+                    frame_cap_.store(request.value);
+                    detail = std::string("Frame cap applied: ") + FramePacer::CapName(cap) + ".";
+                    if (persist_) persist_("video.frame_cap", FramePacer::CapName(cap));
+                } else detail = "Not a frame cap.";
+                break;
+            }
             case Action::SetRenderRate:
                 render_rate_.store(request.value != 0 ? 1 : 0);
                 detail = request.value != 0 ? "Rendering at the display's rate." : "Rendering one frame per game tick.";
@@ -455,7 +469,12 @@ void SessionRuntime::PumpMain() {
         request->done.store(true, std::memory_order_release);
         request->wake.Notify();
     }
-    if (!frame.rgba.empty()) window_.Upload(frame.rgba, frame.width, frame.height);
+    if (!frame.rgba.empty()) {
+        // The newest posted picture waits for the pacer's edge (Run); a picture still waiting
+        // is superseded by it (the game's tick ran; only its picture is not shown).
+        if (!pending_frame_.rgba.empty()) pacer_.Supersede();
+        pending_frame_ = std::move(frame);
+    }
     PollCapture();
     PollRestore();
     Publish();
@@ -648,13 +667,23 @@ int SessionRuntime::Run(std::function<int()> game, unsigned shutdown_seconds) {
             std::fprintf(stderr, "Session restore exceeded %u seconds; terminating process.\n", shutdown_seconds);
             std::_Exit(2);
         }
+        // The presented-frame cadence (video.frame_cap; FramePacer): the pending picture is
+        // uploaded and drawn at the pacer's edge; the fps_cap train below keeps re-drawing the
+        // held picture (the menu, the overlays) between edges.
+        if (pacer_.Admit(now, !pending_frame_.rgba.empty())) {
+            window_.Upload(pending_frame_.rgba, pending_frame_.width, pending_frame_.height);
+            pending_frame_ = {};
+            picture_fresh_ = true;
+            next_present = now;
+        }
         if (now >= next_present) {
             // Not marked main_busy_: a present is a few ms (a vsync'd swap at most a
             // period) -- the pad's bounded wait covers it; marking it made a third of
             // the boundaries' reads late (fix2: late=633 of 1800).
             window_.Draw();
             presents_.fetch_add(1, std::memory_order_relaxed);
-            if (present_observer_) present_observer_(std::chrono::steady_clock::now());
+            if (present_observer_) present_observer_(std::chrono::steady_clock::now(), picture_fresh_);
+            picture_fresh_ = false;
             // video.fps_cap paces the presenter (0 presents on every pump); under
             // video.render_rate=display the period is the display's (A3), the
             // edges a fixed train (re-anchored when the pump fell a frame behind).
@@ -689,9 +718,12 @@ int SessionRuntime::Run(std::function<int()> game, unsigned shutdown_seconds) {
                 std::_Exit(2);
             }
         }
-        // Sleep to the next present edge, at most 4 ms (the command / frame pump).
+        // Sleep to the next present edge (the re-draw train or the pacer's admission edge,
+        // whichever is first), at most 4 ms (the command / frame pump); a posted picture
+        // wakes the pump (PostFrame notifies).
         const uint64_t until = ps2r::Park::NowNs();
-        const uint64_t to_edge = next_present > until ? next_present - until : 0;
+        uint64_t to_edge = next_present > until ? next_present - until : 0;
+        if (!pending_frame_.rgba.empty()) to_edge = std::min(to_edge, pacer_.ToNextEdge(until));
         wake_main_.WaitFor(std::min<uint64_t>(4000000, std::max<uint64_t>(to_edge, 200000)), generation);
     }
     pthread_join(thread, nullptr);

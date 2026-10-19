@@ -34,6 +34,7 @@ bool SessionControls::Supported(Action action) const {
         case Action::SetPerfOverlay: return capabilities_.perf_overlay;
         case Action::SetDisplayMode: return capabilities_.fullscreen;
         case Action::SetScale: case Action::SetVSync: case Action::SetAspect: case Action::SetRenderRate:
+        case Action::SetFrameCap:
             return capabilities_.display_rows;
         case Action::SetTextureFilter: case Action::SetAnisotropy: return capabilities_.texture_filter;
     }
@@ -101,6 +102,8 @@ uint64_t SessionControls::SubmitLocked(Action action, int value, std::string pat
         return refuse("The internal scale must be native or 1..4.");
     if (action == Action::SetAspect && (value < 0 || value > 4))
         return refuse("The aspect selection must be one of the five shapes.");
+    if (action == Action::SetFrameCap && (value < 0 || value > 2))
+        return refuse("The frame cap must be off, 30 or 60 (0..2).");
     if (action == Action::SetTextureFilter && (value < 0 || value > 3))
         return refuse("Texture filter must be title, point, bilinear or trilinear (0..3).");
     if (action == Action::SetAnisotropy && value != 1 && value != 2 && value != 4 && value != 8 && value != 16)
@@ -291,6 +294,7 @@ const char* SessionControls::ActionLabel(Action action) {
         case Action::SetVSync: return "VSync";
         case Action::SetAspect: return "Aspect ratio";
         case Action::SetRenderRate: return "Render rate";
+        case Action::SetFrameCap: return "Frame cap";
         case Action::SetTextureFilter: return "Texture filter";
         case Action::SetAnisotropy: return "Anisotropic filtering";
     }

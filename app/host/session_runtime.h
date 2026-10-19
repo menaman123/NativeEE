@@ -11,6 +11,7 @@
 #include <thread>
 #include <vector>
 
+#include "app/host/frame_pacer.h"
 #include "app/host/session_controls.h"
 #include "app/host/session_window.h"
 #include "app/host/shutdown_census.h"
@@ -113,12 +114,18 @@ public:
         int render_rate = 0;
         int display_mode = 0;
         int display_hz = 0;
+        int frame_cap = 2;   // video.frame_cap's index: 0 off, 1 30, 2 60 (FramePacer::Cap)
     };
     void ConfigureDisplayRows(const DisplaySettings& seed);
     int ScaleSetting() const { return scale_setting_.load(); }          // 0 = native window, 1..4
     int EffectiveScale() const { return effective_scale_.load(); }      // the factor in force / requested, 1..4
     int AspectSetting() const { return aspect_setting_.load(); }
     int RenderRateSetting() const { return render_rate_.load(); }
+    // The presented-frame cadence in force (video.frame_cap's index; FramePacer::Cap) and
+    // the pacer's census row ("cap=..:admitted=..:held=..:superseded=..:late=.."). Any thread
+    // for the index; the row is read after Run (main).
+    int FrameCapSetting() const { return frame_cap_.load(); }
+    std::string FrameCapCensus() const { return pacer_.CensusRow(); }
     int DisplayModeState() const { return display_mode_.load(); }
     bool VSyncState() const { return vsync_state_.load(); }
     // The display rate the presenter paces at under render_rate=display (Hz).
@@ -135,8 +142,11 @@ public:
     // press-to-bind over the composition's bindings file + live mapper reload).
     void ConfigureControlsPage(ControlsSection::Model model);
     // Main thread before Run: called after EVERY frame the presenter draws to
-    // the window (the display-rate render census and the camera interpolation).
-    void SetPresentObserver(std::function<void(std::chrono::steady_clock::time_point)> observer);
+    // the window (the display-rate render census and the camera interpolation);
+    // `new_picture` = this draw showed a picture the window had not shown before
+    // (a Live present), else the held picture again (a Hold: the presented-frame
+    // cadence a player sees is the train of the new_picture draws).
+    void SetPresentObserver(std::function<void(std::chrono::steady_clock::time_point, bool new_picture)> observer);
     uint64_t Presents() const { return presents_.load(); }
     // Main thread before Run: at the end of the session the presenter's LAST
     // window image (the picture plus the GUI overlays -- what the user saw) is
@@ -254,9 +264,14 @@ private:
     std::atomic<bool> perf_overlay_{false}, fullscreen_state_{false}, keyboard_state_{true}, vsync_state_{false};
     bool display_rows_ = false;
     std::atomic<int> scale_setting_{1}, effective_scale_{1}, scale_request_{0}, aspect_setting_{0}, render_rate_{0},
-        display_mode_{0};
+        display_mode_{0}, frame_cap_{2};
+    // The presented-frame cadence (video.frame_cap): the pacer admits the pending picture
+    // (the newest posted, main-thread only) at its edges; between edges it waits.
+    FramePacer pacer_;
+    Frame pending_frame_;
     int display_hz_ = 0;
-    std::function<void(std::chrono::steady_clock::time_point)> present_observer_;
+    std::function<void(std::chrono::steady_clock::time_point, bool)> present_observer_;
+    bool picture_fresh_ = false;   // a picture uploaded since the last draw (the observer's new_picture)
     std::atomic<uint64_t> presents_{0};
     std::atomic<uint64_t> display_swaps_{0}, display_swap_max_us_{0}, display_swap_total_us_{0};
     Persist persist_;
