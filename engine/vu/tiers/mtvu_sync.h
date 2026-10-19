@@ -52,7 +52,14 @@ public:
 
     // Wait until the worker is idle (eager-draining meanwhile), then fence the
     // drain thread. Immediate when the worker is down or on the worker thread.
+    // A completed wait (the pipeline ran empty on the EE's demand) is an
+    // observation point for the device causes the pipeline latched: the
+    // after-sync hook runs then (the root binds Intc::CollectDeferred).
     void Sync(SyncSite site = SyncSite::Other);
+    void SetAfterSyncHook(void (*fn)(void* user), void* user) {
+        after_sync_ = fn;
+        after_sync_user_ = user;
+    }
     // A site that would have synced skipped it under DeferOn (census only).
     void NoteSiteSkipped(SyncSite site);
     // True and `*stat` = the busy view while segments are in flight.
@@ -105,4 +112,6 @@ private:
     std::atomic<uint64_t> skipped_count_[static_cast<size_t>(SyncSite::Count)];
     std::atomic<uint64_t> progress_waits_{0};
     std::atomic<uint64_t> progress_idle_{0};
+    void (*after_sync_)(void* user) = nullptr;
+    void* after_sync_user_ = nullptr;
 };

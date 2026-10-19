@@ -77,6 +77,9 @@ public:
 
     struct Deps {
         std::function<void()> advance_field;   // one field of emulated time (BoundaryProtocol::WaitHook bound)
+        // A WALL field is due: the pacer noted a tick no boundary has consumed yet
+        // (BoundaryProtocol::WallFieldDue under Play; nullptr / false = never).
+        std::function<bool()> wall_field_due;
         EmuDomain* domain = nullptr;           // with alarms: FireDue(domain->DomainTick())
         Alarms* alarms = nullptr;
         EeTimers* timers = nullptr;
@@ -106,6 +109,8 @@ public:
         uint64_t idle_isrs = 0;    // idle grants that took a pending INTC cause instead of a field
         uint64_t idle_pipeline_waits = 0;   // idle grants that parked on the GS pipeline instead of a field
         uint64_t idle_wakes = 0;   // idle grants whose field park ended on a foreign wake before the tick (no field passed)
+        uint64_t wall_wakes = 0;   // WakeVblankIfWallFieldDue: a vblank waiter readied by a due wall field
+        uint64_t deferred_collects = 0;   // RunField / idle grants that collected a latched device cause (Intc::CollectDeferred)
         uint64_t contended = 0;    // trips that found another READY thread before PreemptPoint
         uint64_t nested = 0;       // refused: inside a trip
         uint64_t inhibited = 0;    // refused: inhibit() or an INTC dispatch in progress
@@ -123,6 +128,18 @@ public:
 
     // The seam body (seams.cpp: ps2r_ee_yield_point). Reloads g_ee_backedge_budget first.
     void Trip(CpuContext& ctx);
+    // The wall vblank landing on a RUNNING thread (a scheduling point of the
+    // holder: the title's syscall entry). When `wall_field_due` holds and a
+    // thread sleeps in WaitVblank, that thread is readied (no field passes
+    // here: the boundary it then runs finds the tick noted and fires it, as a
+    // late boundary does) and the holder takes its preemption point -- a
+    // higher-priority vsync thread runs its boundary and kicks the next frame
+    // while this thread finishes the game's logic, as on the console, instead
+    // of the vblank waiting for every other thread to block (the idle-skip
+    // model serialises the frame's VU1 work after the whole logic tick).
+    // Counted (wall_wakes). Refused like a trip (unbound, nested, inhibited,
+    // in an INTC dispatch, not the holder, the idle runner, inside an ISR).
+    bool WakeVblankIfWallFieldDue();
     // The kernel's idle (header comment): called by a kernel-object wait right
     // after EeRunToken::BlockBegin with no lock held; returns the fields advanced
     // (0 = the EE was not idle or the call was refused).

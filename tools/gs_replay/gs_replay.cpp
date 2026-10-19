@@ -3,7 +3,7 @@
 //
 //   gs_replay stream <in.gsstream> [--scale N] [--warmup N] [--max-frames N] [--csv f]
 //                    [--json f] [--dump-ppm DIR] [--dump-frames a-b] [--quiet] [--sync-capture] [--swap] [--cd-barrier]
-//                                                                                (exit 77 = no GL)
+//                    [--backend gl|metal]                                         (exit 77 = no GL / Metal device)
 //       the renderer THROUGHPUT harness: the consumer alone over a captured consumer
 //       stream (engine/gs/hle/capture), per-frame ms / fps / frames-lane hashes.
 //
@@ -30,7 +30,9 @@ int Usage() {
     std::fprintf(stderr,
                  "usage: gs_replay stream <in.gsstream> [--scale N] [--warmup N] [--max-frames N]\n"
                  "                 [--csv f] [--json f] [--dump-ppm DIR] [--dump-frames a-b]\n"
-                 "                 [--quiet] [--sync-capture] [--swap] [--cd-barrier]  (exit 77 = no GL)\n");
+                 "                 [--quiet] [--sync-capture] [--swap] [--cd-barrier] [--backend gl|metal]\n"
+                 "                 [--force-shader-blend] [--draw-limit N[@F]]\n"
+                 "                 (exit 77 = no GL / Metal device)\n");
     return 2;
 }
 
@@ -58,6 +60,18 @@ int MainStream(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--sync-capture")) opt.deferred_capture = false;
         else if (!std::strcmp(argv[i], "--swap")) opt.swap_hidden_window = true;
         else if (!std::strcmp(argv[i], "--cd-barrier")) opt.cd_barrier = true;
+        else if (!std::strcmp(argv[i], "--force-shader-blend")) opt.force_shader_blend = true;
+        else if (!std::strcmp(argv[i], "--draw-limit") && i + 1 < argc) {
+            char* end = nullptr;
+            opt.draw_limit = static_cast<uint32_t>(std::strtoul(argv[++i], &end, 0));
+            if (end && *end == '@') opt.draw_limit_frame = static_cast<uint32_t>(std::strtoul(end + 1, nullptr, 0));
+        }
+        else if (!std::strcmp(argv[i], "--backend") && i + 1 < argc) {
+            const char* b = argv[++i];
+            if (!std::strcmp(b, "metal")) opt.metal = true;
+            else if (!std::strcmp(b, "gl")) opt.metal = false;
+            else return Usage();
+        }
         else return Usage();
     }
     tools::StreamReplayDriver driver(opt);

@@ -13,7 +13,7 @@
 
 namespace ps2r {
 
-enum class VideoBackend : uint8_t { Gl = 0, Soft };
+enum class VideoBackend : uint8_t { Gl = 0, Soft, Metal };   // Metal: Apple GPUs (macOS builds)
 enum class FitMode : uint8_t { Stretch = 0, Fit, Fill, Integer, Custom };
 // video.aspect: the display shape the title renders FOR (the projection, culling
 // frustum, HUD fit and movie picture take the ratio -- TR renderer.cpp's

@@ -73,6 +73,7 @@ void BoundarySequencer::InstallPhase3Steps(const Phase3Deps& deps) {
         deps_.domain->OnBoundary(deps_.source->RawCount());
         if (deps_.alarms) deps_.alarms->FireDue(deps_.domain->DomainTick());
         if (deps_.timers) deps_.timers->PumpAtBoundary(ctx);
+        deps_.intc->CollectDeferred();   // the vblank: an observation point for the device pipeline's latched causes
         deps_.intc->DispatchPending(ctx, Intc::kSiteBoundary);
         return true;
     });

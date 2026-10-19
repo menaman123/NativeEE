@@ -32,7 +32,8 @@ std::vector<std::string> ConfigValidator::DegradeDependents(Config& c, bool reta
         key = false;
         notes.push_back(std::string(name) + " disabled: requires " + prerequisite);
     };
-    const bool gl = c.video.backend == VideoBackend::Gl;
+    // GL and Metal host the live video scene the Graphics producers need; Soft hosts none.
+    const bool gl = c.video.backend == VideoBackend::Gl || c.video.backend == VideoBackend::Metal;
     if (!gl) {
         off(c.hle.graphics_shadows, "hle.graphics_shadows", "video.backend=gl");
         off(c.hle.graphics_distortion, "hle.graphics_distortion", "video.backend=gl");

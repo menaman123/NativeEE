@@ -1,6 +1,8 @@
 #include "engine/gif/gif_drain_thread.h"
 
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 
 #include "engine/gif/gif_arbiter.h"
 
@@ -113,6 +115,13 @@ void GifDrainThread::RunPass() {
         faulted_.store(true, std::memory_order_release);
     }
     const auto t1 = std::chrono::steady_clock::now();
+    {   // TEMP-PIPE protocol trace (removed before the report)
+        static const bool proto_trace = std::getenv("NATIVEEE_PROTO_TRACE") != nullptr;
+        if (proto_trace && delivered)
+            std::fprintf(stderr, "proto: t=%llu drain-pass us=%llu\n",
+                         (unsigned long long)std::chrono::duration_cast<std::chrono::microseconds>(t1.time_since_epoch()).count(),
+                         (unsigned long long)std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
+    }
     if (delivered) {
         busy_ns_.fetch_add(static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count()),
                            std::memory_order_relaxed);

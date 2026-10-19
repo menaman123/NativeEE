@@ -7,6 +7,9 @@
 #include "engine/ee/sched/ee_run_token.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <vector>
 
 Intc& Intc::Instance() {
@@ -72,6 +75,34 @@ void Intc::Raise(int cause) {
         return;
     }
     RaiseInPlace(cause);
+}
+
+void Intc::RaiseDeferred(int cause) {
+    if (cause < 0 || cause >= kCount) return;
+    deferred_.fetch_or(1u << cause, std::memory_order_acq_rel);
+    deferred_raises_.fetch_add(1, std::memory_order_relaxed);
+    {   // TEMP-PIPE trace
+        static const bool tr = std::getenv("NATIVEEE_PIPE_TRACE") != nullptr;
+        if (tr) std::fprintf(stderr, "pipe: t=%lld latch cause=%d holder=%d owner=%d\n",
+            (long long)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(),
+            cause, EeRunToken::Instance().CurrentThreadHoldsToken() ? EeRunToken::Instance().CurrentTid() : -9, EeRunToken::Instance().OwnerTid());
+    }
+    // A fully parked guest set has no observer: the no-op event's poke wakes
+    // one park (the queue's policy names it) whose re-park's idle grant
+    // collects; a holder collects at its own observation point.
+    EeEventQueue::Event ev;
+    ev.kind = EeEventQueue::Event::kDeferredLatched;
+    EeEventQueue::Instance().Enqueue(ev);
+}
+
+uint32_t Intc::CollectDeferred() {
+    if (!EeRunToken::Instance().CurrentThreadHoldsToken()) return 0;
+    const uint32_t causes = deferred_.exchange(0, std::memory_order_acq_rel);
+    if (causes == 0) return 0;
+    deferred_collects_.fetch_add(1, std::memory_order_relaxed);
+    for (int c = 0; c < kCount; ++c)
+        if ((causes >> c) & 1u) RaiseInPlace(c);
+    return causes;
 }
 
 bool Intc::Dispatch(CpuContext& ctx, int cause, int site) {
@@ -183,9 +214,12 @@ void Intc::RestoreRegisters(uint32_t stat, uint32_t mask) {
 
 void Intc::ResetForTest() {
     stat_.store(0);
+    deferred_.store(0);
     mask_ = 0;
     raises_ = dispatches_ = 0;
     queued_raises_.store(0);
+    deferred_raises_.store(0);
+    deferred_collects_.store(0);
     in_dispatch_ = false;
     in_dispatch_cause_ = -1;
     nested_refusals_ = 0;

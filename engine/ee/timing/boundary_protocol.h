@@ -76,6 +76,11 @@ public:
     // re-reads its clock / re-evaluates and parks again.
     void Wait(uint64_t deadline);
     std::function<void(uint64_t)> WaitHook();
+    // A wall field is due: under Play (wall-locked, not bypassed) the pacer has
+    // noted a tick no boundary has fired yet. The deterministic policy and the
+    // bypass modes never report one (the running thread's vblank wake,
+    // EeYieldPoint::WakeVblankIfWallFieldDue, is inert there by construction).
+    bool WallFieldDue() const;
     // Play pacer: a tick fired (wakes the timer waiters and the parked boundary).
     void NotifyTick();
     // The wall-locked boundary (Play policy with a host pacer): the boundary's

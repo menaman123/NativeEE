@@ -24,6 +24,14 @@ ps2r_render_test(test_sw_blend_integer)
 ps2r_render_test(test_s9_stencil_smoke)
 ps2r_render_test(test_inherited_uniforms)
 ps2r_render_test(test_texture_filter)
+if(APPLE)   # ps2r_render_metal (engine/render is configured after tests/: test on the platform)
+    add_executable(test_metal_device_smoke test_metal_device_smoke.cpp)
+    target_link_libraries(test_metal_device_smoke PRIVATE ps2r_render_metal ps2r_gs_ir ps2r_core)
+    target_compile_options(test_metal_device_smoke PRIVATE -Wall -Wextra -Werror -O2)
+    # The Metal arm's device smoke (the GL smoke's checks on MetalDevice; SKIP without a device).
+    add_test(NAME Render_MetalDeviceSmoke COMMAND test_metal_device_smoke)
+    set_tests_properties(Render_MetalDeviceSmoke PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+endif()
 
 # The rendering pins over a title's frozen PCSX2 baselines (title-screen draws, whole-frame
 # replays, the attract-sequence correctness gate) were ONE title's: they keyed on that title's

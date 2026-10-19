@@ -65,6 +65,7 @@ void ThreadManager::InstallEventApplier() {
             case E::kIntcRaise:
                 if (auto* fn = intc_raise_.load(std::memory_order_acquire)) fn(ev.a);
                 break;
+            case E::kDeferredLatched: break;   // the wake was the point (Intc collects at an observation point)
         }
     });
 }

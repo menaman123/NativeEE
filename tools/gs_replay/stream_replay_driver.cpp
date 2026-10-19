@@ -40,15 +40,36 @@ double StreamReplayDriver::NowMs() {
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
+bool StreamReplayDriver::DrawLimitApplies(uint32_t frame_index) const {
+    if (opt_.draw_limit_frame != kDrawLimitDumpRange) return frame_index == opt_.draw_limit_frame;
+    return opt_.dump_range.Contains(frame_index);
+}
+
 bool StreamReplayDriver::CreateContext() {
-    if (!win_.Create(true, kHiddenWindowW, kHiddenWindowH, "gs_replay stream")) return false;
-    if (!ctx_.Create(win_)) return false;
-    ctx_.SetSwapInterval(0);
-    if (!be_.Init([this] { PresentWindow(); })) return false;
-    be_.SetWindowSize(kNativeWindowW, kNativeWindowH);
-    be_.ArmPresentCapture(true);   // play: every Present's window image is read back for the session window
-    be_.SetPresentCaptureDeferred(opt_.deferred_capture);   // play: the read lands one present late (B1)
-    if (opt_.cd_barrier) be_.SetCdCopyByBarrier(true);
+    if (opt_.metal) {
+#if defined(PS2R_HAS_METAL)
+        metal_ = std::make_unique<render::MetalDevice>();
+        if (!metal_->Init([this] { PresentWindow(); })) return false;
+        be_ = metal_.get();
+        api_name_ = "Metal";
+        renderer_name_ = metal_->DeviceName();
+#else
+        return false;
+#endif
+    } else {
+        if (!win_.Create(true, kHiddenWindowW, kHiddenWindowH, "gs_replay stream")) return false;
+        if (!ctx_.Create(win_)) return false;
+        ctx_.SetSwapInterval(0);
+        if (!gl_.Init([this] { PresentWindow(); })) return false;
+        be_ = &gl_;
+        api_name_ = ctx_.Version() ? ctx_.Version() : "";
+        renderer_name_ = ctx_.Renderer() ? ctx_.Renderer() : "";
+        if (opt_.cd_barrier) gl_.SetCdCopyByBarrier(true);
+        if (opt_.force_shader_blend) gl_.SetForceShaderBlend(true);
+    }
+    be_->SetWindowSize(kNativeWindowW, kNativeWindowH);
+    be_->ArmPresentCapture(true);   // play: every Present's window image is read back for the session window
+    be_->SetPresentCaptureDeferred(opt_.deferred_capture);   // play: the read lands one present late (B1)
     return true;
 }
 
@@ -58,13 +79,13 @@ void StreamReplayDriver::BuildScene() {
     if (scale > 4) scale = 4;
     vram_ = std::make_unique<gs::VramImage>();
     scale_ = std::make_unique<gs::ScalePolicy>(gs::ScaleSettings{scale}, &layout_);
-    cache_ = std::make_unique<gs::RenderTargetCache>(be_, *vram_, *scale_);
-    refresher_ = std::make_unique<gs::TargetRefresher>(be_, *vram_, *cache_);
-    resolver_ = std::make_unique<gs::TextureResolver>(be_, *vram_, *cache_, *refresher_, layout_);
-    scanout_ = std::make_unique<gs::ScanoutComposer>(be_, *cache_);
+    cache_ = std::make_unique<gs::RenderTargetCache>(*be_, *vram_, *scale_);
+    refresher_ = std::make_unique<gs::TargetRefresher>(*be_, *vram_, *cache_);
+    resolver_ = std::make_unique<gs::TextureResolver>(*be_, *vram_, *cache_, *refresher_, layout_);
+    scanout_ = std::make_unique<gs::ScanoutComposer>(*be_, *cache_);
     presenter_ = std::make_unique<gs::Presenter>(*scanout_);
     gs::DrawPipeline::Deps deps;
-    deps.be = &be_;
+    deps.be = be_;
     deps.vram = vram_.get();
     deps.cache = cache_.get();
     deps.refresher = refresher_.get();
@@ -82,7 +103,7 @@ void StreamReplayDriver::BuildScene() {
     hooks.upload_pixels = [this] { return last_payload_valid_ ? &last_payload_ : nullptr; };
     hooks.crtc = [this] { return crtc_; };
     hooks.window_resized = [this](int w, int h) {
-        if (w > 0 && h > 0) be_.SetWindowSize(w, h);
+        if (w > 0 && h > 0) be_->SetWindowSize(w, h);
     };
     consumer_ = std::make_unique<gs::DrawIrQueueConsumer>(*pipe_, std::move(hooks));
     consumer_->SetFrameHashScale(scale);   // play: the frames-lane hash where the grab is made
@@ -98,16 +119,20 @@ void StreamReplayDriver::Teardown() {
     cache_.reset();
     scale_.reset();
     vram_.reset();
-    if (be_.IsInitialized()) be_.Shutdown();
+    if (gl_.IsInitialized()) gl_.Shutdown();
+#if defined(PS2R_HAS_METAL)
+    metal_.reset();
+#endif
+    be_ = nullptr;
     ctx_.Destroy();
     win_.Destroy();
 }
 
 void StreamReplayDriver::PresentWindow() {
     int w = 0, h = 0;
-    if (be_.ReadPresented(&presented_, &w, &h) && w > 0 && h > 0) ++presents_read_;
-    if (opt_.swap_hidden_window) win_.Swap();
-    else be_.FlushCommands();   // play: the hidden window is never shown -- a flush, not a swap
+    if (be_->ReadPresented(&presented_, &w, &h) && w > 0 && h > 0) ++presents_read_;
+    if (opt_.swap_hidden_window && !opt_.metal) win_.Swap();
+    else be_->FlushCommands();   // play: the hidden window is never shown -- a flush, not a swap
 }
 
 void StreamReplayDriver::OnFrameDone(const gs::JobRec& vsync) {
@@ -122,7 +147,7 @@ void StreamReplayDriver::OnFrameDone(const gs::JobRec& vsync) {
     const gs::DrawPipeline::Frame& f = consumer_->LastFrame();
     st.grabbed = f.grabbed;
     st.hash = f.hash;
-    if (const render::CallCensus* c = be_.Census()) {
+    if (const render::CallCensus* c = be_->Census()) {
         st.readbacks = c->readbacks - census_at_frame_.readbacks;
         st.copies = c->copies - census_at_frame_.copies;
         st.draw_calls = c->draw_calls - census_at_frame_.draw_calls;
@@ -143,6 +168,19 @@ void StreamReplayDriver::OnFrameDone(const gs::JobRec& vsync) {
         char name[64];
         std::snprintf(name, sizeof(name), "/g%u.ppm", frame_index);
         WritePpm(std::string(opt_.dump_dir) + name, f.rgba, f.w, f.h);
+        // The grab's alpha lane as a PGM (the stored GS alpha byte per pixel).
+        std::snprintf(name, sizeof(name), "/a%u.pgm", frame_index);
+        if (std::FILE* af = std::fopen((std::string(opt_.dump_dir) + name).c_str(), "wb")) {
+            std::fprintf(af, "P5\n%d %d\n255\n", f.w, f.h);
+            for (size_t i = 3; i < f.rgba.size(); i += 4) std::fputc(f.rgba[i], af);
+            std::fclose(af);
+        }
+        // The route trace of the dumped frame (how every draw was lowered) next to its image.
+        std::snprintf(name, sizeof(name), "/r%u.txt", frame_index);
+        if (std::FILE* tf = std::fopen((std::string(opt_.dump_dir) + name).c_str(), "w")) {
+            pipe_->RouteTrace().Write(tf);
+            std::fclose(tf);
+        }
     }
 }
 
@@ -203,16 +241,16 @@ int StreamReplayDriver::Run() {
     }
     reader_thread_ = std::thread([this, &reader] { ReaderMain(&reader); });
     if (!CreateContext()) {
-        std::fprintf(stderr, "[GSSTREAM] no GL context (SKIP)\n");
+        std::fprintf(stderr, "[GSSTREAM] no %s device (SKIP)\n", opt_.metal ? "Metal" : "GL");
         return 77;
     }
     BuildScene();
     if (!opt_.quiet)
-        std::printf("[GSSTREAM] %s scale=%d gl=%s renderer=%s\n", opt_.in_path, opt_.scale, ctx_.Version(), ctx_.Renderer());
+        std::printf("[GSSTREAM] %s scale=%d api=%s renderer=%s\n", opt_.in_path, opt_.scale, api_name_.c_str(), renderer_name_.c_str());
     gs::GsStreamReader::Record rec;
     gs::VramOpLog ops;
     frame_t0_ = NowMs();
-    if (const render::CallCensus* c = be_.Census()) census_at_frame_ = *c;
+    if (const render::CallCensus* c = be_->Census()) census_at_frame_ = *c;
     while (PopRecord(&rec)) {
         switch (rec.kind) {
             case gs::GsStreamFormat::kVramInit:
@@ -227,7 +265,11 @@ int StreamReplayDriver::Run() {
                 vram_ops_ += ops.Replay(*vram_);
                 break;
             case gs::GsStreamFormat::kDraw:
-                consumer_->OnDraw(rec.draw);
+                // The bisection aid limits only the dumped frames (every earlier frame runs whole so the
+                // render-target / depth state the limited frame starts from is the real one).
+                if (!opt_.draw_limit || !DrawLimitApplies(static_cast<uint32_t>(frames_.size())) ||
+                    frame_draws_ < opt_.draw_limit)
+                    consumer_->OnDraw(rec.draw);
                 ++frame_draws_;
                 break;
             case gs::GsStreamFormat::kJob:
@@ -311,7 +353,7 @@ void StreamReplayDriver::WriteOutputs() const {
                          opt_.in_path, opt_.scale, frames_.size(), first, n, total_ms_, fps_mean, fps_p50, p50, p99, max_ms,
                          kFrameBarMs, over_bar, static_cast<unsigned long long>(draws), static_cast<unsigned long long>(uploads_),
                          static_cast<unsigned long long>(vram_ops_), static_cast<unsigned long long>(stream_hash_),
-                         ctx_.Version() ? ctx_.Version() : "", ctx_.Renderer() ? ctx_.Renderer() : "");
+                         api_name_.c_str(), renderer_name_.c_str());
             std::fclose(f);
         }
     }

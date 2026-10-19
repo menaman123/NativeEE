@@ -1,5 +1,9 @@
 #include "engine/ee/sched/ee_yield_point.h"
 
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+
 #include "engine/ee/hle/alarms.h"
 #include "engine/ee/intc/ee_timers.h"
 #include "engine/ee/intc/intc.h"
@@ -25,7 +29,8 @@ std::string EeYieldPoint::Census::Format() const {
            ":inhibited=" + std::to_string(inhibited) + ":non_holder=" + std::to_string(non_holder) +
            ":idle_calls=" + std::to_string(idle_calls) + ":idle_fields=" + std::to_string(idle_fields) +
            ":idle_isrs=" + std::to_string(idle_isrs) + ":idle_pipeline_waits=" + std::to_string(idle_pipeline_waits) +
-           ":idle_wakes=" + std::to_string(idle_wakes);
+           ":idle_wakes=" + std::to_string(idle_wakes) + ":wall_wakes=" + std::to_string(wall_wakes) +
+           ":deferred_collects=" + std::to_string(deferred_collects);
 }
 
 void EeYieldPoint::Bind(Deps deps) {
@@ -78,10 +83,27 @@ void EeYieldPoint::RunField(CpuContext& ctx) {
     }
     if (deps_.alarms && deps_.domain) deps_.alarms->FireDue(deps_.domain->DomainTick());
     if (deps_.timers) deps_.timers->PumpAtBoundary(ctx);
-    if (deps_.intc) census_.isrs += static_cast<uint64_t>(deps_.intc->DispatchPending(ctx, Intc::kSiteYield));
+    // A field passed: an observation point for the device pipeline's latched
+    // causes (Intc::RaiseDeferred), taken with the field's own interrupts.
+    if (deps_.intc) {
+        if (deps_.intc->CollectDeferred()) ++census_.deferred_collects;
+        census_.isrs += static_cast<uint64_t>(deps_.intc->DispatchPending(ctx, Intc::kSiteYield));
+    }
     if (deps_.dispatch_dmac) deps_.dispatch_dmac(ctx);
     if (deps_.queue) deps_.queue->DrainIfPendingOnHolder();
     if (deps_.pump_devices) deps_.pump_devices(ctx);
+}
+
+bool EeYieldPoint::WakeVblankIfWallFieldDue() {
+    if (!bound_ || in_trip_ || !deps_.wall_field_due) return false;
+    if ((deps_.inhibit && deps_.inhibit()) || (deps_.intc && deps_.intc->InDispatch())) return false;
+    EeRunToken& token = EeRunToken::Instance();
+    if (!token.CurrentThreadHoldsToken() || token.CurrentThreadIdling() || token.InIsr() || token.CurrentTid() < 0) return false;
+    if (!deps_.wall_field_due()) return false;
+    if (!token.WakeVblankWaitersForWallTick()) return false;
+    ++census_.wall_wakes;
+    token.PreemptPoint();
+    return true;
 }
 
 uint64_t EeYieldPoint::IdleWhileBlocked(CpuContext& ctx) {
@@ -99,8 +121,14 @@ uint64_t EeYieldPoint::IdleWhileBlocked(CpuContext& ctx) {
         // A cause already pending (a queued foreign raise applied here) is taken
         // now, with no field: the handler's wakes run the election below.
         if (deps_.queue) deps_.queue->DrainIfPendingOnHolder();
+        if (deps_.intc && deps_.intc->CollectDeferred()) ++census_.deferred_collects;   // the idle loop's observation point
         if (deps_.intc && deps_.intc->Pending()) {
             ++census_.idle_isrs;
+            {   // TEMP-PIPE trace
+                static const bool tr = std::getenv("NATIVEEE_PIPE_TRACE") != nullptr;
+                if (tr) std::fprintf(stderr, "pipe: t=%lld idle-isr tid=%d stat=0x%x\n",
+                    (long long)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(), tid, deps_.intc->Stat());
+            }
             census_.isrs += static_cast<uint64_t>(deps_.intc->DispatchPending(ctx, Intc::kSiteYield));
             if (deps_.dispatch_dmac) deps_.dispatch_dmac(ctx);
             in_trip_ = false;

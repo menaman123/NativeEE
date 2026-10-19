@@ -85,6 +85,15 @@ public:
     // seen non-zero (a second title's frame pacer spins; its main thread starves).
     void WaitVblank();
     void NoteFieldElapsed();
+    // (c) a WALL field is due: the composition's pacer noted a tick no boundary
+    // has consumed while a thread ran past it (the console's vblank interrupt
+    // lands whatever the EE is doing; here it lands at the running holder's
+    // next scheduling point). Readies every thread sleeping in WaitVblank (its
+    // wait returns; the boundary it runs finds the tick noted and fires it) --
+    // no field passes here. Holder only. False = nobody was waiting.
+    bool WakeVblankWaitersForWallTick();
+    uint32_t VblankWaiters();
+    uint64_t WallTickWakes() const { return wall_tick_wakes_.load(std::memory_order_relaxed); }
     uint64_t VblankWaits() const { return vblank_waits_.load(std::memory_order_relaxed); }
     uint64_t VblankWaitsIdle() const { return vblank_waits_idle_.load(std::memory_order_relaxed); }
 
@@ -160,6 +169,15 @@ public:
     int CurrentTid() const;
     bool ElectionHeld();
 
+    // The elected tid -- a running thread, a thread elected but not yet arrived,
+    // or the idle runner -- or kNone when no thread holds or is about to hold
+    // the token (a snapshot: the event queue's poke policy reads it).
+    int OwnerTid();
+    // The guest tid that released the token last (BlockBegin / WaitVblank /
+    // exit; never the idle runner, never a host gate): with no owner, the
+    // thread an in-line device pipeline would have run on -- the event queue's
+    // no-holder poke target. kNone before the first release.
+    int LastOwnerTid();
     // Introspection (tests / diagnostics).
     int OwnerForTest();
     bool AnyReadyBesides(int tid);
@@ -213,6 +231,7 @@ private:
     bool retired_[kMaxTid] = {};  // GuestExit ran for the tid; cleared by GuestEnter
     uint64_t retired_ready_noops_ = 0;
     int owner_ = kNone;           // elected tid (may not have arrived yet)
+    int last_owner_ = kNone;      // ReleaseLocked's last guest tid (under mu_)
     bool owner_running_ = false;  // elected thread is inside its grant
     bool shutdown_ = false;
     bool hold_election_ = false;  // BeginRelaunch .. EndRelaunch
@@ -220,7 +239,15 @@ private:
     std::mutex host_gate_mu_;     // serialises concurrent HostGate users
     void (*post_acquire_)() = nullptr;
     uint64_t field_gen_ = 0;      // NoteFieldElapsed count (under mu_)
+    uint64_t wall_tick_gen_ = 0;  // WakeVblankWaitersForWallTick count (under mu_)
     uint32_t vblank_waiters_ = 0; // threads sleeping inside WaitVblank (under mu_)
+    static constexpr int kMaxVblankWaiters = 8;
+    struct VblankWaiter {
+        int tid = kNone;
+        int prio = 0;
+    };
+    VblankWaiter vblank_waiter_[kMaxVblankWaiters];   // the sleepers' tid / prio (under mu_)
+    std::atomic<uint64_t> wall_tick_wakes_{0};
     std::atomic<uint64_t> vblank_waits_{0}, vblank_waits_idle_{0};
     std::atomic<uint64_t> idle_grants_{0};
 

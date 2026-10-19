@@ -26,6 +26,7 @@ void MtvuSync::Sync(SyncSite site) {
         // Lock-free idle fast path: every worker write is visible already.
         if (arbiter_.DrainThreadRunning() && !worker_.InEagerDrain() && arbiter_.hasPending())
             arbiter_.DrainFence();
+        if (after_sync_ && !worker_.InEagerDrain()) after_sync_(after_sync_user_);
         return;
     }
     // The wait is the game thread parked on the worker: booked as `vu1wait`.
@@ -53,6 +54,7 @@ void MtvuSync::Sync(SyncSite site) {
     }
     if (arbiter_.DrainThreadRunning() && !worker_.InEagerDrain() && arbiter_.hasPending())
         arbiter_.DrainFence();
+    if (after_sync_ && !worker_.InEagerDrain()) after_sync_(after_sync_user_);
 }
 
 void MtvuSync::NoteSiteSkipped(SyncSite site) {

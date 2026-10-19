@@ -18,6 +18,21 @@
 // event kIntcRaise, applied by ThreadManager's applier at the holder's next
 // scheduling point -- the boundary's drain step).
 //
+// The DEFERRED stage (RaiseDeferred / CollectDeferred) is for a cause an
+// asynchronous device pipeline produces -- the GS's SIGNAL / FINISH, reached
+// by a parser that runs behind a VU1 worker and a drain thread. Such a cause
+// is latched in `deferred_` (any thread) and enters STAT only when the holder
+// COLLECTS it at an observation point: a blocking kernel wait with no other
+// READY thread (the console's idle loop), the kernel idle, a field tick, a
+// frame boundary, a GS sync site. Never at a busy scheduling point (a syscall
+// entry the thread runs through, a wait another READY thread follows): there
+// the moment the pipeline happened to reach the register would decide which
+// guest instruction the interrupt lands behind -- host timing in the guest's
+// schedule (two guest threads trading a FINISH-driven semaphore replayed
+// three different ways). At an observation point the guest can make no
+// further progress on its own, so the collected set is a function of the
+// guest's own schedule and a pad log replays byte-identical.
+//
 // Handlers run through the installed GuestCall (the composition root binds
 // DispatchTable::Invoke; tests bind a model): $a0 = handler arg, $gp = its
 // gp, $ra = the kernel return stub; the caller's PC and GPR file are saved
@@ -59,6 +74,16 @@ public:
     void Raise(int cause);
     // Holder only (the queue applier / tests): the in-place half of Raise.
     void RaiseInPlace(int cause);
+    // Deferred stage (header comment). Any thread: latches the cause and
+    // enqueues the queue's kDeferredLatched no-op, whose poke wakes one thread
+    // of a fully parked guest set to collect it at its idle grant.
+    void RaiseDeferred(int cause);
+    // Holder only: moves the latched causes into STAT (one edge each) and
+    // returns them; 0 when nothing was latched or the caller is not the holder.
+    uint32_t CollectDeferred();
+    bool DeferredPending() const { return deferred_.load(std::memory_order_acquire) != 0; }
+    uint64_t DeferredRaiseCount() const { return deferred_raises_.load(std::memory_order_relaxed); }
+    uint64_t DeferredCollectCount() const { return deferred_collects_.load(std::memory_order_relaxed); }
     bool Pending() const { return (Stat() & Mask()) != 0; }
     bool Pending(int cause) const { return ((Stat() & Mask()) >> cause) & 1u; }
     uint32_t Stat() const { return stat_.load(std::memory_order_acquire); }
@@ -111,11 +136,13 @@ public:
 
 private:
     std::atomic<uint32_t> stat_{0};
+    std::atomic<uint32_t> deferred_{0};
     uint32_t mask_ = 0;
     GuestCall guest_call_;
     uint64_t raises_ = 0;
     uint64_t dispatches_ = 0;
     std::atomic<uint64_t> queued_raises_{0};
+    std::atomic<uint64_t> deferred_raises_{0}, deferred_collects_{0};
     bool in_dispatch_ = false;
     int in_dispatch_cause_ = -1;
     uint64_t nested_refusals_ = 0;

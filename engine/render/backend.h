@@ -14,10 +14,12 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 #include "engine/gs/hle/ir/cd_dirty_set.h"
 #include "engine/render/surface_format.h"
+#include "engine/render/texture_filter_selection.h"
 
 namespace ps2r {
 namespace gs {
@@ -260,6 +262,16 @@ public:
     virtual const CallCensus* Census() const { return nullptr; }
     virtual void BeginFrame() = 0;
     virtual void EndFrame() = 0;
+    // The compositions' presentation hooks (every one a no-op for a backend without a
+    // window image): the window size Present falls back to when ScanoutDesc.dst is empty;
+    // the armed capture's read one present late behind a fence instead of a pipeline drain
+    // (ReadPresented then hands over the PREVIOUS present's image); a command flush for a
+    // host whose present window is never shown; the player's texture-filtering enhancement
+    // over the owned textures (null = the title's choice everywhere).
+    virtual void SetWindowSize(int, int) {}
+    virtual void SetPresentCaptureDeferred(bool) {}
+    virtual void FlushCommands() {}
+    virtual void SetTextureFilter(std::shared_ptr<const TextureFilterSelection>) {}
 };
 
 }  // namespace render

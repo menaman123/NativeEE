@@ -42,7 +42,11 @@
 #include "engine/gs/vram/vram_image.h"
 #include "engine/platform/sdl/gl_context.h"
 #include "engine/platform/sdl/window.h"
+#include "engine/render/backend.h"
 #include "engine/render/backends/gl/gl_device.h"
+#if defined(PS2R_HAS_METAL)
+#include "engine/render/backends/metal/metal_device.h"
+#endif
 #include "tools/gs_replay/frame_range.h"
 
 namespace ps2r {
@@ -63,7 +67,12 @@ public:
         bool deferred_capture = true;      // the play composition's present-capture mode (--sync-capture = off)
         bool swap_hidden_window = false;   // --swap: SDL_GL_SwapWindow on the hidden window instead of a flush
         bool cd_barrier = false;           // --cd-barrier: the NV_texture_barrier destination read (not tile-coherent on Apple)
+        bool metal = false;                // --backend metal: the Metal device (macOS builds; exit 77 when absent)
+        bool force_shader_blend = false;   // --force-shader-blend: GL's exact shader blend on every blended draw
+        uint32_t draw_limit = 0;           // --draw-limit N[@F]: only the first N draws of frame F (default: every dumped frame) reach the consumer (0 = all; a bisection aid)
+        uint32_t draw_limit_frame = kDrawLimitDumpRange;
     };
+    static constexpr uint32_t kDrawLimitDumpRange = 0xFFFFFFFFu;
     struct FrameStat {
         double ms = 0;
         uint32_t draws = 0;
@@ -87,6 +96,7 @@ public:
 
 private:
     bool CreateContext();
+    bool DrawLimitApplies(uint32_t frame_index) const;
     void BuildScene();
     void Teardown();
     // The prefetch thread: records from the reader into the bounded queue.
@@ -101,7 +111,12 @@ private:
     Options opt_;
     platform::Window win_;
     platform::GlContext ctx_;
-    render::GlDevice be_;
+    render::GlDevice gl_;
+#if defined(PS2R_HAS_METAL)
+    std::unique_ptr<render::MetalDevice> metal_;
+#endif
+    render::Backend* be_ = nullptr;   // gl_ or *metal_
+    std::string renderer_name_, api_name_;
     gs::VramLayout layout_{};
     std::unique_ptr<gs::VramImage> vram_;
     std::unique_ptr<gs::ScalePolicy> scale_;

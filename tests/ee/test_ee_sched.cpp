@@ -223,6 +223,44 @@ static void TestEventQueuePoke() {
     ClearLog();
 }
 
+// While a thread holds the run token, an enqueue pokes only THAT thread's
+// parks: a blocked guest thread's park stays asleep (the holder applies the
+// event at its next scheduling point). With no holder every park is poked.
+static void TestEventQueuePokeHolderOnly() {
+    std::mutex m; std::condition_variable cv; std::atomic<bool> woke{false};
+    std::mutex hm; std::condition_variable hcv; bool release_holder = false; std::atomic<bool> holding{false};
+    std::thread holder([&] {
+        TOK().GuestEnter(62, 10);
+        holding = true;
+        std::unique_lock<std::mutex> lk(hm);
+        hcv.wait(lk, [&] { return release_holder; });
+        lk.unlock();
+        TOK().GuestExit(62);
+    });
+    while (!holding.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    CHECK(TOK().OwnerTid() == 62, "holder_only_owner_is_the_holder");
+    // The parker registers from a non-guest thread (tid kNone): not the holder's park.
+    std::thread parker([&] { EeEventQueue::ParkReg reg(&m, &cv); std::unique_lock<std::mutex> lk(m); cv.wait(lk, [&] { return Q().HasPending(); }); woke = true; });
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const uint64_t pokes_holder0 = Q().PokesHolder(), pokes_all0 = Q().PokesAll();
+    Q().Enqueue({Event::kWakeupThread, 8, 0});
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    CHECK(!woke.load(), "holder_only_blocked_park_not_poked_while_a_holder_exists");
+    CHECK(Q().PokesHolder() == pokes_holder0 + 1 && Q().PokesAll() == pokes_all0, "holder_only_poke_counted_as_holder");
+    { std::lock_guard<std::mutex> lk(hm); release_holder = true; }
+    hcv.notify_all();
+    holder.join();
+    CHECK(TOK().OwnerTid() == EeRunToken::kNone, "holder_only_no_owner_after_exit");
+    // The parker's predicate already sees pending_; a second enqueue with no holder pokes every park.
+    Q().Enqueue({Event::kWakeupThread, 9, 0});
+    parker.join();
+    CHECK(woke.load(), "holder_only_all_parks_poked_without_a_holder");
+    CHECK(Q().PokesAll() == pokes_all0 + 1, "holder_only_poke_counted_as_all");
+    std::thread drainer([&] { TOK().GuestEnter(63, 10); Q().DrainIfPendingOnHolder(); TOK().GuestExit(63); });
+    drainer.join();
+    ClearLog();
+}
+
 static void TestNonHolderDrainCountedNoop() {
     ClearLog();
     Q().Enqueue({Event::kSignalSema, 100, 0}); Q().Enqueue({Event::kWakeupThread, 101, 0});
@@ -349,6 +387,7 @@ int main() {
     TestRetiredTidCannotWedge();
     TestEventQueueFifo();
     TestEventQueuePoke();
+    TestEventQueuePokeHolderOnly();
     TestNonHolderDrainCountedNoop();
     TestApplyingNeverReenqueues();
     TestHolderAppliesExactlyOnce();

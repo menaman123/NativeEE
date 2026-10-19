@@ -94,7 +94,7 @@ public:
     // signalled when frame N presents: no GPU pipeline drain per present; the
     // output lane is one present late). The play composition's choice; a reader
     // that needs this present's image keeps the synchronous form.
-    void SetPresentCaptureDeferred(bool deferred);
+    void SetPresentCaptureDeferred(bool deferred) override;
     bool PresentCaptureDeferred() const { return present_capture_deferred_; }
     uint64_t PresentCaptureWaits() const { return present_capture_waits_; }   // fences found unsignalled at completion
     void ClearStencil(SurfaceId stencil, uint8_t value) override;
@@ -130,7 +130,7 @@ public:
     // read per draw by the executor; null = the title's choice everywhere. Any
     // thread may change the selection's fields; this pointer is set once by the
     // context owner. MaxAnisotropy is the driver's limit (1 = no extension).
-    void SetTextureFilter(std::shared_ptr<const TextureFilterSelection> selection) {
+    void SetTextureFilter(std::shared_ptr<const TextureFilterSelection> selection) override {
         texture_filter_ = std::move(selection);
     }
     const TextureFilterSelection* TextureFilter() const { return texture_filter_.get(); }
@@ -148,7 +148,7 @@ public:
     const CallCensus* Census() const override;
     CallCensus& CensusMut() { return census_; }
     // Default-framebuffer size Present falls back to when ScanoutDesc.dst is empty.
-    void SetWindowSize(int w, int h);
+    void SetWindowSize(int w, int h) override;
     // The destination-read route of a shader-blended draw: the lazy Cd COPY of the
     // attachment (glCopyTexSubImage2D before the draw -- ends the render pass each
     // time) or, when the driver exposes NV_texture_barrier, the attachment itself
@@ -159,10 +159,15 @@ public:
     TextureBarrierFn TextureBarrier() const { return texture_barrier_; }
     void SetCdCopyByBarrier(bool on) { cd_copy_by_barrier_ = on && texture_barrier_ != nullptr; }
     bool CdCopyByBarrier() const { return cd_copy_by_barrier_; }
+    // Every blended draw through the shader-side blend (the exact integer GS equation over
+    // the destination copy) instead of the fixed-function arm where one exists: the
+    // reference arm another backend's identity judge compares against. OFF by default.
+    void SetForceShaderBlend(bool on) { force_shader_blend_ = on; }
+    bool ForceShaderBlend() const { return force_shader_blend_; }
     // glFlush: the host's swap callback for a window that is never shown (the
     // hidden GL window of a captured present) -- the command stream reaches the
     // GPU without the swap's drawable flush.
-    void FlushCommands();
+    void FlushCommands() override;
 
 private:
     bool BuildRenderable(GlSurface& s);
@@ -208,6 +213,7 @@ private:
     };
     TextureBarrierFn texture_barrier_ = nullptr;
     bool cd_copy_by_barrier_ = false;
+    bool force_shader_blend_ = false;
     bool present_capture_deferred_ = false;
     DeferredCapture deferred_capture_;
     uint64_t present_capture_waits_ = 0;

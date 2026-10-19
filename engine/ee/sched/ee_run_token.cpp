@@ -78,6 +78,7 @@ void EeRunToken::ElectLocked() {
 
 void EeRunToken::ReleaseLocked(int tid) {
     if (owner_ == tid) {
+        if (tid >= 0 && !t_idle) last_owner_ = tid;
         owner_ = kNone;
         owner_running_ = false;
         ElectLocked();
@@ -156,7 +157,7 @@ void EeRunToken::ParkEnd() {
 void EeRunToken::WaitVblank() {
     if (!t_holds || t_tid == kNone) return;
     const int tid = t_tid;
-    uint64_t field_seen = 0;
+    uint64_t field_seen = 0, wall_seen = 0;
     {
         std::lock_guard<std::mutex> lk(mu_);
         bool others = false;
@@ -168,23 +169,58 @@ void EeRunToken::WaitVblank() {
             return;
         }
         field_seen = field_gen_;
+        wall_seen = wall_tick_gen_;
         if (Ready* r = FindReady(tid)) r->valid = false;  // WAITING, not READY (BlockBegin's body)
         ReleaseLocked(tid);
         ++vblank_waiters_;  // an all-blocked EE wakes THIS thread, never the idle grant
+        for (auto& w : vblank_waiter_)
+            if (w.tid == kNone) {
+                w.tid = tid;
+                w.prio = t_prio;
+                break;
+            }
     }
     cv_.notify_all();
     t_holds = false;
     {
         std::unique_lock<std::mutex> lk(mu_);
         cv_.wait(lk, [&] {
-            if (shutdown_ || field_gen_ != field_seen) return true;
+            if (shutdown_ || field_gen_ != field_seen || wall_tick_gen_ != wall_seen) return true;
             for (const auto& r : ready_)
                 if (r.valid) return false;
             return true;  // every other thread blocked: idle, the vblank is now
         });
         --vblank_waiters_;
+        for (auto& w : vblank_waiter_)
+            if (w.tid == tid) w.tid = kNone;
     }
     BlockEnd(tid);
+}
+
+bool EeRunToken::WakeVblankWaitersForWallTick() {
+    if (!t_holds || t_idle) return false;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (vblank_waiters_ == 0) return false;
+        ++wall_tick_gen_;
+        // READY now, from the holder's side: the holder's PreemptPoint sees the
+        // waiter at once (its own BlockEnd's MakeReady is then the idempotent no-op).
+        for (const auto& w : vblank_waiter_) {
+            if (w.tid == kNone) continue;
+            Ready* r = SlotFor(w.tid);
+            if (!r) continue;
+            r->prio = w.prio;
+            if (r->seq == 0) r->seq = NextSeq();
+        }
+    }
+    wall_tick_wakes_.fetch_add(1, std::memory_order_relaxed);
+    cv_.notify_all();
+    return true;
+}
+
+uint32_t EeRunToken::VblankWaiters() {
+    std::lock_guard<std::mutex> lk(mu_);
+    return vblank_waiters_;
 }
 
 bool EeRunToken::TryIdleAcquire(int tid) {
@@ -380,6 +416,7 @@ bool EeRunToken::RestartAfterJoin(std::string* error) {
     for (auto& ready : ready_) ready = Ready{};
     for (auto& retired : retired_) retired = false;
     owner_ = kNone;
+    last_owner_ = kNone;
     owner_running_ = false;
     hold_election_ = false;
     shutdown_ = false;
@@ -406,6 +443,16 @@ bool EeRunToken::ElectionHeld() {
     return hold_election_;
 }
 
+int EeRunToken::OwnerTid() {
+    std::lock_guard<std::mutex> lk(mu_);
+    return owner_;
+}
+
+int EeRunToken::LastOwnerTid() {
+    std::lock_guard<std::mutex> lk(mu_);
+    return last_owner_;
+}
+
 int EeRunToken::OwnerForTest() {
     std::lock_guard<std::mutex> lk(mu_);
     return owner_;
@@ -424,10 +471,13 @@ void EeRunToken::ResetForTest() {
     for (auto& r : retired_) r = false;
     retired_ready_noops_ = 0;
     owner_ = kNone;
+    last_owner_ = kNone;
     owner_running_ = false;
     shutdown_ = false;
     hold_election_ = false;
     attached_guests_ = attached_hosts_ = 0;
+    for (auto& w : vblank_waiter_) w = VblankWaiter{};
+    vblank_waiters_ = 0;
     t_tid = kNone;
     t_holds = false;
     t_park_depth = 0;

@@ -604,6 +604,7 @@ void GlDrawExecutor::ClassifyRoutes(const gs::DrawIr& ir, const gs::TextureSourc
         s.fbmsk32_exact = Fbmsk32Partial(r.frame.fbmsk);
     }
     s.route_rt_blend = RouteRtBlend(ir, s.using_rt, s.fbmsk16_exact || s.fbmsk32_exact);
+    if (dev_.ForceShaderBlend()) s.route_rt_blend = false;
     s.idx_self_serve = s.has_texture && s.using_rt && tex.transform.idx_fmt == 4 &&
                        tex.transform.idx_self != 0;
     if (s.idx_self_serve) s.route_rt_blend = false;
@@ -713,7 +714,7 @@ void GlDrawExecutor::BlendState(const gs::DrawIr& ir, const DrawParams& p, Step&
     // OLD route for every FBA draw).
     const bool fba_sw = ir.raster.fba && !BlendFfMap::Map(a.a, a.b, a.c, a.d).matched;
     if (ir.alpha_blend &&
-        (s.using_rt || fba_sw || s.fbmsk16_exact || s.fbmsk32_exact || s.wrap_route) &&
+        (s.using_rt || fba_sw || s.fbmsk16_exact || s.fbmsk32_exact || s.wrap_route || dev_.ForceShaderBlend()) &&
         !s.route_rt_blend) {
         s.needs_rt_copy = true;
         CdCopy(p, s);

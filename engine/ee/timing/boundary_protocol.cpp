@@ -49,6 +49,11 @@ void BoundaryProtocol::Wait(uint64_t) {
     queue.DrainIfPendingOnHolder();
 }
 
+bool BoundaryProtocol::WallFieldDue() const {
+    if (source_.policy() != TickSource::Policy::Play || source_.Bypass()) return false;
+    return ticks_.Pending() != 0;
+}
+
 void BoundaryProtocol::MarkWorkWindow() {
     work_marked_ = true;
     work_marked_max_us_ = 0;
