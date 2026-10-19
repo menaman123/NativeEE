@@ -82,7 +82,7 @@ public:
     // thread parks and is back at its next WaitSema before the lower-priority
     // threads ran a single instruction, and a "frame ready" semaphore that is
     // only ever signalled while the renderer sleeps on the vblank is never
-    // seen non-zero (Sly 2's frame pacer spins; its main thread starves).
+    // seen non-zero (a second title's frame pacer spins; its main thread starves).
     void WaitVblank();
     void NoteFieldElapsed();
     uint64_t VblankWaits() const { return vblank_waits_.load(std::memory_order_relaxed); }
@@ -127,7 +127,7 @@ public:
     // dispatcher has acknowledged the cause. Handing over mid-handler would let
     // another thread run -- and raise the SAME cause again -- inside the
     // handler's window, and the acknowledgement after the handler would then
-    // eat that second event (Sly 2's second GS FINISH).
+    // eat that second event (a second title's second GS FINISH).
     void PreemptPoint();
     void IsrBegin();
     void IsrEnd();

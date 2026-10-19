@@ -11,6 +11,9 @@
 //   test_vu1_capture_replay <case.bin> --cached     the cached tier instead of the interpreter
 //   test_vu1_capture_replay <case.bin> --block      the block tier
 //   test_vu1_capture_replay <case.bin> --aot        the AOT tier, the image assumed verified
+//   test_vu1_capture_replay <case.bin> --dump <out> also write the kicked packets to <out> as
+//                                                   [u32 size][size bytes] records (the probe's
+//                                                   kicks_*.bin shape) for a byte diff against a capture
 //   test_vu1_capture_replay --bench N [--cached|--block|--aot] <case.bin>...
 //   ... --aot --native <dir>                        the AOT tier WITH the generated library of each
 //                                                   case's image loaded from <dir>/<image hash>.O1.<dylib|so>
@@ -269,6 +272,8 @@ int main(int argc, char** argv) {
     }
     bool trace = false, cached = false, block = false, aot = false;
     int bench = 0, bench_rr = 0;
+    uint64_t cap = 0;  // --cap N: the cycle cap of the single-case replay (0 = the dispatch default)
+    std::string dump;  // --dump <out>: the kicked packets of the single-case replay
     std::vector<std::string> files;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -279,6 +284,8 @@ int main(int argc, char** argv) {
         else if (a == "--bench" && i + 1 < argc) bench = std::atoi(argv[++i]);
         else if (a == "--bench-rr" && i + 1 < argc) bench_rr = std::atoi(argv[++i]);
         else if (a == "--native" && i + 1 < argc) g_native_dir = argv[++i];
+        else if (a == "--cap" && i + 1 < argc) cap = static_cast<uint64_t>(std::atoll(argv[++i]));
+        else if (a == "--dump" && i + 1 < argc) dump = argv[++i];
         else files.push_back(a);
     }
     const VuTierMode mode = aot ? VuTierMode::Aot : block ? VuTierMode::Block : cached ? VuTierMode::Cached : VuTierMode::Interp;
@@ -318,6 +325,7 @@ int main(int argc, char** argv) {
     VuUnit vu(1, &rig.arbiter);
     vu.LoadCase(c);
     SetMode(vu, mode);
+    if (cap > 0) vu.dispatch().set_cycle_cap(cap);
     if (!InstallNativeFor(vu, c)) return 77;
     vu.Execute(c.start_pc);
     rig.arbiter.drain();
@@ -327,6 +335,17 @@ int main(int argc, char** argv) {
                 static_cast<unsigned long long>(vu.cycle() - c.vu_cycle), vu.state().xgkick_count, rig.sink.kick_bytes(), vu.regs().TPC);
     GsPacketDiff::Print(s, stdout);
     PrintRegs(vu.regs(), vu.state().cur_bundle_pc, vu.dispatch().bundles());
+    if (!dump.empty()) {
+        if (std::FILE* f = std::fopen(dump.c_str(), "wb")) {
+            for (const auto& k : rig.sink.kicks()) {
+                const uint32_t n = static_cast<uint32_t>(k.size());
+                std::fwrite(&n, 4, 1, f);
+                std::fwrite(k.data(), 1, k.size(), f);
+            }
+            std::fclose(f);
+            std::printf("dumped %zu packets to %s\n", rig.sink.kicks().size(), dump.c_str());
+        }
+    }
     if (!s.errors.empty()) {
         for (const auto& e : s.errors) std::printf("decode error: %s\n", e.c_str());
         return 1;

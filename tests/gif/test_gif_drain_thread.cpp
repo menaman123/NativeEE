@@ -5,14 +5,18 @@
 // position, on the drain thread; (c) DrainFence returns only after a pass
 // that collected every seal published before it; (d) Stop with an unsealed
 // marker blocking the inbox joins without delivering what sits behind it;
+// (e) the EE's idle view (DrainInFlight / WaitDrainPassAfter / the ledger);
+// (f) a fault in a pass is caught there and rethrown on the producer's drain();
 // plus the idle-generation predicate and the fence-after-stop no-op. No
 // wall-clock assertion: every check is on order, counts and thread identity.
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <random>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -241,6 +245,57 @@ int main() {
         CHECK(rig.thread.PassGeneration() >= gen + 2, "foreign drain() kicked a pass");
         std::lock_guard<std::mutex> lock(rig.mtx);
         CHECK(rig.delivered.size() == 1 && rig.delivered[0].on_drain_thread, "kicked pass delivered on the drain thread");
+    }
+
+    // (e) the EE's idle view: DrainInFlight while a pass holds work, WaitDrainPassAfter
+    // returns once the pass completed, the ledger counts the pass.
+    {
+        rig.Clear();
+        std::atomic<bool> release{false};
+        std::atomic<bool> inside{false};
+        const uint64_t passes0 = rig.thread.Passes();
+        const uint64_t gen0 = rig.arbiter.DrainPassGeneration();
+        rig.arbiter.submitOrdered([&] {
+            inside.store(true, std::memory_order_release);
+            while (!release.load(std::memory_order_acquire)) std::this_thread::yield();
+        });
+        rig.Submit(4242);
+        rig.arbiter.drain();
+        while (!inside.load(std::memory_order_acquire)) std::this_thread::yield();
+        CHECK(rig.arbiter.DrainInFlight(), "(e) in flight while the pass runs");
+        CHECK(rig.thread.DrainIdleGeneration() == 0, "(e) not idle mid-pass");
+        rig.arbiter.WaitDrainPassAfter(gen0, 200'000);   // times out: the pass is held
+        CHECK(rig.arbiter.DrainPassGeneration() == gen0, "(e) bounded wait returned with the pass still held");
+        release.store(true, std::memory_order_release);
+        for (int i = 0; i < 2000 && rig.arbiter.DrainPassGeneration() == gen0; ++i) rig.arbiter.WaitDrainPassAfter(gen0, 1'000'000);
+        CHECK(rig.arbiter.DrainPassGeneration() > gen0, "(e) the wait wakes on the completed pass");
+        rig.arbiter.DrainFence();
+        CHECK(!rig.arbiter.DrainInFlight(), "(e) nothing in flight after the fence");
+        CHECK(rig.thread.Passes() > passes0 && rig.thread.BusyNs() > 0, "(e) the ledger counted the pass");
+        CHECK(rig.Count() == 2, "(e) the job slot and the packet behind it were delivered");
+    }
+
+    // (f) a fault inside a pass is caught on the drain thread and rethrown on the
+    // producer at its next drain(); the thread keeps running and delivers after.
+    {
+        rig.Clear();
+        rig.arbiter.submitOrdered([] { throw std::runtime_error("drain fault"); });   // the submit kicks the pass
+        rig.Submit(98);                                                                 // behind the fault: dropped
+        for (int i = 0; i < 2000 && !rig.thread.Faulted(); ++i) std::this_thread::sleep_for(std::chrono::microseconds(100));
+        CHECK(rig.thread.Faulted(), "(f) the fault is pending on the thread");
+        CHECK(rig.arbiter.PendingBytes() == 0 && rig.arbiter.PendingSlots() == 0, "(f) the pass's ledger settled behind the fault");
+        bool rethrown = false;
+        try {
+            rig.arbiter.drain();
+        } catch (const std::runtime_error& e) {
+            rethrown = std::strcmp(e.what(), "drain fault") == 0;
+        }
+        CHECK(rethrown, "(f) the producer's drain() rethrew the fault");
+        CHECK(!rig.thread.Faulted() && rig.thread.Running(), "(f) fault taken once; the thread still runs");
+        rig.Clear();
+        rig.Submit(99);
+        rig.arbiter.DrainFence();
+        CHECK(rig.Count() == 1, "(f) delivery resumes after the fault was taken");
     }
 
     // (d) stop with a non-empty queue: bounded join, nothing behind the marker.

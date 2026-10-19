@@ -181,6 +181,7 @@ struct CallCensus {
     uint64_t upload_bytes = 0;
     uint64_t buffer_maps = 0;
     uint64_t clears = 0;
+    uint64_t barriers = 0;           // texture barriers issued in place of a destination copy
 };
 
 // Surface preserves retained callers' sampling. Owned presentation declares

@@ -11,7 +11,14 @@ came from. Nothing is hand-maintained: a header the prelude starts to pull is st
 on the next build.
 
     vu1_aot_stage_prelude.py --compiler <c++> --root <source root> --out <dir> [--define NAME=VAL]...
-                             [--key-header <path>]
+                             [--key-header <path>] [--also <tree-relative file>]...
+
+--also stages a file that is NOT in the include closure but whose text decides what a
+generated TU CONTAINS: the code generator's own sources (engine/vu/vu1_aot/
+vu1_aot_block_gen.cpp, vu1_aot_emitter.cpp). They join MANIFEST.txt and the key, so a
+generator change (a fix in the emitted text, E385) retires every cached library and
+pack built by the old generator -- those pass the corpus gate and would otherwise be
+loaded forever (the user cache and a pack are keyed by this key alone).
 
 --key-header writes the VU1 AOT ABI KEY of the staged closure as a C++ header
 (`inline const char* const kVu1AotAbiKey = "abi-<16 hex>";`): SHA-256 over every
@@ -77,10 +84,12 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--define", action="append", default=[])
     ap.add_argument("--key-header", default="")
+    ap.add_argument("--also", action="append", default=[])
     a = ap.parse_args()
     files = closure(a.compiler, a.root, a.define)
     if not files:
         return 1
+    files = sorted(set(files + [os.path.normpath(x) for x in a.also]))
     manifest = os.path.join(a.out, "MANIFEST.txt")
     have = []
     if os.path.exists(manifest):

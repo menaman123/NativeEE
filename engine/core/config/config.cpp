@@ -170,6 +170,7 @@ const std::vector<Field>& Fields() {
         ENUM_FIELD("dev.log_level", dev.log_level, kLevel),
         BOOL_FIELD("diag.perf", diag.perf),
         BOOL_FIELD("diag.tick_census", diag.tick_census),
+        BOOL_FIELD("diag.vu1_lockstep", diag.vu1_lockstep),
         INT_FIELD("engine.ee_runahead", engine.ee_runahead),
         BOOL_FIELD("engine.mtvu", engine.mtvu),
         INT_FIELD("engine.mtvu_depth", engine.mtvu_depth),

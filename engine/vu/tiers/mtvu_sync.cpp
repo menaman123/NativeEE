@@ -93,19 +93,26 @@ bool MtvuSync::WaitProgress() {
     // "nothing more will arrive", or that marker's packets wait for ever.
     const auto drained_idle = [this] {
         if (!worker_.WorkerIdle()) return false;
-        if (arbiter_.hasPending()) worker_.TryDrainGuarded();
+        if (arbiter_.hasPending()) worker_.TryDrainGuarded();   // inline: delivered here; thread: kicked
+        if (arbiter_.DrainInFlight()) return false;             // the drain thread still owes deliveries
         progress_idle_.fetch_add(1, std::memory_order_relaxed);
         return true;
     };
     const uint64_t seen = worker_.SealCount();
+    const uint64_t seen_pass = arbiter_.DrainPassGeneration();
     worker_.TryDrainGuarded();
     if (drained_idle()) return true;
     progress_waits_.fetch_add(1, std::memory_order_relaxed);
     {
         ps2r::ee::TickProfile::Scope scope(ps2r::ee::TickProfile::Vu1Wait);
-        worker_.EnterSyncWait();
-        worker_.WaitIdleOrSeal(kPollNs, seen);
-        worker_.LeaveSyncWait();
+        if (!worker_.WorkerIdle()) {
+            worker_.EnterSyncWait();
+            worker_.WaitIdleOrSeal(kPollNs, seen);
+            worker_.LeaveSyncWait();
+        } else {
+            // The worker owes nothing; the drain thread does.
+            arbiter_.WaitDrainPassAfter(seen_pass, kPollNs);
+        }
     }
     worker_.TryDrainGuarded();
     return drained_idle();

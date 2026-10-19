@@ -34,6 +34,13 @@ struct Vu1State {
     bool xgkick_has_fired = false;    // an XGKICK was issued during this run
     int xgkick_count = 0;             // XGKICKs issued during this run
     uint32_t cur_bundle_pc = 0;       // byte address of the bundle being executed
+    // The generated region functions' contract with the block loop (engine/vu/
+    // vu1_aot/): the ops the function may still run (the loop's cycle cap), the
+    // pc of the block whose end it reached (or whose head it stopped at, with
+    // native_resume set: that block has not run).
+    uint32_t native_budget = 0;
+    uint32_t native_exit_pc = 0;
+    bool native_resume = false;
 
     // Bumped on every micro-memory store (VIF MPG, the EE window); the cached
     // tier and the HLE runtime compare it against their decoded image epoch.

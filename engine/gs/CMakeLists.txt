@@ -40,3 +40,4 @@ add_subdirectory(hle/present)  # Phase 6
 add_subdirectory(hle/texsrc)  # Phase 6
 add_subdirectory(hle/classrdr)  # Phase 6
 add_subdirectory(hle/queue)  # Phase 6 (integration: the DrawIR consumer)
+add_subdirectory(hle/capture)  # the .gsstream consumer-stream capture (the throughput harness)

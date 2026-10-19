@@ -41,8 +41,9 @@ size_t Vu1AotTier::native_images() const {
     return native_.size();
 }
 
-bool Vu1AotTier::InstallNative(VuBlockProgram& prog, const Vu1AotImageExports& ex) {
+bool Vu1AotTier::InstallNative(VuBlockProgram& prog, const Vu1AotImageExports& ex, bool flags_lazy) {
     if (ex.abi_version != kVu1AotAbiVersion || ex.slot_size != sizeof(VuDecodedSlot) || ex.image_hash != prog.hash) return false;
+    if ((ex.flags_lazy != 0) != flags_lazy) return false;  // the pushes name the other MAC-ring arm
     const size_t n_slots = prog.slots.size();
     for (uint32_t i = 0; i < ex.block_count; ++i) {
         const Vu1AotBlockExport& b = ex.blocks[i];
@@ -129,7 +130,7 @@ void Vu1AotTier::Execute(VuUnit& unit, uint32_t start_pc) {
         if (prog->native != memo_native_) {
             if (memo_native_ == nullptr) {
                 VuBlockTier::ClearNative(*prog);
-            } else if (!InstallNative(*prog, *memo_native_)) {
+            } else if (!InstallNative(*prog, *memo_native_, unit.flags().lazy())) {
                 VuBlockTier::ClearNative(*prog);
                 ++native_refused_;
                 SetNativeExports(prog->hash, nullptr);

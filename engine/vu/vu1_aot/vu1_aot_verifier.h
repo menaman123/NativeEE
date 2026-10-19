@@ -39,7 +39,13 @@ public:
     // refused with divergence "mixed images"). An empty set is not identical.
     // `native` = an exports table to install on the native leg (null = the
     // specialised table alone).
-    static Result Verify(const std::vector<const Vu1Case*>& cases, const Vu1AotImageExports* native = nullptr);
+    // `cycle_cap` > 0 runs both legs under that cycle cap (the cut-block /
+    // region-budget paths of the block loop; the gate's own runs use the
+    // dispatch default).
+    // `oracle_block` judges the native leg against the BLOCK tier instead of
+    // the interpreter (the loop's own cut path under a cap).
+    static Result Verify(const std::vector<const Vu1Case*>& cases, const Vu1AotImageExports* native = nullptr,
+                         uint64_t cycle_cap = 0, bool oracle_block = false);
 
     // The image hash of a case (VuImageHash::Fast over its micro memory).
     static uint64_t ImageHashOf(const Vu1Case& c);
@@ -48,6 +54,7 @@ public:
 
 private:
     struct Outcome;
-    static void RunLeg(const Vu1Case& c, bool native, const Vu1AotImageExports* exports, Outcome& out, Result& r);
+    static void RunLeg(const Vu1Case& c, bool native, const Vu1AotImageExports* exports, uint64_t cycle_cap, bool oracle_block,
+                       Outcome& out, Result& r);
     static bool Same(const Outcome& native, const Outcome& interp, std::string& field);
 };

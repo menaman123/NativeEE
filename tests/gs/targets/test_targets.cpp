@@ -95,6 +95,59 @@ void FillColor(test::FakeBackend& be, RenderTarget& t, uint8_t r, uint8_t g, uin
         for (int x = 0; x < t.identity.width; ++x) be.SetPixel(t.views.color, x, y, r, g, b, a);
 }
 
+// The grab -> deposit pixel sharing (consumer_b B1): a colour writeback of an
+// attachment the caller just read in full takes its rows from the offered bytes --
+// the same deposit, no backend readback; a different attachment, a rect outside
+// the offer or a revoked / disabled offer read the GPU as before.
+void OfferedPixels() {
+    World w;
+    RenderTarget& t = w.cache.GetOrCreate(0x0, 64, 64, 0x00, 0);
+    FillColor(w.be, t, 0x10, 0x20, 0x30, 0x80);
+    // The reference deposit (GPU read).
+    t.AfterDraw(MakeDraw(0x0, 64, 0x00), Drew(0, 8, 64, 16), 1, 1);
+    const int rb0 = w.be.readbacks;
+    CHECK(w.cache.Readback().SyncRtToVram(w.be, t, w.vram, 1, nullptr, 0) == 64 * 8);
+    CHECK(w.be.readbacks == rb0 + 1);
+    const uint32_t ref = VramWord(w.vram, PsmLayout::PixelByteAddress(Psm::CT32, 3, 8, 0, 1));
+    CHECK(ref == 0x80302010u);
+    // The same rows offered as a full-attachment grab (bottom-up rows, w*4 stride).
+    std::vector<uint8_t> grab(64 * 64 * 4, 0);
+    w.be.Readback(t.views.color, render::Rect{0, 0, 64, 64}, grab.data(), 64 * 4);
+    FillColor(w.be, t, 0x11, 0x22, 0x33, 0x44);   // the GPU moved on; the offer is what the grab saw
+    const int rb1 = w.be.readbacks;
+    w.cache.Readback().OfferPixels(t.views.color, 64, 64, &grab);
+    t.AfterDraw(MakeDraw(0x0, 64, 0x00), Drew(0, 8, 64, 16), 2, 2);
+    CHECK(w.cache.Readback().SyncRtToVram(w.be, t, w.vram, 2, nullptr, 0) == 64 * 8);
+    CHECK(w.be.readbacks == rb1);   // no GPU read
+    CHECK(w.cache.Readback().OfferedReads() == 1);
+    CHECK(VramWord(w.vram, PsmLayout::PixelByteAddress(Psm::CT32, 3, 8, 0, 1)) == ref);   // the offered bytes
+    // Revoked: the GPU is read again (the new content lands).
+    w.cache.Readback().RevokeOffer();
+    t.AfterDraw(MakeDraw(0x0, 64, 0x00), Drew(0, 8, 64, 16), 3, 3);
+    CHECK(w.cache.Readback().SyncRtToVram(w.be, t, w.vram, 3, nullptr, 0) == 64 * 8);
+    CHECK(w.be.readbacks == rb1 + 1);
+    CHECK(VramWord(w.vram, PsmLayout::PixelByteAddress(Psm::CT32, 3, 8, 0, 1)) == 0x44332211u);
+    // Another attachment or a rect past the offer: not served by it.
+    RenderTarget& u = w.cache.GetOrCreate(0x100000, 64, 64, 0x00, 0);
+    FillColor(w.be, u, 1, 2, 3, 4);
+    w.cache.Readback().OfferPixels(t.views.color, 64, 64, &grab);
+    u.AfterDraw(MakeDraw(0x100000, 64, 0x00), Drew(0, 0, 64, 8), 4, 4);
+    const int rb2 = w.be.readbacks;
+    CHECK(w.cache.Readback().SyncRtToVram(w.be, u, w.vram, 4, nullptr, 0) == 64 * 8);
+    CHECK(w.be.readbacks == rb2 + 1);
+    w.cache.Readback().OfferPixels(t.views.color, 64, 8, &grab);   // the offer covers rows 0..8 only
+    t.AfterDraw(MakeDraw(0x0, 64, 0x00), Drew(0, 8, 64, 16), 5, 5);
+    CHECK(w.cache.Readback().SyncRtToVram(w.be, t, w.vram, 5, nullptr, 0) == 64 * 8);
+    CHECK(w.be.readbacks == rb2 + 2);
+    // Disabled: the offer is refused.
+    w.cache.Readback().SetOfferEnabled(false);
+    w.cache.Readback().OfferPixels(t.views.color, 64, 64, &grab);
+    t.AfterDraw(MakeDraw(0x0, 64, 0x00), Drew(0, 8, 64, 16), 6, 6);
+    CHECK(w.cache.Readback().SyncRtToVram(w.be, t, w.vram, 6, nullptr, 0) == 64 * 8);
+    CHECK(w.be.readbacks == rb2 + 3);
+    CHECK(w.cache.Readback().OfferedReads() == 1);
+}
+
 // Invariant 9: the colour writeback covers only drawn_since_sync rows, then nothing.
 void Inv09() {
     World w;
@@ -1403,6 +1456,7 @@ int main(int argc, char** argv) {
     const std::string which = argc > 1 ? argv[1] : "all";
     const bool all = which == "all";
     if (all || which == "inv09") Inv09();
+    if (all || which == "offer") OfferedPixels();
     if (all || which == "inv10") Inv10();
     if (all || which == "inv11") Inv11();
     if (all || which == "inv12") Inv12();

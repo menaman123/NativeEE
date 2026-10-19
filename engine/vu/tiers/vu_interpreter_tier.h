@@ -49,27 +49,33 @@ public:
     // Bundles retired across every run of this tier (the catalog's exec count).
     uint64_t bundles() const { return bundles_; }
 
-private:
-    // The cached tier reuses these bodies for the kinds it has no fast form of
-    // and for the shared program-end drain (ONE semantics, two dispatchers);
-    // the block tier runs the cached tier's resolved bodies and shares the drain.
-    friend class VuCachedTier;
-    friend class VuBlockTier;
-
+    // The bodies the other dispatchers share (ONE semantics): the cached tier
+    // for the kinds it has no fast form of, the block tier through the cached
+    // tier's resolved bodies, and the GENERATED blocks (engine/vu/vu1_aot/,
+    // free functions in a generated TU -- hence public) for CLIP, DIV, the
+    // GENERIC words and the program-end drain.
     // The upper word (RunUpper dispatches func >= 0x3C to the special-2 table).
     void RunUpper(VuUnit& u, uint32_t upper);
-    void RunSpecial2Upper(VuUnit& u, uint32_t upper);
     void RunClip(VuUnit& u, const VR_reg& fs_raw, const VR_reg& ft_raw);
     // The lower word; `pc` is the bundle's byte address.
     void RunLower(VuUnit& u, uint32_t lower, uint32_t pc, bool& branch_taken, uint32_t& branch_target);
-    void RunLowerSpecial(VuUnit& u, uint32_t lower);
-    void RunEfu(VuUnit& u, uint32_t lower, uint32_t funct2, uint32_t t3);
     // FDIV-pipe bodies shared by the lower word and the legacy upper encodings.
     void DoDiv(VuUnit& u, uint32_t fs, uint32_t fsf, uint32_t ft, uint32_t ftf);
-    void DoSqrt(VuUnit& u, uint32_t ft, uint32_t ftf);
-    void DoRsqrt(VuUnit& u, uint32_t fs, uint32_t fsf, uint32_t ft, uint32_t ftf);
+    // DIV over operand VALUES (the register-resident generated blocks pass
+    // their locals): DoDiv's body with the two source registers named.
+    void DivLanes(VuUnit& u, const VR_reg& fs_raw, uint32_t fsf, const VR_reg& ft_raw, uint32_t ftf);
     // Program end / yield / park: every pipe drained, a pending kick completed.
     void DrainAll(VuUnit& u);
+
+private:
+    friend class VuCachedTier;
+    friend class VuBlockTier;
+
+    void RunSpecial2Upper(VuUnit& u, uint32_t upper);
+    void RunLowerSpecial(VuUnit& u, uint32_t lower);
+    void RunEfu(VuUnit& u, uint32_t lower, uint32_t funct2, uint32_t t3);
+    void DoSqrt(VuUnit& u, uint32_t ft, uint32_t ftf);
+    void DoRsqrt(VuUnit& u, uint32_t fs, uint32_t fsf, uint32_t ft, uint32_t ftf);
 
     static VR_reg Clamp4(const VR_reg& v);
     static void PinHardwired(VUregs& regs);

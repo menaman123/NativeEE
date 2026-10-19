@@ -138,8 +138,7 @@ uint32_t ReadbackEngine::SyncRtToVram(render::Backend& be, RenderTarget& t, Vram
     if (!rows.Empty() && EncodesColorPsm(enc_psm)) {
         const int s = t.identity.scale;
         render::Rect pr{rows.x0 * s, rows.y0 * s, (rows.x1 - rows.x0) * s, (rows.y1 - rows.y0) * s};
-        pixels_.assign(static_cast<size_t>(pr.w) * pr.h * 4, 0);
-        be.Readback(t.views.color, pr, pixels_.data(), static_cast<size_t>(pr.w) * 4);
+        ReadColorRows(be, t.views.color, pr);
         // The encode stride is the target width; only a rescue may narrow it.
         const uint32_t fbw = (rescue && rescue_fbw) ? rescue_fbw : uint32_t(w);
         staged = EncodeColorRows(t, vram, batch_epoch, rows, fbw, rescue != nullptr, enc_psm,
@@ -147,6 +146,31 @@ uint32_t ReadbackEngine::SyncRtToVram(render::Backend& be, RenderTarget& t, Vram
     }
     if (rescue == nullptr) c.ClearDrawnSinceSync();
     return staged;
+}
+
+void ReadbackEngine::OfferPixels(render::SurfaceId color, int pw, int ph, const std::vector<uint8_t>* rgba) {
+    offer_ = Offer{};
+    if (!offer_enabled_ || !rgba || !color.id || pw <= 0 || ph <= 0 || rgba->size() < static_cast<size_t>(pw) * ph * 4) return;
+    offer_.color = color;
+    offer_.pw = pw;
+    offer_.ph = ph;
+    offer_.rgba = rgba;
+}
+
+void ReadbackEngine::ReadColorRows(render::Backend& be, render::SurfaceId color, const render::Rect& pr) {
+    const size_t stride = static_cast<size_t>(pr.w) * 4;
+    pixels_.assign(stride * pr.h, 0);
+    if (offer_.rgba && offer_.color.id == color.id && pr.x >= 0 && pr.y >= 0 && pr.x + pr.w <= offer_.pw &&
+        pr.y + pr.h <= offer_.ph) {
+        // The same attachment, unchanged since the grab: its rows (bottom-up, offer stride).
+        const size_t src_stride = static_cast<size_t>(offer_.pw) * 4;
+        for (int r = 0; r < pr.h; ++r)
+            std::memcpy(pixels_.data() + stride * r,
+                        offer_.rgba->data() + src_stride * static_cast<size_t>(pr.y + r) + static_cast<size_t>(pr.x) * 4, stride);
+        offered_reads_++;
+        return;
+    }
+    be.Readback(color, pr, pixels_.data(), stride);
 }
 
 uint32_t ReadbackEngine::EncodeColorRows(RenderTarget& t, VramImage& vram, uint64_t batch_epoch,

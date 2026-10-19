@@ -478,7 +478,7 @@ void TestFrameSyncFlush() {
 
 // The blocking kernel wait completes the chain for good: the EE slept while the
 // DMA ran to END, so the END slot the game rewrites afterwards is a NEW list
-// (Sly 2 rebuilds its double-buffered display list in place once its FINISH
+// (a second title's rebuilds its double-buffered display list in place once its FINISH
 // arrived; the old chase resumed into that half-built list and misparsed the
 // next kick). A KernelWait flush records no tail; records of earlier walks go.
 void TestKernelWaitEndsAppendRace() {

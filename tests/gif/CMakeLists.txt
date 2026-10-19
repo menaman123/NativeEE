@@ -40,7 +40,9 @@ ps2r_gif_test(test_gif_arbiter_order GifArbiterOrder)
 # GifMarkerOwner) delivered in order on the drain thread, boundary slot once
 # in stream position, DrainFence drained-to-mark, idle generation, foreign
 # drain() == kick, Stop with an unsealed marker joins without delivering
-# behind it, restart. Order/count/thread-identity checks only.
+# behind it, restart; the EE's idle view (DrainInFlight / WaitDrainPassAfter /
+# the busy ledger) and a pass fault rethrown on the producer's drain().
+# Order/count/thread-identity checks only.
 ps2r_gif_test(test_gif_drain_thread GifDrainThread)
 
 # GifDeferBoundaryOrder: frame boundaries as ordered command slots under

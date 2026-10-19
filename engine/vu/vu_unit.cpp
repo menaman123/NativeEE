@@ -81,6 +81,15 @@ void VuUnit::LoadCase(const Vu1Case& c) {
     flags_.SetCycle(c.vu_cycle);
 }
 
+void VuUnit::CopyStateFrom(const VuUnit& other) {
+    *state_ = *other.state_;
+    flags_ = other.flags_;
+    stalls_ = other.stalls_;
+    if (xgk_ && other.xgk_) xgk_->CopyDrainState(*other.xgk_);
+    vif_top_ = other.vif_top_;
+    vif_itop_ = other.vif_itop_;
+}
+
 void VuUnit::SaveCase(Vu1Case& c, uint32_t start_pc) const {
     std::memset(&c, 0, sizeof(c));
     c.magic = Vu1Case::kMagic;

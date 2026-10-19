@@ -103,6 +103,11 @@ size_t VramOpLog::Replay(VramImage& target) const {
     return n;
 }
 
+void VramOpLog::LoadEncoded(const uint8_t* bytes, size_t n) {
+    Clear();
+    buf_.assign(bytes, bytes + n);
+}
+
 void VramOpLog::Clear() {
     buf_.clear();
     ops_ = 0;

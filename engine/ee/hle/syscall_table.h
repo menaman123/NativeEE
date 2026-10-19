@@ -17,6 +17,7 @@
 // Labels the kernel documents but OLD left as logged no-ops (RFU, cache, TLB,
 // SbusIntc, ExecPS2 ...) keep exactly that shape: counted, $v0 untouched.
 // Unknown numbers hit `default:` -- counted and logged, never fatal.
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <vector>
@@ -95,7 +96,9 @@ public:
     // register are one state (unbound = the kernel word only).
     using DmacMaskSink = std::function<void(int channel, bool enable)>;
     void SetDmacMaskSink(DmacMaskSink sink) { dmac_mask_sink_ = std::move(sink); }
-    uint64_t GsImr() const { return gs_imr_; }
+    // The kernel's GsPutIMR word (syscall 113): read by the GS interrupt observer on the thread that
+    // raises SIGNAL / FINISH (the GIF drain thread while it runs) -- an atomic word.
+    uint64_t GsImr() const { return gs_imr_.load(std::memory_order_relaxed); }
 
     uint64_t UnknownCount() const { return unknown_count_; }
     uint64_t NotImplementedCount() const { return not_implemented_count_; }
@@ -138,7 +141,7 @@ private:
     uint32_t* intc_mask_ptr_ = &intc_mask_;
     uint32_t dmac_mask_ = 0;
     DmacMaskSink dmac_mask_sink_;
-    uint64_t gs_imr_ = 0;
+    std::atomic<uint64_t> gs_imr_{0};
     bool crt_interlaced_ = false;
     int crt_mode_ = 0;
     bool crt_frame_mode_ = false;

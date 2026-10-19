@@ -43,6 +43,10 @@ public:
 
     // Apply every recorded op to `target`, in order. Returns the op count.
     size_t Replay(VramImage& target) const;
+    // The encoded op stream as bytes (a capture writes it; LoadEncoded rebuilds a
+    // log from such bytes -- the op count is recovered by Replay's return).
+    const std::vector<uint8_t>& Encoded() const { return buf_; }
+    void LoadEncoded(const uint8_t* bytes, size_t n);
 
     bool Empty() const { return buf_.empty(); }
     size_t Bytes() const { return buf_.size(); }

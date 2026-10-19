@@ -5,6 +5,7 @@
 #include <cstring>
 
 #include "engine/vif/vif_unpack_bulk.h"
+#include "engine/vif/vif_unpack_table.h"
 #include "engine/vu/vu_unit.h"
 
 namespace {
@@ -111,6 +112,30 @@ void VifUnpack::Execute(int vif, VuUnit& vu, const VifRegs& regs, uint32_t cmd, 
             }
         }
     }
+    if (settings_.bulk_lanes && vif == 1 && cl >= wl) {
+        // The table lane: every other skipping-write shape (masked, MODE 1-3,
+        // S / V2 / V3-16 / V3-8 / V4-5, WL > 1); declines partial payloads.
+        VifUnpackTable::Command c;
+        c.format = format;
+        c.usn = usn;
+        c.use_mask = use_mask;
+        c.addr_qw = addr_qw;
+        c.n = n;
+        c.cl = cl;
+        c.wl = wl;
+        c.regs = &regs;
+        c.payload = payload;
+        c.payload_size = payload_size;
+        c.phase = unpack_phase;
+        c.dmem = vu.state().data;
+        if (VifUnpackTable::Run(c)) {
+            table_cmds_++;
+            table_qw_ += n;
+            return;
+        }
+    }
+    scalar_cmds_++;
+    scalar_qw_ += n;
 
     const uint8_t* src_ptr = payload;
     const uint8_t* src_end = payload + payload_size;

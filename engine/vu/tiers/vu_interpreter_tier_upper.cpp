@@ -290,8 +290,13 @@ void VuInterpreterTier::RunClip(VuUnit& u, const VR_reg& fs_raw, const VR_reg& f
 
 void VuInterpreterTier::DoDiv(VuUnit& u, uint32_t fs, uint32_t fsf, uint32_t ft, uint32_t ftf) {
     VUregs& regs = u.regs();
-    const float num = VuFloat::ClampFloat(regs.VF[fs].F[fsf]);
-    const float den = VuFloat::ClampFloat(regs.VF[ft].F[ftf]);
+    DivLanes(u, regs.VF[fs], fsf, regs.VF[ft], ftf);
+}
+
+void VuInterpreterTier::DivLanes(VuUnit& u, const VR_reg& fs_raw, uint32_t fsf, const VR_reg& ft_raw, uint32_t ftf) {
+    VUregs& regs = u.regs();
+    const float num = VuFloat::ClampFloat(fs_raw.F[fsf]);
+    const float den = VuFloat::ClampFloat(ft_raw.F[ftf]);
     float q;
     uint16_t st;
     if (den != 0.0f) {

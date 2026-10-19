@@ -8,6 +8,7 @@
 #include <cstdio>
 
 #include "engine/vu/tiers/vu_block_tier.h"
+#include "engine/vu/vu1_aot/vu1_aot_block_gen.h"
 #include "engine/vu/vu1_aot/vu1_aot_exports.h"
 #include "engine/vu/vu_decoder.h"
 
@@ -91,71 +92,21 @@ std::string Vu1AotEmitter::EmitSlot(const VuDecodedSlot& s, const std::string& n
     return o;
 }
 
-// One block: RunOps<false> with the slots constant. The op facts are the
-// resolver's (VuBlockTier::ResolveOp) -- read from the block's ops so the
-// emitted arm is exactly the arm the loop would take.
-std::string Vu1AotEmitter::EmitBlock(const VuBlockProgram& prog, const VuBlock& blk, const std::string& fn_name) {
-    (void)prog;
+// One block's function: its region (the block and the blocks it can reach over
+// fall-through / static targets within the cap) with the register file in
+// locals (Vu1AotBlockGen). The slots are emitted once per block of the TU
+// (EmitBlockSlots), named by the block's pc.
+std::string Vu1AotEmitter::EmitBlock(VuBlockProgram& prog, const VuBlock& blk, const std::string& fn_name,
+                                     const std::vector<uint32_t>& emitted) {
+    return Vu1AotBlockGen::EmitFunction(prog, blk, fn_name, emitted);
+}
+
+std::string Vu1AotEmitter::EmitBlockSlots(const VuBlock& blk) {
     const int n = static_cast<int>(blk.ops.size());
     std::string o;
     o += "// block " + Pc4(blk.pc) + ": " + Dec(blk.n_body) + " ops" + (blk.has_ds ? " + delay slot" : "") +
          (blk.branch_idx >= 0 ? ", branch at op " + Dec(blk.branch_idx) : "") + (blk.e_bit ? ", E bit" : "") + "\n";
-    for (int i = 0; i < n; ++i) o += EmitSlot(*blk.ops[static_cast<size_t>(i)].slot, fn_name + "_s" + Dec(i));
-    o += "int " + fn_name + "(VuUnit& unit, VuInterpreterTier& g, bool& taken, uint32_t& target) {\n";
-    o += "    Vu1State& st = unit.state();\n    VUregs& regs = st.regs;\n    FlagPipeline& pipes = unit.flags();\n"
-         "    StallModel& stalls = unit.stalls();\n    XgKick* const xgk = unit.xgkick();\n    uint64_t& cycle = pipes.cycle();\n"
-         "    taken = false;\n    bool t = false;\n    uint32_t tg = 0;\n"
-         "    constexpr uint64_t kNever = ~0ull;\n"
-         "    uint64_t pace_due = (xgk != nullptr && xgk->armed()) ? xgk->next_due() : kNever;\n"
-         "    (void)g; (void)regs; (void)stalls; (void)t; (void)tg; (void)target;\n";
-    for (int i = 0; i < n; ++i) {
-        const VuBlockOp& op = blk.ops[static_cast<size_t>(i)];
-        const VuDecodedSlot& s = *op.slot;
-        const std::string ks = fn_name + "_s" + Dec(i);
-        const uint32_t pc = (blk.pc + 8u * static_cast<uint32_t>(i)) & VuBlockTier::kPcMask;
-        o += "    // op " + Dec(i) + " @ " + Pc4(pc) + "  upper=" + Hex(s.upper) + " lower=" + Hex(s.lower) + "\n";
-        o += "    ++cycle;\n";
-        // The stall entry (the resolver's stall_kind over the class table).
-        if (op.stall_kind == VuBlockOp::kStallModel) {
-            const int mask = VuBlockTier::StallClassMask(s.stall_class);
-            if (mask < 0) o += "    stalls.Apply(" + ks + ", regs, pipes);\n";
-            else o += "    stalls.ApplySpec<" + Dec(mask) + ">(" + ks + ", regs, pipes);  // class " + Dec(s.stall_class) + "\n";
-        } else if (op.stall_kind == VuBlockOp::kStallPush) {
-            o += "    stalls.ApplyPrunePush(" + ks + ", pipes);\n";
-        }
-        o += "    if (cycle >= pace_due) {\n        xgk->Pace(st.data, cycle);\n"
-             "        pace_due = xgk->armed() ? xgk->next_due() : kNever;\n    }\n";
-        // The bodies: the resolver's choice (a null upper = the NOP arm, a null lower = no issue).
-        std::string upper = op.upper == nullptr
-                                ? "VuFloat::ClampStoreACC(regs.ACC);"
-                                : "VuCachedTier::ExecUpperK<" + Dec(s.upper_kind) + ", " + Dec(s.u_dest) + ">(g, unit, " + ks + ");";
-        std::string lower;
-        if (op.lower != nullptr) {
-            const int ld = VuCachedTier::LowerKindReadsDest(s.lower_kind) ? s.l_dest : -1;
-            lower = "VuCachedTier::ExecLowerK<" + Dec(s.lower_kind) + ", " + Dec(ld) + ">(g, unit, " + ks + ", " + Hex(pc) +
-                    "u, t, tg);";
-        }
-        const uint16_t f = op.flags;
-        if (f & VuBlockOp::kIBit) {
-            o += "    " + upper + "  // the upper reads the OLD I\n";
-            o += "    regs.I = " + Hex(s.lower) + "u;\n";
-        } else if (f & VuBlockOp::kHideUpper) {
-            const std::string uvw = Dec(op.upper_vf_write);
-            o += "    {\n        // both words read at the same stage: the lower sees the pre-upper VF\n";
-            o += "        const VR_reg vf_pre = regs.VF[" + uvw + "];\n        " + upper + "\n";
-            o += "        const VR_reg vf_post = regs.VF[" + uvw + "];\n        regs.VF[" + uvw + "] = vf_pre;\n";
-            if (!lower.empty()) o += "        " + lower + "\n";
-            o += "        regs.VF[" + uvw + "] = vf_post;\n    }\n";
-        } else {
-            o += "    " + upper + "\n";
-            if (!lower.empty()) o += "    " + lower + "\n";
-        }
-        if (i == blk.branch_idx) o += "    taken = t;\n    target = tg;\n";
-        if (f & VuBlockOp::kTouchHw) o += "    VuBlockTier::PinHardwired(regs);\n";
-        if (f & VuBlockOp::kXgkick) o += "    pace_due = xgk->armed() ? xgk->next_due() : kNever;\n";
-        if (f & VuBlockOp::kXtop) o += "    if (st.xtop_exit_requested) return " + Dec(i + 1) + ";\n";
-    }
-    o += "    return " + Dec(n) + ";\n}\n\n";
+    for (int i = 0; i < n; ++i) o += EmitSlot(*blk.ops[static_cast<size_t>(i)].slot, Vu1AotBlockGen::SlotName(blk.pc, i));
     return o;
 }
 
@@ -197,14 +148,23 @@ Vu1AotEmitter::Output Vu1AotEmitter::Emit(VuBlockProgram& prog, const std::vecto
     o += "// GENERATED by Vu1AotEmitter (engine/vu/vu1_aot/) for VU1 image " + Hex16(prog.hash) + " -- DO NOT EDIT.\n";
     o += "// engine build: " + opt.engine_build + "\n";
     if (!opt.note.empty()) o += "// " + opt.note + "\n";
-    o += "// One function per block of the block tier's table: RunOps over the block with every slot a\n"
-         "// compile-time constant through the engine's own instruction bodies (vu_cached_tier_exec.inl).\n";
+    o += "// One function per block of the block tier's table: the block's ops with the VU register file\n"
+         "// resident in locals (Vu1AotBlockGen), every slot a compile-time constant, the engine's own lane\n"
+         "// kernels (VuFloat) and pipelines (FlagPipeline, StallModel, XgKick) as the primitives.\n";
     o += "#include \"engine/vu/vu1_aot/vu1_aot_prelude.h\"\n\nnamespace {\n\n";
+    o += "constexpr VR_reg kVf0 = {{0.0f, 0.0f, 0.0f, 1.0f}};  // VF00, hard-wired\n\n";
+    std::vector<uint32_t> emitted(block_pcs);
+    for (uint32_t& pc : emitted) pc &= VuBlockTier::kPcMask;
+    std::sort(emitted.begin(), emitted.end());
+    // The slots of every block first (a region names the slots of the blocks it
+    // reaches), then one region function per block.
+    for (uint32_t pc : emitted) o += EmitBlockSlots(*VuBlockTier::BuildBlock(prog, pc >> 3));
+    o += "\n";
     std::vector<std::string> names;
     for (uint32_t pc : block_pcs) {
         const VuBlock* blk = VuBlockTier::BuildBlock(prog, (pc & VuBlockTier::kPcMask) >> 3);
         const std::string fn = "Blk_" + Pc4(blk->pc);
-        o += EmitBlock(prog, *blk, fn);
+        o += EmitBlock(prog, *blk, fn, emitted);
         names.push_back(fn);
         ++out.blocks;
         out.ops += blk->ops.size();
@@ -218,7 +178,7 @@ Vu1AotEmitter::Output Vu1AotEmitter::Emit(VuBlockProgram& prog, const std::vecto
     o += "};\n\n";
     o += "const Vu1AotImageExports kExports = {\n    kVu1AotAbiVersion,\n    static_cast<uint32_t>(sizeof(VuDecodedSlot)),\n";
     o += "    0x" + Hex16(prog.hash) + "ull,\n    \"" + opt.engine_build + "\",\n    VU1_AOT_COMPILER,\n    " +
-         Dec(static_cast<long long>(block_pcs.size())) + "u,\n    kBlocks,\n};\n\n}  // namespace\n\n";
+         Dec(static_cast<long long>(block_pcs.size())) + "u,\n    kBlocks,\n    FlagPipeline::kDefaultLazy ? 1u : 0u,\n};\n\n}  // namespace\n\n";
     o += "extern \"C\" const Vu1AotImageExports* " + out.entry_symbol + "() { return &kExports; }\n";
     return out;
 }

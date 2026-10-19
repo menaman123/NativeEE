@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -747,6 +748,26 @@ static void PrivRegs() {
     CHECK((gs.ReadPrivileged(0x12001000) & GsPrivRegs::kCsrFinish) != 0, "FINISH sets CSR.FINISH");
     gs.WritePrivileged(0x12001000, GsPrivRegs::kCsrFinish);
     CHECK((gs.ReadPrivileged(0x12001000) & GsPrivRegs::kCsrFinish) == 0, "write-1 clears it");
+    // (c) the job deferrer: a display-register write stores the register at once but
+    // hands the job's push to the deferrer; the job (seq / epoch) is stamped when the
+    // deferred push runs; without a deferrer the push is in place again.
+    {
+        std::vector<std::function<void()>> deferred;
+        gs.Priv().SetJobDeferrer([&deferred](std::function<void()> push) { deferred.push_back(std::move(push)); });
+        const size_t jobs_before = sink.jobs.size();
+        const uint64_t dispfb2 = (uint64_t)0x20 | ((uint64_t)10 << 9);
+        gs.WritePrivileged(0x12000070, dispfb2);
+        CHECK(gs.ReadPrivileged(0x12000070) == dispfb2, "deferred: the register stores at once");
+        CHECK(sink.jobs.size() == jobs_before && deferred.size() == 1, "deferred: the job waits in the deferrer");
+        const uint32_t seq_before = gs.Seq();
+        deferred.back()();
+        CHECK(sink.jobs.size() == jobs_before + 1 && sink.jobs.back().type == (uint32_t)JobKind::SetFrontBuffer &&
+                  sink.jobs.back().arg1 == 0x20u * 8192u && sink.jobs.back().seq == seq_before,
+              "deferred: the push lands the job, stamped at push time");
+        gs.Priv().SetJobDeferrer(nullptr);
+        gs.WritePrivileged(0x12000070, dispfb);
+        CHECK(sink.jobs.size() == jobs_before + 2, "no deferrer: the push is in place");
+    }
 }
 
 static void LibraryDrawSubmission() {

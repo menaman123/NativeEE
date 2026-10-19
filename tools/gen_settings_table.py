@@ -63,6 +63,7 @@ ROWS = [
     ("dev.log_level", "enum(quiet|error|warn|info|narrate)", "quiet", "=", "PS2_LOG"),
     ("diag.perf", "bool", "off", "=", "PS2_PERF"),
     ("diag.tick_census", "bool", "off", "=", "-"),
+    ("diag.vu1_lockstep", "bool", "off", "=", "-"),
     ("engine.ee_runahead", "int", "2", "=", "PS2_EE_RUNAHEAD"),
     ("engine.mtvu", "bool", "on", "off", "PS2_MTVU"),
     ("engine.mtvu_depth", "int", "2", "=", "PS2_MTVU_MAX_FRAMES"),

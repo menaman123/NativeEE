@@ -87,6 +87,16 @@ public:
     void Present(const ScanoutDesc& desc) override;
     void ArmPresentCapture(bool armed) override;
     bool ReadPresented(std::vector<uint8_t>* rgba, int* w, int* h) override;
+    // The armed capture's read: synchronous (the default -- ReadPresented hands over
+    // THIS present's image; the frame dump's contract) or DEFERRED: Present reads
+    // its window image into a pixel-pack buffer behind a fence and ReadPresented
+    // hands over the PREVIOUS present's image (the fence of frame N-1 is long
+    // signalled when frame N presents: no GPU pipeline drain per present; the
+    // output lane is one present late). The play composition's choice; a reader
+    // that needs this present's image keeps the synchronous form.
+    void SetPresentCaptureDeferred(bool deferred);
+    bool PresentCaptureDeferred() const { return present_capture_deferred_; }
+    uint64_t PresentCaptureWaits() const { return present_capture_waits_; }   // fences found unsignalled at completion
     void ClearStencil(SurfaceId stencil, uint8_t value) override;
     void DrawConstQuad(SurfaceId color, SurfaceId stencil, const Rect& scissor, uint32_t rgba,
                        bool write_alpha, const StencilState& st) override;
@@ -139,6 +149,20 @@ public:
     CallCensus& CensusMut() { return census_; }
     // Default-framebuffer size Present falls back to when ScanoutDesc.dst is empty.
     void SetWindowSize(int w, int h);
+    // The destination-read route of a shader-blended draw: the lazy Cd COPY of the
+    // attachment (glCopyTexSubImage2D before the draw -- ends the render pass each
+    // time) or, when the driver exposes NV_texture_barrier, the attachment itself
+    // sampled behind glTextureBarrierNV (Caps::texture_barrier). Resolved at Init
+    // (dlsym); the mode defaults to the COPY (the Apple barrier is not tile-coherent:
+    // gl_device.cpp Init); SetCdCopyByBarrier(true) opts in where the barrier is exact.
+    using TextureBarrierFn = void (*)();
+    TextureBarrierFn TextureBarrier() const { return texture_barrier_; }
+    void SetCdCopyByBarrier(bool on) { cd_copy_by_barrier_ = on && texture_barrier_ != nullptr; }
+    bool CdCopyByBarrier() const { return cd_copy_by_barrier_; }
+    // glFlush: the host's swap callback for a window that is never shown (the
+    // hidden GL window of a captured present) -- the command stream reaches the
+    // GPU without the swap's drawable flush.
+    void FlushCommands();
 
 private:
     bool BuildRenderable(GlSurface& s);
@@ -174,6 +198,21 @@ private:
     uint32_t capture_tex_ = 0;
     int capture_w_ = 0, capture_h_ = 0;
     bool CaptureTarget(int w, int h);
+    // The deferred capture: the present's pixels are read into `pbo` behind `sync`;
+    // completed (mapped into presented_) at the NEXT present or at Shutdown.
+    struct DeferredCapture {
+        uint32_t pbo = 0;
+        void* sync = nullptr;   // GLsync
+        int w = 0, h = 0;
+        bool pending = false;
+    };
+    TextureBarrierFn texture_barrier_ = nullptr;
+    bool cd_copy_by_barrier_ = false;
+    bool present_capture_deferred_ = false;
+    DeferredCapture deferred_capture_;
+    uint64_t present_capture_waits_ = 0;
+    void CompleteDeferredCapture(bool wait);
+    void ReleaseDeferredCapture();
     std::unordered_map<uint32_t, GlSurface> surfaces_;
     uint32_t next_surface_ = 1;
     struct PendingReadback {

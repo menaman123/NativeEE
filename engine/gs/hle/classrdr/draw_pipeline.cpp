@@ -256,6 +256,12 @@ void DrawPipeline::FrameEndGrab(bool ee_frame_end, Frame* out) {
             out->source = ScanoutComposer::Source::None;
             out->source_fbp = kNoFbp;
             out->source_fallback = false;
+        } else if (out->source == ScanoutComposer::Source::Target) {
+            // The grab just read the whole attachment: the scanout deposit that
+            // follows (DrawScanout -> SyncDrawn) takes its rows from it instead of a
+            // second GPU read; revoked after the present (OnFrameEnd).
+            if (const RenderTarget* t = d_.cache->Find(out->source_fbp))
+                d_.cache->Readback().OfferPixels(t->views.color, out->w, out->h, &out->rgba);
         }
     }
 }
@@ -276,12 +282,14 @@ void DrawPipeline::CloseFrameTrace() {
 void DrawPipeline::OnFrameEnd(bool ee_frame_end, const CrtcClassifier::Snapshot& crtc, Frame* out) {
     FrameEndGrab(ee_frame_end, out);
     d_.presenter->Present(*d_.vram, *d_.layout, crtc, gfx_epoch_, window_w_, window_h_);
+    d_.cache->Readback().RevokeOffer();
     CloseFrameTrace();
 }
 
 void DrawPipeline::OnFrameEndGrabOnly(bool ee_frame_end, Frame* out) {
     FrameEndGrab(ee_frame_end, out);
     d_.presenter->PresentBlank(window_w_, window_h_);
+    d_.cache->Readback().RevokeOffer();
     CloseFrameTrace();
 }
 

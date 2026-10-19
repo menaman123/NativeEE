@@ -230,6 +230,22 @@ target_compile_options(test_vu1_capture_replay PRIVATE -Wall -Wextra -Werror -O2
 add_test(NAME Vu1CaptureReplay COMMAND test_vu1_capture_replay)
 set_tests_properties(Vu1CaptureReplay PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 
+# VuLockstepChain: the in-game tier A/B (VuLockstep, Config diag.vu1_lockstep) over a CHAIN of
+# consecutive recorded kicks (a capture probe's case_<nnn>_<pc>.bin + kicks_<nnn>.bin for one stretch
+# of a run; the inter-kick memory writes are in the next case): every case restored into one unit,
+# the configured tier and the interpreter run side by side and must agree on registers, data memory,
+# clock, latches, bundles and kicked bytes; the tier's packets must equal the recording. The AOT
+# tier with the generated libraries under <chain>/native when the directory has them (built by
+# tools/vu1_aot_pack or test_vu1_aot_native --keep). The chain lives OUTSIDE the tree
+# (PS2R_VU1_KICK_CHAIN, a cache path; SKIP 77 when unset or absent). The corpus gap this closes: a
+# single-kick corpus replays an entry both tiers reproduce even after the game has diverged.
+set(PS2R_VU1_KICK_CHAIN "" CACHE PATH "a capture probe's consecutive VU1 kick cases for VuLockstepChain (empty = SKIP)")
+add_executable(test_vu_lockstep test_vu_lockstep.cpp)
+target_link_libraries(test_vu_lockstep PRIVATE ps2r_vu ps2r_gs_ir)
+target_compile_options(test_vu_lockstep PRIVATE -Wall -Wextra -Werror -O2)
+add_test(NAME VuLockstepChain COMMAND test_vu_lockstep ${PS2R_VU1_KICK_CHAIN} --native ${PS2R_VU1_KICK_CHAIN}/native)
+set_tests_properties(VuLockstepChain PROPERTIES TIMEOUT 600 SKIP_RETURN_CODE 77)
+
 # Vu1HleMechanism: Vu1Registry lookup rules, Vu1ImageAnalyzer on synthetic
 # images, KickLowering's one-slot-per-kick raw tier, and Vu1HleRuntime::Hook
 # through the tier dispatch on one corpus case (kicks / data / TPC equal the

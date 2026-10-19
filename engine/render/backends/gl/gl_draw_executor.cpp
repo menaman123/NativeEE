@@ -629,11 +629,26 @@ void GlDrawExecutor::ClassifyRoutes(const gs::DrawIr& ir, const gs::TextureSourc
     s.wrap_route = BlendFfMap::RouteWrapBlend(ir.alpha_blend, r.colclamp);
 }
 
-// Lazy destination copy into rt_copy (unit 1) from the bound attachment.
+// Lazy destination copy into rt_copy (unit 1) from the bound attachment -- or, by
+// texture barrier, the attachment itself on unit 1 behind glTextureBarrierNV: the
+// writes of the draws before it are visible to this draw's destination reads
+// without a copy (and without ending the render pass for the copy's sake).
 void GlDrawExecutor::CdCopy(const DrawParams& p, Step& s) {
     const GlSurface* copy = dev_.Surface(p.rt_copy);
     if (!p.rt_copy_available || !copy || !copy->tex) return;
     GlStateCache& st = dev_.State();
+    if (dev_.CdCopyByBarrier()) {
+        const GlSurface* att = dev_.Surface(p.alt16_route ? p.alt16 : p.color);
+        if (att && att->tex) {
+            st.ActiveTexture(GL_TEXTURE1);
+            st.BindTex2D(att->tex);
+            st.ActiveTexture(GL_TEXTURE0);
+            dev_.TextureBarrier()();
+            dev_.CensusMut().barriers++;
+            s.sw_blend_active = true;
+            return;
+        }
+    }
     bool skip = false;
     int cx = s.copy_x, cy = s.copy_y, cw = s.copy_w, ch = s.copy_h;
     if (p.cd_copy) {

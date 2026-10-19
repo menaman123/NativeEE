@@ -16,12 +16,14 @@
 // nothing changed. VU0 never enters the hooks.
 #include <cstdint>
 #include <memory>
+#include <string>
 
 #include "engine/vu/tiers/vu_block_tier.h"
 #include "engine/vu/tiers/vu_cached_tier.h"
 #include "engine/vu/tiers/vu_interpreter_tier.h"
 #include "engine/vu/vu1_aot/vu1_aot_tier.h"
 
+class VuLockstep;
 class VuUnit;
 
 // The fallback tier a program runs on when no hook takes it.
@@ -32,6 +34,13 @@ enum class VuTierMode : uint8_t { Cached, Interp, Block, Aot };
 struct VuSettings {
     VuTierMode vu1_mode = VuTierMode::Cached;
     bool hle_enabled = false;  // the HLE library consult; the corpus tools run tiers only
+    // Config diag.vu1_lockstep: every VU1 kick the tier runs is ALSO run on
+    // the interpreter reference on a shadow unit and the end states diffed
+    // (VuLockstep); the GS sees the tier's packets only. Off in play.
+    bool lockstep = false;
+    // Where the lockstep writes the entry state of each reported divergence
+    // as a Vu1Case ("" = nowhere); the composition points it under user_data.
+    std::string lockstep_dump_dir;
 };
 
 class VuTierDispatch {
@@ -44,10 +53,16 @@ public:
     static constexpr uint64_t kDefaultCycleCap = 1000000;  // bundles before a runaway program is cut
 
     explicit VuTierDispatch(VuSettings settings = VuSettings{}, uint64_t cycle_cap = kDefaultCycleCap);
+    ~VuTierDispatch();
 
     // The ladder: hle (VU1, enabled, hook set) -> mtvu (VU1, hook set) -> tier
     // (Block / Aot: VU1 on that tier, VU0 on the cached tier).
     void Execute(VuUnit& unit, uint32_t start_pc);
+    // The tier step alone (the configured tier on this unit, no hooks): what
+    // Execute runs once the hooks declined; the lockstep A/B's real leg.
+    void RunTier(VuUnit& unit, uint32_t start_pc);
+    // The lockstep A/B (settings.lockstep; built at the first VU1 kick), for a census.
+    const VuLockstep* lockstep() const { return lockstep_.get(); }
     // A parked VU0 (self-spin suspend) resumes through the ladder.
     void ResumeIfWaiting(VuUnit& unit);
 
@@ -79,4 +94,5 @@ private:
     void* hle_user_ = nullptr;
     MtvuHook mtvu_ = nullptr;
     void* mtvu_user_ = nullptr;
+    std::unique_ptr<VuLockstep> lockstep_;
 };

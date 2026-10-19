@@ -146,10 +146,33 @@ void MtvuStack::Vif1Gate::Write(uint32_t addr, unsigned size, uint64_t value) {
     inner_.Write(addr, size, value);
 }
 
+MmioHandler& MtvuStack::GifWindow(MmioHandler& inner) {
+    gif_gate_ = std::make_unique<GifGate>(*this, inner);
+    return *gif_gate_;
+}
+
+void MtvuStack::FenceDrain() {
+    if (!drain_.Running()) return;
+    gif_fences_.fetch_add(1, std::memory_order_relaxed);
+    arbiter_.DrainFence();
+}
+
+uint64_t MtvuStack::GifGate::Read(uint32_t addr, unsigned size) {
+    stack_.FenceDrain();
+    return inner_.Read(addr, size);
+}
+
+void MtvuStack::GifGate::Write(uint32_t addr, unsigned size, uint64_t value) {
+    stack_.FenceDrain();
+    inner_.Write(addr, size, value);
+}
+
 std::string MtvuStack::Census() const {
     std::string s = "on,worker=" + std::string(worker_.IsRunning() ? "1" : "0") +
                     ",drain=" + std::to_string(drain_.PassGeneration()) +
                     ",drain_thread=" + (drain_.Running() ? "on" : "inline") +
+                    ",drain_ns=" + std::to_string(drain_.BusyNs()) + "/" + std::to_string(drain_.Passes()) +
+                    ",gif_fences=" + std::to_string(GifFences()) +
                     ",redirects=" + std::to_string(sync_.SyncCount(SyncSite::Vu1EeKick)) + ",syncs=";
     for (size_t i = 0; i < static_cast<size_t>(SyncSite::Count); ++i)
         s += (i ? ":" : "") + std::to_string(sync_.SyncCount(static_cast<SyncSite>(i)));

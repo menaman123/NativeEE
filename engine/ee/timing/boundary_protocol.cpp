@@ -1,9 +1,10 @@
 #include "engine/ee/timing/boundary_protocol.h"
 
-#include "engine/ee/timing/tick_profile.h"
-
 #include <chrono>
 #include <string>
+
+#include "engine/ee/sched/ee_event_queue.h"
+#include "engine/ee/timing/tick_profile.h"
 
 BoundaryProtocol::BoundaryProtocol(TickSource& source, TickSync& ticks) : source_(source), ticks_(ticks) {}
 
@@ -31,13 +32,21 @@ void BoundaryProtocol::Wait(uint64_t) {
     // (an absolute deadline, never a poll quantum). The pacer is a non-guest
     // thread and only NOTES its ticks; the waiter is the guest fixed point
     // that fires them, so the clock it re-reads has advanced (a non-guest
-    // waiter leaves them for the next boundary).
-    std::unique_lock<std::mutex> lk(mu_);
-    const uint64_t seen = tick_generation_;
-    const uint32_t period_us = source_.PeriodUs() ? source_.PeriodUs() : TickSource::kBasePeriodUs;
-    cv_.wait_for(lk, std::chrono::microseconds(period_us), [&] { return tick_generation_ != seen; });
-    lk.unlock();
+    // waiter leaves them for the next boundary). A queued foreign wake ends
+    // the park too (the park is registered with the event queue, whose
+    // Enqueue pokes it); the holder applies it here, and no tick is fired for
+    // it unless the pacer noted one meanwhile.
+    EeEventQueue& queue = EeEventQueue::Instance();
+    {
+        EeEventQueue::ParkReg reg(&mu_, &cv_);
+        std::unique_lock<std::mutex> lk(mu_);
+        const uint64_t seen = tick_generation_;
+        const uint32_t period_us = source_.PeriodUs() ? source_.PeriodUs() : TickSource::kBasePeriodUs;
+        cv_.wait_for(lk, std::chrono::microseconds(period_us),
+                     [&] { return tick_generation_ != seen || queue.HasPending(); });
+    }
     if (!is_guest_ || is_guest_()) ticks_.FirePending();
+    queue.DrainIfPendingOnHolder();
 }
 
 void BoundaryProtocol::MarkWorkWindow() {

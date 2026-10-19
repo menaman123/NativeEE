@@ -68,7 +68,8 @@ uint64_t Vu1AotVerifier::CorpusHashOf(const std::vector<const Vu1Case*>& cases) 
 // with every image assumed verified (native) or on the interpreter, the
 // arbiter drained into a null sink (the identity is judged on the kicked bytes
 // at the submit tap; the parse only keeps the arbiter's contract).
-void Vu1AotVerifier::RunLeg(const Vu1Case& c, bool native, const Vu1AotImageExports* exports, Outcome& out, Result& r) {
+void Vu1AotVerifier::RunLeg(const Vu1Case& c, bool native, const Vu1AotImageExports* exports, uint64_t cycle_cap, bool oracle_block,
+                            Outcome& out, Result& r) {
     NullGsSink null_sink;
     GifRegs gif_regs;
     GifParser parser(null_sink, gif_regs);
@@ -78,8 +79,9 @@ void Vu1AotVerifier::RunLeg(const Vu1Case& c, bool native, const Vu1AotImageExpo
     VuUnit vu(1, &arbiter);
     vu.LoadCase(c);
     VuSettings& settings = vu.dispatch().settings();
-    settings.vu1_mode = native ? VuTierMode::Aot : VuTierMode::Interp;
+    settings.vu1_mode = native ? VuTierMode::Aot : oracle_block ? VuTierMode::Block : VuTierMode::Interp;
     settings.hle_enabled = false;
+    if (cycle_cap > 0) vu.dispatch().set_cycle_cap(cycle_cap);
     vu.dispatch().aot().set_assume_verified(native);
     if (native && exports != nullptr) vu.dispatch().aot().SetNativeExports(r.image_hash, exports);
     vu.Execute(c.start_pc);
@@ -155,7 +157,8 @@ bool Vu1AotVerifier::Same(const Outcome& a, const Outcome& b, std::string& field
     return true;
 }
 
-Vu1AotVerifier::Result Vu1AotVerifier::Verify(const std::vector<const Vu1Case*>& cases, const Vu1AotImageExports* native) {
+Vu1AotVerifier::Result Vu1AotVerifier::Verify(const std::vector<const Vu1Case*>& cases, const Vu1AotImageExports* native,
+                                              uint64_t cycle_cap, bool oracle_block) {
     Result r;
     r.cases = cases.size();
     if (cases.empty()) {
@@ -174,8 +177,8 @@ Vu1AotVerifier::Result Vu1AotVerifier::Verify(const std::vector<const Vu1Case*>&
     // The two outcomes are 2 x ~17 KB: heap-held, reused across cases.
     std::vector<Outcome> legs(2);
     for (size_t i = 0; i < cases.size(); ++i) {
-        RunLeg(*cases[i], true, native, legs[0], r);
-        RunLeg(*cases[i], false, nullptr, legs[1], r);
+        RunLeg(*cases[i], true, native, cycle_cap, false, legs[0], r);
+        RunLeg(*cases[i], false, nullptr, cycle_cap, oracle_block, legs[1], r);
         r.bundles += legs[0].bundles;
         std::string field;
         if (!Same(legs[0], legs[1], field)) {

@@ -76,6 +76,11 @@ drain thread (5G); hle/ reserved.
 - `FinishPath3` (OLD `FinishDMA`): a mid-IMAGE transfer is kept open, nothing else happens
   (tail kept); any other incomplete tag is abandoned, the GS is told to finish, the tail is
   cleared. The arbiter calls it once after a drain pass that delivered any PATH3 packet.
+- PATH1 packet buffers are pooled: `XgKick` hands the arbiter the buffer it staged the packet in
+  (no second copy); the drain owner collects a pass's PATH1 buffers (capacity <= one VU1 data memory)
+  and returns them under one lock (`recyclePath1Buffers`, bounded by `kPath1PoolMax`); the VU1 unit
+  takes them back in batches (`acquirePath1Buffers`). Larger buffers fall to the staging pool's rule.
+  `openMarker` reserves `kMarkerReservePackets` slots for the worker's fills.
 - Submission order is the arbiter's whole contract: the order packets were submitted is the
   order the GS sees them; no path-priority sort. `is_directhl` / `is_path3_image` are computed
   and unused (DIRECTHL pre-empting a PATH3 IMAGE is not modelled).

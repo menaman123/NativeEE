@@ -168,8 +168,8 @@ void SyscallTable::Dispatch(uint32_t v1, CpuContext& ctx) {
         case 95: SetHandlerActive(dmac_handlers_, ctx, false); break;
         case 100: RetS(ctx, 0); break;  // FlushCache: caches are coherent here
         case 107: RetS(ctx, 0); break;  // sceSifStopDma: SIF0 STR cleared (no DMAC yet)
-        case 112: ctx.cpuRegs.GPR.r[2].UD[0] = gs_imr_; break;
-        case 113: gs_imr_ = ctx.cpuRegs.GPR.r[4].UD[0]; break;
+        case 112: ctx.cpuRegs.GPR.r[2].UD[0] = gs_imr_.load(std::memory_order_relaxed); break;
+        case 113: gs_imr_.store(ctx.cpuRegs.GPR.r[4].UD[0], std::memory_order_relaxed); break;
         case 116: SetSysCall(ctx); break;
         case 118: RetS(ctx, -1); break;  // sceSifDmaStat: -1 = transfer complete
         case 119: SifSetDma(ctx); break;
@@ -578,7 +578,7 @@ void SyscallTable::ResetForTest() {
     next_dmac_id_ = 1;
     intc_mask_ = dmac_mask_ = 0;
     *intc_mask_ptr_ = 0;
-    gs_imr_ = 0;
+    gs_imr_.store(0, std::memory_order_relaxed);
     for (uint32_t& c : custom_syscall_) c = 0;
     for (uint32_t& r : sif_sys_reg_) r = 0;
     sif_dma_id_ = 0;

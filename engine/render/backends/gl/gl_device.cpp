@@ -4,6 +4,8 @@
 #include "engine/platform/host/platform.h"
 #include PS2R_GL_HEADER
 
+#include <dlfcn.h>
+
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -14,6 +16,18 @@
 
 namespace ps2r {
 namespace render {
+
+namespace {
+bool HasExtension(const char* name) {
+    GLint n = 0;
+    glGetIntegerv(GL_NUM_EXTENSIONS, &n);
+    for (GLint i = 0; i < n; ++i) {
+        const char* e = reinterpret_cast<const char*>(glGetStringi(GL_EXTENSIONS, static_cast<GLuint>(i)));
+        if (e && std::strcmp(e, name) == 0) return true;
+    }
+    return false;
+}
+}  // namespace
 
 GlDevice::GlDevice(const GlDeviceSettings& settings) : settings_(settings) {}
 
@@ -116,6 +130,16 @@ bool GlDevice::Init(std::function<void()> swap) {
         }
     }
     executor_ = std::make_unique<GlDrawExecutor>(*this);
+    // NV_texture_barrier (exposed by Apple's GL-on-Metal 4.1 and by Mesa): the
+    // destination read without the copy. Looked up by name; absent = the copy route.
+    texture_barrier_ = nullptr;
+    if (HasExtension("GL_NV_texture_barrier"))
+        texture_barrier_ = reinterpret_cast<TextureBarrierFn>(dlsym(RTLD_DEFAULT, "glTextureBarrierNV"));
+    // OFF by default: Apple's GL-on-Metal barrier is not coherent at the 32-row
+    // tile boundaries for a same-pass attachment read (1-px horizontal lines every
+    // 32 rows on the Paris capture, 0.15-0.4 % of the pixels, delta up to 36); the
+    // copy route is the reference. Opt-in for a driver whose barrier is exact.
+    cd_copy_by_barrier_ = false;
     initialized_ = true;
     return true;
 }
@@ -137,6 +161,7 @@ void GlDevice::Shutdown() {
     if (const_vao_) { state_.DeleteVertexArrays(1, &const_vao_); const_vao_ = 0; }
     if (sten_fbo_) { state_.DeleteFramebuffers(1, &sten_fbo_); sten_fbo_ = 0; }
     if (res_fbo_) { state_.DeleteFramebuffers(1, &res_fbo_); res_fbo_ = 0; }
+    ReleaseDeferredCapture();
     if (capture_fbo_) { state_.DeleteFramebuffers(1, &capture_fbo_); capture_fbo_ = 0; }
     if (capture_tex_) { state_.DeleteTextures(1, &capture_tex_); capture_tex_ = 0; }
     capture_w_ = capture_h_ = 0;
@@ -152,7 +177,7 @@ Caps GlDevice::QueryCaps() const {
     c.staging_readback = false;
     c.reverse_subtract = true;
     c.depth_sample = true;
-    c.texture_barrier = false;
+    c.texture_barrier = texture_barrier_ != nullptr;
     c.compute = false;
     c.copy_pack5551 = shaders_.Pack5551Program() != 0;
     c.alpha_lane_write = shaders_.AlphaLaneProgram() != 0;
@@ -713,8 +738,30 @@ void GlDevice::Present(const ScanoutDesc& desc) {
         state_.UseProgram(0);
         state_.Enable(GL_DEPTH_TEST);
     }
-    presented_w_ = presented_h_ = 0;
-    if (capture) {
+    if (capture && present_capture_deferred_) {
+        // The previous present's pixels first (its fence is long signalled: no
+        // drain), then this present's read into the pack buffer behind a new fence.
+        CompleteDeferredCapture(/*wait=*/true);
+        DeferredCapture& dc = deferred_capture_;
+        if (!dc.pbo) glGenBuffers(1, &dc.pbo);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, dc.pbo);
+        const size_t bytes = static_cast<size_t>(capture_w) * capture_h * 4;
+        glBufferData(GL_PIXEL_PACK_BUFFER, static_cast<GLsizeiptr>(bytes), nullptr, GL_STREAM_READ);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        census_.readbacks++;
+        census_.readback_bytes += bytes;
+        glReadPixels(0, 0, capture_w, capture_h, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+        dc.sync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        dc.w = capture_w;
+        dc.h = capture_h;
+        dc.pending = true;
+        state_.BindFb(GL_READ_FRAMEBUFFER, capture_fbo_);
+        state_.BindFb(GL_DRAW_FRAMEBUFFER, 0);
+        glBlitFramebuffer(0, 0, capture_w, capture_h, 0, 0, capture_w, capture_h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        state_.BindFb(GL_FRAMEBUFFER, 0);
+    } else if (capture) {
+        presented_w_ = presented_h_ = 0;
         // The frame dump's presented image: the whole window as drawn above
         // (the display quad at its offset, black around it), bottom-up.
         presented_.assign(static_cast<size_t>(capture_w) * capture_h * 4, 0);
@@ -728,8 +775,53 @@ void GlDevice::Present(const ScanoutDesc& desc) {
         state_.BindFb(GL_DRAW_FRAMEBUFFER, 0);
         glBlitFramebuffer(0, 0, capture_w, capture_h, 0, 0, capture_w, capture_h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
         state_.BindFb(GL_FRAMEBUFFER, 0);
+    } else {
+        presented_w_ = presented_h_ = 0;
     }
     if (swap_) swap_();
+}
+
+void GlDevice::SetPresentCaptureDeferred(bool deferred) {
+    if (present_capture_deferred_ && !deferred) CompleteDeferredCapture(/*wait=*/true);
+    present_capture_deferred_ = deferred;
+}
+
+// The pending read's pixels into presented_ (the image ReadPresented hands over).
+// `wait`: block on the fence when it has not signalled (counted); otherwise leave
+// an unsignalled read pending.
+void GlDevice::CompleteDeferredCapture(bool wait) {
+    DeferredCapture& dc = deferred_capture_;
+    if (!dc.pending) return;
+    if (dc.sync) {
+        GLenum r = glClientWaitSync(static_cast<GLsync>(dc.sync), 0, 0);
+        if (r != GL_ALREADY_SIGNALED && r != GL_CONDITION_SATISFIED) {
+            if (!wait) return;
+            present_capture_waits_++;
+            r = glClientWaitSync(static_cast<GLsync>(dc.sync), GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull);
+        }
+        glDeleteSync(static_cast<GLsync>(dc.sync));
+        dc.sync = nullptr;
+    }
+    dc.pending = false;
+    const size_t bytes = static_cast<size_t>(dc.w) * dc.h * 4;
+    presented_.resize(bytes);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, dc.pbo);
+    if (const void* p = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, static_cast<GLsizeiptr>(bytes), GL_MAP_READ_BIT)) {
+        std::memcpy(presented_.data(), p, bytes);
+        glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+        presented_w_ = dc.w;
+        presented_h_ = dc.h;
+    } else {
+        presented_w_ = presented_h_ = 0;
+    }
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+}
+
+void GlDevice::ReleaseDeferredCapture() {
+    DeferredCapture& dc = deferred_capture_;
+    if (dc.sync) { glDeleteSync(static_cast<GLsync>(dc.sync)); dc.sync = nullptr; }
+    if (dc.pbo) { glDeleteBuffers(1, &dc.pbo); dc.pbo = 0; }
+    dc.pending = false;
 }
 
 bool GlDevice::CaptureTarget(int w, int h) {
@@ -773,6 +865,8 @@ void GlDevice::SetWindowSize(int w, int h) {
     window_w_ = w;
     window_h_ = h;
 }
+
+void GlDevice::FlushCommands() { glFlush(); }
 
 void GlDevice::BeginFrame() { BeginDrawRun(); }
 void GlDevice::EndFrame() { EndDrawRun(); }

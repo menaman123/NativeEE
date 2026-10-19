@@ -23,7 +23,9 @@ std::string EeYieldPoint::Census::Format() const {
     return "trips=" + std::to_string(trips) + ":yields=" + std::to_string(yields) + ":isrs=" + std::to_string(isrs) +
            ":contended=" + std::to_string(contended) + ":nested=" + std::to_string(nested) +
            ":inhibited=" + std::to_string(inhibited) + ":non_holder=" + std::to_string(non_holder) +
-           ":idle_calls=" + std::to_string(idle_calls) + ":idle_fields=" + std::to_string(idle_fields);
+           ":idle_calls=" + std::to_string(idle_calls) + ":idle_fields=" + std::to_string(idle_fields) +
+           ":idle_isrs=" + std::to_string(idle_isrs) + ":idle_pipeline_waits=" + std::to_string(idle_pipeline_waits) +
+           ":idle_wakes=" + std::to_string(idle_wakes);
 }
 
 void EeYieldPoint::Bind(Deps deps) {
@@ -93,12 +95,38 @@ uint64_t EeYieldPoint::IdleWhileBlocked(CpuContext& ctx) {
     // what the field readied; a refused grant (something READY, a vblank waiter,
     // a relaunch hold, shutdown) ends the idle.
     while (token.TryIdleAcquire(tid)) {
-        if (fields == 0) ++census_.idle_calls;   // counted as they happen: a park dump mid-idle sees them
-        ++census_.idle_fields;
         in_trip_ = true;
+        // A cause already pending (a queued foreign raise applied here) is taken
+        // now, with no field: the handler's wakes run the election below.
+        if (deps_.queue) deps_.queue->DrainIfPendingOnHolder();
+        if (deps_.intc && deps_.intc->Pending()) {
+            ++census_.idle_isrs;
+            census_.isrs += static_cast<uint64_t>(deps_.intc->DispatchPending(ctx, Intc::kSiteYield));
+            if (deps_.dispatch_dmac) deps_.dispatch_dmac(ctx);
+            in_trip_ = false;
+            token.IdleRelease(tid);
+            break;
+        }
+        // Deliveries in flight: park on their progress (bounded), then re-evaluate
+        // -- what they delivered may be pending or may have readied a thread.
+        if (deps_.pipeline_wait && deps_.pipeline_wait()) {
+            ++census_.idle_pipeline_waits;
+            in_trip_ = false;
+            token.IdleRelease(tid);
+            continue;
+        }
+        // The field park may end early on a foreign wake (no tick fired): the
+        // domain tick tells a field from a wake.
+        const uint64_t tick0 = deps_.domain ? deps_.domain->DomainTick() : 0;
         RunField(ctx);
+        if (!deps_.domain || deps_.domain->DomainTick() != tick0) {
+            if (fields == 0) ++census_.idle_calls;   // counted as they happen: a park dump mid-idle sees them
+            ++census_.idle_fields;
+            ++fields;
+        } else {
+            ++census_.idle_wakes;
+        }
         in_trip_ = false;
-        ++fields;
         token.IdleRelease(tid);
     }
     return fields;

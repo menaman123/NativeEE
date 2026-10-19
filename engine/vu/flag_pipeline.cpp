@@ -17,16 +17,17 @@ FlagPipeline::FlagPipeline(bool lazy) : lazy_(lazy) {}
 
 // ---------------------------------------------------------------- CLIP ring
 
+// The entries retire in issue order (a push's retire is the monotonic clock
+// + the delay), so the due ones are a PREFIX: the last due value is the
+// visible flag and the rest shift down once.
 uint32_t FlagPipeline::VisibleClip(VUregs& regs) {
-    int keep = 0;
-    for (int i = 0; i < clip_pending_n_; ++i) {
-        if (clip_pending_[i].retire <= vu_cycle_) {
-            regs.clip_flag = clip_pending_[i].value;  // later due entries overwrite earlier ones
-        } else {
-            clip_pending_[keep++] = clip_pending_[i];
-        }
+    int due = 0;
+    while (due < clip_pending_n_ && clip_pending_[due].retire <= vu_cycle_) ++due;
+    if (due > 0) {
+        regs.clip_flag = clip_pending_[due - 1].value;
+        clip_pending_n_ -= due;
+        if (clip_pending_n_ > 0) std::memmove(&clip_pending_[0], &clip_pending_[due], sizeof(PendingClip) * static_cast<size_t>(clip_pending_n_));
     }
-    clip_pending_n_ = keep;
     return regs.clip_flag;
 }
 
@@ -57,27 +58,7 @@ void FlagPipeline::SetClipImmediate(VUregs& regs, uint32_t imm24) {
 
 // ------------------------------------------------------ MAC / STATUS ring
 
-void FlagPipeline::AccumulateLazyEntry(const PendingMac& e) {
-#if PS2R_VU_LAZY_NEON
-    const uint32x4_t bits = vld1q_u32(e.bits);
-    const uint32x4_t expm = vdupq_n_u32(VuFloat::kExpMask);
-    const uint32x4_t exp = vandq_u32(bits, expm);
-    const uint32x4_t z_m = vceqq_u32(exp, vdupq_n_u32(0));
-    const uint32x4_t o_m = vceqq_u32(exp, expm);
-    const uint32x4_t u_m = vandq_u32(z_m, vtstq_u32(bits, vdupq_n_u32(VuFloat::kMantMask)));
-    const uint32x4_t s_m = vreinterpretq_u32_s32(vshrq_n_s32(vreinterpretq_s32_u32(bits), 31));
-    const uint32x4_t lm = vld1q_u32(VuFloat::kLaneMask[e.mask & 0xF]);
-    vst1q_u32(lazy_acc_[0], vorrq_u32(vld1q_u32(lazy_acc_[0]), vandq_u32(z_m, lm)));
-    vst1q_u32(lazy_acc_[1], vorrq_u32(vld1q_u32(lazy_acc_[1]), vandq_u32(s_m, lm)));
-    vst1q_u32(lazy_acc_[2], vorrq_u32(vld1q_u32(lazy_acc_[2]), vandq_u32(u_m, lm)));
-    vst1q_u32(lazy_acc_[3], vorrq_u32(vld1q_u32(lazy_acc_[3]), vandq_u32(o_m, lm)));
-#else
-    lazy_or_mac_ |= VuFloat::PackMacBits(e.bits, e.mask);
-#endif
-    std::memcpy(lazy_last_bits_, e.bits, sizeof(lazy_last_bits_));
-    lazy_last_mask_ = e.mask;
-    lazy_have_last_ = true;
-}
+void FlagPipeline::AccumulateLazyEntry(const PendingMac& e) { FoldLazyRetired(e.bits, e.mask); }
 
 void FlagPipeline::MaterializeMacStatus(VUregs& regs) {
     if (!lazy_have_last_) return;
@@ -110,26 +91,6 @@ void FlagPipeline::MaterializeMacStatus(VUregs& regs) {
     std::memset(lazy_acc_, 0, sizeof(lazy_acc_));
     lazy_or_mac_ = 0;
     lazy_have_last_ = false;
-}
-
-void FlagPipeline::RetireDue(VUregs& regs) {
-    PendingMac kept[kRingDepth];
-    int nk = 0;
-    for (int i = 0; i < mac_pending_n_; ++i) {
-        const PendingMac& e = mac_pending_[(mac_head_ + i) & (kRingDepth - 1)];
-        if (e.retire <= vu_cycle_) {
-            if (lazy_) {
-                AccumulateLazyEntry(e);
-            } else {
-                ApplyMacToStatus(regs, e.mac);
-            }
-        } else {
-            kept[nk++] = e;
-        }
-    }
-    for (int i = 0; i < nk; ++i) mac_pending_[i] = kept[i];
-    mac_head_ = 0;
-    mac_pending_n_ = nk;
 }
 
 void FlagPipeline::RetireMacStatus(VUregs& regs) {

@@ -108,6 +108,32 @@ void Mapping(render::GlDevice& backend,std::vector<uint8_t>& shown,unsigned& swa
         backend.ArmPresentCapture(false);
         CHECK(!backend.ReadPresented(&presented,&pw,&ph));
 
+        // The DEFERRED capture (the play composition's): a present reads its
+        // window image behind a fence and ReadPresented hands over the PREVIOUS
+        // present's image -- nothing after the first present, then case N-1 at
+        // present N, each exactly the synchronous form's bytes; the window still
+        // shows the current case; turning the mode off completes the pending read.
+        backend.ArmPresentCapture(true);
+        backend.SetPresentCaptureDeferred(true);
+        CHECK(backend.PresentCaptureDeferred());
+        backend.Present(cases[2]);
+        Compare(shown,cases[2]);
+        CHECK(!backend.ReadPresented(&presented,&pw,&ph));   // the first present's read is in flight
+        backend.Present(cases[5]);
+        Compare(shown,cases[5]);
+        CHECK(backend.ReadPresented(&presented,&pw,&ph) && pw == window_size && ph == window_size);
+        Compare(presented,cases[2]);                          // one present late
+        backend.Present(cases[1]);
+        CHECK(backend.ReadPresented(&presented,&pw,&ph));
+        Compare(presented,cases[5]);
+        backend.SetPresentCaptureDeferred(false);             // completes the pending read (cases[1])
+        CHECK(!backend.PresentCaptureDeferred());
+        CHECK(backend.ReadPresented(&presented,&pw,&ph));
+        Compare(presented,cases[1]);
+        CHECK(glGetError() == GL_NO_ERROR);
+        backend.ArmPresentCapture(false);
+        CHECK(!backend.ReadPresented(&presented,&pw,&ph));
+
         const auto before_pixels = WindowPixels();
         const unsigned before_swaps = swaps;
         for (const render::Rect rect : {

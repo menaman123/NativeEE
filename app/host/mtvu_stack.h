@@ -22,17 +22,29 @@
 //    other register read and every write syncs first (PS2 rule: the EE
 //    observes VIF1 as hardware would -- nothing may touch the VIF1 unit while
 //    the worker owns it).
+//  * GifWindow(): an MmioHandler over the GIF register window: every access
+//    fences the drain thread first while it runs (the parser owns the GIF
+//    transfer state the STAT / TAG registers are composed from), then reaches
+//    the register file; with the drain inline it is the plain handler.
 //
 // Thread rule: Start() spawns the worker, and the drain thread only when the
-// root asks for it: the drain owner runs the GIF parser and so the GS state
-// machine and its DrawIR consumer -- with a live GL video stack that consumer
-// draws on the draining thread, and a GL context has ONE current thread, so
-// the drain stays inline on the EE thread while GL is live and moves to the
-// thread only when no GL consumer exists. Start() runs before any producer
-// traffic (the ELF has not been loaded when the root constructs it). Teardown order: Quiesce (savestate), then Stop() = worker.Stop()
-// (drains, joins, unbinds VIF1) then drain.Stop(); the destructor does the
-// same. Nothing here reads Config: the root copies engine.mtvu /
-// engine.mtvu_depth into MtvuSettings and engine.vu1_mode into VuSettings.
+// root asks for it. The drain owner runs the GIF parser and so the GS state
+// machine up to the DrawIR chain's head: the root may ask for the thread only
+// when that chain hands its records to a consumer on ITS OWN thread (the
+// pipelined / lockstep DrawIR queue) -- with a consumer that draws on the
+// pushing thread (gs.queue=inline, the GL context's one current thread) the
+// drain stays inline on the EE thread. With the thread up the EE sees the GS
+// as hardware: the CSR events (SIGNAL / FINISH) rise when the parser reaches
+// the register (on the drain thread, through the INTC's foreign-thread
+// route), and every EE-side push into the DrawIR chain (the frame boundary's
+// VSync job, the privileged display registers' jobs) travels as an ORDERED
+// arbiter slot so the chain keeps one producer in stream order. Start() runs
+// before any producer traffic (the ELF has not been loaded when the root
+// constructs it). Teardown order: Quiesce (savestate), then Stop() =
+// worker.Stop() (drains, joins, unbinds VIF1) then drain.Stop(); the
+// destructor does the same. Nothing here reads Config: the root copies
+// engine.mtvu / engine.mtvu_depth into MtvuSettings and engine.vu1_mode into
+// VuSettings.
 #include <atomic>
 #include <cstdint>
 #include <memory>
@@ -111,6 +123,11 @@ public:
 
     // The VIF1 register + FIFO windows over `inner` with the sync rule.
     MmioHandler& Vif1Window(MmioHandler& inner);
+    // The GIF register window over `inner` with the drain-fence rule.
+    MmioHandler& GifWindow(MmioHandler& inner);
+    // Fences the drain thread (immediate with the drain inline); counted.
+    void FenceDrain();
+    uint64_t GifFences() const { return gif_fences_.load(std::memory_order_relaxed); }
 
     // The worker's VU1 unit: the composition root installs the title library's
     // consult (a second Vu1HleRuntime, driven from the worker thread) on it.
@@ -139,6 +156,17 @@ private:
         MmioHandler& inner_;
     };
 
+    class GifGate final : public MmioHandler {
+    public:
+        GifGate(MtvuStack& stack, MmioHandler& inner) : stack_(stack), inner_(inner) {}
+        uint64_t Read(uint32_t addr, unsigned size) override;
+        void Write(uint32_t addr, unsigned size, uint64_t value) override;
+
+    private:
+        MtvuStack& stack_;
+        MmioHandler& inner_;
+    };
+
     static void OnThreadStart(void* name);
 
     VuUnit worker_vu1_;
@@ -152,10 +180,12 @@ private:
     VuTierDispatch& inline_dispatch_;
     std::atomic<uint64_t> declared_{0};
     std::atomic<uint64_t> presented_{0};
+    std::atomic<uint64_t> gif_fences_{0};
     uint64_t deferred_boundaries_ = 0;
     uint64_t terminal_syncs_ = 0;
     uint64_t quiesce_laps_ = 0;
     uint64_t mirrors_ = 0;
     bool defer_boundaries_ = true;
     std::unique_ptr<Vif1Gate> vif1_gate_;
+    std::unique_ptr<GifGate> gif_gate_;
 };

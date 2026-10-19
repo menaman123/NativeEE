@@ -8,7 +8,7 @@
 //   1. after B resumes the fiber and the fiber parks back to B, A's
 //      fiber_current() is still A's host record (a thread_local written through
 //      an address cached across swapcontext would land in A's slot: BUG the
-//      Sly 2 FMV exposed -- the next Dispatch on A then saved A's context INTO
+//      a second title's FMV exposed -- the next Dispatch on A then saved A's context INTO
 //      the fiber's record and B later jumped onto A's stack);
 //   2. the fiber keeps running correctly when A and B alternate resuming it
 //      (its own saved context is never overwritten by a host context).

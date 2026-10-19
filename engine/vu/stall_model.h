@@ -70,6 +70,10 @@ public:
     // on its own: the block tier's static schedule skips the body but keeps
     // the IALU side live for the branch stall).
     void QueueIalu(uint8_t vi, uint64_t cycle) { PushIalu(vi, cycle); }
+    // Queue one VF writeback (lanes `mask` of `reg`) issued at `cycle`: step 7
+    // of the body for one write, the generated blocks' materialise of a folded
+    // op's write (MaterializeFmacIssued one write at a time, oldest first).
+    void QueueFmac(uint8_t reg, uint8_t mask, uint64_t cycle) { PushFmac(reg, mask, cycle); }
 
     // Program end: the clock passes every in-flight writeback.
     void FlushFmacWb(FlagPipeline& pipes);

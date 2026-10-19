@@ -1,5 +1,8 @@
 // ThreadManager implementation; the thbase rules R1..R10 are in the header.
 #include "engine/ee/hle/thread_manager.h"
+
+#include <cstdio>
+#include <string>
 #include "engine/ee/timing/tick_profile.h"
 
 #include <algorithm>

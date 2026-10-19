@@ -162,6 +162,14 @@ foreach(pair
     set_tests_properties(${tname} PROPERTIES TIMEOUT 120)
 endforeach()
 
+# The .gsstream consumer-stream capture (engine/gs/hle/capture): recorder -> reader round
+# trip, CPU-only (the throughput harness's input format).
+add_executable(test_gs_stream_capture capture/test_gs_stream_capture.cpp)
+target_link_libraries(test_gs_stream_capture PRIVATE ps2r_gs_hle_capture)
+target_compile_options(test_gs_stream_capture PRIVATE -Wall -Wextra -Werror -O2)
+add_test(NAME GsStreamCaptureRoundTrip COMMAND test_gs_stream_capture ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(GsStreamCaptureRoundTrip PROPERTIES TIMEOUT 120)
+
 # ---------------------------------------------------------------------------
 # Phase 6 (stage 6D): gs/hle/targets + gs/hle/present suites over the CPU FakeBackend
 # (tests/lib/fake_backend.h) -- GL-free; the title profile's VramLayout data.
@@ -188,7 +196,7 @@ foreach(pair
         "Targets_RefreshFromVram;refresh" "Targets_VramLayoutQueries;layout"
         "Targets_RefreshArms;arms" "Targets_RefreshBandStride;stride" "Targets_AliasPreDraw;alias" "Targets_PendingLedger;ledger"
         "Targets_AlphaMergeRoutes;alphamerge"
-        "Targets_TargetDims;dims")
+        "Targets_TargetDims;dims" "Targets_OfferedPixels;offer")
     list(GET pair 0 tname)
     list(GET pair 1 arg)
     add_test(NAME ${tname} COMMAND test_targets ${arg})

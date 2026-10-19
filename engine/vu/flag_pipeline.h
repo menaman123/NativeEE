@@ -82,6 +82,15 @@ public:
     void PushMac(VUregs& regs, uint16_t mac);
     // Lazy push of the raw lanes; a full ring folds its oldest entry.
     void PushMacRaw(const uint32_t bits[4], uint8_t mask);
+    // The same pushes for a result ISSUED at `issue_cycle` (<= the clock): the
+    // generated blocks deliver their results late, in issue order, and a
+    // result that has retired by then is folded directly (FoldLazyRetired /
+    // CommitEagerRetired) -- what RetireDue / the ring overflow would do with
+    // it, in the same order.
+    void PushMacRawAt(const uint32_t bits[4], uint8_t mask, uint64_t issue_cycle);
+    void PushMacAt(VUregs& regs, uint16_t mac, uint64_t issue_cycle);
+    void FoldLazyRetired(const uint32_t bits[4], uint8_t mask);
+    void CommitEagerRetired(VUregs& regs, uint16_t mac) { ApplyMacToStatus(regs, mac); }
     // Retire every due entry (commit or fold).
     void RetireDue(VUregs& regs);
     // Fold the lazy accumulators into the architectural registers.

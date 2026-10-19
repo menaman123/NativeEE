@@ -82,6 +82,17 @@ public:
 
     // The colour PSMs the writeback encodes (others stage nothing).
     static bool EncodesColorPsm(uint32_t psm);
+    // A colour attachment just read in full by the caller (the frame end's display
+    // grab, physical rows bottom-up, w*4 stride): until Revoke, a colour writeback
+    // of that attachment takes its rows from `rgba` instead of a second GPU read.
+    // The caller guarantees nothing draws into the attachment in between (the
+    // frame-end sequence: grab -> deferred deposits of other targets -> the scanout
+    // deposit) and that `rgba` outlives the offer. Counted (OfferedReads).
+    void OfferPixels(render::SurfaceId color, int pw, int ph, const std::vector<uint8_t>* rgba);
+    void RevokeOffer() { offer_ = Offer{}; }
+    // Off = every colour writeback reads the GPU (the A/B of the sharing).
+    void SetOfferEnabled(bool on) { offer_enabled_ = on; }
+    uint64_t OfferedReads() const { return offered_reads_; }
     // The shared page sets the tail marks (may be null: no marks).
     void SetAliasPages(AliasPageSet* alias) { alias_ = alias; }
 
@@ -102,6 +113,18 @@ private:
                                                                uint32_t fbo_end,
                                                                uint64_t batch_epoch) const;
 
+    // The pixels_ fill for `pr` of `color`: the offer when it covers the rect,
+    // else the backend's readback.
+    void ReadColorRows(render::Backend& be, render::SurfaceId color, const render::Rect& pr);
+
+    struct Offer {
+        render::SurfaceId color;
+        int pw = 0, ph = 0;
+        const std::vector<uint8_t>* rgba = nullptr;
+    };
+    Offer offer_;
+    bool offer_enabled_ = true;
+    uint64_t offered_reads_ = 0;
     std::vector<uint8_t> pixels_;    // readback scratch (physical rows)
     std::vector<float> depth_;
     std::vector<uint8_t> linear_;    // encoded linear rows

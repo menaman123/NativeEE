@@ -55,6 +55,13 @@ public:
     // both memories, VIF tops, the Q/P latches, the clock).
     void LoadCase(const Vu1Case& c);
     void SaveCase(Vu1Case& c, uint32_t start_pc) const;
+    // Become a clone of `other` (same id): the record (registers, memories,
+    // the per-run scratch, the micro epoch), the flag pipeline with its rings
+    // and clock, the stall tables, the XGKICK drain state and the VIF tops --
+    // everything a program's execution reads, so a run from here retires the
+    // same bundles, cycles and kicks. The tier dispatch and the arbiter stay
+    // this unit's (the lockstep A/B's shadow unit, VuLockstep).
+    void CopyStateFrom(const VuUnit& other);
 
     // Run the microprogram from `start_pc` through the tier ladder; resume a
     // parked VU0 the same way. The dispatch carries the mode / HLE settings.
@@ -80,6 +87,7 @@ public:
     const FlagPipeline& flags() const { return flags_; }
     StallModel& stalls() { return stalls_; }
     XgKick* xgkick() { return xgk_.get(); }
+    const XgKick* xgkick() const { return xgk_.get(); }
     uint64_t cycle() const { return flags_.cycle(); }
     uint64_t micro_generation() const { return state_->micro_generation; }
 

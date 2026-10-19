@@ -34,3 +34,16 @@
 - No session tags in identifiers or comments; provenance goes in this README as links, never in code.
 - Flag outcomes applied at transplant time (NORM winning arm only / SETTING = Config field / DIAG = core/diag / DELETE+TEST-ONLY not written).
 - Plan: `docs/design/CONSTRUCTION_PLAN.md` §4.
+
+## Present capture and the destination read (consumer_b, round P phase B)
+
+- `GlDevice::SetPresentCaptureDeferred(true)`: the armed present capture reads the window image into a
+  `GL_PIXEL_PACK_BUFFER` behind `glFenceSync` and completes the PREVIOUS present's read into the image
+  `ReadPresented` hands over (one present late, no GPU pipeline drain per present); the default stays the
+  synchronous read (a frame dump's contract). `PresentCaptureWaits()` counts fences found unsignalled.
+- `GlDevice::FlushCommands()`: `glFlush` for a host whose present window is never shown (the swap callback).
+- `GlDevice::SetCdCopyByBarrier(true)`: the shader-blended draw's destination read from the attachment itself
+  behind `glTextureBarrierNV` (resolved by `dlsym` when `GL_NV_texture_barrier` is listed; `Caps::texture_barrier`)
+  instead of the lazy `glCopyTexSubImage2D` copy. OFF by default: on Apple's GL 4.1 over Metal the barrier is not
+  coherent at the 32-row tile boundaries (1-px lines every 32 rows on the Paris capture); the copy is the reference.
+

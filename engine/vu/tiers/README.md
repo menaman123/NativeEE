@@ -27,6 +27,16 @@ tier dispatch (`VuTierDispatch`, mode + HLE-library consult) and the MTVU worker
   Block, Aot}` and the two hook slots; `Block` / `Aot` run VU1 on that tier and VU0 on the cached tier. `Aot` is the
   generic run-time recompiler of `engine/vu/vu1_aot/` (owned here as the `aot_` member: a verified image on its
   (kind, dest)-specialised block table, every other image on the AOT tier's fallback).
+- `vu_lockstep.h/.cpp` — `VuLockstep`, the tier A/B IN THE RUNNING GAME (Config `diag.vu1_lockstep`, `VuSettings::
+  lockstep`): every VU1 kick the dispatch's tier runs is also run on the interpreter reference on a shadow unit cloned
+  from the real one at the kick (`VuUnit::CopyStateFrom`: record, flag rings, stall tables, XGKICK drain state), and
+  the end states are diffed -- registers (field-named), data memory, clock, Q/P latches, bundles, the kicked bytes
+  (`XgKick::SetSubmitTap`; the shadow's kicks are muted). The first divergences are printed with a bisect (both tiers
+  re-run from the entry under growing cycle caps until the states part: bundle index, pc, slot words, field) and the
+  entry state written as a Vu1Case; every one is counted (`Summary()` for a census). What a corpus of single-kick
+  cases cannot see: the state the game carries ACROSS kicks -- the E385 generator bug diverged a frame-1121 kick that
+  no corpus case took, and every later case replayed "identically" from its already-diverged entry.
+  `tests/vu/test_vu_lockstep.cpp` (`VuLockstepChain`) runs it over a probe's consecutive kick cases.
 - `vu_block_tier` also carries the AOT tier's hooks: `VuBlockProgram::resolve` (a `VuBlockOpResolver`, null = `ResolveOp`),
   `SetResolver(prog, fn)` (re-resolves the built blocks, recomputes the schedule), `ExecuteAcquired(unit, pc, prog)`, and
   `VuBlock::native` (a `VuBlock::NativeFn`: the GENERATED function for the block -- `RunOps` over its ops with every slot a

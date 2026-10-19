@@ -127,7 +127,7 @@ static void Coverage() {
     st.Dispatch(69, c);
     CHECK(c.cpuRegs.GPR.r[2].SL[0] == 0, "PollSema on count 2 succeeds");
     // ReferSemaStatus fills the SDK SemaParam (count after the poll = 1, max 4, init 2, 0 waiters) and
-    // returns the id; a game pacing loop polls currentCount (Sly 2's frame thread spins on it).
+    // returns the id; a game pacing loop polls currentCount (a second title's frame thread spins on it).
     for (uint32_t i = 0; i < 6; ++i) memory::write<uint32_t>(0x100100 + 4 * i, 0xCCCCCCCCu);
     c.cpuRegs.GPR.r[4].SL[0] = sid; c.cpuRegs.GPR.r[5].UL[0] = 0x100100;
     st.Dispatch(71, c);

@@ -67,16 +67,20 @@ public:
     // EE-produced packet behind no marker has no hint and its FINISH would
     // otherwise wait for the next unconditional drain.
     void TryDrainPending();
-    // The idle EE's wait on the worker: a BLOCKING kernel wait that found no
+    // The idle EE's wait on the pipeline: a BLOCKING kernel wait that found no
     // other READY guest thread while segments are in flight has nothing to run
     // until the worker's output reaches the GS (the FINISH / SIGNAL a VIF1
     // chain carries wakes the waiter through the INTC handler) -- the
     // console's idle loop taking the interrupt the VU1-fed GS raises. Drains
     // the sealed prefix, then parks until the worker idles or a newer seal
-    // lands (kPollNs at most), then drains again. Returns true when the worker
-    // is idle after the drain (nothing more will arrive from it: block for
-    // real); false = progress was delivered and the worker still runs (the
-    // caller re-checks its interrupts and calls again). Immediate (true) when
+    // lands (kPollNs at most), then drains again. With the GIF drain thread
+    // up the parser's deliveries are the pipeline's tail: an idle worker with
+    // packets still in flight on that thread parks on its next completed pass
+    // instead (the FINISH it raises arrives through the event queue). Returns
+    // true when the worker is idle and nothing is in flight after the drain
+    // (nothing more will arrive: block for real); false = progress was
+    // delivered and the pipeline still runs (the caller applies the queued
+    // events, re-checks its interrupts and calls again). Immediate (true) when
     // the worker is down, on the worker thread, or nested inside a drain.
     // Booked as `vu1wait`; counted (ProgressWaits / ProgressIdle).
     bool WaitProgress();

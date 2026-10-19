@@ -90,7 +90,7 @@ public:
     // not exist yet). False = a block of the table does not match the program
     // (pc past the image, op count differs): nothing is installed. Called on the
     // thread that runs the unit; public for the verifier leg and the tests.
-    bool InstallNative(VuBlockProgram& prog, const Vu1AotImageExports& ex);
+    bool InstallNative(VuBlockProgram& prog, const Vu1AotImageExports& ex, bool flags_lazy);
     Status status(uint64_t image_hash) const;
     size_t images() const;
     size_t verified() const;

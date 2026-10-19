@@ -68,7 +68,12 @@ public:
     bool ShouldPark(uint32_t declared, uint32_t processed) const { return ShouldPark(declared, processed, runahead_); }
 
     // The KernlTimer wait hook: block until the emu clock may have advanced
-    // past `deadline` (T0 counts; the caller re-reads its clock).
+    // past `deadline` (T0 counts; the caller re-reads its clock). Play: the park
+    // on the pacer's tick also ends on a queued foreign wake (EeEventQueue: a GS
+    // FINISH raised by the GIF drain thread, an IOP completion), which the
+    // holder applies before returning -- the console takes a pending interrupt
+    // at once, it does not sleep to the next vblank over it; the caller
+    // re-reads its clock / re-evaluates and parks again.
     void Wait(uint64_t deadline);
     std::function<void(uint64_t)> WaitHook();
     // Play pacer: a tick fired (wakes the timer waiters and the parked boundary).

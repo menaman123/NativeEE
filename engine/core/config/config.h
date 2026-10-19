@@ -391,6 +391,12 @@ struct DiagConfig {
     // chains, printed in run.meta pace_long_trace as callers=... Off = marks
     // are counted only (the long trace keeps its site breakdown).
     bool tick_census = false;
+    // The VU1 tier A/B (VuLockstep): every kick the configured tier runs is
+    // also run on the interpreter reference on a shadow unit and the end
+    // states (registers, data memory, clock, latches, kicked bytes) diffed;
+    // the first divergences are printed, all are counted (run.meta
+    // vu1_lockstep=). The GS sees the tier's output only. Off = no shadow.
+    bool vu1_lockstep = false;
 };
 
 struct TriageConfig {

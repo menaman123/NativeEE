@@ -61,8 +61,13 @@ public:
     static std::string EntrySymbol(uint64_t image_hash);
     static std::string Hex16(uint64_t v);
 
-    // One block's function text (public for the structural test / the notes' excerpt).
-    static std::string EmitBlock(const VuBlockProgram& prog, const VuBlock& blk, const std::string& fn_name);
+    // One block's REGION function text (Vu1AotBlockGen; `emitted` = the sorted
+    // pcs the TU holds slots for -- public for the structural test / the
+    // notes' excerpt), and the block's slots as constexpr objects named by
+    // its pc (one set per block of the TU; a region names its blocks' slots).
+    static std::string EmitBlock(VuBlockProgram& prog, const VuBlock& blk, const std::string& fn_name,
+                                 const std::vector<uint32_t>& emitted);
+    static std::string EmitBlockSlots(const VuBlock& blk);
     // One slot as a constexpr initialiser (every field by name).
     static std::string EmitSlot(const VuDecodedSlot& s, const std::string& name);
 };

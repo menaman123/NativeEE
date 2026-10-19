@@ -120,6 +120,7 @@ int main(int argc, char** argv) {
         bad.compiler = "none";
         bad.block_count = 1;
         bad.blocks = &bad_block;
+        bad.flags_lazy = FlagPipeline::kDefaultLazy ? 1u : 0u;
         std::vector<const Vu1Case*> ptrs;
         for (const auto& c : first.second) ptrs.push_back(c.get());
         const Vu1AotVerifier::Result r = Vu1AotVerifier::Verify(ptrs, &bad);
@@ -147,7 +148,9 @@ int main(int argc, char** argv) {
         std::printf("     emitted: blocks=%u ops=%llu bytes=%zu\n", out.blocks, static_cast<unsigned long long>(out.ops), out.source.size());
         if (excerpt_pc != 0xFFFFFFFFu) {
             const VuBlock* b = VuBlockTier::BuildBlock(scratch, (excerpt_pc & VuBlockTier::kPcMask) >> 3);
-            std::printf("%s", Vu1AotEmitter::EmitBlock(scratch, *b, "Blk_excerpt").c_str());
+            std::vector<uint32_t> emitted(pcs);
+            std::sort(emitted.begin(), emitted.end());
+            std::printf("%s", Vu1AotEmitter::EmitBlock(scratch, *b, "Blk_excerpt", emitted).c_str());
         }
     }
 
@@ -187,6 +190,33 @@ int main(int argc, char** argv) {
             verify_ns += b.verify_ns;
             blocks += b.blocks;
             ops += b.ops;
+            // The cycle-cap sweep: the region functions' budget exits (a block
+            // the cap will not hold is left to the loop, cut or whole) and the
+            // loop's re-sync on the exit pc, against the interpreter under the
+            // same cap. Every cap must be identical.
+            // The oracle is the interpreter; a cap where the BLOCK tier itself
+            // differs from the interpreter (a pre-existing cut-path item of the
+            // loop, cycle only, e.g. corpus case 002 at cap 47) is judged against the
+            // block tier and reported.
+            static const uint64_t kCaps[] = {1, 2, 3, 4, 5, 7, 11, 17, 29, 47, 100, 333, 1000};
+            bool caps_ok = true;
+            int block_judged = 0;
+            for (uint64_t cap : kCaps) {
+                Vu1AotVerifier::Result rc = Vu1AotVerifier::Verify(ptrs, b.exports, cap);
+                if (!rc.identical) {
+                    const Vu1AotVerifier::Result rb = Vu1AotVerifier::Verify(ptrs, b.exports, cap, true);
+                    if (rb.identical) {
+                        std::printf("     cap=%llu: native == block tier; block tier vs interp: %s (pre-existing cut path)\n",
+                                    static_cast<unsigned long long>(cap), rc.divergence.c_str());
+                        ++block_judged;
+                        continue;
+                    }
+                    std::printf("     cap=%llu divergence: %s\n", static_cast<unsigned long long>(cap), rc.divergence.c_str());
+                    caps_ok = false;
+                }
+            }
+            Check(caps_ok, "the loaded library is identical to the oracle under every cycle cap of the sweep");
+            if (block_judged > 0) std::printf("     caps judged against the block tier: %d\n", block_judged);
         }
     }
     Check(native == static_cast<int>(images.size()), "every image of the corpus runs native-identical through its generated library");

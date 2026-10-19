@@ -34,3 +34,12 @@ Added in the 6D″ fix round / 6D‴: `target_dims.h/.cpp` (`TargetDims::Compute
 `SyncRTToVRAM` tail that removes the deferred entry, `:17092-17095`; `SyncAll` routes through it), the
 `AliasPageSet` walks CLAMP at page 511 (OLD `markDirtyRange :3407-3416`), `ReadbackEngine::SyncRtToVram` takes a
 deposit-base override (`dest_fbp`) for the display path's stand-in deposit (OLD's `SyncRTToVRAM(fbp, target)` pair).
+
+## Grab -> deposit pixel sharing (consumer_b, round P phase B)
+
+`ReadbackEngine::OfferPixels(color, pw, ph, rgba)` / `RevokeOffer()`: the frame end's display grab just read the
+whole colour attachment; until the revoke a colour writeback of that attachment (`SyncRtToVram`, the scanout deposit
+of `DrawScanout -> SyncDrawn`) takes its rows from the offered buffer instead of a second GPU read (same bytes: the
+caller guarantees nothing draws into the attachment in between -- the frame-end sequence). `OfferedReads()` counts;
+`SetOfferEnabled(false)` is the A/B switch. Pinned by `Targets_OfferedPixels`.
+

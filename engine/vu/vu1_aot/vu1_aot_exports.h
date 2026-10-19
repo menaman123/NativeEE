@@ -20,7 +20,7 @@
 
 #include "engine/vu/tiers/vu_block_tier.h"
 
-constexpr uint32_t kVu1AotAbiVersion = 1;
+constexpr uint32_t kVu1AotAbiVersion = 2;  // 2: flags_lazy (the MAC ring arm the pushes were generated for)
 constexpr char kVu1AotExportsPrefix[] = "vu1_aot_exports_";
 
 struct Vu1AotBlockExport {
@@ -37,4 +37,8 @@ struct Vu1AotImageExports {
     const char* compiler = nullptr;       // the compiler that built the TU (its __VERSION__)
     uint32_t block_count = 0;
     const Vu1AotBlockExport* blocks = nullptr;
+    // The FlagPipeline MAC-ring representation the generated pushes name
+    // (FlagPipeline::kDefaultLazy of the generating build): 1 = lazy, 0 =
+    // eager. The installer refuses a unit whose pipeline runs the other arm.
+    uint32_t flags_lazy = 0;
 };

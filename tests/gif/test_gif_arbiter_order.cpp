@@ -157,12 +157,32 @@ void finish_counting() {
 void pool_recycle() {
     TestGifArbiter t;
     CHECK(t.arbiter.acquireBuffer().capacity() == 0 && t.arbiter.PoolSize() == 0);
-    // A drained owned buffer of staging capacity returns to the pool, cleared.
+    // A drained PATH1 owned buffer (an XGKICK packet, capacity <= one VU1 data memory)
+    // returns to the PATH1 pool, cleared, capacity kept; the staging pool stays empty.
+    const Bytes p1 = ad_packet(1, 0x100);
+    Bytes kicked;
+    kicked.reserve(0x800);
+    kicked.insert(kicked.end(), p1.begin(), p1.end());
+    t.arbiter.submitOwned(GifPath::Path1, std::move(kicked));
+    t.arbiter.drain();
+    CHECK(t.arbiter.Path1PoolSize() == 1 && t.arbiter.PoolSize() == 0);
+    std::vector<Bytes> taken;
+    t.arbiter.acquirePath1Buffers(taken, 8);
+    CHECK(taken.size() == 1 && taken[0].empty() && taken[0].capacity() >= 0x800 && t.arbiter.Path1PoolSize() == 0);
+    // A PATH1 buffer grown past the VU1 data memory (the runaway guard) is not a packet
+    // buffer: it takes the staging pool's rule instead (4 KiB..64 KiB kept there).
+    Bytes runaway;
+    runaway.reserve(0x4001);
+    runaway.insert(runaway.end(), p1.begin(), p1.end());
+    t.arbiter.submitOwned(GifPath::Path1, std::move(runaway));
+    t.arbiter.drain();
+    CHECK(t.arbiter.Path1PoolSize() == 0 && t.arbiter.PoolSize() == 1);
+    CHECK(t.arbiter.acquireBuffer().capacity() >= 0x4001 && t.arbiter.PoolSize() == 0);
+    // A drained PATH3 owned buffer of staging capacity returns to the staging pool, cleared.
     Bytes staged;
     staged.reserve(0x4000);
-    const Bytes p1 = ad_packet(1, 0x100);
     staged.insert(staged.end(), p1.begin(), p1.end());
-    t.arbiter.submitOwned(GifPath::Path1, std::move(staged));
+    t.arbiter.submitOwned(GifPath::Path3, std::move(staged));
     t.arbiter.drain();
     CHECK(t.arbiter.PoolSize() == 1);
     Bytes got = t.arbiter.acquireBuffer();

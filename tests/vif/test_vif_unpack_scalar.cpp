@@ -1,8 +1,9 @@
 // VifUnpackScalar: the UNPACK reference loop on hand-computed vectors -- every
 // format x sign, the S / V2 / V3 / V4-5 expansion rules, MODE adds, the MASK
 // table and actions, CL/WL skip and fill, the 1024-QW wrap, TOPS (VIF1 only),
-// VU0 masked reads, partial payloads; GetUnpackSize; and the bulk lanes
-// byte-identical to the scalar loop on their eligible shapes.
+// VU0 masked reads, partial payloads; GetUnpackSize; the bulk lanes
+// byte-identical to the scalar loop on their eligible shapes; and the table
+// lane byte-identical over every (format, mask, mode, USN, CL/WL, phase) cell.
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -364,7 +365,7 @@ struct LaneCase {
     const char* name;
     uint32_t cmd, imm, num, cycle;
     uint8_t phase;
-    int expect_lane;  // 0 = neither, 1 = bulk, 2 = skip
+    int expect_lane;  // 0 = scalar, 1 = bulk, 2 = skip, 3 = table
 };
 
 void TestBulkLanesEquivalence() {
@@ -380,10 +381,11 @@ void TestBulkLanesEquivalence() {
         {"v432_wrap", 0x6C, 1020, 9, 0x0101, 0, 1},
         {"v432_tops", 0x6C, kTops | 30, 6, 0x0101, 0, 1},
         {"v432_cl2wl2", 0x6C, 5, 6, 0x0202, 0, 1},
-        {"masked_decline", 0x7C, 0, 4, 0x0101, 0, 0},
-        {"s32_decline", 0x60, 128, 4, 0x0101, 0, 0},
-        {"v45_decline", 0x6F, 140, 4, 0x0101, 0, 0},
-        {"v216_decline", 0x65, 140, 4, 0x0101, 0, 0},
+        {"masked_table", 0x7C, 0, 4, 0x0101, 0, 3},
+        {"s32_table", 0x60, 128, 4, 0x0101, 0, 3},
+        {"v45_table", 0x6F, 140, 4, 0x0101, 0, 3},
+        {"v216_table", 0x65, 140, 4, 0x0101, 0, 3},
+        {"fill_cl1wl2_decline", 0x6C, 64, 6, 0x0201, 0, 0},
         {"skx_v332_cl4_ph0", 0x68, 300, 7, 0x0104, 0, 2},
         {"skx_v332_cl4_ph1", 0x68, 300, 7, 0x0104, 1, 2},
         {"skx_v432_cl4", 0x6C, 40, 6, 0x0104, 0, 2},
@@ -394,8 +396,8 @@ void TestBulkLanesEquivalence() {
         {"skx_v432_cl4_wrap", 0x6C, 1020, 6, 0x0104, 0, 2},
         {"skx_v332_cl4_wrap", 0x68, 1016, 5, 0x0104, 0, 2},
         {"skx_v48_cl4_n256", 0x6E, 200, 0, 0x0104, 0, 2},
-        {"skx_v416_decline", 0x6D, 40, 4, 0x0104, 0, 0},
-        {"skx_cl4wl2_decline", 0x6C, 64, 6, 0x0204, 0, 0},
+        {"skx_v416_table", 0x6D, 40, 4, 0x0104, 0, 3},
+        {"skx_cl4wl2_table", 0x6C, 64, 6, 0x0204, 0, 3},
     };
     uint32_t rng = 0xC0FFEEu;
     for (const LaneCase& c : cases) {
@@ -420,14 +422,17 @@ void TestBulkLanesEquivalence() {
         Run(a, r, 1, c.cmd, c.imm, c.num, payload, c.phase, false, &off);
         Run(b, r, 1, c.cmd, c.imm, c.num, payload, c.phase, true, &on);
         const bool same = std::memcmp(a.state().data, b.state().data, Vu1State::kMemSize) == 0;
-        const bool census_ok = off.bulk_cmds() == 0 && off.skip_cmds() == 0 &&
+        const bool census_ok = off.bulk_cmds() == 0 && off.skip_cmds() == 0 && off.table_cmds() == 0 &&
+                               off.scalar_cmds() == 1 && off.scalar_qw() == n &&
                                on.bulk_cmds() == (c.expect_lane == 1 ? 1u : 0u) &&
                                on.skip_cmds() == (c.expect_lane == 2 ? 1u : 0u) &&
-                               on.bulk_qw() + on.skip_qw() == (c.expect_lane ? n : 0u);
+                               on.table_cmds() == (c.expect_lane == 3 ? 1u : 0u) &&
+                               on.scalar_cmds() == (c.expect_lane == 0 ? 1u : 0u) &&
+                               on.bulk_qw() + on.skip_qw() + on.table_qw() == (c.expect_lane ? n : 0u);
         if (!same || !census_ok) {
-            std::printf("FAIL lane case %s: same=%d bulk=%llu skip=%llu\n", c.name, same ? 1 : 0,
-                        static_cast<unsigned long long>(on.bulk_cmds()),
-                        static_cast<unsigned long long>(on.skip_cmds()));
+            std::printf("FAIL lane case %s: same=%d bulk=%llu skip=%llu table=%llu scalar=%llu\n", c.name, same ? 1 : 0,
+                        static_cast<unsigned long long>(on.bulk_cmds()), static_cast<unsigned long long>(on.skip_cmds()),
+                        static_cast<unsigned long long>(on.table_cmds()), static_cast<unsigned long long>(on.scalar_cmds()));
             g_fail++;
         }
         // Short payload: the lane declines and the scalar loop's partial semantics hold.
@@ -438,9 +443,102 @@ void TestBulkLanesEquivalence() {
             Run(a2, r, 1, c.cmd, c.imm, c.num, short_payload, c.phase, false, &off2);
             Run(b2, r, 1, c.cmd, c.imm, c.num, short_payload, c.phase, true, &on2);
             CHECK(std::memcmp(a2.state().data, b2.state().data, Vu1State::kMemSize) == 0);
-            CHECK(on2.bulk_cmds() == 0 && on2.skip_cmds() == 0);
+            CHECK(on2.bulk_cmds() == 0 && on2.skip_cmds() == 0 && on2.table_cmds() == 0 && on2.scalar_cmds() == 1);
         }
     }
+}
+
+// The table lane over every cell: 13 formats x mask x mode 0-3 x USN x CL/WL
+// shapes (skipping writes with WL 1 and WL > 1, CL == WL, the 1024-QW wrap,
+// the filling write that must decline) x payload phase x NUM, with random
+// payloads, MASK, ROW, COL and TOPS: the VU1 data memory byte-identical to the
+// scalar loop, exactly one lane taken, the short payload declined to scalar.
+void TestTableLaneEquivalence() {
+    struct Shape {
+        uint32_t cycle;
+        bool table_eligible;  // CL >= WL
+    };
+    const Shape shapes[] = {{0x0101, true}, {0x0104, true}, {0x0102, true}, {0x0204, true}, {0x0303, true},
+                            {0x0203, true}, {0x0201, false}, {0x0304, true}, {0x0505, true}};
+    const uint32_t formats[] = {0x0, 0x1, 0x2, 0x4, 0x5, 0x6, 0x8, 0x9, 0xA, 0xC, 0xD, 0xE, 0xF};
+    const uint32_t nums[] = {1, 2, 7, 0 /* 256 */};
+    const uint32_t bases[] = {0, 300, 1020};
+    uint32_t rng = 0xBEEF1234u;
+    auto next = [&rng] {
+        rng = rng * 1664525u + 1013904223u;
+        return rng;
+    };
+    std::vector<uint8_t> init(Vu1State::kMemSize);
+    for (size_t i = 0; i < init.size(); i++) init[i] = static_cast<uint8_t>(0x3C + (i * 7));
+    uint64_t cells = 0, table_taken = 0, scalar_taken = 0, bulk_taken = 0;
+    for (uint32_t format : formats)
+        for (int masked = 0; masked < 2; masked++)
+            for (uint32_t mode = 0; mode < 4; mode++)
+                for (int usn = 0; usn < 2; usn++)
+                    for (const Shape& sh : shapes)
+                        for (uint32_t num : nums)
+                            for (int phase = 0; phase < 2; phase++) {
+                                const uint32_t base = bases[next() % 3];
+                                VifRegs r = DefaultRegs();
+                                r.cycle = sh.cycle;
+                                r.mode = mode;
+                                r.mask = next();
+                                for (int f = 0; f < 4; f++) {
+                                    r.row[f] = next();
+                                    r.col[f] = next();
+                                }
+                                r.tops = (next() & 1) ? 512 : 0;
+                                const uint32_t cmd = 0x60u | (masked ? 0x10u : 0u) | format;
+                                const uint32_t imm = base | (usn ? kUsn : 0u) | ((next() & 1) ? kTops : 0u);
+                                const uint32_t n = num == 0 ? 256 : num;
+                                const uint32_t bytes = VifUnpack::GetUnpackSize(cmd, num, VifRegsCl(r), VifRegsWl(r));
+                                std::vector<uint8_t> payload(bytes + 4);  // + the lookahead word
+                                for (size_t i = 0; i < payload.size(); i += 4) {
+                                    const uint32_t w = next();
+                                    std::memcpy(&payload[i], &w, 4);
+                                }
+                                VuUnit a(1), b(1);
+                                a.WriteDataMem(0, init.data(), init.size());
+                                b.WriteDataMem(0, init.data(), init.size());
+                                VifUnpack off(VifUnpackSettings{false}), on(VifUnpackSettings{true});
+                                Run(a, r, 1, cmd, imm, num, payload, static_cast<uint8_t>(phase), false, &off);
+                                Run(b, r, 1, cmd, imm, num, payload, static_cast<uint8_t>(phase), true, &on);
+                                cells++;
+                                const bool same = std::memcmp(a.state().data, b.state().data, Vu1State::kMemSize) == 0;
+                                const uint64_t lanes = on.bulk_cmds() + on.skip_cmds() + on.table_cmds() + on.scalar_cmds();
+                                const bool one_lane = lanes == 1 && off.scalar_cmds() == 1 && off.scalar_qw() == n &&
+                                                      on.bulk_qw() + on.skip_qw() + on.table_qw() + on.scalar_qw() == n;
+                                const bool route_ok = sh.table_eligible ? on.scalar_cmds() == 0 : on.scalar_cmds() == 1;
+                                table_taken += on.table_cmds();
+                                scalar_taken += on.scalar_cmds();
+                                bulk_taken += on.bulk_cmds() + on.skip_cmds();
+                                if (!same || !one_lane || !route_ok) {
+                                    std::printf("FAIL table cell fmt=%x mask=%d mode=%u usn=%d cycle=%04x num=%u phase=%d base=%u: same=%d "
+                                                "bulk=%llu skip=%llu table=%llu scalar=%llu\n",
+                                                format, masked, mode, usn, sh.cycle, num, phase, base, same ? 1 : 0,
+                                                static_cast<unsigned long long>(on.bulk_cmds()),
+                                                static_cast<unsigned long long>(on.skip_cmds()),
+                                                static_cast<unsigned long long>(on.table_cmds()),
+                                                static_cast<unsigned long long>(on.scalar_cmds()));
+                                    g_fail++;
+                                }
+                                // The short payload (one word fewer than the command consumes) declines to scalar.
+                                if (sh.table_eligible && bytes >= 8 && on.table_cmds() == 1) {
+                                    VuUnit a2(1), b2(1);
+                                    a2.WriteDataMem(0, init.data(), init.size());
+                                    b2.WriteDataMem(0, init.data(), init.size());
+                                    std::vector<uint8_t> short_payload(payload.begin(), payload.begin() + bytes - 4);
+                                    VifUnpack off2(VifUnpackSettings{false}), on2(VifUnpackSettings{true});
+                                    Run(a2, r, 1, cmd, imm, num, short_payload, static_cast<uint8_t>(phase), false, &off2);
+                                    Run(b2, r, 1, cmd, imm, num, short_payload, static_cast<uint8_t>(phase), true, &on2);
+                                    CHECK(std::memcmp(a2.state().data, b2.state().data, Vu1State::kMemSize) == 0);
+                                    CHECK(on2.table_cmds() == 0 && on2.scalar_cmds() == 1);
+                                }
+                            }
+    std::printf("table lane sweep: %llu cells, table %llu, bulk %llu, scalar %llu\n",
+                static_cast<unsigned long long>(cells), static_cast<unsigned long long>(table_taken),
+                static_cast<unsigned long long>(bulk_taken), static_cast<unsigned long long>(scalar_taken));
+    CHECK(table_taken > 0 && scalar_taken > 0 && bulk_taken > 0);
 }
 
 }  // namespace
@@ -453,6 +551,7 @@ int main() {
     TestCycleShapes();
     TestVu0MaskedRead();
     TestBulkLanesEquivalence();
+    TestTableLaneEquivalence();
     if (g_fail) {
         std::printf("VifUnpackScalar: %d failure(s)\n", g_fail);
         return 1;
