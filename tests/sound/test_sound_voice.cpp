@@ -9,6 +9,7 @@
 // ===========================================================================
 #include <cassert>
 #include <cstdint>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -338,7 +339,59 @@ static void TestVolumeSweepFadeIn() {
     CHECK(v.VolxL() == 0);
 }
 
+// 15. The resampler knob: linear (the default) reproduces a constant block exactly at half pitch; the
+//     SPU2 Gaussian (audio.interpolation=gaussian) is a 4-tap kernel whose weights sum to 0x7F80 (a
+//     constant comes out 0.4 % low, as on the hardware), whose output at a step between two blocks is
+//     monotonic (no ringing: the kernel is all-positive bar the -1 tails), and which is the SAME on
+//     every voice (the knob is process-wide). The default is restored afterwards.
+static void TestInterpolationKnob() {
+    TestRam ram;
+    PutBlock(ram, 0x8000, 0, 0);           // 28 zeros
+    PutBlock(ram, 0x8010, 4, 0);           // 28 x 0x4000
+    PutBlock(ram, 0x8020, 4, 0);
+    auto run = [&](bool gaussian, std::vector<int32_t>* out) {
+        Voice::SetGaussian(gaussian);
+        Voice v;
+        ProgramBasic(v, 0x8000, 0x800);    // half pitch: two output samples per source sample
+        v.KeyOn();
+        float l, r;
+        for (int i = 0; i < 120; i++) {
+            v.Step(RamData(ram), l, r);
+            out->push_back(static_cast<int32_t>(std::lround(l / 0.5f * 32768.0f * 32768.0f / 32767.0f)));   // undo the 0x3FFF gain
+        }
+    };
+    std::vector<int32_t> lin, gau;
+    run(false, &lin);
+    run(true, &gau);
+    Voice::SetGaussian(false);
+    CHECK(!Voice::Gaussian());
+    // Linear settles to the block's level; the Gaussian to 0x7F80/0x8000 of it (the kernel's DC gain, -0.034 dB).
+    const int32_t top_lin = lin[119], top_gau = gau[119];
+    CHECK(top_lin > 16000);
+    CHECK(std::abs(top_gau - (top_lin * 0x7F80) / 0x8000) <= 2);
+    // Both transitions are monotonic non-decreasing across the step (no overshoot / ringing; the -1 tails
+    // of the gauss table dip at most a couple of LSB).
+    bool mono_lin = true, mono_gau = true;
+    for (size_t i = 1; i < lin.size(); i++) {
+        if (lin[i] < lin[i - 1] - 2) mono_lin = false;
+        if (gau[i] < gau[i - 1] - 2) mono_gau = false;
+    }
+    CHECK(mono_lin);
+    CHECK(mono_gau);
+    // The Gaussian's step is wider than linear's (4 source samples vs 2): more output samples strictly inside (0, top).
+    auto inside = [](const std::vector<int32_t>& o, int32_t top) {
+        int n = 0;
+        for (int32_t x : o) if (x > 8 && x < top - 8) n++;
+        return n;
+    };
+    CHECK(inside(lin, top_lin) == 1);   // half pitch: one midpoint sample
+    CHECK(inside(gau, top_gau) >= 4);
+    std::printf("interpolation: linear settles %d, gaussian settles %d (x 0x7F80/0x8000); step width lin %d gau %d\n",
+                top_lin, top_gau, inside(lin, top_lin), inside(gau, top_gau));
+}
+
 int main() {
+    TestInterpolationKnob();
     TestKeyOnResetsNax();
     TestPitchUnityBlockAdvance();
     TestPitchHalfRate();

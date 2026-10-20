@@ -124,10 +124,20 @@ struct VideoConfig {
     int          anisotropy = 1;
 };
 
+// The SPU2 voice resampler: 2-tap linear (the default: the audio lane's
+// fixtures and hashes are cut with it) or the hardware's 4-tap Gaussian (the
+// SPU gauss table, no$psx "4-Point Gaussian Interpolation"; PCSX2 Mixer.cpp).
+// Linear images +5..+9 dB above 15 kHz on pitched-down voices (PCSX2 LTAS);
+// Gaussian halves that excess but moves judge_audio's centroid ratio away from
+// the oracle's on the paris and fmv_body legs (0.937->0.916, 0.945->0.928), so
+// it is opt-in until the oracle alignment settles. Audio-lane bytes differ.
+enum class AudioInterpolation : uint8_t { Linear = 0, Gaussian };
+
 struct AudioConfig {
     bool enabled = true;
     int  volume = 100;                    // 0..100
     int  sdr_block_ms = 8;                // libsdr virtual SPU2 block transfer duration (ms of mixer time)
+    AudioInterpolation interpolation = AudioInterpolation::Linear;
 };
 
 struct InputConfig {
