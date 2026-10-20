@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "engine/gs/hle/ir/vertex_rec.h"
 #include "engine/gs/hle/ir/alpha_fail_mask.h"
 #include "engine/gs/hle/ir/halfword_shuffle.h"
 #include "engine/render/backend.h"
@@ -97,6 +98,7 @@ private:
 
     MetalDevice& dev_;
     std::vector<GpuVertex> scratch_;
+    std::vector<gs::VertexRec> thin_scratch_;   // PrimExpand output for point / line draws
     MetalFragUniforms u_;          // persistent (the GL uniform cache's semantics)
     // Per-encoder shadows.
     void* enc_shadow_ = nullptr;

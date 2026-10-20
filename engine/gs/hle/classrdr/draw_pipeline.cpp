@@ -4,6 +4,7 @@
 #include <chrono>
 
 #include "engine/gs/hle/classrdr/texture_shuffle_snap.h"
+#include "engine/gs/hle/ir/prim_expand.h"
 #include "engine/gs/hle/targets/target_dims.h"
 
 namespace ps2r {
@@ -135,7 +136,9 @@ bool DrawPipeline::Prepare(const DrawIr& ir, Prepared* pr, const PrepareOptions&
     // The sequence hook precedes the guards (a 2-vertex or FBW-0 draw into the
     // armed accumulator still materialises it) -- after the reference's vCount < 2.
     if (opt.run_hook && ir.verts.size() >= 2) SequencePreDraw(ir);
-    if (ir.verts.size() < 3 || ir.raster.frame.fbw == 0) return false;
+    // A point draws from 1 vertex, a line from 2 (PrimExpand widens them in the
+    // backend); the triangle / sprite types still need 3.
+    if (ir.verts.size() < PrimExpand::MinVerts(ir.prim_type) || ir.raster.frame.fbw == 0) return false;
     // 1. render size.
     TargetDims::Display disp;
     disp.scanout_fbp = d_.scanout->ScanoutFbp();

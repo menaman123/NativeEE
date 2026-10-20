@@ -21,6 +21,7 @@
 
 #include "engine/gs/hle/ir/alpha_fail_mask.h"
 #include "engine/gs/hle/ir/halfword_shuffle.h"
+#include "engine/gs/hle/ir/vertex_rec.h"
 #include "engine/render/backend.h"
 #include "engine/render/backends/gl/gpu_vertex.h"
 #include "engine/render/texture_filter_selection.h"
@@ -120,6 +121,7 @@ private:
 
     GlDevice& dev_;
     std::vector<GpuVertex> scratch_;
+    std::vector<gs::VertexRec> thin_scratch_;   // PrimExpand output for point / line draws
 };
 
 }  // namespace render
