@@ -3,7 +3,6 @@
 // are the cached tier's resolved tables (vu_cached_tier_exec.cpp).
 #include "engine/vu/tiers/vu_block_tier.h"
 
-#include <chrono>
 #include <cstring>
 
 #include "engine/platform/host/platform.h"
@@ -270,6 +269,10 @@ VuBlock* VuBlockTier::BuildBlock(VuBlockProgram& prog, size_t slot_idx) {
         ++i;
     }
     Schedule(blk->ops.data(), blk->ops.size());
+    // The sled facts the loop reads per block, cached off the ops array (the
+    // native path never touches the ops otherwise). Structural: the slot's.
+    blk->head_nop = (blk->ops[0].flags & VuBlockOp::kNopPair) != 0;
+    blk->ds_nop = blk->has_ds && (blk->ops[static_cast<size_t>(blk->n_body)].flags & VuBlockOp::kNopPair) != 0;
     VuBlock* raw = blk.get();
     prog.block_at[slot_idx] = raw;
     prog.blocks.push_back(std::move(blk));
@@ -319,8 +322,13 @@ void VuBlockTier::Execute(VuUnit& unit, uint32_t start_pc, uint64_t cycle_limit)
 void VuBlockTier::ExecuteAcquired(VuUnit& unit, uint32_t pc, VuBlockProgram& prog) { Run(unit, pc, prog, cycle_cap_); }
 
 void VuBlockTier::Run(VuUnit& unit, uint32_t pc, VuBlockProgram& prog, uint64_t cycle_limit) {
-    const auto t0 = std::chrono::steady_clock::now();
-    VuChopRoundGuard round_guard;  // FMAC/FDIV/EFU truncate for the whole run
+    // The run ledger (census block_ns / ns per bundle): the host's cheap clock,
+    // one pair per kick (2790 kicks a Paris frame).
+    const uint64_t t0 = ps2r::host::FastNowNs();
+    // FMAC/FDIV/EFU truncate for the whole run. Under the MTVU worker the
+    // segment already holds the mode (MtvuWorker::ProcessSegment): this guard
+    // then reads the mode and writes nothing.
+    VuChopRoundGuard round_guard;
     Vu1State& st = unit.state();
     VUregs& regs = st.regs;
 
@@ -338,8 +346,7 @@ void VuBlockTier::Run(VuUnit& unit, uint32_t pc, VuBlockProgram& prog, uint64_t 
     Loop(unit, pc, prog, cycle_limit);
     prog.bundles += bundles_ - before;
     ++stats_.runs;
-    stats_.run_ns += static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count());
+    stats_.run_ns += ps2r::host::FastNowNs() - t0;
 }
 
 void VuBlockTier::DrainAll(VuUnit& unit) { generic_.DrainAll(unit); }
@@ -495,7 +502,7 @@ void VuBlockTier::Loop(VuUnit& unit, uint32_t pc, VuBlockProgram& prog, uint64_t
     auto delay_slot = [&](uint32_t ds_pc) -> int {
         const VuBlock* blk = BlockAt(prog, ds_pc);
         --cycle_limit;
-        if (blk->ops[0].flags & VuBlockOp::kNopPair) {
+        if (blk->head_nop) {
             if (++consecutive_nops >= kNopSledBundles) {
                 ++pipes.cycle();
                 ++bundles_;
@@ -516,70 +523,74 @@ void VuBlockTier::Loop(VuUnit& unit, uint32_t pc, VuBlockProgram& prog, uint64_t
 
     VuBlock* blk = BlockAt(prog, pc);
     while (cycle_limit > 0) {
-        const VuBlockOp* ops = blk->ops.data();
         int n_body = blk->n_body;
-        int n = static_cast<int>(blk->ops.size());
-        bool cut = false;
-        if (static_cast<uint64_t>(n) > cycle_limit) {  // the cap cuts the block
-            n = static_cast<int>(cycle_limit);
-            cut = true;
-        }
-        if (ops[0].flags & VuBlockOp::kNopPair) {  // a NOP pair is a block of its own
+        if (PS2R_UNLIKELY(blk->head_nop)) {  // a NOP pair is a block of its own
             if (++consecutive_nops >= kNopSledBundles) {
                 ++pipes.cycle();
                 ++bundles_;
                 break;
             }
         } else {
-            consecutive_nops = (blk->has_ds && (ops[n_body].flags & VuBlockOp::kNopPair)) ? 1 : 0;
+            consecutive_nops = blk->ds_nop ? 1 : 0;
         }
         ++acc.blocks_run;
         bool taken = false;
         uint32_t target = 0;
-        int done;
-        int last_idx;  // the index, in the block the run ended in, of the last op executed
-        if (blk->native != nullptr && !cut) {
-            // The generated REGION function: this block and the blocks it can
-            // reach over fall-through / static targets within the cap (the
-            // budget), the register file in locals. It reports the block whose
-            // end it reached (native_exit_pc; its verdict in taken / target) --
-            // the loop re-syncs there -- or the head it stopped at for lack of
+        bool cut = false;
+        int n = static_cast<int>(blk->ops.size());
+        if (blk->native != nullptr && static_cast<uint64_t>(n) <= cycle_limit) {
+            // The generated REGION function (the hot path: 99.99 % of the blocks
+            // of a pack-fed run): this block and the blocks it can reach over
+            // fall-through / static targets within the cap (the budget), the
+            // register file in locals. It reports the block whose end it
+            // reached (native_exit_pc; its verdict in taken / target) -- the
+            // loop re-syncs there -- or the head it stopped at for lack of
             // budget (native_resume: that block has not run; the loop runs it).
+            // Nothing of the ops array is read here (the sled facts are the
+            // block's own fields); the XTOP / re-sync / resume tails are cold.
             st.native_budget = cycle_limit > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<uint32_t>(cycle_limit);
             st.native_exit_pc = pc;
             st.native_resume = false;
-            done = blk->native(unit, generic_, taken, target);
+            const int done = blk->native(unit, generic_, taken, target);
             bundles_ += static_cast<uint64_t>(done);
             ++acc.blocks_native;
             acc.ops_native += static_cast<uint64_t>(done);
             cycle_limit -= static_cast<uint64_t>(done);
-            if (st.native_exit_pc != pc) {
+            if (PS2R_UNLIKELY(st.native_exit_pc != pc)) {
                 pc = st.native_exit_pc;
                 blk = BlockAt(prog, pc);
-                ops = blk->ops.data();
                 n_body = blk->n_body;
                 n = static_cast<int>(blk->ops.size());
-                consecutive_nops = (blk->has_ds && (ops[n_body].flags & VuBlockOp::kNopPair)) ? 1 : 0;
+                consecutive_nops = blk->ds_nop ? 1 : 0;
             }
-            if (st.native_resume) {
+            if (PS2R_UNLIKELY(st.native_resume)) {
                 st.native_resume = false;
                 continue;  // the block at pc has not run: the loop's turn (cut or whole)
             }
-            last_idx = static_cast<int>((st.cur_bundle_pc - pc) & kPcMask) / 8;
+            if (PS2R_UNLIKELY(st.xtop_exit_requested)) {
+                // The index, in the block the run ended in, of the last op executed.
+                const int idx = static_cast<int>((st.cur_bundle_pc - pc) & kPcMask) / 8;
+                yield(pc + 8u * static_cast<uint32_t>(idx), idx > 0 && !(blk->has_ds && idx == n_body));
+                return;
+            }
         } else {
-            done = n > kWarmupOps + kMinStaticOps - 1
-                       ? RunOps<true>(unit, ops, n, pc, blk->branch_idx, taken, target, acc)
-                       : RunOps<false>(unit, ops, n, pc, blk->branch_idx, taken, target, acc);
+            const VuBlockOp* ops = blk->ops.data();
+            if (static_cast<uint64_t>(n) > cycle_limit) {  // the cap cuts the block
+                n = static_cast<int>(cycle_limit);
+                cut = true;
+            }
+            const int done = n > kWarmupOps + kMinStaticOps - 1
+                                 ? RunOps<true>(unit, ops, n, pc, blk->branch_idx, taken, target, acc)
+                                 : RunOps<false>(unit, ops, n, pc, blk->branch_idx, taken, target, acc);
             cycle_limit -= static_cast<uint64_t>(done);
-            last_idx = done - 1;
-        }
-        if (st.xtop_exit_requested) {
-            const int idx = last_idx;
-            yield(pc + 8u * static_cast<uint32_t>(idx), idx > 0 && !(blk->has_ds && idx == n_body));
-            return;
+            if (st.xtop_exit_requested) {
+                const int idx = done - 1;
+                yield(pc + 8u * static_cast<uint32_t>(idx), idx > 0 && !(blk->has_ds && idx == n_body));
+                return;
+            }
         }
         const uint32_t pc_after_body = (pc + 8u * static_cast<uint32_t>(n_body)) & kPcMask;
-        if (cut) {
+        if (PS2R_UNLIKELY(cut)) {
             // TPC = the first unexecuted bundle; an E-bit bundle does not advance
             // it (TPC stays at the advance before it).
             if (n == n_body && blk->e_bit) {
@@ -598,7 +609,7 @@ void VuBlockTier::Loop(VuUnit& unit, uint32_t pc, VuBlockProgram& prog, uint64_t
         }
         regs.TPC = pc_after_body;
         if (taken) {
-            if (!blk->has_ds) {
+            if (PS2R_UNLIKELY(!blk->has_ds)) {
                 if (cycle_limit == 0) break;
                 const int r = delay_slot(pc_after_body);
                 if (r == 1) break;

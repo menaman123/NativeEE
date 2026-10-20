@@ -273,6 +273,12 @@ const char* DynamicLibraryExtension();
 
 // --- clocks ---
 uint64_t MonotonicNowNs();   // the steady clock the TimeDomain samples
+// The cheapest monotonic nanosecond clock the host has, for per-event ledgers
+// on hot paths (the VU1 tier's per-kick run_ns: thousands of pairs a frame).
+// macOS: mach_absolute_time scaled by the timebase (~5 ns a read; steady_clock
+// is ~17 ns); elsewhere MonotonicNowNs. Its epoch is its own: never mix its
+// values with MonotonicNowNs / NowNs, difference it against itself only.
+uint64_t FastNowNs();
 // Thread-safe UTC broken-down time (gmtime_r / gmtime_s); false when the conversion fails.
 bool GmTimeUtc(int64_t unix_seconds, struct tm* out);
 

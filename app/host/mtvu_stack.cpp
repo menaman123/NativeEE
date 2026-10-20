@@ -198,6 +198,6 @@ std::string MtvuStack::Census() const {
     const MtvuWorker::Ledger l = worker_.ledger();
     s += ",worker_ns=" + std::to_string(l.busy_ns) + "/" + std::to_string(l.wait_ns) + "/" + std::to_string(l.spin_ns) +
          ",worker_segs=" + std::to_string(l.segments) + "/" + std::to_string(l.records) + ",worker_pops=" + std::to_string(l.pops) +
-         "/" + std::to_string(l.depth_max);
+         "/" + std::to_string(l.depth_max) + ",seal_wakes_skipped=" + std::to_string(l.seal_wakes_skipped);
     return s;
 }

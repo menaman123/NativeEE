@@ -6,6 +6,7 @@
 #include "engine/gif/gif_arbiter.h"
 #include "engine/vu/tiers/mtvu_backpressure.h"
 #include "engine/vu/tiers/mtvu_vif_feed.h"
+#include "engine/vu/vu_chop_round_guard.h"
 #include "engine/vu/vu_unit.h"
 
 namespace {
@@ -215,6 +216,7 @@ MtvuWorker::Ledger MtvuWorker::ledger() const {
     l.records = records_.load(std::memory_order_relaxed);
     l.pops = pops_.load(std::memory_order_relaxed);
     l.depth_max = depth_max_.load(std::memory_order_relaxed);
+    l.seal_wakes_skipped = seal_wakes_skipped_.load(std::memory_order_relaxed);
     return l;
 }
 
@@ -230,11 +232,24 @@ void MtvuWorker::SealAndRetire(Segment& seg) {
     pending_bytes_.fetch_sub(seg.bytes.size(), std::memory_order_relaxed);
     pending_segs_.fetch_sub(1, std::memory_order_relaxed);
     if (seg.marker) {
-        arbiter_.sealMarker(seg.marker);
+        arbiter_.sealMarker(seg.marker);   // kicks the drain thread itself when one runs
         seal_count_.fetch_add(1, std::memory_order_seq_cst);
         if (sync_waiters_.load(std::memory_order_seq_cst) > 0) {
-            { std::lock_guard<std::mutex> lk(mtx_); }
-            cv_idle_.notify_all();
+            // A parked producer (Sync's eager loop, WaitProgress, the backpressure
+            // park) wants progress. With the drain thread running the seal's
+            // delivery does not depend on the EE's wake (sealMarker kicked the
+            // thread) and every one of those waits is a kPollNs poll: the futex
+            // wake is spent on the LAST in-flight segment only (its idle is what
+            // the EE's predicate waits for), not on the ~137 others of a Paris
+            // frame. Without a drain thread the EE's wake IS the delivery: every
+            // seal wakes it, as before.
+            const bool last_inflight = inflight_.load(std::memory_order_acquire) == 1;
+            if (last_inflight || !arbiter_.DrainThreadRunning()) {
+                { std::lock_guard<std::mutex> lk(mtx_); }
+                cv_idle_.notify_all();
+            } else {
+                seal_wakes_skipped_.fetch_add(1, std::memory_order_relaxed);
+            }
         }
     }
     // Completion is published LAST.
@@ -242,6 +257,13 @@ void MtvuWorker::SealAndRetire(Segment& seg) {
 }
 
 void MtvuWorker::ProcessSegment(Segment& seg) {
+    // The VU rounding mode for the whole segment: every kick's own guard
+    // (VuBlockTier::Run and the other tiers) then finds FE_TOWARDZERO set and
+    // writes nothing -- the two FPCR writes per kick (2790 a Paris frame) were
+    // the worker's per-kick fixed cost. Nothing else this thread runs between
+    // kicks computes in floating point (VIF decode and the GIF hand-off are
+    // integer; the GIF -> DrawIR parse runs on the EE or the drain thread).
+    VuChopRoundGuard round_guard;
     switch (seg.op) {
         case Segment::Op::ResetLatch:
             vif_.ResetVif1Latch();

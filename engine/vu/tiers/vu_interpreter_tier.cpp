@@ -25,12 +25,6 @@ constexpr int kNopSledBundles = 4;  // four all-zero bundles end the run (uninit
 
 VuInterpreterTier::VuInterpreterTier(uint64_t cycle_cap) : cycle_cap_(cycle_cap) {}
 
-VR_reg VuInterpreterTier::Clamp4(const VR_reg& v) {
-    VR_reg r;
-    for (int k = 0; k < 4; ++k) r.I[k] = VuFloat::ClampBits1(v.I[k]);
-    return r;
-}
-
 void VuInterpreterTier::PinHardwired(VUregs& regs) {
     regs.VF[0].x = 0.0f;
     regs.VF[0].y = 0.0f;

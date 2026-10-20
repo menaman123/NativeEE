@@ -117,3 +117,65 @@ PS2R_FORCE_INLINE void FlagPipeline::UpdateMACFlags(VUregs& regs, const VR_reg& 
         PushMac(regs, VuFloat::PackMacBits(result.I, mask));
     }
 }
+
+// ---- the readers / pushers the generated blocks call per op (inline so a
+// generated TU does not go through a dyld stub for each: RetireMacStatus,
+// VisibleQ, VisibleClip, PushQ, PushClip, FlushQPipe were 9-11 % of the
+// worker's busy time as out-of-line calls). Bodies unchanged.
+
+// The entries retire in issue order (a push's retire is the monotonic clock
+// + the delay), so the due ones are a PREFIX: the last due value is the
+// visible flag and the rest shift down once.
+PS2R_FORCE_INLINE uint32_t FlagPipeline::VisibleClip(VUregs& regs) {
+    int due = 0;
+    while (due < clip_pending_n_ && clip_pending_[due].retire <= vu_cycle_) ++due;
+    if (due > 0) {
+        regs.clip_flag = clip_pending_[due - 1].value;
+        clip_pending_n_ -= due;
+        if (clip_pending_n_ > 0) std::memmove(&clip_pending_[0], &clip_pending_[due], sizeof(PendingClip) * static_cast<size_t>(clip_pending_n_));
+    }
+    return regs.clip_flag;
+}
+
+PS2R_FORCE_INLINE void FlagPipeline::PushClip(VUregs& regs, uint32_t value) {
+    clip_latest_ = value & 0xFFFFFFu;
+    if (clip_pending_n_ == kRingDepth) {
+        regs.clip_flag = clip_pending_[0].value;  // overflow: the oldest retires now
+        std::memmove(&clip_pending_[0], &clip_pending_[1], sizeof(PendingClip) * (kRingDepth - 1));
+        clip_pending_n_ = kRingDepth - 1;
+    }
+    clip_pending_[clip_pending_n_++] = PendingClip{vu_cycle_ + kClipDelay, clip_latest_};
+}
+
+// THE reader entry (FS* / FM*): retire, then materialise the lazy fold (a
+// no-op when nothing retired since the last materialisation).
+PS2R_FORCE_INLINE void FlagPipeline::RetireMacStatus(VUregs& regs) {
+    RetireDue(regs);
+    if (lazy_ && lazy_have_last_) MaterializeMacStatus(regs);
+}
+
+PS2R_FORCE_INLINE float FlagPipeline::VisibleQ(VUregs& regs) {
+    if (q_pending_valid_ && q_pending_retire_ <= vu_cycle_) {
+        regs.Q = q_pending_value_;
+        VuFloat::CommitQStatus(regs, q_pending_status_);
+        q_pending_valid_ = false;
+    }
+    return VuFloat::ClampFloat(regs.Q);
+}
+
+PS2R_FORCE_INLINE void FlagPipeline::FlushQPipe(VUregs& regs) {
+    if (!q_pending_valid_) return;
+    if (q_pending_retire_ > vu_cycle_) vu_cycle_ = q_pending_retire_;
+    regs.Q = q_pending_value_;
+    VuFloat::CommitQStatus(regs, q_pending_status_);
+    q_pending_valid_ = false;
+}
+
+PS2R_FORCE_INLINE void FlagPipeline::PushQ(VUregs& regs, float value, int delay, uint16_t status_bits) {
+    value = VuFloat::ClampFloat(value);
+    FlushQPipe(regs);  // back-to-back FDIV: wait for and commit the in-flight quotient
+    q_pending_valid_ = true;
+    q_pending_retire_ = vu_cycle_ + static_cast<uint64_t>(delay);
+    q_pending_value_ = value;
+    q_pending_status_ = status_bits;
+}

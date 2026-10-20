@@ -28,6 +28,12 @@ PS2R_FORCE_INLINE float VuFloat::ClampFloat(float v) {
     return Bits2F(ClampBits1(F2Bits(v)));
 }
 
+// The FDIV unit's STATUS bits (D/I and their sticky twins DS/IS) land when Q
+// retires; the FMAC bits are untouched. Inline: the Q latch's readers are.
+PS2R_FORCE_INLINE void VuFloat::CommitQStatus(VUregs& regs, uint16_t q_status) {
+    regs.status_flag = static_cast<uint16_t>((regs.status_flag & 0xFCFu) | (q_status & 0xC30u));
+}
+
 PS2R_FORCE_INLINE uint16_t VuFloat::MacFlags1(uint32_t bits, int field) {
     uint16_t flags = 0;
     const uint32_t exp = (bits >> 23) & 0xFFu;

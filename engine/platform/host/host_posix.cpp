@@ -22,6 +22,7 @@
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
 #include <mach/mach.h>
+#include <mach/mach_time.h>
 #include <sys/qos.h>
 #include <pthread/qos.h>
 #endif
@@ -284,6 +285,23 @@ void PinCurrentThreadInteractive() {
 uint64_t MonotonicNowNs() {
     return static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+uint64_t FastNowNs() {
+#if defined(__APPLE__)
+    static const mach_timebase_info_data_t tb = [] {
+        mach_timebase_info_data_t t{};
+        mach_timebase_info(&t);
+        if (t.denom == 0) { t.numer = 1; t.denom = 1; }
+        return t;
+    }();
+    const uint64_t t = mach_absolute_time();
+    if (tb.numer == tb.denom) return t;
+    // Split to keep the product in 64 bits for long uptimes.
+    return (t / tb.denom) * tb.numer + ((t % tb.denom) * tb.numer) / tb.denom;
+#else
+    return MonotonicNowNs();
+#endif
 }
 
 bool GmTimeUtc(int64_t unix_seconds, struct tm* out) {
