@@ -1361,6 +1361,30 @@ void PendingLedger() {
     CHECK(!ap.AnyCpuDirty(0x400000, 0x2000));      // a query past the end is false, not page 0
     ap.ClearAliased(0x3FE000, 0x8000);
     CHECK(!ap.IsAliased(511));
+    // Word-range marks (the per-draw ClearCpuDirty is masks, not a bit walk): a span
+    // inside one word, one crossing word boundaries, one ending on a word's last page;
+    // every page in the span is set and the neighbours outside it are not.
+    AliasPageSet ws;
+    auto span_ok = [&](uint32_t first, uint32_t last) {
+        for (uint32_t p = 0; p < VramImage::kPageCount; ++p)
+            if (ws.IsCpuDirty(p) != (p >= first && p <= last)) return false;
+        return true;
+    };
+    ws.MarkCpuDirty(3 * VramImage::kPageBytes, 5 * VramImage::kPageBytes);          // pages 3..7
+    CHECK(span_ok(3, 7));
+    CHECK(ws.AnyCpuDirty(7 * VramImage::kPageBytes, 1) && !ws.AnyCpuDirty(8 * VramImage::kPageBytes, 64 * VramImage::kPageBytes));
+    ws.ClearCpuDirty(0, 512 * VramImage::kPageBytes);
+    CHECK(span_ok(1, 0));                                                           // all clear
+    ws.MarkCpuDirty(60 * VramImage::kPageBytes, 70 * VramImage::kPageBytes);        // pages 60..129: three words
+    CHECK(span_ok(60, 129));
+    CHECK(ws.AnyCpuDirty(63 * VramImage::kPageBytes, 2 * VramImage::kPageBytes) && !ws.AnyCpuDirty(130 * VramImage::kPageBytes, 1));
+    ws.ClearCpuDirty(64 * VramImage::kPageBytes, 64 * VramImage::kPageBytes);       // the middle word exactly
+    CHECK(ws.IsCpuDirty(60) && ws.IsCpuDirty(63) && !ws.IsCpuDirty(64) && !ws.IsCpuDirty(127) && ws.IsCpuDirty(128) && ws.IsCpuDirty(129));
+    ws.MarkCpuDirty(0, 64 * VramImage::kPageBytes);                                 // pages 0..63 = word 0 whole
+    CHECK(ws.IsCpuDirty(0) && ws.IsCpuDirty(63) && !ws.IsCpuDirty(64));
+    ws.ClearCpuDirty(0, 512 * VramImage::kPageBytes);
+    ws.MarkCpuDirty(511 * VramImage::kPageBytes, 3 * VramImage::kPageBytes);        // the last page, clamped
+    CHECK(span_ok(511, 511));
 }
 
 // The per-draw render size rule (TargetDims): FBW in (0, 1024] else the window
