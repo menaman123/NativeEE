@@ -289,6 +289,8 @@ uint64_t MonotonicNowNs() {
     return secs * 1000000000ull + (rem * 1000000000ull) / static_cast<uint64_t>(freq.QuadPart);
 }
 
+uint64_t FastNowNs() { return MonotonicNowNs(); }   // QueryPerformanceCounter is the cheap clock already
+
 bool GmTimeUtc(int64_t unix_seconds, struct tm* out) {
     const __time64_t t = static_cast<__time64_t>(unix_seconds);
     return _gmtime64_s(out, &t) == 0;

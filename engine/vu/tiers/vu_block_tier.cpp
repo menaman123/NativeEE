@@ -3,7 +3,6 @@
 // are the cached tier's resolved tables (vu_cached_tier_exec.cpp).
 #include "engine/vu/tiers/vu_block_tier.h"
 
-#include <chrono>
 #include <cstring>
 
 #include "engine/platform/host/platform.h"
@@ -323,8 +322,13 @@ void VuBlockTier::Execute(VuUnit& unit, uint32_t start_pc, uint64_t cycle_limit)
 void VuBlockTier::ExecuteAcquired(VuUnit& unit, uint32_t pc, VuBlockProgram& prog) { Run(unit, pc, prog, cycle_cap_); }
 
 void VuBlockTier::Run(VuUnit& unit, uint32_t pc, VuBlockProgram& prog, uint64_t cycle_limit) {
-    const auto t0 = std::chrono::steady_clock::now();
-    VuChopRoundGuard round_guard;  // FMAC/FDIV/EFU truncate for the whole run
+    // The run ledger (census block_ns / ns per bundle): the host's cheap clock,
+    // one pair per kick (2790 kicks a Paris frame).
+    const uint64_t t0 = ps2r::host::FastNowNs();
+    // FMAC/FDIV/EFU truncate for the whole run. Under the MTVU worker the
+    // segment already holds the mode (MtvuWorker::ProcessSegment): this guard
+    // then reads the mode and writes nothing.
+    VuChopRoundGuard round_guard;
     Vu1State& st = unit.state();
     VUregs& regs = st.regs;
 
@@ -342,8 +346,7 @@ void VuBlockTier::Run(VuUnit& unit, uint32_t pc, VuBlockProgram& prog, uint64_t 
     Loop(unit, pc, prog, cycle_limit);
     prog.bundles += bundles_ - before;
     ++stats_.runs;
-    stats_.run_ns += static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count());
+    stats_.run_ns += ps2r::host::FastNowNs() - t0;
 }
 
 void VuBlockTier::DrainAll(VuUnit& unit) { generic_.DrainAll(unit); }

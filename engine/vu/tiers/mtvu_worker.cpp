@@ -6,6 +6,7 @@
 #include "engine/gif/gif_arbiter.h"
 #include "engine/vu/tiers/mtvu_backpressure.h"
 #include "engine/vu/tiers/mtvu_vif_feed.h"
+#include "engine/vu/vu_chop_round_guard.h"
 #include "engine/vu/vu_unit.h"
 
 namespace {
@@ -242,6 +243,13 @@ void MtvuWorker::SealAndRetire(Segment& seg) {
 }
 
 void MtvuWorker::ProcessSegment(Segment& seg) {
+    // The VU rounding mode for the whole segment: every kick's own guard
+    // (VuBlockTier::Run and the other tiers) then finds FE_TOWARDZERO set and
+    // writes nothing -- the two FPCR writes per kick (2790 a Paris frame) were
+    // the worker's per-kick fixed cost. Nothing else this thread runs between
+    // kicks computes in floating point (VIF decode and the GIF hand-off are
+    // integer; the GIF -> DrawIR parse runs on the EE or the drain thread).
+    VuChopRoundGuard round_guard;
     switch (seg.op) {
         case Segment::Op::ResetLatch:
             vif_.ResetVif1Latch();
