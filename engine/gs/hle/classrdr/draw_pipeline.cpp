@@ -115,15 +115,19 @@ render::DrawResult DrawPipeline::DrawGeneric(const DrawIr& ir, const PrepareOpti
     Prepared pr;
     // The draw's cost bracket (the route trace's attribution): the census is a
     // snapshot by value (the backend's own counters move under the bracket).
-    const uint64_t t0 = NowNs();
-    const render::CallCensus* census = d_.be->Census();
+    const bool traced = route_trace_.Armed();
+    const uint64_t t0 = traced ? NowNs() : 0;
+    const render::CallCensus* census = traced ? d_.be->Census() : nullptr;
     const render::CallCensus c0 = census ? *census : render::CallCensus{};
     if (!Prepare(ir, &pr, opt)) return res;
     // 6. draw.
     res = d_.be->Draw(ir, pr.src, pr.params);
     Finish(ir, pr, res);
-    const DrawRouteTrace::Cost cost = DrawRouteTrace::Cost::Delta(census ? &c0 : nullptr, census, NowNs() - t0);
-    route_trace_.Note(ir, pr.src, res, static_cast<uint32_t>(draw_seq_), cost);
+    if (traced) {
+        const DrawRouteTrace::Cost cost =
+            DrawRouteTrace::Cost::Delta(census ? &c0 : nullptr, census, NowNs() - t0);
+        route_trace_.Note(ir, pr.src, res, static_cast<uint32_t>(draw_seq_), cost);
+    }
     return res;
 }
 

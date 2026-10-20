@@ -231,6 +231,13 @@ private:
     void Push(Record&& r);
     void Deliver(Record& r);
     void ThreadMain();
+    // The consumer's bookkeeping since its last lock (ThreadMain folds it in batches).
+    struct Pending {
+        uint64_t consumed = 0, frames = 0, draws = 0;
+        uint64_t draw_ns = 0, frame_ns = 0, other_ns = 0;
+    };
+    static constexpr size_t kBatch = 64;   // records popped per lock, at most (a frame record ends a batch)
+    void FoldPendingLocked(Pending& p);
 
     DrawIrSink& next_;
     Hooks hooks_;
@@ -255,7 +262,9 @@ private:
     // pthread_cond_signal with no waiter).
     bool consumer_sleeping_ = false;
     std::atomic<int64_t> last_idle_ns_{0};   // steady_clock ns the consumer last slept / woke
-    uint32_t done_waiters_ = 0;
+    // Written under mu_; the consumer also reads it lock-free between the records of
+    // a batch to publish its pending counts as soon as someone waits.
+    std::atomic<uint32_t> done_waiters_{0};
     // cv_done_.wait with the waiter count kept (the predicate form).
     void WaitDoneLocked(std::unique_lock<std::mutex>& lk, const std::function<bool()>& pred);
     std::deque<Record> ring_;

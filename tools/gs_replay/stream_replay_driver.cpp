@@ -100,6 +100,7 @@ void StreamReplayDriver::BuildScene() {
     deps.sequence = nullptr;
     pipe_ = std::make_unique<gs::DrawPipeline>(deps);
     pipe_->SetLiveSnapshot(true);
+    pipe_->RouteTrace().Arm(opt_.dump_dir != nullptr);   // r<frame>.txt beside the dumped grabs
     scanout_->SetScanoutFbp(gs::DrawPipeline::kNoFbp);
     scanout_->SetGrabPolicy(gs::ScanoutComposer::GrabPolicy::LocalMemory);
     gs::DrawIrQueueConsumer::Hooks hooks;
@@ -377,6 +378,7 @@ void StreamReplayDriver::WriteOutputs() const {
                     static_cast<unsigned long long>(c->uploads), static_cast<unsigned long long>(c->readbacks),
                     static_cast<unsigned long long>(c->readback_bytes), static_cast<unsigned long long>(c->buffer_maps),
                     static_cast<unsigned long long>(c->submits), static_cast<double>(c->gpu_ns) * 1e-6);
+    if (pipe_) pipe_->EmitCounters(stdout);
     std::printf("STREAM_HASH %016llx\n", static_cast<unsigned long long>(stream_hash_));
     if (opt_.csv_path) {
         if (std::FILE* f = std::fopen(opt_.csv_path, "w")) {

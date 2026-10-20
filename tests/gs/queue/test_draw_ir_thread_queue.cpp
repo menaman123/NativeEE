@@ -388,6 +388,58 @@ void TestLocalToLocalSource() {
     q.Stop();
 }
 
+// Batched consumption (perf): a pipelined ring of many records is delivered in
+// push order with the counters exact; a Sync() waiter returns once everything was
+// consumed (the consumer publishes its folded counts to a waiter without waiting
+// for its batch to end); WaitFrame sees every frame; Stop folds the last counts.
+void TestBatchedConsumption() {
+    TestDrawIrThreadQueue sink;
+    std::vector<uint8_t> none;
+    DrawIrThreadQueue::Hooks h;
+    h.upload_pixels = [&none] { return &none; };
+    h.crtc = [] { return CrtcClassifier::Snapshot{}; };
+    DrawIrThreadQueue q(sink, std::move(h), DrawIrThreadQueue::Policy::Pipelined, 100000);
+    sink.q = &q;
+    // The consumer parks on draw 1 so the ring fills with several batches' worth.
+    sink.block_at_seq = 1;
+    q.Start();
+    const uint32_t kDraws = 1000;
+    uint32_t seq = 1;
+    for (uint32_t f = 0; f < 4; ++f) {
+        for (uint32_t i = 0; i < kDraws / 4; ++i) q.OnDraw(Draw(seq++, 3));
+        q.OnJob(Job(JobKind::InvalidateTextures, seq++));
+        q.OnFrame(Job(JobKind::VSync, seq++));
+    }
+    while (!sink.blocked.load()) std::this_thread::yield();
+    CHECK(q.Depth() >= kDraws / 2, "the ring holds a backlog while the consumer is parked");
+    sink.gate = true;
+    q.Sync();
+    const DrawIrThreadQueue::Counters n = q.Count();
+    CHECK(n.enqueued == seq - 1 && n.consumed == seq - 1, "Sync returned with every record consumed");
+    CHECK(n.delivered_draws == kDraws, "every draw counted");
+    CHECK(n.frames == 4, "four frames pushed");
+    q.WaitFrame(4);
+    CHECK(sink.log.size() == seq - 1, "every record delivered");
+    bool ordered = true;
+    for (size_t i = 0; i + 1 < sink.log.size() && ordered; ++i) {
+        auto num = [](const std::string& s) { return std::stoul(s.substr(1)); };
+        if (num(sink.log[i]) + 1 != num(sink.log[i + 1])) ordered = false;
+    }
+    CHECK(ordered, "records delivered in push order");
+    // A second round with the consumer awake: Sync after each small push returns
+    // promptly (the waiter publication path), the counters stay exact.
+    for (uint32_t i = 0; i < 50; ++i) {
+        q.OnDraw(Draw(seq++, 3));
+        q.Sync();
+        CHECK(q.Count().consumed == seq - 1, "Sync sees the record consumed");
+    }
+    q.OnFrame(Job(JobKind::VSync, seq++));
+    q.WaitFrame(5);
+    CHECK(sink.log.back() == "F" + std::to_string(seq - 1), "the fifth frame delivered");
+    q.Stop();
+    CHECK(q.Count().consumed == seq - 1, "Stop drained with the counts folded");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -402,6 +454,7 @@ int main(int argc, char** argv) {
     if (which == "splitimage" || which == "all") TestSplitImage();
     if (which == "frameskip" || which == "all") TestFrameSkip();
     if (which == "l2lsource" || which == "all") TestLocalToLocalSource();
+    if (which == "batched" || which == "all") TestBatchedConsumption();
     std::printf("%s: %d checks, %d failures\n", argv[0], g_checks, g_fails);
     return g_fails ? 1 : 0;
 }

@@ -59,6 +59,13 @@ public:
         bool drew, sw_blend, route_rt_blend, needs_rt_copy, cd_copied, wrap_route, fbmsk16_exact;
         Cost cost;
     };
+    // The trace is OFF until armed (gs_replay's --dump-ppm, the title's
+    // NATIVEEE_GS_ROUTES): the per-draw record and the two clock reads + census
+    // snapshot that cost it were ~0.3 ms of a Paris frame on the consumer thread.
+    // Arming mid-run starts recording at the next draw; the frame written is the
+    // first completed after the arm.
+    void Arm(bool on) { armed_ = on; }
+    bool Armed() const { return armed_; }
     // Records the draw just executed (the generic arm's inputs and result).
     void Note(const DrawIr& ir, const TextureSource& src, const render::DrawResult& res, uint32_t seq,
               const Cost& cost);
@@ -79,6 +86,7 @@ public:
     void Write(std::FILE* f) const;
 
 private:
+    bool armed_ = false;
     std::vector<Line> cur_;
     std::vector<Line> last_;
     Cost last_frame_end_;
