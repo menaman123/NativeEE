@@ -357,19 +357,18 @@ uint32_t ReadbackEngine::EncodeColorRows(const EncodeTarget& t, VramImage& vram,
         }
     }
     if (!protected_ranges.empty()) {
-        // A pixel any byte of which lies in a protected range keeps its bytes.
-        for (int y = rows.y0; y < rows.y1; ++y) {
-            for (int x = rows.x0; x < rows.x1; ++x) {
-                const uint32_t addr = PsmLayout::PixelByteAddress(psm, uint32_t(x), uint32_t(y),
-                                                                  fbp / PsmLayout::kBlockBytes, bw);
-                if (addr < lo || addr + bpp > hi) continue;
-                bool hit = false;
-                for (const auto& r : protected_ranges) {
-                    if (r.first >= addr + bpp) break;
-                    if (addr < r.second) { hit = true; break; }
-                }
-                if (hit) std::memcpy(scratch_.data() + addr, before_.data() + (addr - lo), bpp);
-            }
+        // A pixel any byte of which lies in a protected range keeps its bytes. Pixels
+        // are bpp-aligned in local memory, so the pixels a range [a, b) touches are
+        // exactly the bytes [a rounded down, b rounded up) to the pixel size; bytes
+        // outside the encoded rect are the view's own already (restoring them is a
+        // no-op), so the whole aligned range is restored from `before_` -- the same
+        // bytes the per-pixel address walk restored, without 100k address computations.
+        for (const auto& r : protected_ranges) {
+            uint32_t a = std::max(r.first, lo), b = std::min(r.second, hi);
+            if (a >= b) continue;
+            a = a / bpp * bpp;                              // lo and hi are page-aligned: absolute alignment
+            b = std::min(hi, (b + bpp - 1) / bpp * bpp);
+            std::memcpy(scratch_.data() + a, before_.data() + (a - lo), b - a);
         }
     }
     // Authorship is recorded over the deposit rect's page tiles before staging.

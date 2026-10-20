@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <memory>
 #include <unordered_map>
 
 #include "engine/gs/hle/ir/draw_ir.h"
@@ -146,6 +147,8 @@ private:
     std::vector<ReadbackEngine::Deferred> deferred_;
     DeferredCensus deferred_n_;
     uint32_t CompleteDeferred(bool gated);
+    void DropTargets();   // the surfaces go (no writeback, no image access)
+    std::shared_ptr<RenderTargetCache*> self_token_ = std::make_shared<RenderTargetCache*>(this);
 };
 
 }  // namespace gs

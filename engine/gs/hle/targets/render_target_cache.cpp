@@ -3,6 +3,7 @@
 #include "engine/gs/hle/targets/render_target_cache.h"
 
 #include <algorithm>
+#include <memory>
 #include <cmath>
 
 namespace ps2r {
@@ -11,7 +12,13 @@ namespace gs {
 RenderTargetCache::RenderTargetCache(render::Backend& be, VramImage& vram, const ScalePolicy& scale)
     : be_(be), vram_(vram), scale_(scale) {
     readback_.SetAliasPages(&alias_);
-    vram_.SetDeferredGate([this] { CompleteDeferred(/*gated=*/true); });
+    // The image's gate holds the cache WEAKLY: the title's pipeline image can die
+    // before the cache (member order), so the destructor touches neither the image
+    // nor the gate, and a gate fired after the cache is gone is a no-op.
+    std::weak_ptr<RenderTargetCache*> self = self_token_;
+    vram_.SetDeferredGate([self] {
+        if (std::shared_ptr<RenderTargetCache*> p = self.lock()) (*p)->CompleteDeferred(/*gated=*/true);
+    });
 }
 
 uint32_t RenderTargetCache::FootprintBytes(const RenderTarget& t) {
@@ -21,9 +28,11 @@ uint32_t RenderTargetCache::FootprintBytes(const RenderTarget& t) {
 }
 
 RenderTargetCache::~RenderTargetCache() {
-    DestroyAll();
-    vram_.SetDeferredGate(nullptr);
-    vram_.ClearDeferred();
+    // No image access here (it may be gone): the in-flight reads are dropped -- the
+    // backend releases their buffers at its own shutdown -- and the surfaces go.
+    self_token_.reset();
+    deferred_.clear();
+    DropTargets();
 }
 
 uint32_t RenderTargetCache::SyncDrawnDeferred(RenderTarget& t, uint64_t batch_epoch, uint32_t enc_psm,
@@ -227,6 +236,10 @@ uint32_t RenderTargetCache::FlushPending(PendingRtSyncLedger::Reason reason, uin
 
 void RenderTargetCache::DestroyAll() {
     FlushDeferred();
+    DropTargets();
+}
+
+void RenderTargetCache::DropTargets() {
     for (auto& kv : targets_) kv.second->Destroy(be_);
     targets_.clear();
 }
