@@ -328,13 +328,17 @@ DrawResult GlDrawExecutor::DrawHalfwordShuffle(const gs::DrawIr& ir, const gs::T
     if (!fbo) return none;
     FrameClear(p);
     st.Viewport(0, 0, p.target_w * sc, p.target_h * sc);
-    // The destination copy: the whole target, from the main attachment.
+    // The destination copy from the main attachment: the op's rect only -- the
+    // program reads the copy (and, for a self read, the source) at the fragment's
+    // own texel, and the quad covers exactly [0, cols) x [0, rows32); the copy is
+    // invalidated for every later user, so the rest of it owes nothing.
     st.BindFb(GL_READ_FRAMEBUFFER, fbo);
     st.ActiveTexture(GL_TEXTURE1);
     st.BindTex2D(copy->tex);
+    const int cw = static_cast<int>(op.cols) * sc, ch = static_cast<int>(op.rows32) * sc;
     dev_.CensusMut().copies++;
-    dev_.CensusMut().copy_bytes += static_cast<uint64_t>(p.target_w) * p.target_h * sc * sc * 4u;
-    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, p.target_w * sc, p.target_h * sc);
+    dev_.CensusMut().copy_bytes += static_cast<uint64_t>(cw) * ch * 4u;
+    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, cw, ch);
     if (p.cd_copy) CdCopyPolicy::Invalidate(*p.cd_copy);
     st.ActiveTexture(GL_TEXTURE0);
     st.BindTex2D(src->tex);
