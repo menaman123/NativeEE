@@ -76,6 +76,7 @@ const char* const kFitNames[]       = {"stretch", "fit", "fill", "integer", "cus
 const char* const kAspectNames[]    = {"auto", "4:3", "16:9", "16:10", "21:9"};
 const char* const kTextureFilterNames[] = {"title", "point", "bilinear", "trilinear"};
 const char* const kLatencyNames[]   = {"instant", "modelled"};
+const char* const kInterpNames[]    = {"linear", "gaussian"};
 const char* const kVisibilityNames[] = {"boundary", "poll"};
 const char* const kVu1Names[]       = {"hle", "cached", "interp", "block", "aot"};
 const char* const kVu1AotFbNames[]  = {"block", "interp"};
@@ -96,6 +97,7 @@ const EnumTable kFit{kFitNames, 5};
 const EnumTable kAspect{kAspectNames, 5};
 const EnumTable kTextureFilter{kTextureFilterNames, 4};
 const EnumTable kLatency{kLatencyNames, 2};
+const EnumTable kInterp{kInterpNames, 2};
 const EnumTable kVisibility{kVisibilityNames, 2};
 const EnumTable kVu1{kVu1Names, 5};
 const EnumTable kVu1AotFb{kVu1AotFbNames, 2};
@@ -159,8 +161,9 @@ bool Fail(std::string* err, const char* key, const std::string& v, const char* w
 const std::vector<Field>& Fields() {
     static const std::vector<Field> f = {
         BOOL_FIELD("audio.enabled", audio.enabled),
-        INT_FIELD("audio.volume", audio.volume),
+        ENUM_FIELD("audio.interpolation", audio.interpolation, kInterp),
         INT_FIELD("audio.sdr_block_ms", audio.sdr_block_ms),
+        INT_FIELD("audio.volume", audio.volume),
         ENUM_FIELD("cdvd.delivery_visibility", cdvd.delivery_visibility, kVisibility),
         ENUM_FIELD("cdvd.latency_model", cdvd.latency_model, kLatency),
         DOUBLE_FIELD("cdvd.latency_scale", cdvd.latency_scale),

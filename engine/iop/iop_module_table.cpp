@@ -93,9 +93,13 @@ bool IopModuleTable::DrainToUs(uint64_t ceiling) {
     return ran;
 }
 
-void IopModuleTable::PumpAtBoundary() {
+void IopModuleTable::PumpAtBoundary(uint64_t fields) {
     if (!frame_ || !booted_) return;
-    DrainQuantum(/*advance_frame=*/true);
+    // One quantum per delivered field: the IOP's virtual time keeps pace with
+    // the SPU's (800 frames per field) at any boundary rate -- a 989snd stream
+    // refill due in field k of a late boundary runs here, not frame_hz/60 late.
+    if (fields == 0) fields = 1;
+    for (uint64_t i = 0; i < fields; i++) DrainQuantum(/*advance_frame=*/true);
 }
 
 void IopModuleTable::PumpAfterEeService() {

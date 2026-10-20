@@ -143,6 +143,7 @@ Peak default = FLAG_LEDGER SETTINGS table (run_play.sh CANON); "det" = the
 | `audio.enabled` | bool | true | true (device suppressed by `time.tick_sync`) | PS2_SOUND |
 | `audio.volume` | int 0..100 | GUI default | — | GUI |
 | `audio.sdr_block_ms` | int 1..1000 | 8 | 8 (mixer-frame clock: 48 frames/ms) | PS2_SDR_BLOCK_MS |
+| `audio.interpolation` | linear\|gaussian | linear | linear (the audio lane's hashes and fixtures are cut with the 2-tap resampler) | — (the SPU2 voice resampler: `gaussian` = the hardware's 4-tap gauss table as PCSX2 Mixer.cpp; opt-in, changes the audio-lane bytes) |
 | `input.device`, `input.kbm_pad`, `input.bindings_file` | str/bool/path | GUI defaults, `default_bindings.ini` | scripted only | GUI, input/ |
 | `cdvd.latency_model` | instant\|modelled | instant | instant | PS2_CDVD_INSTANT |
 | `cdvd.latency_scale` | float | 1.0 | 0 | PS2_DVD_LATENCY_SCALE |

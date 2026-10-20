@@ -8,7 +8,8 @@
 //
 // Pitch: 0x1000 == 1.0 (48 kHz), clamped to 0x3FFF as the hardware does. Each
 // output sample advances the source by pitch/0x1000 input samples; blocks are
-// 28 samples / 16 bytes; linear interpolation between adjacent source samples.
+// 28 samples / 16 bytes; linear interpolation between adjacent source samples, or the SPU2's 4-tap Gaussian
+// over the last four decoded samples (Voice::SetGaussian(true), Config audio.interpolation=gaussian).
 //
 // Envelope (the SPU2's 15-bit level 0..0x7FFF, stepped by the shared rate
 // engine every sample: a shift / step pair gives a counter increment of
@@ -154,7 +155,17 @@ private:
     int sample_idx_ = 0;
     uint32_t frac_ = 0;
     int16_t prev_sample_ = 0;
+    int16_t older_[2] = {0, 0};      // the two samples before prev_sample_ (Gaussian taps; seeded from prev_sample_ at a restore)
     bool last_end_repeat_ = false;   // transient (trace only)
+
+public:
+    // The resampler every voice uses (Config audio.interpolation; set once at composition, before any Step):
+    // 2-tap linear (the default) or the SPU2's 4-tap Gaussian.
+    static void SetGaussian(bool on) { gaussian_ = on; }
+    static bool Gaussian() { return gaussian_; }
+
+private:
+    static bool gaussian_;
 };
 
 }  // namespace ps2r::sound

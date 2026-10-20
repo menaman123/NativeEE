@@ -2,7 +2,9 @@
 // (DelayThread deadlines, deferred-completion dues, periodic timer beats).
 // Two policies (Config iop.dispatch):
 //   Frame    -- a virtual microsecond counter derived from EE frame boundaries
-//               (kFrameUs per boundary, the emu time domain's frame quantum)
+//               (kFrameUs per delivered FIELD -- one per boundary under the
+//               deterministic profile, N for a late play-mode boundary that
+//               delivered N fields: IopModuleTable::PumpAtBoundary(fields))
 //               plus the explicit forced advances the dispatcher issues when
 //               every runnable thread is time-parked. Guest-visible IOP
 //               scheduling becomes a pure function of the EE frame stream: the

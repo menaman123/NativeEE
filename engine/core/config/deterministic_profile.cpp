@@ -49,6 +49,7 @@ void DeterministicProfile::Apply(Config& c) {
     c.time.t0_tickpaced = true;
     c.time.maint_eepaced = true;
     c.iop.dispatch = IopDispatch::Frame;
+    c.audio.interpolation = AudioInterpolation::Linear;   // the audio lane's hashes are cut with the 2-tap resampler
     c.hle.startup = StartupMode::Retained;   // the IOP oracle arm: lanes identical, STREAM.IRX booted
     c.game.rtc_fixed = true;
     c.ui.gui_open = false;
