@@ -160,6 +160,7 @@ public:
     void CopyRect(SurfaceId src, const Rect& src_rect, SurfaceId dst, const Rect& dst_rect, uint32_t transform) override;
     void Readback(SurfaceId id, const Rect& rect, void* out, size_t stride) override;
     FenceId BeginReadback(SurfaceId id, const Rect& rect) override;
+    bool ReadbackReady(FenceId fence) override;
     bool PollReadback(FenceId fence, void* out, size_t stride) override;
     void Present(const ScanoutDesc& desc) override;
     void ArmPresentCapture(bool armed) override;

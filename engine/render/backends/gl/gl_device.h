@@ -82,8 +82,12 @@ public:
                   uint32_t transform) override;
     void WriteAlphaLane(SurfaceId dst, const Rect& dst_rect, SurfaceId lane, const Rect& exclude) override;
     void Readback(SurfaceId id, const Rect& rect, void* out, size_t stride) override;
+    // Asynchronous: the rows go into a pixel-pack buffer behind a fence (no GPU
+    // drain at Begin); Poll waits on the fence only if the GPU has not finished.
     FenceId BeginReadback(SurfaceId id, const Rect& rect) override;
+    bool ReadbackReady(FenceId fence) override;
     bool PollReadback(FenceId fence, void* out, size_t stride) override;
+    uint64_t ReadbackWaits() const { return readback_waits_; }   // Polls that found the fence unsignalled
     void Present(const ScanoutDesc& desc) override;
     void ArmPresentCapture(bool armed) override;
     bool ReadPresented(std::vector<uint8_t>* rgba, int* w, int* h) override;
@@ -222,12 +226,17 @@ private:
     std::unordered_map<uint32_t, GlSurface> surfaces_;
     uint32_t next_surface_ = 1;
     struct PendingReadback {
-        std::vector<uint8_t> bytes;
-        size_t stride = 0;
+        uint32_t pbo = 0;       // GL_PIXEL_PACK_BUFFER holding the rows
+        void* sync = nullptr;   // GLsync after the glReadPixels into it
+        size_t stride = 0;      // packed row stride in the buffer
         int rows = 0;
     };
     std::unordered_map<uint64_t, PendingReadback> readbacks_;
+    std::vector<uint32_t> free_pbos_;   // pack buffers of completed readbacks, reused
     uint64_t next_fence_ = 1;
+    uint64_t readback_waits_ = 0;
+    void ReleaseReadbacks();
+    static bool ReadbackReadySync(void* sync);
     int max_texture_size_ = 0;
     int max_anisotropy_ = 1;
     std::shared_ptr<const TextureFilterSelection> texture_filter_;

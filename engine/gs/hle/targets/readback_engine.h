@@ -67,6 +67,35 @@ public:
     uint32_t SyncRtToVram(render::Backend& be, RenderTarget& t, VramImage& vram,
                           uint64_t batch_epoch, const LogicalRect* rescue, uint32_t rescue_fbw,
                           uint32_t enc_psm = kNoPsmOverride, uint32_t dest_fbp = kSameFbp);
+    // The DEFERRED form of the drawn-rows colour writeback (no rescue): the GPU
+    // read is queued (Backend::BeginReadback) and the rows' bookkeeping that is a
+    // fact of the GPU's write order lands now (page authorship, the alias marks,
+    // the drawn rect reset, the deposit span registered as OWED with the image);
+    // the bytes are encoded and staged by CompleteDeferred -- at the image's gate
+    // (a reader / writer of the span) or at the frame end, whichever comes first.
+    // False (nothing queued) when the target has nothing to write back, the
+    // backend's readbacks are synchronous, or the offer covers the rows (the
+    // synchronous path costs no GPU read then: the caller takes SyncRtToVram).
+    struct Deferred {
+        render::FenceId fence;
+        render::Rect pr;               // physical rows read
+        LogicalRect rows;
+        uint32_t fbw = 0, enc_psm = 0, dest_fbp = 0;
+        uint64_t batch_epoch = 0;
+        int scale = 1;
+        uint16_t keep16 = 0;
+        uint32_t width = 0, height = 0;   // the target's logical size (the protected-range footprint)
+        uint32_t target_fbp = 0;
+        uint32_t span_lo = 0, span_hi = 0;   // the owed byte span (gate): the page rows + the linear span
+        // The uploaded-texture protection as of Begin (it reads upload epochs over the
+        // whole footprint, which the owed span does not cover).
+        std::vector<std::pair<uint32_t, uint32_t>> protected_ranges;
+    };
+    bool BeginDeferredColorSync(render::Backend& be, RenderTarget& t, VramImage& vram, uint64_t batch_epoch,
+                                uint32_t enc_psm, uint32_t dest_fbp, Deferred* out);
+    // Completes `d`: waits for its read if the GPU has not finished, encodes and
+    // stages the rows; commits them when the image owed a commit. Returns texels.
+    uint32_t CompleteDeferred(render::Backend& be, VramImage& vram, const Deferred& d, bool commit);
     // The companion (alt16) rows of `rect` deposited as 5551 at `draw_fbw` (0 or
     // > 1024 falls back to the target's FBW / width). Returns texels staged.
     uint32_t DepositAlt16Lane(render::Backend& be, RenderTarget& t, VramImage& vram, uint16_t keep16,
@@ -97,9 +126,27 @@ public:
     void SetAliasPages(AliasPageSet* alias) { alias_ = alias; }
 
 private:
+    // What the colour encode needs of its target (a deferred encode outlives the
+    // target's state at Begin -- and possibly the target).
+    struct EncodeTarget {
+        int scale = 1;
+        uint16_t keep16 = 0;
+        uint32_t width = 0, height = 0;
+        uint32_t fbp = 0;
+        RenderTarget* reset_drawn = nullptr;   // main_drawn_since_deposit.Reset() when the deposit is the target's own
+        bool mark_only = false;                // Begin-time half: authorship + alias marks, no bytes
+        const std::vector<std::pair<uint32_t, uint32_t>>* protected_ranges = nullptr;   // precomputed (deferred)
+    };
+    static EncodeTarget EncodeTargetOf(RenderTarget& t);
     uint32_t EncodeColorRows(RenderTarget& t, VramImage& vram, uint64_t batch_epoch,
                              const LogicalRect& rows, uint32_t fbw, bool rescue, uint32_t enc_psm,
                              uint32_t dest_fbp);
+    uint32_t EncodeColorRows(const EncodeTarget& et, VramImage& vram, uint64_t batch_epoch,
+                             const LogicalRect& rows, uint32_t fbw, bool rescue, uint32_t enc_psm,
+                             uint32_t dest_fbp);
+    // The rows of a drawn-rows colour writeback of `t` (clamped drawn_since_sync);
+    // false when nothing encodes.
+    static bool DrawnRows(const RenderTarget& t, uint32_t enc_psm, LogicalRect* rows);
     uint32_t EncodeZRows(RenderTarget& t, VramImage& vram, uint64_t batch_epoch,
                          const LogicalRect& rows, uint32_t zpsm_field);
     // Stage [lo, hi) of the scratch image: pages inside the linear span
@@ -125,6 +172,11 @@ private:
     Offer offer_;
     bool offer_enabled_ = true;
     uint64_t offered_reads_ = 0;
+public:
+    uint64_t OfferedReadsCount() const { return offered_reads_; }
+    // Does the offer cover the attachment's rows `pr`? (the deferral's bypass test)
+    bool OfferCovers(render::SurfaceId color, const render::Rect& pr) const;
+private:
     std::vector<uint8_t> pixels_;    // readback scratch (physical rows)
     std::vector<float> depth_;
     std::vector<uint8_t> linear_;    // encoded linear rows

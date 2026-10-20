@@ -437,6 +437,7 @@ void DrawIrThreadQueue::Deliver(Record& r) {
 // local->local source. ~4 MiB per frame, only once a copy armed it.
 void DrawIrThreadQueue::PublishSnapshot(uint64_t frame) {
     if (!mirror_target_) return;
+    mirror_target_->GateRaw(VramImage::Span{0, VramImage::kBytes});   // a deferred deposit lands first
     std::lock_guard<std::mutex> lk(snap_mu_);
     if (snap_.bytes.size() != VramImage::kBytes) {
         snap_.bytes.resize(VramImage::kBytes);

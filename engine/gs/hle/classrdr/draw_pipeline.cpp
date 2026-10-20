@@ -242,6 +242,9 @@ void DrawPipeline::FrameEndGrab(bool ee_frame_end, Frame* out) {
     frame_end_t0_ = NowNs();
     const render::CallCensus* census = d_.be->Census();
     frame_end_census_ = census ? *census : render::CallCensus{};
+    // The previous present's deferred scanout deposit lands first (one frame late at
+    // most): the GPU had the whole frame to finish its read.
+    d_.cache->FlushDeferred();
     target_dump_.OnFrameEnd();
     if (d_.resolver) d_.resolver->Trace().OnFrameEnd();
     if (ee_frame_end) d_.presenter->MarkEeFrameEnd();
@@ -298,6 +301,7 @@ void DrawPipeline::OnFrameEndGrabOnly(bool ee_frame_end, Frame* out) {
 }
 
 void DrawPipeline::OnOwnedFrameEnd(bool ee_frame_end, uint32_t source_key) {
+    d_.cache->FlushDeferred();
     route_trace_.OnFrameEnd();
     target_dump_.OnFrameEnd();
     if (d_.resolver) d_.resolver->Trace().OnFrameEnd();
@@ -315,6 +319,10 @@ void DrawPipeline::EmitCounters(std::FILE* f) const {
                  (unsigned long long)(d_.refresher ? d_.refresher->AlphaMergesGpu() : 0),
                  (unsigned long long)(d_.refresher ? d_.refresher->AlphaMergesCpu() : 0),
                  (unsigned long long)(d_.refresher ? d_.refresher->AlphaLaneUploadsSkipped() : 0));
+    const RenderTargetCache::DeferredCensus& dc = d_.cache->Deferred();
+    std::fprintf(f, "[GS-PIPELINE] deferred_deposit=%s begun=%llu gated=%llu frame_end=%llu offered=%llu sync=%llu\n",
+                 d_.cache->DeferredDeposit() ? "on" : "off", (unsigned long long)dc.begun, (unsigned long long)dc.gated,
+                 (unsigned long long)dc.frame_end, (unsigned long long)dc.offered, (unsigned long long)dc.sync);
 }
 
 }  // namespace gs

@@ -44,7 +44,7 @@ int main() {
     CHECK(dev.Init([&] { win.Swap(); }), "Init");
     dev.SetWindowSize(win.Width(), win.Height());
     const render::Caps caps = dev.QueryCaps();
-    CHECK(caps.max_texture_size >= 4096 && caps.reverse_subtract && !caps.staging_readback, "caps");
+    CHECK(caps.max_texture_size >= 4096 && caps.reverse_subtract && caps.staging_readback, "caps");
 
     render::SurfaceDesc cd; cd.width = 64; cd.height = 64; cd.format = render::SurfaceFormat::Rgba8; cd.renderable = true;
     render::SurfaceDesc dd = cd; dd.format = render::SurfaceFormat::Depth32f; dd.renderable = false;

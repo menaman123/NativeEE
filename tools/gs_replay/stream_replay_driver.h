@@ -65,6 +65,10 @@ public:
         uint32_t max_frames = 0;           // 0 = the whole capture
         bool quiet = false;
         bool deferred_capture = true;      // the play composition's present-capture mode (--sync-capture = off)
+        bool gate_trace = false;           // --gate-trace: the image's first gated deferred-deposit completions on stderr
+        bool deferred_deposit = true;      // --sync-deposit: the display deposit's GPU read at once (the A/B of the deferral)
+        bool grab = true;                  // --no-grab: the play composition with no frames-lane reader (grab_wanted false;
+                                           // the per-frame hash column reads 0 -- a timing run, not an identity run)
         bool swap_hidden_window = false;   // --swap: SDL_GL_SwapWindow on the hidden window instead of a flush
         bool cd_barrier = false;           // --cd-barrier: the NV_texture_barrier destination read (not tile-coherent on Apple)
         bool metal = false;                // --backend metal: the Metal device (macOS builds; exit 77 when absent)
@@ -82,6 +86,7 @@ public:
         uint32_t draws = 0;
         uint32_t jobs = 0;
         uint64_t hash = 0;
+        uint64_t phash = 0;      // the presented window image read at this frame's PresentWindow (0 = none read)
         bool grabbed = false;
         uint64_t readbacks = 0, copies = 0, draw_calls = 0;   // backend census deltas
         uint64_t submits = 0, gpu_ns = 0;                     // (the GPU time lands when its command buffers complete)
@@ -138,6 +143,7 @@ private:
     bool last_payload_valid_ = false;
     gs::CrtcClassifier::Snapshot crtc_{};
     std::vector<uint8_t> presented_;
+    uint64_t presented_hash_ = 0;
     uint64_t presents_read_ = 0;
     // Per-frame bookkeeping.
     std::vector<FrameStat> frames_;

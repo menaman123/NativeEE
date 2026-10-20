@@ -186,6 +186,7 @@ struct CallCensus {
     uint64_t barriers = 0;           // texture barriers issued in place of a destination copy
     uint64_t submits = 0;            // command buffers committed (backends that batch work)
     uint64_t gpu_ns = 0;             // GPU busy time of the completed command buffers (backends that report it)
+    uint64_t readback_waits = 0;     // PollReadback calls that found the GPU not yet done (a wait)
 };
 
 // Surface preserves retained callers' sampling. Owned presentation declares
@@ -248,7 +249,16 @@ public:
     // Synchronous readback of `rect` (physical texels), rows bottom-up as the
     // attachment stores them, RGBA8 (colour) or float (depth).
     virtual void Readback(SurfaceId id, const Rect& rect, void* out, size_t stride) = 0;
+    // The asynchronous form: BeginReadback queues the read (colour RGBA8 only; the
+    // bytes land in backend-owned storage behind a fence) and returns its handle;
+    // ReadbackReady says whether the GPU has completed it (never waits; a backend
+    // whose readbacks are synchronous says true); PollReadback completes it --
+    // WAITING for the GPU if it has not -- copies the rows (bottom-up, `stride`
+    // bytes apart; 0 = packed) into `out` and releases the handle. False from
+    // PollReadback = unknown handle. Caps::staging_readback says the read is truly
+    // deferred (a caller may overlap work between Begin and Poll).
     virtual FenceId BeginReadback(SurfaceId id, const Rect& rect) = 0;
+    virtual bool ReadbackReady(FenceId) { return true; }
     virtual bool PollReadback(FenceId fence, void* out, size_t stride) = 0;
     // A missing nonzero source or invalid explicit source rectangle refuses
     // before clear/swap; source 0 retains the cold no-image presentation.

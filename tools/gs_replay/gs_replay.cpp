@@ -29,7 +29,7 @@ namespace {
 int Usage() {
     std::fprintf(stderr,
                  "usage: gs_replay stream <in.gsstream> [--scale N] [--warmup N] [--max-frames N]\n"
-                 "                 [--csv f] [--json f] [--dump-ppm DIR] [--dump-frames a-b]\n"
+                 "                 [--csv f] [--json f] [--dump-ppm DIR] [--dump-frames a-b] [--no-grab]\n"
                  "                 [--quiet] [--sync-capture] [--swap] [--cd-barrier] [--backend gl|metal] [--metal-hw-depth] [--metal-commit-draws N] [--trace-draw N@F]\n"
                  "                 [--force-shader-blend] [--draw-limit N[@F]]\n"
                  "                 (exit 77 = no GL / Metal device)\n");
@@ -58,6 +58,9 @@ int MainStream(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--dump-frames") && i + 1 < argc) { if (!ParseRange(argv[++i], &opt.dump_range)) return Usage(); }
         else if (!std::strcmp(argv[i], "--quiet")) opt.quiet = true;
         else if (!std::strcmp(argv[i], "--sync-capture")) opt.deferred_capture = false;
+        else if (!std::strcmp(argv[i], "--no-grab")) opt.grab = false;
+        else if (!std::strcmp(argv[i], "--sync-deposit")) opt.deferred_deposit = false;
+        else if (!std::strcmp(argv[i], "--gate-trace")) opt.gate_trace = true;
         else if (!std::strcmp(argv[i], "--swap")) opt.swap_hidden_window = true;
         else if (!std::strcmp(argv[i], "--cd-barrier")) opt.cd_barrier = true;
         else if (!std::strcmp(argv[i], "--force-shader-blend")) opt.force_shader_blend = true;

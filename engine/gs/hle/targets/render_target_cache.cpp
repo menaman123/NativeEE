@@ -11,6 +11,7 @@ namespace gs {
 RenderTargetCache::RenderTargetCache(render::Backend& be, VramImage& vram, const ScalePolicy& scale)
     : be_(be), vram_(vram), scale_(scale) {
     readback_.SetAliasPages(&alias_);
+    vram_.SetDeferredGate([this] { CompleteDeferred(/*gated=*/true); });
 }
 
 uint32_t RenderTargetCache::FootprintBytes(const RenderTarget& t) {
@@ -19,7 +20,59 @@ uint32_t RenderTargetCache::FootprintBytes(const RenderTarget& t) {
     return uint32_t(t.identity.width) * uint32_t(t.identity.height) * (bpp / 8);
 }
 
-RenderTargetCache::~RenderTargetCache() { DestroyAll(); }
+RenderTargetCache::~RenderTargetCache() {
+    DestroyAll();
+    vram_.SetDeferredGate(nullptr);
+    vram_.ClearDeferred();
+}
+
+uint32_t RenderTargetCache::SyncDrawnDeferred(RenderTarget& t, uint64_t batch_epoch, uint32_t enc_psm,
+                                              uint32_t dest_fbp) {
+    if (!deferred_on_) { deferred_n_.sync++; return SyncDrawn(t, batch_epoch, enc_psm, dest_fbp); }
+    Touch(t.identity.fbp);
+    if (!t.coherence.HasValidContent() || !t.coherence.HasDrawnSinceSync()) return 0;
+    ReadbackEngine::Deferred d;
+    if (!readback_.BeginDeferredColorSync(be_, t, vram_, batch_epoch, enc_psm, dest_fbp, &d)) {
+        // Offered rows or no staging: the synchronous deposit (no GPU drain in the
+        // offered case, the backend's own read otherwise).
+        const int s = t.identity.scale;
+        LogicalRect rows;
+        rows.x0 = std::max(0, t.coherence.drawn_since_sync.x0);
+        rows.y0 = std::max(0, t.coherence.drawn_since_sync.y0);
+        rows.x1 = std::min(t.identity.width, t.coherence.drawn_since_sync.x1);
+        rows.y1 = std::min(t.identity.height, t.coherence.drawn_since_sync.y1);
+        const render::Rect pr{rows.x0 * s, rows.y0 * s, (rows.x1 - rows.x0) * s, (rows.y1 - rows.y0) * s};
+        if (readback_.OfferCovers(t.views.color, pr)) deferred_n_.offered++;
+        else deferred_n_.sync++;
+        return SyncDrawn(t, batch_epoch, enc_psm, dest_fbp);
+    }
+    deferred_.push_back(d);
+    deferred_n_.begun++;
+    // The tail SyncDrawn runs: the drawn rect is reset (Begin did it), the deferred
+    // ledger entry for the deposit base is moot.
+    ledger_.Remove(d.dest_fbp);
+    return 0;
+}
+
+uint32_t RenderTargetCache::CompleteDeferred(bool gated) {
+    if (deferred_.empty() || deferred_flushing_) return 0;
+    deferred_flushing_ = true;
+    const bool commit = vram_.DeferredCommitOwed();
+    std::vector<ReadbackEngine::Deferred> taken;
+    taken.swap(deferred_);
+    vram_.ClearDeferred();   // the staging below passes the gate
+    uint32_t n = 0;
+    for (const ReadbackEngine::Deferred& d : taken) {
+        readback_.CompleteDeferred(be_, vram_, d, commit);
+        ++n;
+    }
+    if (gated) deferred_n_.gated += n;
+    else deferred_n_.frame_end += n;
+    deferred_flushing_ = false;
+    return n;
+}
+
+uint32_t RenderTargetCache::FlushDeferred() { return CompleteDeferred(/*gated=*/false); }
 
 RenderTarget* RenderTargetCache::Find(uint32_t fbp) {
     auto it = targets_.find(fbp);
@@ -78,6 +131,7 @@ RenderTarget& RenderTargetCache::GetOrCreate(uint32_t fbp, int width, int height
 
 void RenderTargetCache::RescueAndDrop(
     std::unordered_map<uint32_t, std::unique_ptr<RenderTarget>>::iterator it) {
+    FlushDeferred();   // a deposit of this target still in flight lands before its rescue
     RenderTarget& t = *it->second;
     // Rescue deposit: everything the surfaces hold would be lost with them, so
     // the full extent is written back at the target's own last-draw epoch
@@ -101,6 +155,7 @@ void RenderTargetCache::Destroy(uint32_t fbp) {
 bool RenderTargetCache::ReplaceAfterQuiescence(
     std::vector<std::unique_ptr<RenderTarget>>& targets, uint32_t recent) {
     if (!ledger_.Empty()) return false;
+    FlushDeferred();
     std::unordered_map<uint32_t, std::unique_ptr<RenderTarget>> next;
     // Allocate the complete map before moving any staged owner.
     for (const auto& target : targets) {
@@ -171,6 +226,7 @@ uint32_t RenderTargetCache::FlushPending(PendingRtSyncLedger::Reason reason, uin
 }
 
 void RenderTargetCache::DestroyAll() {
+    FlushDeferred();
     for (auto& kv : targets_) kv.second->Destroy(be_);
     targets_.clear();
 }
@@ -189,6 +245,7 @@ uint32_t RenderTargetCache::SyncDrawn(RenderTarget& t, uint64_t batch_epoch, uin
 }
 
 void RenderTargetCache::SyncAll() {
+    FlushDeferred();
     // Colour only, batch epoch 0: at save time every page with any recorded EE
     // upload keeps its CPU bytes (the live epoch would be ahead of every page
     // stamp and disarm the newer-upload veto). Every synced target's deferred

@@ -112,6 +112,89 @@ std::vector<std::pair<uint32_t, uint32_t>> ReadbackEngine::ProtectedRanges(
     return out;
 }
 
+bool ReadbackEngine::DrawnRows(const RenderTarget& t, uint32_t enc_psm, LogicalRect* rows) {
+    const CoherenceState& c = t.coherence;
+    if (!c.HasValidContent() || !c.HasDrawnSinceSync()) return false;
+    const int w = t.identity.width, h = t.identity.height;
+    rows->x0 = std::max(0, c.drawn_since_sync.x0);
+    rows->y0 = std::max(0, c.drawn_since_sync.y0);
+    rows->x1 = std::min(w, c.drawn_since_sync.x1);
+    rows->y1 = std::min(h, c.drawn_since_sync.y1);
+    return !rows->Empty() && EncodesColorPsm(enc_psm);
+}
+
+bool ReadbackEngine::OfferCovers(render::SurfaceId color, const render::Rect& pr) const {
+    return offer_.rgba && offer_.color.id == color.id && pr.x >= 0 && pr.y >= 0 && pr.x + pr.w <= offer_.pw &&
+           pr.y + pr.h <= offer_.ph;
+}
+
+bool ReadbackEngine::BeginDeferredColorSync(render::Backend& be, RenderTarget& t, VramImage& vram,
+                                            uint64_t batch_epoch, uint32_t enc_psm, uint32_t dest_fbp,
+                                            Deferred* out) {
+    if (!be.QueryCaps().staging_readback) return false;
+    if (enc_psm == kNoPsmOverride) enc_psm = t.identity.render_psm;
+    LogicalRect rows;
+    if (!DrawnRows(t, enc_psm, &rows)) return false;
+    const int s = t.identity.scale;
+    const render::Rect pr{rows.x0 * s, rows.y0 * s, (rows.x1 - rows.x0) * s, (rows.y1 - rows.y0) * s};
+    if (OfferCovers(t.views.color, pr)) return false;   // the grab's rows: no GPU read either way
+    Psm psm;
+    if (!PsmOf(enc_psm, &psm)) return false;
+    Deferred d;
+    d.fence = be.BeginReadback(t.views.color, pr);
+    if (d.fence.id == 0) return false;
+    d.pr = pr;
+    d.rows = rows;
+    d.fbw = uint32_t(t.identity.width);
+    d.enc_psm = enc_psm;
+    d.dest_fbp = dest_fbp == kSameFbp ? t.identity.fbp : dest_fbp;
+    d.batch_epoch = batch_epoch;
+    d.scale = s;
+    d.keep16 = (psm == Psm::CT16) ? t.coherence.sync_keep_mask16 : uint16_t(0);
+    uint32_t fbo_bpp = RenderTarget::FrameBitsPerPixel(enc_psm);
+    if (fbo_bpp == 0) fbo_bpp = 32;
+    const uint32_t fbo_size = uint32_t(t.identity.width) * uint32_t(t.identity.height) * (fbo_bpp / 8);
+    d.width = uint32_t(t.identity.width);
+    d.height = uint32_t(t.identity.height);
+    d.target_fbp = t.identity.fbp;
+    // The owed span: the page rows the encode touches, the linear span it stages and
+    // the footprint whose upload epochs the protection test reads.
+    const uint32_t bpp = Swizzle::LinearBitsPerPixel(psm) / 8;
+    uint32_t lo, hi, span_lo, span_hi;
+    PageRowRange(d.dest_fbp, d.fbw, psm, rows.y0, rows.y1, &lo, &hi);
+    LinearSpan(d.dest_fbp, d.fbw, bpp, rows.y0, rows.y1, &span_lo, &span_hi);
+    d.span_lo = std::min(lo, span_lo);
+    d.span_hi = std::max(hi, span_hi);
+    if (!(psm == Psm::CT16 && d.keep16 != 0))
+        d.protected_ranges = ProtectedRanges(vram, d.dest_fbp, d.dest_fbp + fbo_size, batch_epoch);
+    // Begin-time facts of the GPU's write order: authorship, alias marks, the drawn
+    // rect reset (a draw after this point is newer than the deposit).
+    EncodeTarget et = EncodeTargetOf(t);
+    et.mark_only = true;
+    EncodeColorRows(et, vram, batch_epoch, rows, d.fbw, false, enc_psm, d.dest_fbp);
+    t.coherence.ClearDrawnSinceSync();
+    vram.NoteDeferred(VramImage::Span{d.span_lo, d.span_hi - d.span_lo});
+    *out = d;
+    return true;
+}
+
+uint32_t ReadbackEngine::CompleteDeferred(render::Backend& be, VramImage& vram, const Deferred& d, bool commit) {
+    const size_t stride = static_cast<size_t>(d.pr.w) * 4;
+    pixels_.assign(stride * d.pr.h, 0);
+    if (!be.PollReadback(d.fence, pixels_.data(), stride)) return 0;
+    EncodeTarget et;
+    et.scale = d.scale;
+    et.keep16 = d.keep16;
+    et.width = d.width;
+    et.height = d.height;
+    et.fbp = d.target_fbp;
+    et.reset_drawn = nullptr;   // reset at Begin
+    et.protected_ranges = &d.protected_ranges;
+    const uint32_t n = EncodeColorRows(et, vram, d.batch_epoch, d.rows, d.fbw, false, d.enc_psm, d.dest_fbp);
+    if (commit) vram.CommitDepositsIn(VramImage::Span{d.span_lo, d.span_hi - d.span_lo});
+    return n;
+}
+
 uint32_t ReadbackEngine::SyncRtToVram(render::Backend& be, RenderTarget& t, VramImage& vram,
                                       uint64_t batch_epoch, const LogicalRect* rescue,
                                       uint32_t rescue_fbw, uint32_t enc_psm, uint32_t dest_fbp) {
@@ -160,8 +243,7 @@ void ReadbackEngine::OfferPixels(render::SurfaceId color, int pw, int ph, const 
 void ReadbackEngine::ReadColorRows(render::Backend& be, render::SurfaceId color, const render::Rect& pr) {
     const size_t stride = static_cast<size_t>(pr.w) * 4;
     pixels_.assign(stride * pr.h, 0);
-    if (offer_.rgba && offer_.color.id == color.id && pr.x >= 0 && pr.y >= 0 && pr.x + pr.w <= offer_.pw &&
-        pr.y + pr.h <= offer_.ph) {
+    if (OfferCovers(color, pr)) {
         // The same attachment, unchanged since the grab: its rows (bottom-up, offer stride).
         const size_t src_stride = static_cast<size_t>(offer_.pw) * 4;
         for (int r = 0; r < pr.h; ++r)
@@ -173,18 +255,47 @@ void ReadbackEngine::ReadColorRows(render::Backend& be, render::SurfaceId color,
     be.Readback(color, pr, pixels_.data(), stride);
 }
 
+ReadbackEngine::EncodeTarget ReadbackEngine::EncodeTargetOf(RenderTarget& t) {
+    EncodeTarget et;
+    et.scale = t.identity.scale;
+    et.keep16 = t.coherence.sync_keep_mask16;
+    et.width = uint32_t(t.identity.width);
+    et.height = uint32_t(t.identity.height);
+    et.fbp = t.identity.fbp;
+    et.reset_drawn = &t;
+    return et;
+}
+
 uint32_t ReadbackEngine::EncodeColorRows(RenderTarget& t, VramImage& vram, uint64_t batch_epoch,
+                                         const LogicalRect& rows, uint32_t fbw, bool rescue,
+                                         uint32_t enc_psm, uint32_t dest_fbp) {
+    return EncodeColorRows(EncodeTargetOf(t), vram, batch_epoch, rows, fbw, rescue, enc_psm, dest_fbp);
+}
+
+uint32_t ReadbackEngine::EncodeColorRows(const EncodeTarget& t, VramImage& vram, uint64_t batch_epoch,
                                          const LogicalRect& rows, uint32_t fbw, bool rescue,
                                          uint32_t enc_psm, uint32_t dest_fbp) {
     Psm psm;
     if (!PsmOf(enc_psm, &psm)) return 0;
     const uint32_t fbp = dest_fbp;   // the deposit base (the target's own unless overridden)
-    const int s = t.identity.scale;
+    const int s = t.scale;
     const int rw = rows.x1 - rows.x0, rh = rows.y1 - rows.y0;
     const int pw = rw * s;
     const uint32_t bpp = Swizzle::LinearBitsPerPixel(psm) / 8;
+    const uint16_t keep16 = (psm == Psm::CT16) ? t.keep16 : uint16_t(0);
+    if (t.mark_only) {
+        // The deferred writeback's Begin-time half (see BeginDeferredColorSync).
+        MarkAuthorTiles(vram, fbp, fbp, fbw, psm, rows);
+        uint32_t span_lo, span_hi;
+        LinearSpan(fbp, fbw, bpp, rows.y0, rows.y1, &span_lo, &span_hi);
+        if (alias_ && span_hi > span_lo) {
+            alias_->MarkCpuDirty(span_lo, span_hi - span_lo);
+            alias_->MarkAliased(span_lo, span_hi - span_lo);
+        }
+        if (t.reset_drawn && fbp == t.fbp) t.reset_drawn->coherence.main_drawn_since_deposit.Reset();
+        return 0;
+    }
     linear_.assign(static_cast<size_t>(rw) * rh * bpp, 0);
-    const uint16_t keep16 = (psm == Psm::CT16) ? t.coherence.sync_keep_mask16 : uint16_t(0);
     for (int y = 0; y < rh; ++y) {
         for (int x = 0; x < rw; ++x) {
             // Nearest physical texel of the logical pixel (identity at scale 1).
@@ -223,10 +334,12 @@ uint32_t ReadbackEngine::EncodeColorRows(RenderTarget& t, VramImage& vram, uint6
     // (CT16: only when the draw wrote every bit); the footprint is sized by the
     // ENCODE format (a 16-bit encode of a 512x448 buffer is half the bytes).
     std::vector<std::pair<uint32_t, uint32_t>> protected_ranges;
-    if (!(psm == Psm::CT16 && keep16 != 0)) {
+    if (t.protected_ranges) {
+        protected_ranges = *t.protected_ranges;   // as of the deferred writeback's Begin
+    } else if (!(psm == Psm::CT16 && keep16 != 0)) {
         uint32_t fbo_bpp = RenderTarget::FrameBitsPerPixel(enc_psm);
         if (fbo_bpp == 0) fbo_bpp = 32;
-        const uint32_t fbo_size = uint32_t(t.identity.width) * uint32_t(t.identity.height) * (fbo_bpp / 8);
+        const uint32_t fbo_size = t.width * t.height * (fbo_bpp / 8);
         protected_ranges = ProtectedRanges(vram, fbp, fbp + fbo_size, batch_epoch);
     }
     // The main body: the linear rows swizzled onto the page rows.
@@ -272,7 +385,7 @@ uint32_t ReadbackEngine::EncodeColorRows(RenderTarget& t, VramImage& vram, uint6
     }
     // The target's own bytes reached the mirror: the main image is no newer than
     // local memory until it draws again.
-    if (fbp == t.identity.fbp) t.coherence.main_drawn_since_deposit.Reset();
+    if (t.reset_drawn && fbp == t.fbp) t.reset_drawn->coherence.main_drawn_since_deposit.Reset();
     return static_cast<uint32_t>(rw) * rh;
 }
 
