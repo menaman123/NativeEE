@@ -125,7 +125,6 @@ namespaces for one field the consolidator picked one (noted). Defaults = today's
 | PS2_LOAD_TURBO | `cdvd.load_turbo` | **false** | s71 user directive; sub-knobs NORM'd as governor constants (see reconciliation) |
 | PS2_SOUND | `audio.enabled` | true | |
 | PS2_SDR_BLOCK_MS | `audio.sdr_block_ms` | 8 | 4E″ it.2: the virtual SPU2 block duration, paced on the mixer frame clock (48 frames/ms), not the wall clock |
-| (none) | `audio.interpolation` | `linear` | the SPU2 voice resampler: `linear` (2-tap; the audio lane's hashes/fixtures) or `gaussian` (the hardware's 4-tap gauss table, PCSX2's; opt-in -- changes the audio-lane bytes; the deterministic profile pins `linear`) |
 | PS2_GUI_OPEN | `ui.gui_open` | dev default on | shard0 said `dev.gui_open`; pick `ui.` |
 | PS2_SAVE_SLOT | `save.slot` | 0 | GUI savestate browser is the richer chooser |
 | PS2_LOG | `dev.log_level` | quiet | compile-time categories do the heavy lifting |

@@ -52,6 +52,7 @@ FINGERPRINT_EXCLUDED_PREFIXES = ("harness.", "paths.", "meta.")
 # key, type, peak, det ("=" = unchanged by the preset), source_var
 ROWS = [
     ("audio.enabled", "bool", "on", "=", "PS2_SOUND"),
+    ("audio.interpolation", "enum(linear|gaussian)", "linear", "=", "-"),
     ("audio.sdr_block_ms", "int", "8", "=", "PS2_SDR_BLOCK_MS"),
     ("audio.volume", "int", "100", "=", "GUI"),
     ("cdvd.delivery_visibility", "enum(boundary|poll)", "poll", "=", "-"),
