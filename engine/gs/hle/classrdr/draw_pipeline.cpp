@@ -238,6 +238,40 @@ void DrawPipeline::OnSyncAll() {
     d_.cache->SyncAll();
 }
 
+void DrawPipeline::ClearFrame(Frame* out) {
+    out->rgba.clear();
+    out->w = out->h = 0;
+    out->grabbed = false;
+    out->source = ScanoutComposer::Source::None;
+    out->source_fbp = kNoFbp;
+    out->source_fallback = false;
+}
+
+bool DrawPipeline::CompletePendingGrab(Frame* out) {
+    if (!pending_grab_.valid) return false;
+    const PendingGrab pg = pending_grab_;
+    pending_grab_ = PendingGrab{};
+    ClearFrame(out);
+    out->rgba.assign(static_cast<size_t>(pg.w) * pg.h * 4, 0);
+    if (!d_.be->PollReadback(pg.fence, out->rgba.data(), static_cast<size_t>(pg.w) * 4)) {
+        out->rgba.clear();
+        return true;   // the fence was unknown (a device reset): no grab for that frame
+    }
+    out->w = pg.w;
+    out->h = pg.h;
+    out->grabbed = true;
+    out->source = pg.source;
+    out->source_fbp = pg.source_fbp;
+    out->source_fallback = pg.source_fallback;
+    return true;
+}
+
+void DrawPipeline::DropPendingGrab() {
+    if (!pending_grab_.valid) return;
+    d_.be->PollReadback(pending_grab_.fence, nullptr, 0);   // releases the staging buffer
+    pending_grab_ = PendingGrab{};
+}
+
 void DrawPipeline::FrameEndGrab(bool ee_frame_end, Frame* out) {
     frame_end_t0_ = NowNs();
     const render::CallCensus* census = d_.be->Census();
@@ -249,6 +283,35 @@ void DrawPipeline::FrameEndGrab(bool ee_frame_end, Frame* out) {
     if (d_.resolver) d_.resolver->Trace().OnFrameEnd();
     if (ee_frame_end) d_.presenter->MarkEeFrameEnd();
     d_.cache->FlushPending(PendingRtSyncLedger::Reason::Present, 0, 0, /*reader_pages_only=*/true);
+    if (out && deferred_grab_) {
+        // A grab still pending here was never completed by the caller: drop it (the
+        // caller completes before it asks for the next one).
+        DropPendingGrab();
+        ClearFrame(out);
+        render::FenceId fence{};
+        int w = 0, h = 0;
+        const bool ok = d_.presenter->BeginGrab(&fence, &out->rgba, &w, &h, d_.vram);
+        if (!ok || w <= 0 || h <= 0) {
+            ClearFrame(out);
+        } else if (fence.id) {
+            out->rgba.clear();
+            pending_grab_.valid = true;
+            pending_grab_.fence = fence;
+            pending_grab_.w = w;
+            pending_grab_.h = h;
+            pending_grab_.source = d_.scanout->LastGrabSource();
+            pending_grab_.source_fbp = d_.scanout->LastGrabFbp();
+            pending_grab_.source_fallback = d_.scanout->LastGrabFallback();
+        } else {
+            out->w = w;
+            out->h = h;
+            out->grabbed = true;
+            out->source = d_.scanout->LastGrabSource();
+            out->source_fbp = d_.scanout->LastGrabFbp();
+            out->source_fallback = d_.scanout->LastGrabFallback();
+        }
+        return;
+    }
     if (out) {
         out->rgba.clear();
         out->w = out->h = 0;

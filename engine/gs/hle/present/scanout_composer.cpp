@@ -74,6 +74,19 @@ bool ScanoutComposer::GrabLocalMemory(const VramImage& vram, std::vector<uint8_t
 }
 
 bool ScanoutComposer::GrabDisplay(std::vector<uint8_t>* out, int* w, int* h, const VramImage* vram) {
+    return GrabDisplayImpl(nullptr, out, w, h, vram);
+}
+
+bool ScanoutComposer::BeginGrabDisplay(render::FenceId* fence, std::vector<uint8_t>* out, int* w, int* h,
+                                       const VramImage* vram) {
+    *fence = render::FenceId{};
+    return GrabDisplayImpl(fence, out, w, h, vram);
+}
+
+// The shared source pick; `fence` null = the synchronous read into `out`, else the
+// queued read (BeginReadback) named by *fence, `out` untouched for a Target.
+bool ScanoutComposer::GrabDisplayImpl(render::FenceId* fence, std::vector<uint8_t>* out, int* w, int* h,
+                                      const VramImage* vram) {
     *w = 0;
     *h = 0;
     last_grab_ = Source::None;
@@ -92,8 +105,13 @@ bool ScanoutComposer::GrabDisplay(std::vector<uint8_t>* out, int* w, int* h, con
     if (!t) return false;
     const int pw = t->identity.PhysicalW(), ph = t->identity.PhysicalH();
     if (pw <= 0 || ph <= 0) return false;
-    out->assign(static_cast<size_t>(pw) * ph * 4, 0);
-    be_.Readback(t->views.color, render::Rect{0, 0, pw, ph}, out->data(), static_cast<size_t>(pw) * 4);
+    if (fence) {
+        *fence = be_.BeginReadback(t->views.color, render::Rect{0, 0, pw, ph});
+        if (!fence->id) return false;
+    } else {
+        out->assign(static_cast<size_t>(pw) * ph * 4, 0);
+        be_.Readback(t->views.color, render::Rect{0, 0, pw, ph}, out->data(), static_cast<size_t>(pw) * 4);
+    }
     *w = pw;
     *h = ph;
     last_grab_ = Source::Target;
