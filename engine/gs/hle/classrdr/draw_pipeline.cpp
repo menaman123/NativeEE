@@ -308,10 +308,13 @@ void DrawPipeline::OnOwnedFrameEnd(bool ee_frame_end, uint32_t source_key) {
 void DrawPipeline::EmitCounters(std::FILE* f) const {
     if (!f) return;
     std::fprintf(f, "[GS-PIPELINE] draws=%llu same_buffer_flushes=%llu shuffle_snaps=%llu zsrc_arms=%llu"
-                    " dropped_materializes=%llu\n",
+                    " dropped_materializes=%llu alpha_merges_gpu=%llu alpha_merges_cpu=%llu alpha_lane_uploads_skipped=%llu\n",
                  (unsigned long long)draw_seq_, (unsigned long long)same_buffer_flushes_,
                  (unsigned long long)snapped_draws_, (unsigned long long)zsrc_arms_,
-                 (unsigned long long)dropped_materializes_);
+                 (unsigned long long)dropped_materializes_,
+                 (unsigned long long)(d_.refresher ? d_.refresher->AlphaMergesGpu() : 0),
+                 (unsigned long long)(d_.refresher ? d_.refresher->AlphaMergesCpu() : 0),
+                 (unsigned long long)(d_.refresher ? d_.refresher->AlphaLaneUploadsSkipped() : 0));
 }
 
 }  // namespace gs

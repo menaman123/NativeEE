@@ -112,6 +112,8 @@ public:
     // Census: alpha merges taken on the GPU route / on the CPU route.
     uint64_t AlphaMergesGpu() const { return alpha_merges_gpu_; }
     uint64_t AlphaMergesCpu() const { return alpha_merges_cpu_; }
+    // Census: GPU merges whose lane bytes were already in the lane surface (upload skipped).
+    uint64_t AlphaLaneUploadsSkipped() const { return alpha_lane_uploads_skipped_; }
 
 private:
     void EnforceUploadedBudget();
@@ -128,6 +130,7 @@ private:
     // false when the backend has no pass (the caller takes the CPU route).
     bool AlphaMergeOnGpu(RenderTarget& t, int y0, int y1);
     bool EnsureLane(int w, int h);
+    static uint64_t LaneKey(const uint8_t* bytes, size_t n, int w, int h);
     void RefreshCt16(RenderTarget& t, int y0, int y1, uint32_t bw, uint64_t job_epoch, bool* absorbed);
     void UploadRows(RenderTarget& t, int y0, int y1, const uint8_t* rgba);
 
@@ -144,7 +147,10 @@ private:
     std::vector<uint8_t> lane_;         // the band's alpha bytes (R8, logical)
     render::SurfaceId lane_tex_;        // the R8 lane surface (grown to the largest band; 0 = none yet)
     int lane_w_ = 0, lane_h_ = 0;
-    uint64_t alpha_merges_gpu_ = 0, alpha_merges_cpu_ = 0;
+    uint64_t alpha_merges_gpu_ = 0, alpha_merges_cpu_ = 0, alpha_lane_uploads_skipped_ = 0;
+    // The content key (FNV-1a over w, h, the bytes) of the lane surface's current contents.
+    uint64_t lane_key_ = 0;
+    uint32_t lane_key_tex_ = 0;   // the lane surface it was uploaded into (0 = none yet)
 };
 
 }  // namespace gs

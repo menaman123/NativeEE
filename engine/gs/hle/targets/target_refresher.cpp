@@ -37,13 +37,43 @@ bool TargetRefresher::EnsureLane(int w, int h) {
     return lane_tex_.id != 0;
 }
 
+// The lane's content key: 64-bit words mixed (FNV-1a's prime), the tail bytes
+// zero-padded; the band's size is part of the key.
+uint64_t TargetRefresher::LaneKey(const uint8_t* bytes, size_t n, int w, int h) {
+    uint64_t key = 0xcbf29ce484222325ull ^ (uint64_t(uint32_t(w)) << 32) ^ uint64_t(uint32_t(h));
+    size_t i = 0;
+    for (; i + 8 <= n; i += 8) {
+        uint64_t v;
+        std::memcpy(&v, bytes + i, 8);
+        key = (key ^ v) * 0x100000001b3ull;
+        key ^= key >> 29;
+    }
+    if (i < n) {
+        uint64_t v = 0;
+        std::memcpy(&v, bytes + i, n - i);
+        key = (key ^ v) * 0x100000001b3ull;
+    }
+    return key;
+}
+
 bool TargetRefresher::AlphaMergeOnGpu(RenderTarget& t, int y0, int y1) {
     if (!be_.QueryCaps().alpha_lane_write) return false;
     const int w = t.identity.width, h = y1 - y0, s = t.identity.scale;
     if (!EnsureLane(w, h)) return false;
     lane_.resize(static_cast<size_t>(w) * h);
     for (size_t i = 0, n = lane_.size(); i < n; ++i) lane_[i] = linear_[i * 4 + 3];
-    be_.Upload(lane_tex_, render::Rect{0, 0, w, h}, lane_.data(), static_cast<size_t>(w));
+    const uint64_t key = LaneKey(lane_.data(), lane_.size(), w, h);
+    // The lane surface is written only here: when the band's alpha bytes are the ones
+    // already in it (the per-frame refresh of a target whose alpha lane did not move)
+    // the 114688-byte upload is skipped; the merge pass still runs (the attachment's
+    // alpha may have moved under the GPU's draws since).
+    if (lane_tex_.id != lane_key_tex_ || key != lane_key_) {
+        be_.Upload(lane_tex_, render::Rect{0, 0, w, h}, lane_.data(), static_cast<size_t>(w));
+        lane_key_tex_ = lane_tex_.id;
+        lane_key_ = key;
+    } else {
+        ++alpha_lane_uploads_skipped_;
+    }
     const LogicalRect& newer = t.coherence.main_drawn_since_deposit;
     render::Rect exclude{};
     if (!newer.Empty()) exclude = render::Rect{newer.x0 * s, newer.y0 * s, (newer.x1 - newer.x0) * s, (newer.y1 - newer.y0) * s};
