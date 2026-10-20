@@ -28,13 +28,25 @@ public:
     uint64_t Reads() const { return reads_; }
     uint64_t Writes() const { return writes_; }  // MMIO accesses (GsPrivRegs::Writes counts register writes)
 
+    // The E425 hazard census: what the EE reads of the GS event state. CSR reads
+    // split by the event bits the returned word carried (FINISH bit 1, SIGNAL bit 0),
+    // SIGLBLID reads, and the CSR W1C writes that cleared FINISH / SIGNAL.
+    struct ReadCensus {
+        uint64_t csr = 0, csr_finish_set = 0, csr_signal_set = 0, siglblid = 0, other = 0;
+        uint64_t csr_clear_finish = 0, csr_clear_signal = 0;
+    };
+    const ReadCensus& Census() const { return census_; }
+
 private:
     uint32_t ReadHalf(uint32_t addr) const;
     void WriteHalf(uint32_t addr, uint32_t value);
+    void NoteRead(uint32_t addr, uint64_t word);
+    void NoteWrite(uint32_t addr, uint64_t word);
 
     GsState& gs_;
     uint64_t reads_ = 0;
     uint64_t writes_ = 0;
+    ReadCensus census_;
 };
 
 }  // namespace gs
