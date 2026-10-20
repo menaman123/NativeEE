@@ -65,6 +65,8 @@ public:
         uint32_t max_frames = 0;           // 0 = the whole capture
         bool quiet = false;
         bool deferred_capture = true;      // the play composition's present-capture mode (--sync-capture = off)
+        bool phash = false;                // --phash: hash the presented window image per frame (CSV column phash; the
+                                           // oracle of a --no-grab run -- ~3 ms a frame of harness time, so opt-in)
         bool gate_trace = false;           // --gate-trace: the image's first gated deferred-deposit completions on stderr
         bool deferred_deposit = true;      // --sync-deposit: the display deposit's GPU read at once (the A/B of the deferral)
         bool grab = true;                  // --no-grab: the play composition with no frames-lane reader (grab_wanted false;

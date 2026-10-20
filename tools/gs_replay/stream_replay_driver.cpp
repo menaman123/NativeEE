@@ -143,7 +143,7 @@ void StreamReplayDriver::PresentWindow() {
         ++presents_read_;
         // The presented image's hash: an oracle over the composed window that does not
         // depend on the frames-lane grab (--no-grab runs compare on it).
-        presented_hash_ = verify::FrameHasher::HashNativeScale(presented_.data(), w, h, 1);
+        if (opt_.phash) presented_hash_ = verify::FrameHasher::HashNativeScale(presented_.data(), w, h, 1);
     }
     if (opt_.swap_hidden_window && !opt_.metal) win_.Swap();
     else be_->FlushCommands();   // play: the hidden window is never shown -- a flush, not a swap

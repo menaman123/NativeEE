@@ -7,7 +7,7 @@ THROUGHPUT harness:
 ```
 gs_replay stream <in.gsstream> [--scale N] [--warmup N] [--max-frames N] [--csv f] [--json f]
                  [--dump-ppm DIR] [--dump-frames a-b] [--quiet] [--sync-capture] [--swap]
-                 [--cd-barrier]                                                  (exit 77 = no GL)
+                 [--cd-barrier] [--no-grab] [--sync-deposit] [--phash] [--gate-trace]   (exit 77 = no GL)
 ```
 
 `stream` replays a `.gsstream` consumer-stream capture (`engine/gs/hle/capture`: everything the
@@ -27,6 +27,15 @@ replays' hash sequences).
 `--sync-capture` / `--swap` / `--cd-barrier` select the pre-lever forms (the synchronous
 present readback, the hidden window's swap) and the NV_texture_barrier destination read (off by
 default: not tile-coherent on Apple's GL-on-Metal) for A/B runs.
+
+`--no-grab` is the play composition with no frames-lane reader (`grab_wanted` false: no display
+grab, no lane hash -- the `hash` column reads 0, so it is a TIMING run); `--sync-deposit` turns
+the deferred display deposit (the GPU read one frame late behind a fence) back into the
+synchronous one for the A/B; `--phash` adds a `phash` column -- the hash of the PRESENTED window
+image read after each present -- which is the identity oracle of a `--no-grab` run (compare it
+against a grabbing run's; it costs ~3 ms a frame of harness time, hence opt-in); `--gate-trace`
+prints the first deferred-deposit completions forced by a reader / writer of the owed span. The
+`[GS-PIPELINE]` lines at the end carry the pipeline census (alpha merges, the deferred deposit).
 
 Belongs: `gs_replay.cpp` (main), `stream_replay_driver.{h,cpp}` (StreamReplayDriver). The first
 title's corpus-replay sources stay for that tree's driver (`census`, `gsrep_file`, `replay_diff`,
