@@ -38,8 +38,13 @@ public:
     void WriteAlphaLane(render::SurfaceId dst, const render::Rect& dst_rect, render::SurfaceId lane,
                         const render::Rect& exclude) override;
     void Readback(render::SurfaceId id, const render::Rect& r, void* out, size_t stride) override;
+    // The asynchronous read, modelled as GL orders it: the bytes are taken at Begin
+    // (a later write to the surface does not reach the read) and handed back at Poll
+    // (rows packed at rect.w * 4 unless a stride is given). An unknown handle polls
+    // false. `readback_pending` = reads begun and not yet polled.
     render::FenceId BeginReadback(render::SurfaceId, const render::Rect&) override;
     bool PollReadback(render::FenceId, void*, size_t) override;
+    size_t readback_pending() const { return pending_reads_.size(); }
     void Present(const render::ScanoutDesc& d) override;
     void ClearStencil(render::SurfaceId stencil, uint8_t value) override;
     void DrawConstQuad(render::SurfaceId color, render::SurfaceId stencil, const render::Rect& scissor,
@@ -84,6 +89,13 @@ public:
 private:
     std::map<uint32_t, Surface> surfaces_;
     uint32_t next_ = 0;
+    struct PendingRead {
+        std::vector<uint8_t> bytes;
+        size_t stride = 0;
+        int rows = 0;
+    };
+    std::map<uint64_t, PendingRead> pending_reads_;
+    uint64_t next_fence_ = 1;
 };
 
 }  // namespace test

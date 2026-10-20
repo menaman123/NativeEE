@@ -199,8 +199,30 @@ void FakeBackend::Readback(render::SurfaceId id, const render::Rect& r, void* ou
     ++readbacks;
 }
 
-render::FenceId FakeBackend::BeginReadback(render::SurfaceId, const render::Rect&) { return {}; }
-bool FakeBackend::PollReadback(render::FenceId, void*, size_t) { return true; }
+render::FenceId FakeBackend::BeginReadback(render::SurfaceId id, const render::Rect& r) {
+    if (!Has(id) || r.w <= 0 || r.h <= 0) return {};
+    PendingRead pr;
+    pr.stride = size_t(r.w) * 4;
+    pr.rows = r.h;
+    pr.bytes.assign(pr.stride * size_t(r.h), 0);
+    Readback(id, r, pr.bytes.data(), pr.stride);   // the bytes as of Begin (counted as one readback)
+    const uint64_t f = next_fence_++;
+    pending_reads_[f] = std::move(pr);
+    return render::FenceId{f};
+}
+
+bool FakeBackend::PollReadback(render::FenceId fence, void* out, size_t stride) {
+    auto it = pending_reads_.find(fence.id);
+    if (it == pending_reads_.end()) return false;
+    if (out) {
+        const size_t dst = stride ? stride : it->second.stride;
+        for (int y = 0; y < it->second.rows; ++y)
+            std::memcpy(static_cast<uint8_t*>(out) + dst * size_t(y), it->second.bytes.data() + it->second.stride * size_t(y),
+                        std::min(dst, it->second.stride));
+    }
+    pending_reads_.erase(it);
+    return true;
+}
 
 void FakeBackend::Present(const render::ScanoutDesc& d) {
     last_present = d;
