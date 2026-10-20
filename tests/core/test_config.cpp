@@ -306,6 +306,7 @@ static void TestFingerprint() {
     c.paths.iso = "/x.iso";              // excluded
     c.diag.tick_census = true;           // an observer: excluded
     c.engine.mtvu_kick_drop = false;     // the worker's host scheduling: excluded
+    c.engine.mtvu_early_finish = true;   // the FINISH raise / boundary scheduling (E425): excluded
     CHECK(c.Fingerprint() == "engine.mtvu=off;video.scale=2;profile=default");
     // Hash semantics: FNV over each entry followed by ";".
     const std::string fp = c.Fingerprint();

@@ -178,6 +178,17 @@ void GsPrivRegs::Signal(uint64_t value) {
 }
 
 void GsPrivRegs::Finish() {
+    if (finish_consumer_ && finish_consumer_()) {
+        // Pre-raised at the EE's staging point: the bit was set and the edge
+        // raised there; setting the bit again here would undo the guest's W1C
+        // clear of that very event.
+        finishes_consumed_.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    FinishNow();
+}
+
+void GsPrivRegs::FinishNow() {
     csr_.fetch_or(kCsrFinish, std::memory_order_relaxed);
     interrupts_.fetch_add(1, std::memory_order_relaxed);
     if (interrupt_observer_) interrupt_observer_(kCsrFinish);

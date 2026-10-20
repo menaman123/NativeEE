@@ -105,8 +105,15 @@ void MtvuWorker::Push(Segment&& seg) {
     if (wake) cv_work_.notify_one();
 }
 
+void MtvuWorker::SetStageObserver(StageObserver span, StageResetObserver reset, void* user) {
+    stage_observer_ = span;
+    stage_reset_observer_ = reset;
+    stage_observer_user_ = user;
+}
+
 void MtvuWorker::SubmitVif1(const uint8_t* data, size_t size, bool tte) {
     if (!IsRunning() || data == nullptr || size == 0) return;
+    if (stage_observer_) stage_observer_(stage_observer_user_, data, size, tte);
     const bool drop = backpressure_.Engage();
     Segment seg;
     seg.op = Segment::Op::Data;
@@ -122,6 +129,7 @@ void MtvuWorker::SubmitVif1(const uint8_t* data, size_t size, bool tte) {
 
 void MtvuWorker::SubmitResetLatch() {
     if (!IsRunning()) return;
+    if (stage_reset_observer_) stage_reset_observer_(stage_observer_user_);
     Segment seg;
     seg.op = Segment::Op::ResetLatch;
     Push(std::move(seg));
@@ -145,6 +153,7 @@ uint64_t MtvuWorker::DroppedKicks() const { return worker_vu1_.DroppedKicks(); }
 
 void MtvuWorker::SubmitVif1Staged(const uint8_t* data, size_t size, bool tte) {
     if (!IsRunning() || data == nullptr || size == 0) return;
+    if (stage_observer_) stage_observer_(stage_observer_user_, data, size, tte);
     // The verdict of the batch is the verdict at its FIRST record (a batch is
     // one walk's spans, flushed before the frame mark; a verdict flip inside a
     // frame -- the valve -- takes effect at the next record's batch).

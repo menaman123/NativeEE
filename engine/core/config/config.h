@@ -189,6 +189,13 @@ struct EngineConfig {
     // dropped). off = the bytes/frames PARK (the Mecha-Bandicoot 560 ms stall
     // of 2026-10-13; kept as the red-before and the deterministic lanes' path).
     bool    mtvu_kick_drop = true;
+    // E425/E426 (MTVU only): the GS FINISH is raised when the EE has STAGED the
+    // packet carrying it (not when the parser reaches it behind the worker) and
+    // the frame boundary is deferred (no terminal sync, no VSync drain fence,
+    // the GIF_STAT read answered from the EE's own view) -- the frame becomes
+    // max(worker, logic) instead of their sum. A guest-observable scheduling
+    // change: off by default until its gates hold (run.meta mtvu= early_finish).
+    bool    mtvu_early_finish = false;
     int     ee_runahead = 2;
     Pacing  pacing = Pacing::Realtime;
     int     time_regime_pin = -1;         // -1 = none (adaptive)

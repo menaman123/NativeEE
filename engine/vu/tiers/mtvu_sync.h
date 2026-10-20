@@ -64,6 +64,14 @@ public:
     void NoteSiteSkipped(SyncSite site);
     // True and `*stat` = the busy view while segments are in flight.
     bool TryVif1StatBusyView(uint32_t* stat) const;
+    // The busy view answered a VIF1_STAT read: the EE is POLLING the unit (the
+    // title's sync-path loop before its next kick). Instead of spinning the host
+    // core against the worker it waits for, park until the worker seals its
+    // last in-flight segment or falls idle (kPollNs at most), as WaitProgress
+    // does; the next read sees the result. Counted (Vif1StatPolls / Parks).
+    void ParkVif1StatPoll(bool park);   // park=false: count only
+    uint64_t Vif1StatPolls() const { return vif1_stat_polls_.load(std::memory_order_relaxed); }
+    uint64_t Vif1StatParks() const { return vif1_stat_parks_.load(std::memory_order_relaxed); }
     // Opportunistic EE-side drains of the sealed prefix (no wait).
     void TryEagerDrain();
     void TryParkDrain();
@@ -111,6 +119,8 @@ private:
     std::atomic<uint64_t> sync_count_[static_cast<size_t>(SyncSite::Count)];
     std::atomic<uint64_t> skipped_count_[static_cast<size_t>(SyncSite::Count)];
     std::atomic<uint64_t> progress_waits_{0};
+    std::atomic<uint64_t> vif1_stat_polls_{0};
+    std::atomic<uint64_t> vif1_stat_parks_{0};
     std::atomic<uint64_t> progress_idle_{0};
     void (*after_sync_)(void* user) = nullptr;
     void* after_sync_user_ = nullptr;

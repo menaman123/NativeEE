@@ -131,7 +131,10 @@ endforeach()
 # over GsState (64-bit CSR RESET -> kCsrAfterReset readable, FINISH + 32-bit W1C;
 # 32-bit halves merge either order; DISPFB/DISPLAY/BGCOLOR through the handler
 # emit the presenter jobs once per changed value; 16/8-bit lanes widen).
-foreach(pair "GsMmioHandlerCsr;csr" "GsMmioHandlerHalves;halves" "GsMmioHandlerJobs;jobs" "GsMmioHandlerWiden;widen")
+# GsMmioHandlerEarlyFinish (E425): FinishNow raises once + sets CSR.FINISH; a consumed Finish()
+# neither re-sets the bit after the guest's W1C nor raises again; the EE read census.
+foreach(pair "GsMmioHandlerCsr;csr" "GsMmioHandlerHalves;halves" "GsMmioHandlerJobs;jobs" "GsMmioHandlerWiden;widen"
+             "GsMmioHandlerEarlyFinish;early_finish")
     list(GET pair 0 tname)
     list(GET pair 1 arg)
     add_test(NAME ${tname} COMMAND test_gs_mmio_handler ${arg})

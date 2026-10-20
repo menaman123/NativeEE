@@ -92,6 +92,13 @@ public:
     static void StagedFeedThunk(void* user, const uint8_t* data, size_t size, bool tte);
     static void StagedFlushThunk(void* user);
     static void StagedResetThunk(void* user);
+    // E425: a tap on the producer edge -- every span the EE stages (SubmitVif1 /
+    // SubmitVif1Staged: the bytes, the TTE flag) and every latch reset, on the
+    // producer thread before the segment is queued. The stack's FINISH scan
+    // reads the chain here, at the point the EE has it. Null = off.
+    using StageObserver = void (*)(void* user, const uint8_t* data, size_t size, bool tte);
+    using StageResetObserver = void (*)(void* user);
+    void SetStageObserver(StageObserver span, StageResetObserver reset, void* user);
 
     // Segments in flight (acquire); backs the VIF1_STAT busy view.
     bool IsBusy() const;
@@ -186,6 +193,9 @@ private:
     bool thread_started_ = false;
     void (*on_start_)(void*) = nullptr;
     void* on_start_user_ = nullptr;
+    StageObserver stage_observer_ = nullptr;
+    StageResetObserver stage_reset_observer_ = nullptr;
+    void* stage_observer_user_ = nullptr;
 
     std::atomic<uint32_t> inflight_{0};
     std::atomic<uint64_t> pending_bytes_{0};

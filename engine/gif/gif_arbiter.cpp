@@ -40,6 +40,55 @@ void GifArbiter::SetDrainObserver(DrainObserver fn, void* user) {
 
 void GifArbiter::SetMarkerOwner(GifMarkerOwner* owner) { owner_ = owner; }
 
+// ---- E425 early FINISH ---------------------------------------------------------
+
+void GifArbiter::SetEarlyFinish(FinishRaiser raiser, void* user) {
+    finish_raiser_ = raiser;
+    finish_raiser_user_ = user;
+}
+
+void GifArbiter::PreRaiseFinish(uint32_t n) {
+    if (n == 0 || finish_raiser_ == nullptr) return;
+    for (uint32_t i = 0; i < n; ++i) {
+        // The count goes up BEFORE the raise: a parser that reaches the write
+        // first (impossible for a staged packet, cheap to order anyway) consumes it.
+        pre_raised_finish_.fetch_add(1, std::memory_order_acq_rel);
+        pre_raised_total_.fetch_add(1, std::memory_order_relaxed);
+        finish_raiser_(finish_raiser_user_);
+    }
+}
+
+bool GifArbiter::ConsumePreRaisedFinish() {
+    uint32_t n = pre_raised_finish_.load(std::memory_order_acquire);
+    while (n != 0) {
+        if (pre_raised_finish_.compare_exchange_weak(n, n - 1, std::memory_order_acq_rel)) {
+            consumed_total_.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        }
+    }
+    return false;
+}
+
+void GifArbiter::ResetEarlyFinish() {
+    pre_raised_finish_.store(0, std::memory_order_release);
+    path3_scan_.Reset();
+}
+
+// A PATH3 submit from the EE thread while the worker runs lands in the inbox
+// behind the worker's markers: its FINISH writes are pre-raised here. Inline
+// (no worker) the parser reaches them in this very call; from the worker or the
+// drain thread the submit is not the EE's staging.
+void GifArbiter::ScanPath3ForFinish(const uint8_t* data, size_t size) {
+    if (finish_raiser_ == nullptr || !WorkerRunning() || owner_->OnWorkerThread() || OnDrainThread()) return;
+    const uint32_t found = path3_scan_.Feed(data, size);
+    // The parser's FinishPath3 at the pass end drops a non-IMAGE tag left open.
+    if (path3_scan_.MidPacket() && !path3_scan_.MidImage()) path3_scan_.Reset();
+    if (found) {
+        pre_raised_path3_.fetch_add(found, std::memory_order_relaxed);
+        PreRaiseFinish(found);
+    }
+}
+
 void GifArbiter::AttachDrainThread(GifDrainThread* thread) { drain_thread_ = thread; }
 
 bool GifArbiter::WorkerRunning() const { return owner_ != nullptr && owner_->Running(); }
@@ -126,6 +175,7 @@ void GifArbiter::submit(GifPath path, const uint8_t* data, size_t size, bool is_
     pkt.is_directhl = path == GifPath::Path2 && is_directhl;
     pkt.is_path3_image = path == GifPath::Path3 && IsImagePacket(data, size);
     pkt.data.assign(data, data + size);
+    if (path == GifPath::Path3) ScanPath3ForFinish(data, size);
     Enqueue(std::move(pkt));
 }
 
@@ -137,6 +187,7 @@ void GifArbiter::submitOwned(GifPath path, std::vector<uint8_t>&& data, bool is_
     pkt.is_directhl = path == GifPath::Path2 && is_directhl;
     pkt.is_path3_image = path == GifPath::Path3 && IsImagePacket(data.data(), data.size());
     pkt.data = std::move(data);
+    if (path == GifPath::Path3) ScanPath3ForFinish(pkt.data.data(), pkt.data.size());
     Enqueue(std::move(pkt));
 }
 
@@ -386,4 +437,5 @@ void GifArbiter::clear() {
     if (freed) pending_bytes_.fetch_sub(freed, std::memory_order_relaxed);
     inbox_.clear();
     sealed_ready_.store(0, std::memory_order_relaxed);
+    ResetEarlyFinish();
 }
