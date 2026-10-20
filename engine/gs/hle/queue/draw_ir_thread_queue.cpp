@@ -38,9 +38,9 @@ void DrawIrThreadQueue::Stop() {
     std::lock_guard<std::mutex> lk(mu_);
     running_ = false;
     PS2R_LOG(PERF, Info,
-             "gs queue: policy=%s frame_skip=%d enqueued=%llu consumed=%llu frames=%llu dropped=%llu max_depth=%llu "
+             "gs queue: policy=%s frame_skip=%d/%u enqueued=%llu consumed=%llu frames=%llu dropped=%llu max_depth=%llu "
              "lockstep_waits=%llu/%llu us room_waits=%llu/%llu us syncs=%llu/%llu us ordered_waits=%llu/%llu us frame_waits=%llu",
-             policy_ == Policy::Lockstep ? "lockstep" : "pipelined", frame_skip_ ? 1 : 0,
+             policy_ == Policy::Lockstep ? "lockstep" : "pipelined", frame_skip_ ? 1 : 0, frame_skip_depth_,
              static_cast<unsigned long long>(n_.enqueued), static_cast<unsigned long long>(n_.consumed),
              static_cast<unsigned long long>(n_.frames), static_cast<unsigned long long>(n_.frames_dropped),
              static_cast<unsigned long long>(n_.max_depth), static_cast<unsigned long long>(n_.lockstep_waits),
@@ -111,9 +111,10 @@ void DrawIrThreadQueue::RethrowPendingFault() {
     std::rethrow_exception(e);
 }
 
-void DrawIrThreadQueue::SetFrameSkip(bool on) {
+void DrawIrThreadQueue::SetFrameSkip(bool on, uint32_t pending_frames) {
     std::lock_guard<std::mutex> lk(mu_);
     frame_skip_ = on && policy_ == Policy::Pipelined;
+    frame_skip_depth_ = pending_frames == 0 ? 1 : pending_frames;
 }
 
 bool DrawIrThreadQueue::FrameSkip() const {
@@ -121,23 +122,35 @@ bool DrawIrThreadQueue::FrameSkip() const {
     return frame_skip_;
 }
 
-// Frame skip (rule 2), at the push of frame record `arriving`: the previous frame
-// is dropped iff it is still WHOLE in the ring -- its frame record present and the
-// consumer has not popped any of its records (it is busy with an older frame).
-// Its draws go; its jobs, VRAM op-logs and ordered work stay in stream order; its
-// frame record becomes a drop marker (delivered, counted, never presented).
+uint32_t DrawIrThreadQueue::FrameSkipDepth() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    return frame_skip_depth_;
+}
+
+// Frame skip (rule 2), at the push of frame record `arriving`: the frames before it
+// still WHOLE in the ring -- frame record present (not yet a drop marker) and the
+// consumer has not popped any of their records (it is busy with an older frame) --
+// are the pending pictures. When `arriving` would make more than frame_skip_depth_
+// of them, the OLDEST whole one is dropped: its draws go; its jobs, VRAM op-logs
+// and ordered work stay in stream order; its frame record becomes a drop marker
+// (delivered, counted, never presented). Depth 1 is the original rule (the
+// previous frame is dropped as soon as the consumer is still on the one before).
 void DrawIrThreadQueue::DropOlderPendingFrameLocked(uint64_t arriving) {
     if (arriving < 2) return;
-    const uint64_t older = arriving - 1;
-    if (consuming_frame_ >= older) return;   // the consumer already started (or finished) it
-    bool whole = false;
-    for (const Record& r : ring_)
-        if (r.frame == older && r.kind == Kind::Frame) { whole = true; break; }
-    if (!whole) return;
+    // The whole frames pending, oldest first (at most frame_skip_depth_ by this rule's
+    // own invariant; the scan stops at the first draw-less marker frame).
+    uint32_t whole = 0;
+    uint64_t oldest = 0;
+    for (const Record& r : ring_) {
+        if (r.kind != Kind::Frame || r.frame >= arriving || r.frame <= consuming_frame_) continue;
+        ++whole;
+        if (oldest == 0 || r.frame < oldest) oldest = r.frame;
+    }
+    if (whole < frame_skip_depth_) return;
     std::deque<Record> kept;
     uint64_t erased = 0;
     for (Record& r : ring_) {
-        if (r.frame == older) {
+        if (r.frame == oldest) {
             if (r.kind == Kind::Draw) { ++erased; continue; }
             if (r.kind == Kind::Frame) r.kind = Kind::FrameDropped;
         }
