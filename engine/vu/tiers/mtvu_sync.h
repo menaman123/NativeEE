@@ -60,6 +60,21 @@ public:
         after_sync_ = fn;
         after_sync_user_ = user;
     }
+    // The VIF1 i-bit stall service: the worker parks on an i-bit (MtvuWorker::EnterIrqStall)
+    // until the EE's interrupt handler writes FBRST.STC. An EE-side wait that finds the
+    // worker stalled runs this (on the EE thread; the root binds the INTC collect + VIF1
+    // dispatch on the running guest thread) and waits on. Returns: > 0 = the handler ran
+    // (its STC resumed the worker); 0 = nothing pending yet (the worker publishes the stall
+    // before its raise lands -- the wait polls on, bounded by kIrqPendingWaitNs); < 0 = the
+    // handler cannot run here (an ISR is in progress: the handler's own FBRST write syncs):
+    // the wait ends on the quiescent pipeline instead.
+    void SetIrqStallService(int (*fn)(void* user), void* user) {
+        irq_service_ = fn;
+        irq_service_user_ = user;
+    }
+    static constexpr uint64_t kIrqPendingWaitNs = 20'000'000;
+    uint64_t IrqServices() const { return irq_services_.load(std::memory_order_relaxed); }
+    uint64_t IrqServiceRefusals() const { return irq_service_refusals_.load(std::memory_order_relaxed); }
     // A site that would have synced skipped it under DeferOn (census only).
     void NoteSiteSkipped(SyncSite site);
     // True and `*stat` = the busy view while segments are in flight.
@@ -114,4 +129,12 @@ private:
     std::atomic<uint64_t> progress_idle_{0};
     void (*after_sync_)(void* user) = nullptr;
     void* after_sync_user_ = nullptr;
+    int (*irq_service_)(void* user) = nullptr;
+    void* irq_service_user_ = nullptr;
+    std::atomic<uint64_t> irq_services_{0};
+    std::atomic<uint64_t> irq_service_refusals_{0};
+    // The worker is stalled on an i-bit: run the service, polling (bounded) while the cause
+    // has not landed. True = the handler ran (the wait goes on); false = it cannot run here
+    // or never became pending (the wait ends: quiescent).
+    bool ServiceIrqStall();
 };

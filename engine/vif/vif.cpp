@@ -139,8 +139,21 @@ void Vif::CompleteDirect(int vif) {
     SubmitDirect(vif);
     u.state = VifState::Idle;
     UpdateStat(vif, VifStat::kVpsIdle);
-    if (u.pending_irq && !(u.regs.err & VifErr::kMii)) u.regs.stat |= VifStat::kInt;
+    if (u.pending_irq) RaiseIBit(vif);
     u.pending_irq = false;
+}
+
+void Vif::RaiseIBit(int vif) {
+    VifRegs& r = u_[vif].regs;
+    if (r.err & VifErr::kMii) return;
+    r.stat |= VifStat::kInt | VifStat::kVis;
+    if (on_irq_) on_irq_(irq_user_, vif);
+}
+
+void Vif::SetIrqHooks(IrqHook on_irq, IrqHook on_stc, void* user) {
+    on_irq_ = on_irq;
+    on_stc_ = on_stc;
+    irq_user_ = user;
 }
 
 // ------------------------------------------------- word-latch state machine --
@@ -298,11 +311,11 @@ void Vif::ExecuteCommand(int vif, uint32_t cmd, uint32_t imm, uint32_t num, cons
     VifRegs& r = u.regs;
     PS2R_LOG(VIF, Narrate, "vif%d: cmd=0x%02x imm=0x%04x num=0x%02x irq=%d payload=%zu", vif, cmd, imm, num,
              irq ? 1 : 0, payload_size);
-    if (irq && !(r.err & VifErr::kMii)) r.stat |= VifStat::kInt;
 
     if (VifUnpack::IsUnpackCmd(cmd)) {
         unpack_.Execute(vif, CtxFor(vif), r, cmd, imm, num, payload, payload_size, use_mask,
                         u.unpack_phase);
+        if (irq) RaiseIBit(vif);
         return;
     }
 
@@ -364,10 +377,13 @@ void Vif::ExecuteCommand(int vif, uint32_t cmd, uint32_t imm, uint32_t num, cons
             break;
         case VifCommand::Direct:
         case VifCommand::Directhl:
-            break;  // handled by the feed paths
+            return;  // handled by the feed paths (their completion raises the i bit)
         default:
             break;  // undefined VIFcodes are ignored (no ER1, no stall)
     }
+    // After the command: FLUSHE / FLUSH / FLUSHA have waited for the program (synchronous
+    // here), MSCAL has started it -- the interrupt the code word carries comes now.
+    if (irq) RaiseIBit(vif);
 }
 
 // ------------------------------------------------------------- MTVU seam ----
@@ -442,9 +458,11 @@ void Vif::WriteRegister(int vif, uint32_t offset, uint32_t value) {
             }
             if (value & VifFbrst::kFbk) r.stat |= VifStat::kVfs;
             if (value & VifFbrst::kStp) r.stat |= VifStat::kVss;
-            if (value & VifFbrst::kStc)
+            if (value & VifFbrst::kStc) {
                 r.stat &= ~(VifStat::kVss | VifStat::kVfs | VifStat::kVis | VifStat::kInt |
                             VifStat::kEr0 | VifStat::kEr1);
+                if (on_stc_) on_stc_(irq_user_, vif);   // the i-bit stall ends here
+            }
             break;
         case kErr:
             r.err = value & 7;

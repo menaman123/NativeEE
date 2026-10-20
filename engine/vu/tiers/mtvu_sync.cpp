@@ -1,5 +1,8 @@
 #include "engine/vu/tiers/mtvu_sync.h"
 
+#include <thread>
+
+#include "engine/core/threads/park.h"
 #include "engine/ee/timing/tick_profile.h"
 #include "engine/gif/gif_arbiter.h"
 #include "engine/vu/tiers/mtvu_worker.h"
@@ -19,9 +22,28 @@ MtvuSync::MtvuSync(MtvuWorker& worker, GifArbiter& arbiter) : worker_(worker), a
     for (auto& c : skipped_count_) c.store(0, std::memory_order_relaxed);
 }
 
+bool MtvuSync::ServiceIrqStall() {
+    if (!worker_.IrqStalled() || !irq_service_) return false;
+    const uint64_t t0 = ps2r::Park::NowNs();
+    for (;;) {
+        const int r = irq_service_(irq_service_user_);
+        if (r > 0) {
+            irq_services_.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        }
+        if (r < 0 || !worker_.IrqStalled() || ps2r::Park::NowNs() - t0 > kIrqPendingWaitNs) break;
+        std::this_thread::yield();
+    }
+    irq_service_refusals_.fetch_add(1, std::memory_order_relaxed);
+    return false;
+}
+
 void MtvuSync::Sync(SyncSite site) {
     if (!worker_.IsRunning() || worker_.OnWorkerThread()) return;
     sync_count_[Idx(site)].fetch_add(1, std::memory_order_relaxed);
+    // A worker parked on an i-bit stall at entry: serve the interrupt first (the loop
+    // below then waits for the resumed span), else the wait below ends at once.
+    if (worker_.IrqStalled() && !ServiceIrqStall()) return;
     if (worker_.WorkerIdle()) {
         // Lock-free idle fast path: every worker write is visible already.
         if (arbiter_.DrainThreadRunning() && !worker_.InEagerDrain() && arbiter_.hasPending())
@@ -39,6 +61,13 @@ void MtvuSync::Sync(SyncSite site) {
             const uint64_t seen = worker_.SealCount();
             worker_.TryDrainGuarded();
             if (worker_.WorkerIdle()) break;
+            // Stalled on an i-bit: the handler runs here (its STC resumes the worker) and
+            // the wait goes on; a handler that cannot run here ends the wait -- the pipeline
+            // is quiescent until the EE's own dispatch point serves it.
+            if (worker_.IrqStalled()) {
+                if (ServiceIrqStall()) continue;
+                break;
+            }
             worker_.WaitIdleOrSeal(kPollNs, seen);
         }
         worker_.LeaveSyncWait();
@@ -64,7 +93,7 @@ void MtvuSync::NoteSiteSkipped(SyncSite site) {
 
 bool MtvuSync::TryVif1StatBusyView(uint32_t* stat) const {
     if (!worker_.IsRunning() || worker_.OnWorkerThread()) return false;
-    if (worker_.WorkerIdle()) return false;
+    if (worker_.Quiescent()) return false;   // stalled: the real STAT (VIS | INT) is the view
     *stat = kVif1StatBusyView;
     return true;
 }
@@ -94,7 +123,7 @@ bool MtvuSync::WaitProgress() {
     // after a drain may have sealed since -- drain once more before answering
     // "nothing more will arrive", or that marker's packets wait for ever.
     const auto drained_idle = [this] {
-        if (!worker_.WorkerIdle()) return false;
+        if (!worker_.Quiescent()) return false;   // stalled = owes nothing until the EE's handler runs
         if (arbiter_.hasPending()) worker_.TryDrainGuarded();   // inline: delivered here; thread: kicked
         if (arbiter_.DrainInFlight()) return false;             // the drain thread still owes deliveries
         progress_idle_.fetch_add(1, std::memory_order_relaxed);
@@ -107,7 +136,7 @@ bool MtvuSync::WaitProgress() {
     progress_waits_.fetch_add(1, std::memory_order_relaxed);
     {
         ps2r::ee::TickProfile::Scope scope(ps2r::ee::TickProfile::Vu1Wait);
-        if (!worker_.WorkerIdle()) {
+        if (!worker_.Quiescent()) {
             worker_.EnterSyncWait();
             worker_.WaitIdleOrSeal(kPollNs, seen);
             worker_.LeaveSyncWait();

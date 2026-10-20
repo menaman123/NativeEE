@@ -71,6 +71,7 @@ void MtvuWorker::Stop() {
         stop_ = true;
     }
     cv_work_.notify_all();
+    cv_stall_.notify_all();   // a worker parked on an i-bit stall leaves it to join
     if (thread_started_) {
         ps2r::host::ThreadJoin(thread_);
         thread_started_ = false;
@@ -398,6 +399,7 @@ void MtvuWorker::WaitIdleOrSeal(uint64_t timeout_ns, uint64_t seen_seal) {
     std::unique_lock<std::mutex> lk(mtx_);
     cv_idle_.wait_for(lk, std::chrono::nanoseconds(timeout_ns), [&] {
         return (queue_.empty() && !processing_ && inflight_.load(std::memory_order_acquire) == 0) ||
+               irq_stalled_.load(std::memory_order_acquire) ||
                seal_count_.load(std::memory_order_seq_cst) != seen_seal;
     });
 }
@@ -405,8 +407,39 @@ void MtvuWorker::WaitIdleOrSeal(uint64_t timeout_ns, uint64_t seen_seal) {
 void MtvuWorker::WaitIdle() {
     std::unique_lock<std::mutex> lk(mtx_);
     cv_idle_.wait(lk, [&] {
-        return queue_.empty() && !processing_ && inflight_.load(std::memory_order_acquire) == 0;
+        return (queue_.empty() && !processing_ && inflight_.load(std::memory_order_acquire) == 0) ||
+               irq_stalled_.load(std::memory_order_acquire);
     });
+}
+
+void MtvuWorker::EnterIrqStall(void (*raise)(void* user), void* user) {
+    if (!OnWorkerThread()) {
+        if (raise) raise(user);
+        return;
+    }
+    irq_stalls_.fetch_add(1, std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        irq_stalled_.store(true, std::memory_order_release);
+    }
+    cv_idle_.notify_all();   // the EE's waits end on a quiescent pipeline
+    if (raise) raise(user);  // the cause lands after the stall is visible (MtvuSync polls for it)
+    std::unique_lock<std::mutex> lk(mtx_);
+    const uint64_t t0 = ps2r::Park::NowNs();
+    cv_stall_.wait(lk, [this] { return stop_ || !irq_stalled_.load(std::memory_order_acquire); });
+    const uint64_t stalled_ns = ps2r::Park::NowNs() - t0;
+    wait_ns_.fetch_add(stalled_ns, std::memory_order_relaxed);
+    irq_stall_ns_.fetch_add(stalled_ns, std::memory_order_relaxed);
+    irq_stalled_.store(false, std::memory_order_release);
+}
+
+void MtvuWorker::ReleaseIrqStall() {
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        if (!irq_stalled_.load(std::memory_order_acquire)) return;
+        irq_stalled_.store(false, std::memory_order_release);
+    }
+    cv_stall_.notify_all();
 }
 
 void MtvuWorker::WaitFrameProgress(uint64_t timeout_ns) {

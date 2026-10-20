@@ -342,6 +342,75 @@ void TestDirect() {
     }
 }
 
+// The i-bit stall hooks (SetIrqHooks): INT | VIS after the command that carries the i bit --
+// the hook runs AFTER the command's effect (an UNPACK's data is in VU memory, a MSCAL's
+// program has run), once per i bit, on both feed paths, never under ERR.MII; FBRST.STC
+// clears INT | VIS and runs the STC hook; a DIRECT's i bit fires at its completion.
+struct IrqLog {
+    int irq = 0, stc = 0, vif_seen = -1;
+    uint32_t qw2_at_irq = 0;
+    Rig* rig = nullptr;
+};
+void OnIrqLog(void* user, int vif) {
+    auto* l = static_cast<IrqLog*>(user);
+    ++l->irq;
+    l->vif_seen = vif;
+    l->rig->vu1.ReadDataMem(2 * 16, reinterpret_cast<uint8_t*>(&l->qw2_at_irq), 4);
+}
+void OnStcLog(void* user, int vif) {
+    auto* l = static_cast<IrqLog*>(user);
+    if (vif == 1) ++l->stc;
+}
+void TestIrqHooks() {
+    for (int fast = 0; fast < 2; fast++) {
+        Rig rig(fast != 0);
+        IrqLog log;
+        log.rig = &rig;
+        rig.vif.SetIrqHooks(&OnIrqLog, &OnStcLog, &log);
+        Stream s;
+        Code(s, 0x01, 0, 0x0101);
+        Code(s, 0x6C, 1, 2, true);   // UNPACK V4-32 x1 -> qw2, i bit
+        s.w.push_back(0xAAAA0001u); s.w.push_back(2); s.w.push_back(3); s.w.push_back(4);
+        Feed(rig, 1, s);
+        CHECK(log.irq == 1 && log.vif_seen == 1);
+        CHECK(log.qw2_at_irq == 0xAAAA0001u);   // the hook saw the unpack's data: after the command
+        CHECK((rig.vif.regs(1).stat & (VifStat::kInt | VifStat::kVis)) == (VifStat::kInt | VifStat::kVis));
+        // FLUSHE with the i bit (the title's lighting packet tail) -- no payload.
+        Stream s2;
+        Code(s2, 0x10, 0, 0, true);
+        Feed(rig, 1, s2);
+        CHECK(log.irq == 2);
+        // STC: INT | VIS cleared, the STC hook ran once; an FBRST without STC runs nothing.
+        rig.vif.Write(Vif::kVif1Base + VifRegOffset::kFbrst, 4, VifFbrst::kStc);
+        CHECK((rig.vif.regs(1).stat & (VifStat::kInt | VifStat::kVis)) == 0);
+        CHECK(log.stc == 1);
+        rig.vif.Write(Vif::kVif1Base + VifRegOffset::kFbrst, 4, 0);
+        CHECK(log.stc == 1);
+        // ERR.MII: no INT, no hook.
+        rig.vif.regs(1).err = VifErr::kMii;
+        Feed(rig, 1, s2);
+        CHECK(log.irq == 2 && (rig.vif.regs(1).stat & VifStat::kInt) == 0);
+        rig.vif.regs(1).err = 0;
+        // A DIRECT's i bit fires once, at completion.
+        Stream s3;
+        Code(s3, 0x50, 0, 2, true);
+        PadToQw(s3);
+        PutGifPacket(s3, 1, 2, 3, 4);
+        Feed(rig, 1, s3);
+        CHECK(log.irq == 3);
+        rig.arbiter.drain();
+        // VIF0 reports its own unit.
+        Stream s4;
+        Code(s4, 0x00, 0, 0, true);
+        Feed(rig, 0, s4);
+        CHECK(log.irq == 4 && log.vif_seen == 0);
+        CHECK((rig.vif.regs(0).stat & (VifStat::kInt | VifStat::kVis)) == (VifStat::kInt | VifStat::kVis));
+        rig.vif.SetIrqHooks(nullptr, nullptr, nullptr);
+        Feed(rig, 1, s2);
+        CHECK(log.irq == 4);   // unhooked: the bits alone
+    }
+}
+
 void TestMskpath3() {
     Rig rig;
     Stream s;
@@ -562,6 +631,7 @@ int main() {
     TestMscal();
     TestMpg();
     TestDirect();
+    TestIrqHooks();
     TestMskpath3();
     TestMmio();
     TestTteFeed();

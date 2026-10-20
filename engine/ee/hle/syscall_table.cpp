@@ -167,6 +167,7 @@ void SyscallTable::Dispatch(uint32_t v1, CpuContext& ctx) {
         case 94: SetHandlerActive(dmac_handlers_, ctx, true); break;
         case 95: SetHandlerActive(dmac_handlers_, ctx, false); break;
         case 100: RetS(ctx, 0); break;  // FlushCache: caches are coherent here
+        case 104: RetS(ctx, 0); break;  // iFlushCache (the VIF1 i-bit handler's write-back): the same
         case 107: RetS(ctx, 0); break;  // sceSifStopDma: SIF0 STR cleared (no DMAC yet)
         case 112: ctx.cpuRegs.GPR.r[2].UD[0] = gs_imr_.load(std::memory_order_relaxed); break;
         case 113: gs_imr_.store(ctx.cpuRegs.GPR.r[4].UD[0], std::memory_order_relaxed); break;
@@ -182,7 +183,7 @@ void SyscallTable::Dispatch(uint32_t v1, CpuContext& ctx) {
         case 0: case 1: case 6: case 7: case 10: case 11: case 12: case 13: case 14: case 15:
         case 26: case 27: case 28: case 29: case 49: case 59: case 76: case 77:
         case 78: case 79: case 96: case 97: case 98: case 99: case 102: case 103:
-        case 104: case 106: case 108: case 109: case 110: case 111: case 114: case 115: case 117:
+        case 106: case 108: case 109: case 110: case 111: case 114: case 115: case 117:
         case 123: case 125: case 126:
             NotImplemented(NameOf(num));
             break;

@@ -89,7 +89,7 @@ bool VifFastSpan::Process(Vif& vif, int v, const uint8_t* data, size_t size) {
                 u.direct_buffer.insert(u.direct_buffer.end(), data + s * 4, data + s * 4 + need_words * 4);
                 vif.SubmitDirect(v);
                 vif.UpdateStat(v, VifStat::kVpsIdle);
-                if (irq && !(u.regs.err & VifErr::kMii)) u.regs.stat |= VifStat::kInt;
+                if (irq) vif.RaiseIBit(v);
                 u.pending_irq = false;
                 wi = s + need_words;
                 continue;

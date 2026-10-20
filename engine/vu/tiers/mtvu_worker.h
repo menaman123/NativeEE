@@ -138,8 +138,24 @@ public:
     void EnterSyncWait() override;
     void LeaveSyncWait() override;
 
+    // ---- the VIF1 i-bit stall (Vif::SetIrqHooks, the composition's stall) ----
+    // EnterIrqStall: the worker thread publishes the stall, runs `raise` (the composition's
+    // INTC latch -- after the publication, so a release can never precede the stall it ends),
+    // then parks inside the span it is replaying (the i-bit command done, INT | VIS set) until
+    // ReleaseIrqStall (the EE's FBRST.STC) or Stop. A stalled worker is QUIESCENT, not idle:
+    // nothing more leaves the pipeline until the EE acts (the handler's STC), so every EE-side
+    // wait ends on it (MtvuSync services the interrupt there); inflight_ stays > 0 -- the span
+    // resumes after.
+    void EnterIrqStall(void (*raise)(void* user), void* user);
+    void ReleaseIrqStall();
+    bool IrqStalled() const { return irq_stalled_.load(std::memory_order_acquire); }
+    bool Quiescent() const { return WorkerIdle() || IrqStalled(); }
+    uint64_t IrqStalls() const { return irq_stalls_.load(std::memory_order_relaxed); }
+    // Wall ns the worker spent parked on i-bit stalls (also inside wait_ns).
+    uint64_t IrqStallNs() const { return irq_stall_ns_.load(std::memory_order_relaxed); }
+
     // ---- the wait surface MtvuSync uses ----
-    // Park until no segment is queued, processing or in flight.
+    // Park until no segment is queued, processing or in flight (or the worker stalls).
     void WaitIdle();
     // One guarded arbiter drain on this thread: false when another drain is
     // in progress (the loser skips -- drains are opportunistic).
@@ -177,6 +193,10 @@ private:
     mutable std::mutex mtx_;
     std::condition_variable cv_work_;
     std::condition_variable cv_idle_;
+    std::condition_variable cv_stall_;
+    std::atomic<bool> irq_stalled_{false};
+    std::atomic<uint64_t> irq_stalls_{0};
+    std::atomic<uint64_t> irq_stall_ns_{0};
     std::deque<Segment> queue_;
     bool processing_ = false;
     bool stop_ = false;
