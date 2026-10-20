@@ -22,6 +22,7 @@ if(PS2R_PRODUCT_TESTS)
             "${PS2R_PRODUCT_ROOT}/engine/ee/timing/regime_detector.cpp"
             "${PS2R_PRODUCT_ROOT}/engine/ee/timing/tick_source.cpp"
             "${PS2R_PRODUCT_ROOT}/engine/ee/timing/tick_sync.cpp")
+        target_include_directories(ps2r_product_clock PUBLIC "${PS2R_PRODUCT_ROOT}")
         target_link_libraries(ps2r_product_clock PUBLIC ${continuation_support})
         target_compile_options(ps2r_product_clock PRIVATE -Wall -Wextra -Werror)
         set(product_clock_support ps2r_product_clock)
