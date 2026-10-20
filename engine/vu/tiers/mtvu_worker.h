@@ -110,6 +110,7 @@ public:
         uint64_t records = 0;
         uint64_t pops = 0;
         uint64_t depth_max = 0;
+        uint64_t seal_wakes_skipped = 0;   // seals that woke no parked producer (the drain thread was kicked instead)
     };
     Ledger ledger() const;
     uint64_t StagedRecords() const { return stage_records_; }
@@ -192,6 +193,7 @@ private:
     std::atomic<uint64_t> submit_seq_{0};
     std::atomic<uint64_t> last_work_ns_{0};
     std::atomic<uint64_t> seal_count_{0};
+    std::atomic<uint64_t> seal_wakes_skipped_{0};
     std::atomic<int> sync_waiters_{0};
     std::atomic<uint64_t> batch_segments_{0};
     std::atomic<uint64_t> busy_ns_{0};
