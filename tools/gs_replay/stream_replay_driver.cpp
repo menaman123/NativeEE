@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "engine/core/verify/frame_hasher.h"
 #include "engine/gs/hle/capture/gs_stream_format.h"
 #include "engine/gs/vram/vram_op_log.h"
 
@@ -83,6 +84,8 @@ void StreamReplayDriver::BuildScene() {
     vram_ = std::make_unique<gs::VramImage>();
     scale_ = std::make_unique<gs::ScalePolicy>(gs::ScaleSettings{scale}, &layout_);
     cache_ = std::make_unique<gs::RenderTargetCache>(*be_, *vram_, *scale_);
+    cache_->SetDeferredDeposit(opt_.deferred_deposit);   // play: the display deposit's read one frame late
+    vram_->SetGateTrace(opt_.gate_trace);
     refresher_ = std::make_unique<gs::TargetRefresher>(*be_, *vram_, *cache_);
     resolver_ = std::make_unique<gs::TextureResolver>(*be_, *vram_, *cache_, *refresher_, layout_);
     scanout_ = std::make_unique<gs::ScanoutComposer>(*be_, *cache_);
@@ -100,6 +103,7 @@ void StreamReplayDriver::BuildScene() {
     deps.sequence = nullptr;
     pipe_ = std::make_unique<gs::DrawPipeline>(deps);
     pipe_->SetLiveSnapshot(true);
+    pipe_->RouteTrace().Arm(opt_.dump_dir != nullptr);   // r<frame>.txt beside the dumped grabs
     scanout_->SetScanoutFbp(gs::DrawPipeline::kNoFbp);
     scanout_->SetGrabPolicy(gs::ScanoutComposer::GrabPolicy::LocalMemory);
     gs::DrawIrQueueConsumer::Hooks hooks;
@@ -108,6 +112,7 @@ void StreamReplayDriver::BuildScene() {
     hooks.window_resized = [this](int w, int h) {
         if (w > 0 && h > 0) be_->SetWindowSize(w, h);
     };
+    if (!opt_.grab) hooks.grab_wanted = [] { return false; };
     consumer_ = std::make_unique<gs::DrawIrQueueConsumer>(*pipe_, std::move(hooks));
     consumer_->SetFrameHashScale(scale);   // play: the frames-lane hash where the grab is made
 }
@@ -133,7 +138,13 @@ void StreamReplayDriver::Teardown() {
 
 void StreamReplayDriver::PresentWindow() {
     int w = 0, h = 0;
-    if (be_->ReadPresented(&presented_, &w, &h) && w > 0 && h > 0) ++presents_read_;
+    presented_hash_ = 0;
+    if (be_->ReadPresented(&presented_, &w, &h) && w > 0 && h > 0) {
+        ++presents_read_;
+        // The presented image's hash: an oracle over the composed window that does not
+        // depend on the frames-lane grab (--no-grab runs compare on it).
+        if (opt_.phash) presented_hash_ = verify::FrameHasher::HashNativeScale(presented_.data(), w, h, 1);
+    }
     if (opt_.swap_hidden_window && !opt_.metal) win_.Swap();
     else be_->FlushCommands();   // play: the hidden window is never shown -- a flush, not a swap
 }
@@ -150,6 +161,7 @@ void StreamReplayDriver::OnFrameDone(const gs::JobRec& vsync) {
     const gs::DrawPipeline::Frame& f = consumer_->LastFrame();
     st.grabbed = f.grabbed;
     st.hash = f.hash;
+    st.phash = presented_hash_;
     if (const render::CallCensus* c = be_->Census()) {
         st.readbacks = c->readbacks - census_at_frame_.readbacks;
         st.copies = c->copies - census_at_frame_.copies;
@@ -370,24 +382,26 @@ void StreamReplayDriver::WriteOutputs() const {
                 n ? static_cast<double>(submits) / static_cast<double>(n) : 0.0);
     if (const render::CallCensus* c = be_->Census())
         std::printf("[GSSTREAM] census draw_calls=%llu passes=%llu program_binds=%llu texture_binds=%llu clears=%llu copies=%llu "
-                    "uploads=%llu readbacks=%llu readback_bytes=%llu buffer_maps=%llu submits=%llu gpu_ms=%.1f\n",
+                    "uploads=%llu readbacks=%llu readback_bytes=%llu readback_waits=%llu buffer_maps=%llu submits=%llu gpu_ms=%.1f\n",
                     static_cast<unsigned long long>(c->draw_calls), static_cast<unsigned long long>(c->framebuffer_binds),
                     static_cast<unsigned long long>(c->program_binds), static_cast<unsigned long long>(c->texture_binds),
                     static_cast<unsigned long long>(c->clears), static_cast<unsigned long long>(c->copies),
                     static_cast<unsigned long long>(c->uploads), static_cast<unsigned long long>(c->readbacks),
-                    static_cast<unsigned long long>(c->readback_bytes), static_cast<unsigned long long>(c->buffer_maps),
+                    static_cast<unsigned long long>(c->readback_bytes), static_cast<unsigned long long>(c->readback_waits),
+                    static_cast<unsigned long long>(c->buffer_maps),
                     static_cast<unsigned long long>(c->submits), static_cast<double>(c->gpu_ns) * 1e-6);
+    if (pipe_) pipe_->EmitCounters(stdout);
     std::printf("STREAM_HASH %016llx\n", static_cast<unsigned long long>(stream_hash_));
     if (opt_.csv_path) {
         if (std::FILE* f = std::fopen(opt_.csv_path, "w")) {
-            std::fprintf(f, "frame,ms,draws,jobs,hash,grabbed,readbacks,copies,draw_calls,submits,gpu_ms\n");
+            std::fprintf(f, "frame,ms,draws,jobs,hash,grabbed,readbacks,copies,draw_calls,submits,gpu_ms,phash\n");
             for (size_t i = 0; i < frames_.size(); ++i) {
                 const FrameStat& s = frames_[i];
-                std::fprintf(f, "%zu,%.4f,%u,%u,%016llx,%d,%llu,%llu,%llu,%llu,%.4f\n", i, s.ms, s.draws, s.jobs,
+                std::fprintf(f, "%zu,%.4f,%u,%u,%016llx,%d,%llu,%llu,%llu,%llu,%.4f,%016llx\n", i, s.ms, s.draws, s.jobs,
                              static_cast<unsigned long long>(s.hash), s.grabbed ? 1 : 0,
                              static_cast<unsigned long long>(s.readbacks), static_cast<unsigned long long>(s.copies),
                              static_cast<unsigned long long>(s.draw_calls), static_cast<unsigned long long>(s.submits),
-                             static_cast<double>(s.gpu_ns) * 1e-6);
+                             static_cast<double>(s.gpu_ns) * 1e-6, static_cast<unsigned long long>(s.phash));
             }
             std::fclose(f);
         }

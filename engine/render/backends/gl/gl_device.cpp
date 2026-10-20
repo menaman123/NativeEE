@@ -150,7 +150,7 @@ void GlDevice::Shutdown() {
     for (auto& kv : surfaces_) ReleaseSurface(kv.second);
     surfaces_.clear();
     pool_.DropAll(state_);
-    readbacks_.clear();
+    ReleaseReadbacks();
     if (dummy_tex_) { state_.DeleteTextures(1, &dummy_tex_); dummy_tex_ = 0; }
     vertices_.Shutdown(state_);
     if (scanout_vbo_) { state_.DeleteBuffers(1, &scanout_vbo_); scanout_vbo_ = 0; }
@@ -174,7 +174,7 @@ void GlDevice::Shutdown() {
 Caps GlDevice::QueryCaps() const {
     Caps c;
     c.max_texture_size = max_texture_size_;
-    c.staging_readback = false;
+    c.staging_readback = true;   // BeginReadback: a pack buffer behind a fence
     c.reverse_subtract = true;
     c.depth_sample = true;
     c.texture_barrier = texture_barrier_ != nullptr;
@@ -644,29 +644,107 @@ void GlDevice::Readback(SurfaceId id, const Rect& rect, void* out, size_t stride
     if (tmp) state_.DeleteFramebuffers(1, &tmp);
 }
 
+// The asynchronous colour readback: glReadPixels into a pixel-pack buffer (the
+// GPU writes it when it gets there; nothing drains here), a fence after it.
+// Depth surfaces take the synchronous path into a pack buffer the same way.
 FenceId GlDevice::BeginReadback(SurfaceId id, const Rect& rect) {
     const GlSurface* s = Surface(id);
     if (!s || rect.w <= 0 || rect.h <= 0) return FenceId{};
+    const bool depth = s->desc.format == SurfaceFormat::Depth32f;
+    GLuint fbo = s->fbo;
+    GLuint tmp = 0;
+    if (!fbo) {
+        glGenFramebuffers(1, &tmp);
+        fbo = tmp;
+        state_.BindFb(GL_READ_FRAMEBUFFER, fbo);
+        glFramebufferTexture2D(GL_READ_FRAMEBUFFER, depth ? GL_DEPTH_ATTACHMENT : GL_COLOR_ATTACHMENT0,
+                               GL_TEXTURE_2D, s->tex, 0);
+    } else {
+        state_.BindFb(GL_READ_FRAMEBUFFER, fbo);
+    }
     PendingReadback pr;
     pr.stride = static_cast<size_t>(rect.w) * 4;
     pr.rows = rect.h;
-    pr.bytes.resize(pr.stride * static_cast<size_t>(rect.h));
-    Readback(id, rect, pr.bytes.data(), pr.stride);
+    if (!free_pbos_.empty()) {
+        pr.pbo = free_pbos_.back();
+        free_pbos_.pop_back();
+    } else {
+        GLuint b = 0;
+        glGenBuffers(1, &b);
+        pr.pbo = b;
+    }
+    const size_t bytes = pr.stride * static_cast<size_t>(rect.h);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, pr.pbo);
+    glBufferData(GL_PIXEL_PACK_BUFFER, static_cast<GLsizeiptr>(bytes), nullptr, GL_STREAM_READ);   // orphan: no stall on reuse
+    glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+    glPixelStorei(GL_PACK_ALIGNMENT, 4);
+    census_.readbacks++;
+    census_.readback_bytes += bytes;
+    if (depth)
+        glReadPixels(rect.x, rect.y, rect.w, rect.h, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+    else
+        glReadPixels(rect.x, rect.y, rect.w, rect.h, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    pr.sync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    state_.BindFb(GL_READ_FRAMEBUFFER, 0);
+    if (tmp) state_.DeleteFramebuffers(1, &tmp);
     const uint64_t f = next_fence_++;
-    readbacks_[f] = std::move(pr);
+    readbacks_[f] = pr;
     return FenceId{f};
+}
+
+bool GlDevice::ReadbackReady(FenceId fence) {
+    auto it = readbacks_.find(fence.id);
+    if (it == readbacks_.end()) return false;
+    return !it->second.sync || ReadbackReadySync(it->second.sync);
 }
 
 bool GlDevice::PollReadback(FenceId fence, void* out, size_t stride) {
     auto it = readbacks_.find(fence.id);
     if (it == readbacks_.end()) return false;
-    const PendingReadback& pr = it->second;
-    const size_t dst_stride = stride ? stride : pr.stride;
-    for (int r = 0; r < pr.rows; r++)
-        std::memcpy(static_cast<uint8_t*>(out) + dst_stride * r, pr.bytes.data() + pr.stride * r,
-                    std::min(pr.stride, dst_stride));
+    PendingReadback pr = it->second;
     readbacks_.erase(it);
+    if (pr.sync) {
+        GLsync sync = static_cast<GLsync>(pr.sync);
+        if (!ReadbackReadySync(sync)) {
+            readback_waits_++;
+            census_.readback_waits++;
+            // The commands may still sit in the client queue: flush them with the wait.
+            glClientWaitSync(sync, GL_SYNC_FLUSH_COMMANDS_BIT, 5000000000ull);
+        }
+        glDeleteSync(sync);
+    }
+    if (out) {
+        const size_t dst_stride = stride ? stride : pr.stride;
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, pr.pbo);
+        const size_t bytes = pr.stride * static_cast<size_t>(pr.rows);
+        if (const void* src = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, static_cast<GLsizeiptr>(bytes), GL_MAP_READ_BIT)) {
+            for (int r = 0; r < pr.rows; r++)
+                std::memcpy(static_cast<uint8_t*>(out) + dst_stride * r,
+                            static_cast<const uint8_t*>(src) + pr.stride * r, std::min(pr.stride, dst_stride));
+            glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+        }
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    }
+    free_pbos_.push_back(pr.pbo);
     return true;
+}
+
+bool GlDevice::ReadbackReadySync(void* sync) {
+    GLint status = GL_UNSIGNALED;
+    GLsizei n = 0;
+    glGetSynciv(static_cast<GLsync>(sync), GL_SYNC_STATUS, 1, &n, &status);
+    return status == GL_SIGNALED;
+}
+
+void GlDevice::ReleaseReadbacks() {
+    for (auto& kv : readbacks_) {
+        if (kv.second.sync) glDeleteSync(static_cast<GLsync>(kv.second.sync));
+        if (kv.second.pbo) { GLuint b = kv.second.pbo; glDeleteBuffers(1, &b); }
+    }
+    readbacks_.clear();
+    for (uint32_t b : free_pbos_) { GLuint g = b; glDeleteBuffers(1, &g); }
+    free_pbos_.clear();
 }
 
 // Textured quad of the source into the default framebuffer, then swap.

@@ -437,6 +437,7 @@ void DrawIrThreadQueue::Deliver(Record& r) {
 // local->local source. ~4 MiB per frame, only once a copy armed it.
 void DrawIrThreadQueue::PublishSnapshot(uint64_t frame) {
     if (!mirror_target_) return;
+    mirror_target_->GateRaw(VramImage::Span{0, VramImage::kBytes});   // a deferred deposit lands first
     std::lock_guard<std::mutex> lk(snap_mu_);
     if (snap_.bytes.size() != VramImage::kBytes) {
         snap_.bytes.resize(VramImage::kBytes);
@@ -460,11 +461,21 @@ void DrawIrThreadQueue::ThreadMain() {
     // The consumer's own time per record (deliver_*_ns): one clock read per record --
     // the end of a record is the start of the next unless the thread slept in between.
     auto t0 = std::chrono::steady_clock::now();
+    // Records are popped in BATCHES (up to kBatch, never past a frame record so the
+    // frame-skip rule sees the same ring) and the per-record bookkeeping (consumed_,
+    // frames_consumed_, the deliver_* census) is folded into the next lock: the
+    // producer pushes ~3500 records a frame under the same mutex, and two lock
+    // round trips per record were ~1 ms of the consumer's frame in play. A waiter
+    // on cv_done_ (Sync / WaitFrame / lockstep / room) publishes at once: the
+    // pending counts are folded whenever done_waiters_ is seen non-zero.
+    std::vector<Record> batch;
+    batch.reserve(kBatch);
+    Pending pend;
     for (;;) {
-        Record r;
         bool faulted;
         {
             std::unique_lock<std::mutex> lk(mu_);
+            FoldPendingLocked(pend);
             bool slept = false;
             while (!stop_ && ring_.empty() && presenter_work_.empty()) {
                 consumer_sleeping_ = true;
@@ -485,38 +496,57 @@ void DrawIrThreadQueue::ThreadMain() {
                 continue;
             }
             if (ring_.empty()) return;   // stop_ with nothing left: drained
-            r = std::move(ring_.front());
-            ring_.pop_front();
-            if (r.frame > consuming_frame_) consuming_frame_ = r.frame;
+            while (!ring_.empty() && batch.size() < kBatch) {
+                batch.push_back(std::move(ring_.front()));
+                ring_.pop_front();
+                const Record& b = batch.back();
+                if (b.frame > consuming_frame_) consuming_frame_ = b.frame;
+                if (b.kind == Kind::Frame || b.kind == Kind::FrameDropped) break;
+            }
             faulted = faulted_;
         }
-        if (!faulted) {
-            try {
-                Deliver(r);
-            } catch (...) {
+        for (Record& r : batch) {
+            if (!faulted) {
+                try {
+                    Deliver(r);
+                } catch (...) {
+                    std::lock_guard<std::mutex> lk(mu_);
+                    faulted_ = true;
+                    fault_ = std::current_exception();
+                    faulted = true;
+                }
+            }
+            if (faulted && r.kind == Kind::Work && r.done) r.done->set_value(false);   // dropped: its waiter resolves
+            const auto t1 = std::chrono::steady_clock::now();
+            const uint64_t ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+            t0 = t1;
+            ++pend.consumed;
+            if (r.kind == Kind::Draw) { pend.draw_ns += ns; ++pend.draws; }
+            else if (r.kind == Kind::Frame || r.kind == Kind::FrameDropped) { pend.frame_ns += ns; ++pend.frames; }
+            else pend.other_ns += ns;
+            if (done_waiters_.load(std::memory_order_acquire) > 0) {
                 std::lock_guard<std::mutex> lk(mu_);
-                faulted_ = true;
-                fault_ = std::current_exception();
-                faulted = true;
+                FoldPendingLocked(pend);
             }
         }
-        if (faulted && r.kind == Kind::Work && r.done) r.done->set_value(false);   // dropped: its waiter resolves
-        const auto t1 = std::chrono::steady_clock::now();
-        const uint64_t ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
-        t0 = t1;
-        bool wake;
-        {
-            std::lock_guard<std::mutex> lk(mu_);
-            ++consumed_;
-            n_.consumed = consumed_;
-            if (r.kind == Kind::Draw) { n_.deliver_draw_ns += ns; ++n_.delivered_draws; }
-            else if (r.kind == Kind::Frame || r.kind == Kind::FrameDropped) n_.deliver_frame_ns += ns;
-            else n_.deliver_other_ns += ns;
-            if (r.kind == Kind::Frame || r.kind == Kind::FrameDropped) ++frames_consumed_;
-            wake = done_waiters_ > 0;
-        }
-        if (wake) cv_done_.notify_all();
+        batch.clear();
     }
+}
+
+// mu_ held: publish the consumer's pending counts; wakes cv_done_ waiters when
+// something was published and someone waits (the notify runs under the lock --
+// the waiters re-take it anyway).
+void DrawIrThreadQueue::FoldPendingLocked(Pending& p) {
+    if (p.consumed == 0) return;
+    consumed_ += p.consumed;
+    n_.consumed = consumed_;
+    frames_consumed_ += p.frames;
+    n_.deliver_draw_ns += p.draw_ns;
+    n_.delivered_draws += p.draws;
+    n_.deliver_frame_ns += p.frame_ns;
+    n_.deliver_other_ns += p.other_ns;
+    p = Pending{};
+    if (done_waiters_.load(std::memory_order_relaxed) > 0) cv_done_.notify_all();
 }
 
 }  // namespace gs

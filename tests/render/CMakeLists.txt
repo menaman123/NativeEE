@@ -14,6 +14,7 @@ ps2r_render_test(test_vertex_convert)
 ps2r_render_test(test_gl_shader_library)
 ps2r_render_test(test_gl_state_cache)
 ps2r_render_test(test_gl_device_smoke)
+ps2r_render_test(test_gl_async_readback)
 ps2r_render_test(test_gl_raster_rule)
 ps2r_render_test(test_gl_alpha_convention)
 ps2r_render_test(test_gl_alpha_fail_split)
@@ -77,6 +78,9 @@ set_tests_properties(Render_StateCacheEquivalence PROPERTIES TIMEOUT 120 SKIP_RE
 
 # Device smoke: surface create / clear / readback, one untextured triangle through the executor.
 add_test(NAME Render_DeviceSmoke COMMAND test_gl_device_smoke)
+# BeginReadback / PollReadback: a pack buffer behind a fence hands back the synchronous read's bytes.
+add_test(NAME Render_AsyncReadback COMMAND test_gl_async_readback)
+set_tests_properties(Render_AsyncReadback PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 set_tests_properties(Render_DeviceSmoke PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 
 # The GS pixel coverage rule (integer sample point, x0 <= i < x1) through the executor.

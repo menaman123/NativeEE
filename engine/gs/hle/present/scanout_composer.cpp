@@ -224,8 +224,8 @@ ScanoutComposer::DrawResult ScanoutComposer::DrawScanout(VramImage& vram, const 
     } else {
         // Full mirror deposit at the SCANOUT base (a stand-in target lands where
         // the display reads), in the DISPFB format for the stale-display round trip.
-        targets_.SyncDrawn(*t, gfx_epoch, r.stale_display ? dispfb_psm_ : ReadbackEngine::kNoPsmOverride,
-                           scanout_fbp_);
+        targets_.SyncDrawnDeferred(*t, gfx_epoch, r.stale_display ? dispfb_psm_ : ReadbackEngine::kNoPsmOverride,
+                                   scanout_fbp_);
     }
     if (!r.stale_display && t->views.HasColor() && t->identity.width > 0 && t->identity.height > 0 &&
         content_w_ > 0 && content_h_ > 0) {

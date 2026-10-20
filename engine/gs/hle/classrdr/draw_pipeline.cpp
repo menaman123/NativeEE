@@ -115,15 +115,19 @@ render::DrawResult DrawPipeline::DrawGeneric(const DrawIr& ir, const PrepareOpti
     Prepared pr;
     // The draw's cost bracket (the route trace's attribution): the census is a
     // snapshot by value (the backend's own counters move under the bracket).
-    const uint64_t t0 = NowNs();
-    const render::CallCensus* census = d_.be->Census();
+    const bool traced = route_trace_.Armed();
+    const uint64_t t0 = traced ? NowNs() : 0;
+    const render::CallCensus* census = traced ? d_.be->Census() : nullptr;
     const render::CallCensus c0 = census ? *census : render::CallCensus{};
     if (!Prepare(ir, &pr, opt)) return res;
     // 6. draw.
     res = d_.be->Draw(ir, pr.src, pr.params);
     Finish(ir, pr, res);
-    const DrawRouteTrace::Cost cost = DrawRouteTrace::Cost::Delta(census ? &c0 : nullptr, census, NowNs() - t0);
-    route_trace_.Note(ir, pr.src, res, static_cast<uint32_t>(draw_seq_), cost);
+    if (traced) {
+        const DrawRouteTrace::Cost cost =
+            DrawRouteTrace::Cost::Delta(census ? &c0 : nullptr, census, NowNs() - t0);
+        route_trace_.Note(ir, pr.src, res, static_cast<uint32_t>(draw_seq_), cost);
+    }
     return res;
 }
 
@@ -238,6 +242,9 @@ void DrawPipeline::FrameEndGrab(bool ee_frame_end, Frame* out) {
     frame_end_t0_ = NowNs();
     const render::CallCensus* census = d_.be->Census();
     frame_end_census_ = census ? *census : render::CallCensus{};
+    // The previous present's deferred scanout deposit lands first (one frame late at
+    // most): the GPU had the whole frame to finish its read.
+    d_.cache->FlushDeferred();
     target_dump_.OnFrameEnd();
     if (d_.resolver) d_.resolver->Trace().OnFrameEnd();
     if (ee_frame_end) d_.presenter->MarkEeFrameEnd();
@@ -294,6 +301,7 @@ void DrawPipeline::OnFrameEndGrabOnly(bool ee_frame_end, Frame* out) {
 }
 
 void DrawPipeline::OnOwnedFrameEnd(bool ee_frame_end, uint32_t source_key) {
+    d_.cache->FlushDeferred();
     route_trace_.OnFrameEnd();
     target_dump_.OnFrameEnd();
     if (d_.resolver) d_.resolver->Trace().OnFrameEnd();
@@ -304,10 +312,17 @@ void DrawPipeline::OnOwnedFrameEnd(bool ee_frame_end, uint32_t source_key) {
 void DrawPipeline::EmitCounters(std::FILE* f) const {
     if (!f) return;
     std::fprintf(f, "[GS-PIPELINE] draws=%llu same_buffer_flushes=%llu shuffle_snaps=%llu zsrc_arms=%llu"
-                    " dropped_materializes=%llu\n",
+                    " dropped_materializes=%llu alpha_merges_gpu=%llu alpha_merges_cpu=%llu alpha_lane_uploads_skipped=%llu\n",
                  (unsigned long long)draw_seq_, (unsigned long long)same_buffer_flushes_,
                  (unsigned long long)snapped_draws_, (unsigned long long)zsrc_arms_,
-                 (unsigned long long)dropped_materializes_);
+                 (unsigned long long)dropped_materializes_,
+                 (unsigned long long)(d_.refresher ? d_.refresher->AlphaMergesGpu() : 0),
+                 (unsigned long long)(d_.refresher ? d_.refresher->AlphaMergesCpu() : 0),
+                 (unsigned long long)(d_.refresher ? d_.refresher->AlphaLaneUploadsSkipped() : 0));
+    const RenderTargetCache::DeferredCensus& dc = d_.cache->Deferred();
+    std::fprintf(f, "[GS-PIPELINE] deferred_deposit=%s begun=%llu gated=%llu frame_end=%llu offered=%llu sync=%llu\n",
+                 d_.cache->DeferredDeposit() ? "on" : "off", (unsigned long long)dc.begun, (unsigned long long)dc.gated,
+                 (unsigned long long)dc.frame_end, (unsigned long long)dc.offered, (unsigned long long)dc.sync);
 }
 
 }  // namespace gs

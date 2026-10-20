@@ -566,6 +566,7 @@ void FrameReview::CopyRect(SurfaceId src, const Rect& src_rect, SurfaceId dst, c
 
 void FrameReview::Readback(SurfaceId id, const Rect& rect, void* out, size_t stride) { next_.Readback(id, rect, out, stride); }
 FenceId FrameReview::BeginReadback(SurfaceId id, const Rect& rect) { return next_.BeginReadback(id, rect); }
+bool FrameReview::ReadbackReady(FenceId fence) { return next_.ReadbackReady(fence); }
 bool FrameReview::PollReadback(FenceId fence, void* out, size_t stride) { return next_.PollReadback(fence, out, stride); }
 
 void FrameReview::Present(const ScanoutDesc& desc) {

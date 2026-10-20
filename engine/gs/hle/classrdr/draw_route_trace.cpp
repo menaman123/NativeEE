@@ -34,6 +34,7 @@ void DrawRouteTrace::Cost::Add(const Cost& o) {
 
 void DrawRouteTrace::Note(const DrawIr& ir, const TextureSource& src, const render::DrawResult& res,
                           uint32_t seq, const Cost& cost) {
+    if (!armed_) return;
     Line l{};
     l.cost = cost;
     l.seq = seq;

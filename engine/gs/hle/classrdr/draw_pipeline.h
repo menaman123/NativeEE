@@ -190,6 +190,7 @@ public:
     void EmitCounters(std::FILE* f) const;
     // The per-draw lowering record of the last completed frame (diagnostics only).
     const DrawRouteTrace& RouteTrace() const { return route_trace_; }
+    DrawRouteTrace& RouteTrace() { return route_trace_; }
     // The one-target colour-image readback around a frame's draws (diagnostics
     // only; armed at a lockstep frame boundary, see target_dump.h).
     TargetDump& Dump() { return target_dump_; }

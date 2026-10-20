@@ -80,6 +80,7 @@ bool StencilCompositeRenderer::InvertBackendOk(const DrawIr& ir) const {
     const uint32_t c0 = cbp % VramImage::kBytes;
     for (const PendingRtSyncLedger::Entry& e : pipe_->Cache().Ledger().Entries())
         if (PendingRtSyncLedger::Overlaps(e, c0, kClutBytes)) { cnt_.inv_pending++; return false; }
+    pipe_->Vram().GateRaw(VramImage::Span{0, VramImage::kBytes});   // a deferred deposit lands first
     const uint8_t* vram = pipe_->Vram().Bytes();
     const bool ok = SequenceRecipe::ClutIsInvertTable(
         [vram](uint32_t addr) { return vram[addr % VramImage::kBytes]; },
