@@ -26,7 +26,8 @@ std::string EeYieldPoint::Census::Format() const {
            ":idle_calls=" + std::to_string(idle_calls) + ":idle_fields=" + std::to_string(idle_fields) +
            ":idle_isrs=" + std::to_string(idle_isrs) + ":idle_pipeline_waits=" + std::to_string(idle_pipeline_waits) +
            ":idle_wakes=" + std::to_string(idle_wakes) + ":wall_wakes=" + std::to_string(wall_wakes) +
-           ":deferred_collects=" + std::to_string(deferred_collects);
+           ":deferred_collects=" + std::to_string(deferred_collects) + ":idle_first=" + std::to_string(idle_first_tick) +
+           "@tid" + std::to_string(idle_first_tid);
 }
 
 void EeYieldPoint::Bind(Deps deps) {
@@ -150,6 +151,14 @@ uint64_t EeYieldPoint::IdleWhileBlocked(CpuContext& ctx) {
         RunField(ctx);
         if (!deps_.domain || deps_.domain->DomainTick() != tick0) {
             if (fields == 0) ++census_.idle_calls;   // counted as they happen: a park dump mid-idle sees them
+            if (census_.idle_first_tick == 0) {
+                census_.idle_first_tick = tick0 + 1;
+                census_.idle_first_tid = tid;
+            }
+            // The schedule-change triage line (optional): the composition prints the guest
+            // thread table at the field -- what every thread waited on while the EE had
+            // nothing to run and the pipeline owed nothing.
+            if (deps_.on_idle_field) deps_.on_idle_field(tick0 + 1, tid);
             ++census_.idle_fields;
             ++fields;
         } else {
