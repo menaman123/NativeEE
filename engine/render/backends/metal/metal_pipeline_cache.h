@@ -36,18 +36,40 @@ struct MetalSamplerKey {
     uint8_t wrap_s = 0;       // 0 clamp-to-edge, 1 repeat
     uint8_t wrap_t = 0;
     uint8_t anisotropy = 1;
-    uint32_t Packed() const {
-        return mag_linear | (min_linear << 1) | (mip << 2) | (wrap_s << 4) | (wrap_t << 5) |
-               (static_cast<uint32_t>(anisotropy) << 8);
-    }
 };
+inline uint32_t PackSamplerKey(const MetalSamplerKey& k) {
+    return k.mag_linear | (k.min_linear << 1) | (k.mip << 2) | (k.wrap_s << 4) | (k.wrap_t << 5) |
+           (static_cast<uint32_t>(k.anisotropy) << 8);
+}
 
 // Depth compare: 0 Never, 1 Always, 2 GreaterEqual, 3 Greater (the GS ZTST order).
 struct MetalDepthKey {
     uint8_t compare = 1;
     uint8_t write = 0;
-    uint32_t Packed() const { return compare | (write << 8); }
 };
+inline uint32_t PackDepthKey(const MetalDepthKey& k) { return k.compare | (k.write << 8); }
+
+// The register program's specialisation (the shader's function constants, same order).
+struct MetalSpecKey {
+    uint8_t use_texture = 0;
+    uint8_t tex_path = 0;     // 0 plain, 1 mip chain, 2 depth view, 3 indexed serve
+    uint8_t fog = 0;
+    uint8_t alpha_test = 0;
+    uint8_t date = 0;
+    uint8_t zsrc = 0;
+    uint8_t blend = 0;
+    uint8_t fbmsk16 = 0;
+    uint8_t fbmsk32 = 0;
+    uint8_t ct16 = 0;
+    uint8_t fba = 0;
+    uint8_t mask_all = 0;
+    uint8_t scanmsk = 0;
+};
+inline uint32_t PackSpecKey(const MetalSpecKey& k) {
+    return k.use_texture | (k.tex_path << 1) | (k.fog << 3) | (k.alpha_test << 4) | (k.date << 5) | (k.zsrc << 6) |
+           (k.blend << 7) | (k.fbmsk16 << 8) | (k.fbmsk32 << 9) | (k.ct16 << 10) | (k.fba << 11) | (k.mask_all << 12) |
+           (k.scanmsk << 13);
+}
 
 class MetalPipelineCache {
 public:
@@ -57,14 +79,17 @@ public:
     MetalPipelineCache& operator=(const MetalPipelineCache&) = delete;
 
     // Compiles the library on `device` (id<MTLDevice>); false with the compiler log on stderr.
-    bool Build(void* device);
+    // `shader_depth`: the register program writes its own window depth (PS2R_SHADER_DEPTH).
+    bool Build(void* device, bool shader_depth);
     void Destroy();
     bool Built() const { return library_ != nullptr; }
 
     // id<MTLRenderPipelineState> for the program over the attachment layout: `color` = an
     // RGBA8 colour attachment is present, `depth` = a Depth32Float depth attachment is present.
+    // `spec` (PackSpecKey) specialises the register program; the other programs ignore it.
     // Null (and a log line) when the pipeline cannot be built.
-    void* Pipeline(MetalProgram program, bool color, bool depth);
+    void* Pipeline(MetalProgram program, bool color, bool depth, uint32_t spec = 0);
+    size_t PipelineCount() const { return pipelines_.size(); }
     // id<MTLDepthStencilState>.
     void* DepthStencil(const MetalDepthKey& key);
     // id<MTLSamplerState>.

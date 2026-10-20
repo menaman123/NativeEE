@@ -269,7 +269,7 @@ void MetalDrawExecutor::BindTextures(const gs::TextureSource& tex, const DrawPar
             s.sampler.anisotropy = static_cast<uint8_t>(aniso);
             MetalDevice::TextureFilterCensus& census = dev_.FilterCensus();
             census.owned_draws++;
-            if (s.sampler.Packed() != title.Packed()) census.enhanced_draws++;
+            if (PackSamplerKey(s.sampler) != PackSamplerKey(title)) census.enhanced_draws++;
             if (s.hw_lod) census.hw_lod_draws++;
         }
         // depth and indexed serves never filter
@@ -525,7 +525,7 @@ void MetalDrawExecutor::Emit(const gs::DrawIr& ir, Step& s) {
     }
     s.encoder = enc;
     id<MTLRenderCommandEncoder> e = (id<MTLRenderCommandEncoder>)enc;
-    void* ps = dev_.Pipelines().Pipeline(MetalProgram::Ps2, true, true);
+    void* ps = dev_.Pipelines().Pipeline(MetalProgram::Ps2, true, true, PackSpecKey(SpecKey()));
     if (!ps) return;
     if (bound_pipeline_ != ps) {
         [e setRenderPipelineState:(id<MTLRenderPipelineState>)ps];
@@ -571,6 +571,31 @@ void MetalDrawExecutor::Emit(const gs::DrawIr& ir, Step& s) {
     [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:static_cast<NSUInteger>(s.first)
           vertexCount:static_cast<NSUInteger>(s.tri_verts)];
     dev_.CensusMut().draw_calls++;
+    dev_.SplitPassIfDue();   // the GPU starts on this chunk while the CPU encodes the next
+}
+
+// The specialisation of the register program for the current uniforms (the shader's
+// function constants: each folds the branch the matching uniform drives).
+MetalSpecKey MetalDrawExecutor::SpecKey() const {
+    MetalSpecKey k;
+    k.use_texture = u_.use_texture != 0 ? 1 : 0;
+    if (k.use_texture) {
+        const bool depth_view = u_.depth_fmt >= 1 && u_.depth_fmt <= 3;
+        const bool indexed = u_.idx_fmt >= 4 && u_.idx_fmt <= 7;
+        k.tex_path = depth_view ? 2 : indexed ? 3 : (u_.mip_levels > 0 ? 1 : 0);
+    }
+    k.fog = u_.fog_enabled != 0 ? 1 : 0;
+    k.alpha_test = u_.ate != 0 ? 1 : 0;
+    k.date = u_.date != 0 ? 1 : 0;
+    k.zsrc = u_.zsrc_en != 0 ? 1 : 0;
+    k.blend = (u_.blend_enabled != 0 && u_.sw_blend != 0) ? 1 : 0;
+    k.fbmsk16 = u_.fbmsk16_en != 0 ? 1 : 0;
+    k.fbmsk32 = u_.fbmsk32_en != 0 ? 1 : 0;
+    k.ct16 = (u_.fb16 != 0 || u_.ct16q != 0) ? 1 : 0;
+    k.fba = u_.fba != 0 ? 1 : 0;
+    k.mask_all = u_.color_mask == 0xF ? 1 : 0;
+    k.scanmsk = (u_.scanmsk == 2 || u_.scanmsk == 3) ? 1 : 0;
+    return k;
 }
 
 DrawResult MetalDrawExecutor::MakeResult(const gs::DrawIr& ir, const DrawParams& p, const Step& s) const {

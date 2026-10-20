@@ -92,6 +92,7 @@ private:
     void ColorMaskState(const gs::DrawIr& ir, const Step& s);
     bool ApplyScissor(const gs::DrawIr& ir, const Step& s);
     void Emit(const gs::DrawIr& ir, Step& s);   // binds the encoder state and issues the draw
+    MetalSpecKey SpecKey() const;
     DrawResult MakeResult(const gs::DrawIr& ir, const DrawParams& p, const Step& s) const;
 
     MetalDevice& dev_;

@@ -32,13 +32,14 @@ MTLCompareFunction Compare(uint8_t c) {
 
 MetalPipelineCache::~MetalPipelineCache() { Destroy(); }
 
-bool MetalPipelineCache::Build(void* device) {
+bool MetalPipelineCache::Build(void* device, bool shader_depth) {
     Destroy();
     @autoreleasepool {
         id<MTLDevice> dev = (id<MTLDevice>)device;
         MTLCompileOptions* opts = [[MTLCompileOptions alloc] init];
         // IEEE semantics: the register program floors / truncates exact integer products.
         opts.mathMode = MTLMathModeSafe;
+        opts.preprocessorMacros = @{@"PS2R_SHADER_DEPTH" : (shader_depth ? @1 : @0)};
         NSError* err = nil;
         NSString* src = [NSString stringWithUTF8String:MetalShaderSources::Library()];
         id<MTLLibrary> lib = [dev newLibraryWithSource:src options:opts error:&err];
@@ -65,8 +66,9 @@ void MetalPipelineCache::Destroy() {
     if (device_) { [(id)device_ release]; device_ = nullptr; }
 }
 
-void* MetalPipelineCache::Pipeline(MetalProgram program, bool color, bool depth) {
-    const uint32_t key = static_cast<uint32_t>(program) | (color ? 0x100u : 0u) | (depth ? 0x200u : 0u);
+void* MetalPipelineCache::Pipeline(MetalProgram program, bool color, bool depth, uint32_t spec) {
+    if (program != MetalProgram::Ps2) spec = 0;
+    const uint32_t key = static_cast<uint32_t>(program) | (color ? 0x100u : 0u) | (depth ? 0x200u : 0u) | (spec << 10);
     auto it = pipelines_.find(key);
     if (it != pipelines_.end()) return it->second;
     if (!library_) return nullptr;
@@ -86,7 +88,28 @@ void* MetalPipelineCache::Pipeline(MetalProgram program, bool color, bool depth)
             default: return nullptr;
         }
         id<MTLFunction> vf = Function(lib, vs);
-        id<MTLFunction> ff = Function(lib, fs);
+        id<MTLFunction> ff = nil;
+        if (program == MetalProgram::Ps2) {
+            // The function constants (MetalSpecKey's fields, in PackSpecKey's bit order).
+            MTLFunctionConstantValues* cv = [[MTLFunctionConstantValues alloc] init];
+            bool b;
+            int tex_path = static_cast<int>((spec >> 1) & 3u);
+            b = (spec & 1u) != 0;        [cv setConstantValue:&b type:MTLDataTypeBool atIndex:0];
+            [cv setConstantValue:&tex_path type:MTLDataTypeInt atIndex:1];
+            for (int i = 2; i <= 12; ++i) {
+                const int bit = i + 1;   // fog = bit 3 ... scanmsk = bit 13
+                b = ((spec >> bit) & 1u) != 0;
+                [cv setConstantValue:&b type:MTLDataTypeBool atIndex:static_cast<NSUInteger>(i)];
+            }
+            NSError* ferr = nil;
+            ff = [lib newFunctionWithName:[NSString stringWithUTF8String:fs] constantValues:cv error:&ferr];
+            [cv release];
+            if (!ff)
+                std::fprintf(stderr, "[metal] specialised %s (spec 0x%x) failed: %s\n", fs, spec,
+                             ferr ? [[ferr localizedDescription] UTF8String] : "(no log)");
+        } else {
+            ff = Function(lib, fs);
+        }
         if (!vf || !ff) { [vf release]; [ff release]; return nullptr; }
         MTLRenderPipelineDescriptor* d = [[MTLRenderPipelineDescriptor alloc] init];
         d.vertexFunction = vf;
@@ -114,7 +137,7 @@ void* MetalPipelineCache::Pipeline(MetalProgram program, bool color, bool depth)
 }
 
 void* MetalPipelineCache::DepthStencil(const MetalDepthKey& key) {
-    const uint32_t k = key.Packed();
+    const uint32_t k = PackDepthKey(key);
     auto it = depth_states_.find(k);
     if (it != depth_states_.end()) return it->second;
     void* result = nullptr;
@@ -131,7 +154,7 @@ void* MetalPipelineCache::DepthStencil(const MetalDepthKey& key) {
 }
 
 void* MetalPipelineCache::Sampler(const MetalSamplerKey& key) {
-    const uint32_t k = key.Packed();
+    const uint32_t k = PackSamplerKey(key);
     auto it = samplers_.find(k);
     if (it != samplers_.end()) return it->second;
     void* result = nullptr;

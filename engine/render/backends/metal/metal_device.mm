@@ -62,7 +62,10 @@ MetalDevice::MetalDevice(const MetalDeviceSettings& settings) : settings_(settin
 
 MetalDevice::~MetalDevice() { Shutdown(); }
 
-const CallCensus* MetalDevice::Census() const { return &census_; }
+const CallCensus* MetalDevice::Census() const {
+    census_.gpu_ns = gpu_ns_.load(std::memory_order_relaxed);
+    return &census_;
+}
 
 bool MetalDevice::Init(std::function<void()> swap) {
     Shutdown();
@@ -82,7 +85,7 @@ bool MetalDevice::Init(std::function<void()> swap) {
         id<MTLCommandQueue> q = [dev newCommandQueue];
         if (!q) return false;
         queue_ = (void*)q;
-        if (!pipelines_.Build(device_)) return false;
+        if (!pipelines_.Build(device_, settings_.shader_depth)) return false;
         id<MTLBuffer> ring = [dev newBufferWithLength:kVertexRingBytes options:MTLResourceStorageModeShared];
         id<MTLBuffer> staging = [dev newBufferWithLength:kStagingRingBytes options:MTLResourceStorageModeShared];
         if (!ring || !staging) return false;
@@ -127,12 +130,15 @@ void MetalDevice::Shutdown() {
     scratch_depth_.clear();
     for (CaptureSlot& c : capture_) {
         if (c.tex) [Tex(c.tex) release];
+        if (c.buf) [(id)c.buf release];
+        c.buf = nullptr;
         c = CaptureSlot{};
     }
     if (dummy_tex_) { [Tex(dummy_tex_) release]; dummy_tex_ = nullptr; }
     if (dummy_depth_) { [Tex(dummy_depth_) release]; dummy_depth_ = nullptr; }
     if (vertex_ring_) { [(id)vertex_ring_ release]; vertex_ring_ = nullptr; }
     if (staging_) { [(id)staging_ release]; staging_ = nullptr; }
+    if (readback_buf_) { [(id)readback_buf_ release]; readback_buf_ = nullptr; readback_buf_bytes_ = 0; }
     if (layer_) { [(id)layer_ release]; layer_ = nullptr; }
     pipelines_.Destroy();   // owns the samplers
     present_sampler_nearest_ = present_sampler_linear_ = nullptr;
@@ -190,17 +196,34 @@ void MetalDevice::Commit(bool wait) {
     id<MTLCommandBuffer> cb = (id<MTLCommandBuffer>)cb_;
     const uint64_t serial = serial_;
     std::atomic<uint64_t>* completed = &completed_serial_;
-    [cb addCompletedHandler:^(id<MTLCommandBuffer>) {
+    std::atomic<uint64_t>* gpu_ns = &gpu_ns_;
+    [cb addCompletedHandler:^(id<MTLCommandBuffer> done) {
+        const double busy_s = done.GPUEndTime - done.GPUStartTime;
+        if (busy_s > 0) gpu_ns->fetch_add(static_cast<uint64_t>(busy_s * 1e9), std::memory_order_relaxed);
         // Serials complete in queue order (one queue, in-order execution).
         uint64_t cur = completed->load(std::memory_order_relaxed);
         while (cur < serial && !completed->compare_exchange_weak(cur, serial, std::memory_order_release)) {
         }
     }];
     [cb commit];
+    census_.submits++;
+    draws_at_commit_ = census_.draw_calls;
     if (wait) [cb waitUntilCompleted];
     [cb release];
     cb_ = nullptr;
     serial_++;
+}
+
+void MetalDevice::MaybeCommit() {
+    if (cb_ && !encoder_ && !blit_ && settings_.commit_draws && census_.draw_calls - draws_at_commit_ >= settings_.commit_draws)
+        Commit(/*wait=*/false);
+}
+
+void MetalDevice::SplitPassIfDue() {
+    if (cb_ && settings_.commit_draws && census_.draw_calls - draws_at_commit_ >= settings_.commit_draws) {
+        EndEncoder();
+        Commit(/*wait=*/false);
+    }
 }
 
 void MetalDevice::WaitSerial(uint64_t serial) {
@@ -241,6 +264,7 @@ void* MetalDevice::BeginTargetPass(SurfaceId color, SurfaceId depth, bool clear_
                                                                                : ScratchDepth(c->desc.width, c->desc.height);
     if (encoder_ && enc_color_ == c->tex && enc_depth_ == dtex && !clear_color && !clear_depth) return encoder_;
     EndEncoder();
+    MaybeCommit();
     CommandBuffer();
     @autoreleasepool {
         MTLRenderPassDescriptor* rp = [MTLRenderPassDescriptor renderPassDescriptor];
@@ -270,6 +294,7 @@ void* MetalDevice::BeginTargetPass(SurfaceId color, SurfaceId depth, bool clear_
 void* MetalDevice::BlitEncoder() {
     if (blit_) return blit_;
     if (encoder_) EndEncoder();
+    MaybeCommit();
     CommandBuffer();
     @autoreleasepool {
         id<MTLBlitCommandEncoder> b = [(id<MTLCommandBuffer>)cb_ blitCommandEncoder];
@@ -591,12 +616,43 @@ void MetalDevice::WriteAlphaLane(SurfaceId dst, const Rect& dst_rect, SurfaceId 
 
 // ---------------------------------------------------------------- readbacks
 
+void* MetalDevice::ReadbackBuffer(size_t bytes) {
+    if (readback_buf_ && readback_buf_bytes_ >= bytes) return readback_buf_;
+    if (readback_buf_) { [(id)readback_buf_ release]; readback_buf_ = nullptr; }
+    size_t cap = std::max<size_t>(bytes, 1u << 20);
+    @autoreleasepool {
+        readback_buf_ = (void*)[(id<MTLDevice>)device_ newBufferWithLength:cap options:MTLResourceStorageModeShared];
+    }
+    readback_buf_bytes_ = readback_buf_ ? cap : 0;
+    return readback_buf_;
+}
+
 void MetalDevice::ReadTexture(MetalSurface& s, const Rect& rect, void* out, size_t stride) {
-    // Everything queued so far must have landed (the attachment's writes included).
-    Commit(/*wait=*/true);
     const size_t bpp = Bpp(s.desc.format);
     const size_t dst_stride = stride ? stride : static_cast<size_t>(rect.w) * bpp;
-    [Tex(s.tex) getBytes:out bytesPerRow:dst_stride fromRegion:MTLRegionMake2D(rect.x, rect.y, rect.w, rect.h) mipmapLevel:0];
+    const bool depth = s.desc.format == SurfaceFormat::Depth32f || s.desc.format == SurfaceFormat::DepthStencil24_8;
+    const size_t row_bytes = static_cast<size_t>(rect.w) * bpp;
+    // Colour: the blit encoder linearises the rows into a shared buffer on the GPU (a texture
+    // getBytes de-twiddles on the CPU, ~1 ms per 512x448 frame); the queue is drained either way.
+    void* buf = depth ? nullptr : ReadbackBuffer(row_bytes * static_cast<size_t>(rect.h));
+    if (buf) {
+        id<MTLBlitCommandEncoder> b = (id<MTLBlitCommandEncoder>)BlitEncoder();
+        [b copyFromTexture:Tex(s.tex) sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(rect.x, rect.y, 0)
+                sourceSize:MTLSizeMake(rect.w, rect.h, 1) toBuffer:(id<MTLBuffer>)buf destinationOffset:0
+                destinationBytesPerRow:row_bytes destinationBytesPerImage:row_bytes * static_cast<size_t>(rect.h)];
+        Commit(/*wait=*/true);
+        const uint8_t* src = static_cast<const uint8_t*>([(id<MTLBuffer>)buf contents]);
+        if (dst_stride == row_bytes) {
+            std::memcpy(out, src, row_bytes * static_cast<size_t>(rect.h));
+        } else {
+            for (int r = 0; r < rect.h; ++r)
+                std::memcpy(static_cast<uint8_t*>(out) + dst_stride * r, src + row_bytes * r, std::min(row_bytes, dst_stride));
+        }
+    } else {
+        // Everything queued so far must have landed (the attachment's writes included).
+        Commit(/*wait=*/true);
+        [Tex(s.tex) getBytes:out bytesPerRow:dst_stride fromRegion:MTLRegionMake2D(rect.x, rect.y, rect.w, rect.h) mipmapLevel:0];
+    }
     census_.readbacks++;
     census_.readback_bytes += static_cast<uint64_t>(rect.w) * static_cast<uint64_t>(rect.h) * bpp;
 }
@@ -639,12 +695,19 @@ bool MetalDevice::PollReadback(FenceId fence, void* out, size_t stride) {
 bool MetalDevice::EnsureCapture(CaptureSlot& slot, int w, int h) {
     if (slot.tex && slot.w == w && slot.h == h) return true;
     if (slot.tex) { [Tex(slot.tex) release]; slot.tex = nullptr; }
+    if (slot.buf) { [(id)slot.buf release]; slot.buf = nullptr; }
     @autoreleasepool {
         MTLTextureDescriptor* d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
                                                                                      width:w height:h mipmapped:NO];
         d.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
-        d.storageMode = MTLStorageModeShared;
+        d.storageMode = MTLStorageModePrivate;
         slot.tex = (void*)[(id<MTLDevice>)device_ newTextureWithDescriptor:d];
+        slot.buf = (void*)[(id<MTLDevice>)device_ newBufferWithLength:static_cast<NSUInteger>(w) * h * 4
+                                                             options:MTLResourceStorageModeShared];
+    }
+    if (!slot.tex || !slot.buf) {
+        if (slot.tex) { [Tex(slot.tex) release]; slot.tex = nullptr; }
+        if (slot.buf) { [(id)slot.buf release]; slot.buf = nullptr; }
     }
     slot.w = slot.tex ? w : 0;
     slot.h = slot.tex ? h : 0;
@@ -661,8 +724,8 @@ void MetalDevice::CompleteCapture(CaptureSlot& slot, bool wait) {
     }
     slot.pending = false;
     presented_.resize(static_cast<size_t>(slot.w) * slot.h * 4);
-    [Tex(slot.tex) getBytes:presented_.data() bytesPerRow:static_cast<NSUInteger>(slot.w) * 4
-                 fromRegion:MTLRegionMake2D(0, 0, slot.w, slot.h) mipmapLevel:0];
+    // The present's command buffer blitted the rows into the slot's buffer (GPU-linearised).
+    std::memcpy(presented_.data(), [(id<MTLBuffer>)slot.buf contents], presented_.size());
     presented_w_ = slot.w;
     presented_h_ = slot.h;
     census_.readbacks++;
@@ -734,6 +797,12 @@ void MetalDevice::Present(const ScanoutDesc& desc) {
                     s->last_gpu_use = serial_;
                 }
                 [enc endEncoding];
+                id<MTLBlitCommandEncoder> b = [(id<MTLCommandBuffer>)cb_ blitCommandEncoder];
+                [b copyFromTexture:Tex(slot.tex) sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0)
+                        sourceSize:MTLSizeMake(slot.w, slot.h, 1) toBuffer:(id<MTLBuffer>)slot.buf destinationOffset:0
+                destinationBytesPerRow:static_cast<NSUInteger>(slot.w) * 4
+              destinationBytesPerImage:static_cast<NSUInteger>(slot.w) * slot.h * 4];
+                [b endEncoding];
             }
             slot.serial = serial_;
             slot.pending = true;

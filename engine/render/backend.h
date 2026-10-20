@@ -184,6 +184,8 @@ struct CallCensus {
     uint64_t buffer_maps = 0;
     uint64_t clears = 0;
     uint64_t barriers = 0;           // texture barriers issued in place of a destination copy
+    uint64_t submits = 0;            // command buffers committed (backends that batch work)
+    uint64_t gpu_ns = 0;             // GPU busy time of the completed command buffers (backends that report it)
 };
 
 // Surface preserves retained callers' sampling. Owned presentation declares

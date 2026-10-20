@@ -68,6 +68,10 @@ public:
         bool swap_hidden_window = false;   // --swap: SDL_GL_SwapWindow on the hidden window instead of a flush
         bool cd_barrier = false;           // --cd-barrier: the NV_texture_barrier destination read (not tile-coherent on Apple)
         bool metal = false;                // --backend metal: the Metal device (macOS builds; exit 77 when absent)
+        bool metal_hw_depth = false;       // --metal-hw-depth: the rasterizer's depth instead of the shader-written one
+        uint32_t metal_commit_draws = 256; // --metal-commit-draws N: draws per command buffer (0 = one per frame)
+        uint32_t trace_draw = 0xFFFFFFFFu; // --trace-draw N@F: print draw N (0-based) of frame F (registers + vertices) on stderr
+        uint32_t trace_draw_frame = 0;
         bool force_shader_blend = false;   // --force-shader-blend: GL's exact shader blend on every blended draw
         uint32_t draw_limit = 0;           // --draw-limit N[@F]: only the first N draws of frame F (default: every dumped frame) reach the consumer (0 = all; a bisection aid)
         uint32_t draw_limit_frame = kDrawLimitDumpRange;
@@ -80,6 +84,7 @@ public:
         uint64_t hash = 0;
         bool grabbed = false;
         uint64_t readbacks = 0, copies = 0, draw_calls = 0;   // backend census deltas
+        uint64_t submits = 0, gpu_ns = 0;                     // (the GPU time lands when its command buffers complete)
     };
     static constexpr uint64_t kHashSeed = 1469598103934665603ull;
     static constexpr uint64_t kHashPrime = 1099511628211ull;
@@ -101,6 +106,7 @@ private:
     void Teardown();
     // The prefetch thread: records from the reader into the bounded queue.
     void ReaderMain(gs::GsStreamReader* reader);
+    void TraceDraw(const gs::DrawIr& d);
     bool PopRecord(gs::GsStreamReader::Record* out);
     void PresentWindow();   // the device's swap callback: the window image read (as play) + swap
     void OnFrameDone(const gs::JobRec& vsync);
@@ -143,9 +149,11 @@ private:
     double total_ms_ = 0;
     // The prefetch queue (reader thread -> the consumer loop).
     static constexpr size_t kPrefetchDepth = 2048;
+    static constexpr size_t kBatch = 64;   // records per reader hand-over
     std::mutex q_mu_;
     std::condition_variable q_cv_;
     std::deque<gs::GsStreamReader::Record> q_;
+    std::deque<gs::GsStreamReader::Record> local_;   // the consumer loop's taken run
     bool reader_done_ = false;
     bool stop_reader_ = false;
     std::thread reader_thread_;

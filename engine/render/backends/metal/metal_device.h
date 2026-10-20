@@ -41,7 +41,9 @@ namespace render {
 class MetalDrawExecutor;
 
 struct MetalDeviceSettings {
-    uint8_t scale = 1;   // default surface scale
+    uint8_t scale = 1;          // default surface scale
+    bool shader_depth = true;   // the register program writes the window depth itself (else the rasterizer's)
+    uint32_t commit_draws = 256; // draws per command buffer before a mid-frame commit (0 = commit at frame end only)
 };
 
 // One surface's Metal objects.
@@ -120,6 +122,11 @@ public:
     // whose load action clears. Null when the colour surface is not renderable.
     void* BeginTargetPass(SurfaceId color, SurfaceId depth, bool clear_color, bool clear_depth, uint32_t clear_rgba,
                           float clear_z);
+    // The executor's split from INSIDE a pass (after a draw) once the open command buffer holds
+    // settings_.commit_draws draws: ends the encoder (a tile store, ~2 MB at scale 1) and commits; the
+    // next draw re-opens the pass with load actions. The GPU works on the committed chunk while
+    // the CPU encodes the next.
+    void SplitPassIfDue();
     // The open encoder (null when none) and its attachments.
     void* CurrentEncoder() const { return encoder_; }
     void EndEncoder();
@@ -148,18 +155,25 @@ private:
     };
     struct CaptureSlot {
         void* tex = nullptr;        // id<MTLTexture>
+        void* buf = nullptr;        // id<MTLBuffer>, shared: the slot's rows, blitted by the present's command buffer
         int w = 0, h = 0;
         uint64_t serial = 0;        // the command buffer that drew it
         bool pending = false;
     };
     void* CommandBuffer();          // the open command buffer (creates one)
     void Commit(bool wait);
+    // Commits the open command buffer once it holds settings_.commit_draws draws (called between
+    // encoders): the GPU runs the frame's early passes while the CPU encodes the rest.
+    void MaybeCommit();
     bool GpuIdle(uint64_t serial) const { return serial <= completed_serial_.load(std::memory_order_acquire); }
     void WaitSerial(uint64_t serial);
     void* ScratchDepth(uint32_t w, uint32_t h);
     bool EnsureCapture(CaptureSlot& slot, int w, int h);
     void CompleteCapture(CaptureSlot& slot, bool wait);
     void StagingUpload(MetalSurface& s, int level, const Rect& rect, const void* bytes, size_t src_stride, size_t bpp);
+    // A shared buffer of at least `bytes` for the colour readbacks (the blit encoder linearises
+    // the texture on the GPU; the CPU copies rows out after completion).
+    void* ReadbackBuffer(size_t bytes);
     void ReleaseSurface(MetalSurface& s);
     void DrawFullscreen(MetalProgram program, void* color_tex, const Rect& scissor, const void* uniforms, size_t uniform_bytes,
                         void* tex0, uint32_t w, uint32_t h);
@@ -177,6 +191,8 @@ private:
     void* enc_depth_ = nullptr;
     uint64_t serial_ = 1;           // the open / next command buffer's serial
     std::atomic<uint64_t> completed_serial_{0};
+    std::atomic<uint64_t> gpu_ns_{0};   // summed GPU busy time of the completed command buffers
+    uint64_t draws_at_commit_ = 0;
     MetalPipelineCache pipelines_;
     std::unique_ptr<MetalDrawExecutor> executor_;
     void* dummy_tex_ = nullptr;
@@ -190,6 +206,8 @@ private:
     void* staging_ = nullptr;       // id<MTLBuffer>, shared
     size_t staging_offset_ = 0;
     uint64_t staging_wrap_serial_ = 0;
+    void* readback_buf_ = nullptr;  // id<MTLBuffer>, shared (grown on demand)
+    size_t readback_buf_bytes_ = 0;
     void* present_sampler_nearest_ = nullptr;
     void* present_sampler_linear_ = nullptr;
     void* layer_ = nullptr;         // CAMetalLayer*

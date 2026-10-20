@@ -93,12 +93,43 @@ struct FragUniforms {
     int color_mask;
 };
 
+// PS2R_SHADER_DEPTH (a compile-time macro of the library): 1 = the fragment writes the
+// window depth itself (the GL arm's gl_FragDepth form); 0 = the rasterizer's depth (the
+// vertex clip z IS z / 2^32 in Metal's [0, 1] clip space, w = 1: the same screen-linear
+// value), which keeps the GPU's early depth rejection / hidden-surface removal.
+// The register program's specialisation (function constants; MetalSpecKey): each folds a
+// uniform-driven branch at pipeline build so a draw runs only its own route's code. Every
+// constant mirrors a FragUniforms field the executor also sets, so the text under a folded
+// branch is the GL arm's unchanged.
+constant bool kUseTexture [[function_constant(0)]];
+constant int kTexPath [[function_constant(1)]];      // 0 plain sample, 1 mip chain, 2 depth view, 3 indexed serve
+constant bool kFog [[function_constant(2)]];
+constant bool kAlphaTest [[function_constant(3)]];
+constant bool kDate [[function_constant(4)]];
+constant bool kZsrc [[function_constant(5)]];
+constant bool kBlend [[function_constant(6)]];
+constant bool kFbmsk16 [[function_constant(7)]];
+constant bool kFbmsk32 [[function_constant(8)]];
+constant bool kCt16 [[function_constant(9)]];         // fb16 or ct16q
+constant bool kFba [[function_constant(10)]];
+constant bool kMaskAll [[function_constant(11)]];     // color_mask == 0xF
+constant bool kScanmsk [[function_constant(12)]];
+
 struct FragOut {
     float4 color [[color(0)]];
+#if PS2R_SHADER_DEPTH
     float depth [[depth(any)]];
+#endif
 };
 
-static inline float3 GlslMod(float3 x, float y) { return x - y * floor(x / y); }
+// Safe-math note: the library compiles with IEEE semantics (no fast math), where a divide
+// is a long precise sequence. Divides by a power of two are written as the multiply by the
+// exact reciprocal (the same IEEE value); the /255 normalisations use kInv255 -- within 2 ulp
+// of the quotient, and every consumer recovers the byte through floor(x * 255 + 0.5) or the
+// unorm8 store (margin 1/510), so the stored bytes are the quotient's.
+constant float kInv255 = 1.0 / 255.0;
+constant float kInv128 = 1.0 / 128.0;
+static inline float3 GlslMod(float3 x, float y) { return x - y * floor(x * (1.0 / y)); }
 
 // Requantise an interpolated GS texel coordinate to its value at the NATIVE pixel centre
 // (the GL arm's S83NativeCenter): exact for the affine mappings the aliasing serves carry.
@@ -137,18 +168,22 @@ fragment FragOut ps2_fragment(RasterData in [[stage_in]],
     const float2 frag_xy = in.position.xy;
     // The window depth: d = PS2 z / 2^32 exactly. Written on every path, before any discard.
     float frag_z = in.z * exp2(-32.0);
+#if PS2R_SHADER_DEPTH
     out.depth = frag_z;
+#endif
     // --- PS2 SCANMSK ---
-    if (U.scanmsk == 2) {
-        if (int(frag_xy.y) % 2 == 0) discard_fragment();
-    } else if (U.scanmsk == 3) {
-        if (int(frag_xy.y) % 2 != 0) discard_fragment();
+    if (kScanmsk) {
+        if (U.scanmsk == 2) {
+            if (int(frag_xy.y) % 2 == 0) discard_fragment();
+        } else if (U.scanmsk == 3) {
+            if (int(frag_xy.y) % 2 != 0) discard_fragment();
+        }
     }
 
     float4 result;
     const float2 tex_size = float2(U.tex_size_x, U.tex_size_y);
 
-    if (U.use_texture != 0) {
+    if (kUseTexture) {
         float inv_q = (in.texcoord.z != 0.0) ? (1.0 / in.texcoord.z) : 1.0;
         float2 uvn_rt = in.texcoord.xy * inv_q;
         if (U.uv_native != 0) uvn_rt = NativeCenter(uvn_rt, U.draw_scale, frag_xy);
@@ -157,13 +192,13 @@ fragment FragOut ps2_fragment(RasterData in [[stage_in]],
 
         float4 vc = floor(in.color * 255.0 + 0.5);
         float4 tex;
-        if (U.depth_fmt == 2) {
+        if (kTexPath == 2 && U.depth_fmt == 2) {
             // Z16-family view of a depth attachment.
             float df = u_texture_depth.sample(u_sampler, uv);
             uint d = ZFromDepth(df);
             uint z16 = min(d, 0xFFFFu);
             tex = Expand5551(z16);
-        } else if (U.depth_fmt == 1) {
+        } else if (kTexPath == 2 && U.depth_fmt == 1) {
             // Native PSMZ32 read of a Z32 depth attachment: raw z bytes as RGBA.
             float df = u_texture_depth.sample(u_sampler, uv);
             uint z = ZFromDepth(df);
@@ -173,7 +208,7 @@ fragment FragOut ps2_fragment(RasterData in [[stage_in]],
                          0.0);
             uint a8 = (z >> 24u) & 0xFFu;
             tex.a = float(a8);
-        } else if (U.depth_fmt == 3) {
+        } else if (kTexPath == 2 && U.depth_fmt == 3) {
             // PSMZ16 view of a Z32 depth attachment: the closed-form aliasing remap.
             float2 rt = in.texcoord.xy * inv_q;
             rt = NativeCenter(rt, U.draw_scale, frag_xy);
@@ -190,7 +225,7 @@ fragment FragOut ps2_fragment(RasterData in [[stage_in]],
             uint z = ZFromDepth(df);
             uint z16 = (hw != 0) ? ((z >> 16u) & 0xFFFFu) : (z & 0xFFFFu);
             tex = Expand5551(z16);
-        } else if (U.idx_fmt == 7) {
+        } else if (kTexPath == 3 && U.idx_fmt == 7) {
             // Depth-byte palette serve: this fragment's own depth texel, one byte of the GS Z.
             int2 ztc = int2(frag_xy);
             int2 zdim = int2(u_texture_depth.get_width(), u_texture_depth.get_height());
@@ -199,7 +234,7 @@ fragment FragOut ps2_fragment(RasterData in [[stage_in]],
             uint z = ZFromDepth(df);
             uint idx = (z >> uint(U.idx_self & 31)) & 0xFFu;
             tex = floor(u_clut.read(uint2(idx, 0u)) * 255.0 + 0.5);
-        } else if (U.idx_fmt == 4) {
+        } else if (kTexPath == 3 && U.idx_fmt == 4) {
             // CLASS IDX-A: PSMT8H read of a CT32-class target: index = the stored alpha byte at
             // the same (x, y); u_idx_self reads the pre-draw destination COPY (texture 1).
             float2 rtc = in.texcoord.xy * inv_q;
@@ -215,7 +250,7 @@ fragment FragOut ps2_fragment(RasterData in [[stage_in]],
             float4 src = (U.idx_self != 0) ? u_rt_copy.read(uint2(tc)) : u_texture.read(uint2(tc));
             uint idx = uint(floor(src.a * 255.0 + 0.5));
             tex = floor(u_clut.read(uint2(idx, uint(U.clut_raw))) * 255.0 + 0.5);
-        } else if (U.idx_fmt == 5) {
+        } else if (kTexPath == 3 && U.idx_fmt == 5) {
             // CLASS IDX-B: PSMT8H read over CT16-rendered pages (base + partner at +height rows).
             float2 rtc = in.texcoord.xy * inv_q;
             rtc = NativeCenter(rtc, U.draw_scale, frag_xy);
@@ -245,7 +280,7 @@ fragment FragOut ps2_fragment(RasterData in [[stage_in]],
             uint a = uint(floor(src.a * 255.0 + 0.5));
             uint idx = ((c.g >> 6u) & 3u) | ((c.b >> 3u) << 2u) | ((a > 127u) ? 0x80u : 0u);
             tex = floor(u_clut.read(uint2(idx, uint(U.clut_raw))) * 255.0 + 0.5);
-        } else if (U.idx_fmt == 6) {
+        } else if (kTexPath == 3 && U.idx_fmt == 6) {
             // CLASS IDX-C: plain PSMT8 read of a CT16 render target (the channel shuffle).
             float2 rtc = in.texcoord.xy * inv_q;
             rtc = NativeCenter(rtc, U.draw_scale, frag_xy);
@@ -280,7 +315,7 @@ fragment FragOut ps2_fragment(RasterData in [[stage_in]],
             uint hw = (c.r >> 3u) | ((c.g >> 3u) << 5u) | ((c.b >> 3u) << 10u) | ((a > 127u) ? 0x8000u : 0u);
             uint idx = (lane != 0) ? ((hw >> 8u) & 0xFFu) : (hw & 0xFFu);
             tex = floor(u_clut.read(uint2(idx, uint(U.clut_raw))) * 255.0 + 0.5);
-        } else if (U.mip_levels > 0) {
+        } else if (kTexPath == 1 && U.mip_levels > 0) {
             // Retail per-pixel LOD over the uploaded chain, floored by the footprint lambda and
             // clamped at the authored chain end (the GL arm's GSMIP_AAF 1 arm).
             float q_abs = abs(in.texcoord.z);
@@ -299,7 +334,7 @@ fragment FragOut ps2_fragment(RasterData in [[stage_in]],
         }
 
         // PS2 TFX in integer space: (A * B) >> 7 = trunc(A * B / 128).
-        float4 FxT = trunc((vc * tex) / 128.0);
+        float4 FxT = trunc((vc * tex) * kInv128);
         if (U.tfx == 0) {
             result = FxT;
             if (U.tcc == 0) result.a = vc.a;
@@ -313,7 +348,7 @@ fragment FragOut ps2_fragment(RasterData in [[stage_in]],
             result.rgb = FxT.rgb + vc.a;
             result.a = (U.tcc == 1) ? tex.a : vc.a;
         }
-        result = min(result, 255.0) / 255.0;
+        result = min(result, 255.0) * kInv255;
     } else {
         result = in.color;
     }
@@ -321,13 +356,13 @@ fragment FragOut ps2_fragment(RasterData in [[stage_in]],
     result = clamp(result, 0.0, 1.0);
 
     // --- PS2 fog (PRIM.FGE + FOGCOL) ---
-    if (U.fog_enabled != 0) {
+    if (kFog) {
         float f = in.fog;
         result.rgb = mix(float3(U.fogcol_r, U.fogcol_g, U.fogcol_b), result.rgb, f);
     }
 
     // --- PS2 alpha test (TEST: ATE, ATST, AREF, AFAIL) ---
-    if (U.ate != 0) {
+    if (kAlphaTest) {
         int alpha_int = int(result.a * 255.0 + 0.5);
         bool alpha_pass = true;
         if (U.atst == 0) alpha_pass = false;
@@ -344,7 +379,7 @@ fragment FragOut ps2_fragment(RasterData in [[stage_in]],
     }
 
     // --- PS2 destination alpha test (DATE / DATM): the attachment's current alpha MSB ---
-    if (U.date != 0) {
+    if (kDate) {
         int dst_alpha_int = int(dst.a * 255.0 + 0.5);
         bool dst_msb = (dst_alpha_int & 0x80) != 0;
         if (U.datm == 0) {
@@ -355,13 +390,13 @@ fragment FragOut ps2_fragment(RasterData in [[stage_in]],
     }
 
     // --- depth test against colour-authored ZBUF VRAM (texture 4) ---
-    if (U.zsrc_en != 0) {
+    if (kZsrc) {
         int2 zdim = int2(u_zsrc_tex.get_width(), u_zsrc_tex.get_height());
         int zn = max(U.zsrc_num, 1), zd = max(U.zsrc_den, 1);
         int2 zc = clamp(int2(frag_xy) * zn / zd, int2(0), zdim - int2(1));
         float4 zpix = u_zsrc_tex.read(uint2(zc));
         float4 zb = floor(zpix * 255.0 + 0.5);
-        float dstz = (zb.a * 16777216.0 + zb.b * 65536.0 + zb.g * 256.0 + zb.r) / 4294967296.0;
+        float dstz = (zb.a * 16777216.0 + zb.b * 65536.0 + zb.g * 256.0 + zb.r) * exp2(-32.0);
         if (U.zsrc_en == 3) {
             if (frag_z <= dstz) discard_fragment();
         } else {
@@ -370,7 +405,7 @@ fragment FragOut ps2_fragment(RasterData in [[stage_in]],
     }
 
     // --- the GS blend equation, integer: Cv = ((A - B) * C >> 7) + D, Cd = the attachment ---
-    if (U.blend_enabled != 0 && U.sw_blend != 0) {
+    if (kBlend) {
         float4 RT = dst;
         float3 Cs = floor(result.rgb * 255.0 + 0.5);
         float As = min(floor(result.a * 255.0 + 0.5), 128.0);
@@ -392,36 +427,36 @@ fragment FragOut ps2_fragment(RasterData in [[stage_in]],
         if (U.blend_d == 0) D_val = Cs;
         else if (U.blend_d == 1) D_val = Cd;
         else D_val = float3(0.0);
-        float3 blended = floor((A_val - B_val) * C_val / 128.0) + D_val;
+        float3 blended = floor((A_val - B_val) * C_val * kInv128) + D_val;
         if (U.colclamp != 0) {
-            result.rgb = clamp(blended, float3(0.0), float3(255.0)) / 255.0;
+            result.rgb = clamp(blended, float3(0.0), float3(255.0)) * kInv255;
         } else {
-            result.rgb = GlslMod(blended, 256.0) / 255.0;
+            result.rgb = GlslMod(blended, 256.0) * kInv255;
         }
     }
 
     // --- COLCLAMP after the blend ---
     if (U.colclamp != 0) {
         result.rgb = clamp(result.rgb, float3(0.0), float3(1.0));
-    } else if (U.blend_enabled == 0 || U.sw_blend == 0) {
+    } else if (!kBlend) {
         result.rgb = fract(result.rgb);
     }
     result.a = clamp(result.a, 0.0, 1.0);
 
     // --- FBA: bit 7 OR-ed into the stored alpha ---
-    if (U.fba != 0) {
+    if (kFba) {
         int a_int = int(result.a * 255.0 + 0.5);
         a_int = a_int | 0x80;
-        result.a = float(min(a_int, 255)) / 255.0;
+        result.a = float(min(a_int, 255)) * kInv255;
     }
 
     // --- 16-bit colour frames store the A-bit ---
-    if (U.fb16 != 0 && (U.blend_enabled == 0 || U.sw_blend != 0)) {
+    if (kCt16 && U.fb16 != 0) {
         result.a = (int(result.a * 255.0 + 0.5) >= 128) ? 1.0 : 0.0;
     }
 
     // --- retail 16-bit frame write rule: dither + 5-bit truncation (zero-fill expansion) ---
-    if (U.ct16q != 0 && (U.blend_enabled == 0 || U.sw_blend != 0)) {
+    if (kCt16 && U.ct16q != 0) {
         int3 cq = int3(result.rgb * 255.0 + 0.5);
         if (U.dthe != 0) {
             int nx = (int(frag_xy.x) / U.ct16q) & 3;
@@ -433,11 +468,11 @@ fragment FragOut ps2_fragment(RasterData in [[stage_in]],
             cq = clamp(cq + int3(dm), int3(0), int3(255));
         }
         int3 q5 = cq >> 3;
-        result.rgb = float3(q5 << 3) / 255.0;
+        result.rgb = float3(q5 << 3) * kInv255;
     }
 
     // --- exact-bit FBMSK merge, 16-bit frames (5551 layout) ---
-    if (U.fbmsk16_en != 0) {
+    if (kFbmsk16) {
         int4 s = int4(result * 255.0 + 0.5);
         int src_bits = ((s.r >> 3) & 0x1F) | (((s.g >> 3) & 0x1F) << 5) | (((s.b >> 3) & 0x1F) << 10) |
                        ((s.a > 127 ? 1 : 0) << 15);
@@ -448,24 +483,28 @@ fragment FragOut ps2_fragment(RasterData in [[stage_in]],
         int r5 = merged & 0x1F;
         int g5 = (merged >> 5) & 0x1F;
         int b5 = (merged >> 10) & 0x1F;
-        result.r = float((r5 << 3) | (r5 >> 2)) / 255.0;
-        result.g = float((g5 << 3) | (g5 >> 2)) / 255.0;
-        result.b = float((b5 << 3) | (b5 >> 2)) / 255.0;
+        result.r = float((r5 << 3) | (r5 >> 2)) * kInv255;
+        result.g = float((g5 << 3) | (g5 >> 2)) * kInv255;
+        result.b = float((b5 << 3) | (b5 >> 2)) * kInv255;
         result.a = ((merged & 0x8000) != 0) ? 1.0 : 0.0;
     }
 
     // --- exact-bit FBMSK merge, 32-bit frames ---
-    if (U.fbmsk32_en != 0) {
+    if (kFbmsk32) {
         int4 s32 = int4(result * 255.0 + 0.5);
         int4 d32 = int4(dst * 255.0 + 0.5);
         int4 m32 = int4(U.fbmsk32 & 0xFF, (U.fbmsk32 >> 8) & 0xFF, (U.fbmsk32 >> 16) & 0xFF, (U.fbmsk32 >> 24) & 0xFF);
         int4 merged32 = (s32 & ~m32) | (d32 & m32);
-        result = float4(merged32) / 255.0;
+        result = float4(merged32) * kInv255;
     }
 
     // The colour write mask: a masked channel writes the attachment's value back.
-    bool4 wm = bool4((U.color_mask & 1) != 0, (U.color_mask & 2) != 0, (U.color_mask & 4) != 0, (U.color_mask & 8) != 0);
-    out.color = select(dst, result, wm);
+    if (kMaskAll) {
+        out.color = result;
+    } else {
+        bool4 wm = bool4((U.color_mask & 1) != 0, (U.color_mask & 2) != 0, (U.color_mask & 4) != 0, (U.color_mask & 8) != 0);
+        out.color = select(dst, result, wm);
+    }
     return out;
 }
 

@@ -113,8 +113,8 @@ bool ConfigValidator::Validate(const Config& c, bool harness_window_requested, s
     if ((c.hle.graphics_shadows || c.hle.graphics_distortion || c.hle.graphics_screen || c.hle.graphics_sprites || c.hle.graphics_text || c.hle.graphics_sky ||
          c.hle.graphics_movie || c.hle.graphics_frame || c.hle.graphics_textures || c.hle.graphics_meshes ||
          c.hle.graphics_strips == GraphicsStrips::All) &&
-        c.video.backend != VideoBackend::Gl)
-        return Refuse(err, "selected Graphics producers require video.backend=gl");
+        c.video.backend == VideoBackend::Soft)
+        return Refuse(err, "selected Graphics producers require a live video backend (video.backend=gl|metal)");
     if (c.hle.graphics_meshes && !c.hle.graphics_textures)
         return Refuse(err, "hle.graphics_meshes requires hle.graphics_textures=on");
     if (c.hle.audio_mix && (!c.hle.music || !c.hle.movie_lifecycle || c.iop.dispatch != IopDispatch::Frame))

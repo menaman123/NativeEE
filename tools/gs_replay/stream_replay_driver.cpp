@@ -48,7 +48,10 @@ bool StreamReplayDriver::DrawLimitApplies(uint32_t frame_index) const {
 bool StreamReplayDriver::CreateContext() {
     if (opt_.metal) {
 #if defined(PS2R_HAS_METAL)
-        metal_ = std::make_unique<render::MetalDevice>();
+        render::MetalDeviceSettings ms;
+        ms.shader_depth = !opt_.metal_hw_depth;
+        ms.commit_draws = opt_.metal_commit_draws;
+        metal_ = std::make_unique<render::MetalDevice>(ms);
         if (!metal_->Init([this] { PresentWindow(); })) return false;
         be_ = metal_.get();
         api_name_ = "Metal";
@@ -151,6 +154,8 @@ void StreamReplayDriver::OnFrameDone(const gs::JobRec& vsync) {
         st.readbacks = c->readbacks - census_at_frame_.readbacks;
         st.copies = c->copies - census_at_frame_.copies;
         st.draw_calls = c->draw_calls - census_at_frame_.draw_calls;
+        st.submits = c->submits - census_at_frame_.submits;
+        st.gpu_ns = c->gpu_ns - census_at_frame_.gpu_ns;
         census_at_frame_ = *c;
     }
     stream_hash_ = (stream_hash_ * kHashPrime) ^ st.hash;
@@ -202,15 +207,39 @@ void StreamReplayDriver::WritePpm(const std::string& path, const std::vector<uin
     std::fclose(f);
 }
 
+// --trace-draw: the draw record as the consumer sees it (registers + every vertex).
+void StreamReplayDriver::TraceDraw(const gs::DrawIr& d) {
+    const auto& r = d.raster;
+    std::fprintf(stderr, "[GSSTREAM] seq=%u frame=%zu prim=%u iip=%d fge=%d fst=%d abe=%d scanmsk=%u FRAME(fbp=%x fbw=%u psm=%02x fbmsk=%08x) "
+                 "ZBUF(zbp=%x psm=%02x zmsk=%d) TEST(ate=%d atst=%u aref=%02x afail=%u date=%d datm=%d zte=%d ztst=%u) ALPHA=%u%u%u%u fix=%02x "
+                 "SCISSOR(%u,%u)-(%u,%u) cc=%d pabe=%d fba=%d verts=%zu\n",
+                 d.seq, frames_.size(), d.prim_type, d.gouraud, d.fog, d.use_fst, d.alpha_blend, d.scanmsk, r.frame.fbp, r.frame.fbw,
+                 r.frame.psm, r.frame.fbmsk, r.zbuf.zbp, r.zbuf.psm, r.zbuf.zmsk, r.test.ate, r.test.atst, r.test.aref, r.test.afail,
+                 r.test.date, r.test.datm, r.test.zte, r.test.ztst, r.alpha.a, r.alpha.b, r.alpha.c, r.alpha.d, r.alpha.fix,
+                 r.scissor.x0, r.scissor.y0, r.scissor.x1, r.scissor.y1, r.colclamp, r.pabe, r.fba, d.verts.size());
+    for (size_t i = 0; i < d.verts.size(); ++i) {
+        const gs::VertexRec& v = d.verts[i];
+        std::fprintf(stderr, "  v%zu x=%.3f y=%.3f z=%.1f s=%.5f t=%.5f q=%.5f uv=(%u,%u) rgba=%02x%02x%02x%02x fog=%u kick=%u\n", i, v.x,
+                     v.y, v.z, v.s, v.t, v.q, v.uv_u, v.uv_v, v.r, v.g, v.b, v.a, v.fog, v.draw_kick);
+    }
+}
+
 void StreamReplayDriver::ReaderMain(gs::GsStreamReader* reader) {
+    // Records are handed over in batches: one lock per kBatch records on each side (a
+    // per-record lock pair contends with the consumer loop at ~3k records per frame).
+    std::deque<gs::GsStreamReader::Record> batch;
     gs::GsStreamReader::Record rec;
-    while (true) {
-        if (!reader->Next(&rec)) break;
+    bool more = true;
+    while (more) {
+        more = reader->Next(&rec);
+        if (more) batch.push_back(std::move(rec));
+        if (batch.size() < kBatch && more) continue;
         std::unique_lock<std::mutex> lk(q_mu_);
         q_cv_.wait(lk, [this] { return q_.size() <= kPrefetchDepth - kPrefetchDepth / 4 || stop_reader_; });
         if (stop_reader_) break;
-        q_.push_back(std::move(rec));
-        const bool wake = q_.size() == 1;   // the consumer may be waiting on an empty queue
+        const bool wake = q_.empty();   // the consumer may be waiting on an empty queue
+        for (auto& r : batch) q_.push_back(std::move(r));
+        batch.clear();
         lk.unlock();
         if (wake) q_cv_.notify_all();
     }
@@ -221,15 +250,16 @@ void StreamReplayDriver::ReaderMain(gs::GsStreamReader* reader) {
 }
 
 bool StreamReplayDriver::PopRecord(gs::GsStreamReader::Record* out) {
-    std::unique_lock<std::mutex> lk(q_mu_);
-    q_cv_.wait(lk, [this] { return !q_.empty() || reader_done_; });
-    if (q_.empty()) return false;
-    *out = std::move(q_.front());
-    q_.pop_front();
-    // Wake the reader once per quarter of the queue drained, not per record.
-    const bool wake = q_.size() == kPrefetchDepth - kPrefetchDepth / 4;
-    lk.unlock();
-    if (wake) q_cv_.notify_all();
+    if (local_.empty()) {
+        std::unique_lock<std::mutex> lk(q_mu_);
+        q_cv_.wait(lk, [this] { return !q_.empty() || reader_done_; });
+        if (q_.empty()) return false;
+        local_.swap(q_);   // take the whole prefetched run; the reader refills behind it
+        lk.unlock();
+        q_cv_.notify_all();
+    }
+    *out = std::move(local_.front());
+    local_.pop_front();
     return true;
 }
 
@@ -265,6 +295,7 @@ int StreamReplayDriver::Run() {
                 vram_ops_ += ops.Replay(*vram_);
                 break;
             case gs::GsStreamFormat::kDraw:
+                if (frame_draws_ == opt_.trace_draw && frames_.size() == opt_.trace_draw_frame) TraceDraw(rec.draw);
                 // The bisection aid limits only the dumped frames (every earlier frame runs whole so the
                 // render-target / depth state the limited frame starts from is the real one).
                 if (!opt_.draw_limit || !DrawLimitApplies(static_cast<uint32_t>(frames_.size())) ||
@@ -321,24 +352,42 @@ void StreamReplayDriver::WriteOutputs() const {
     const double fps_mean = sum_ms > 0 ? 1000.0 * static_cast<double>(n) / sum_ms : 0.0;
     const double fps_p50 = p50 > 0 ? 1000.0 / p50 : 0.0;
     const gs::DrawIrQueueConsumer::Counters& cc = consumer_->Count();
+    std::vector<double> gpu_ms;
+    uint64_t submits = 0;
+    for (size_t i = first; i < frames_.size(); ++i) {
+        gpu_ms.push_back(static_cast<double>(frames_[i].gpu_ns) * 1e-6);
+        submits += frames_[i].submits;
+    }
+    const double gpu_p50 = Percentile(gpu_ms, 0.50);
     std::printf("[GSSTREAM] frames=%zu warmup=%zu measured=%zu scale=%d total_ms=%.1f fps_mean=%.1f fps_p50=%.1f ms_p50=%.3f "
                 "ms_p99=%.3f ms_max=%.3f over_%gms=%u draws=%llu draws_per_frame=%.0f uploads=%llu vram_ops=%llu "
-                "grab_empty=%llu presents=%llu presents_read=%llu\n",
+                "grab_empty=%llu presents=%llu presents_read=%llu gpu_ms_p50=%.3f submits_per_frame=%.1f\n",
                 frames_.size(), first, n, opt_.scale, total_ms_, fps_mean, fps_p50, p50, p99, max_ms, kFrameBarMs, over_bar,
                 static_cast<unsigned long long>(draws), n ? static_cast<double>(draws) / static_cast<double>(n) : 0.0,
                 static_cast<unsigned long long>(uploads_), static_cast<unsigned long long>(vram_ops_),
                 static_cast<unsigned long long>(cc.grab_empty), static_cast<unsigned long long>(cc.presents),
-                static_cast<unsigned long long>(presents_read_));
+                static_cast<unsigned long long>(presents_read_), gpu_p50,
+                n ? static_cast<double>(submits) / static_cast<double>(n) : 0.0);
+    if (const render::CallCensus* c = be_->Census())
+        std::printf("[GSSTREAM] census draw_calls=%llu passes=%llu program_binds=%llu texture_binds=%llu clears=%llu copies=%llu "
+                    "uploads=%llu readbacks=%llu readback_bytes=%llu buffer_maps=%llu submits=%llu gpu_ms=%.1f\n",
+                    static_cast<unsigned long long>(c->draw_calls), static_cast<unsigned long long>(c->framebuffer_binds),
+                    static_cast<unsigned long long>(c->program_binds), static_cast<unsigned long long>(c->texture_binds),
+                    static_cast<unsigned long long>(c->clears), static_cast<unsigned long long>(c->copies),
+                    static_cast<unsigned long long>(c->uploads), static_cast<unsigned long long>(c->readbacks),
+                    static_cast<unsigned long long>(c->readback_bytes), static_cast<unsigned long long>(c->buffer_maps),
+                    static_cast<unsigned long long>(c->submits), static_cast<double>(c->gpu_ns) * 1e-6);
     std::printf("STREAM_HASH %016llx\n", static_cast<unsigned long long>(stream_hash_));
     if (opt_.csv_path) {
         if (std::FILE* f = std::fopen(opt_.csv_path, "w")) {
-            std::fprintf(f, "frame,ms,draws,jobs,hash,grabbed,readbacks,copies,draw_calls\n");
+            std::fprintf(f, "frame,ms,draws,jobs,hash,grabbed,readbacks,copies,draw_calls,submits,gpu_ms\n");
             for (size_t i = 0; i < frames_.size(); ++i) {
                 const FrameStat& s = frames_[i];
-                std::fprintf(f, "%zu,%.4f,%u,%u,%016llx,%d,%llu,%llu,%llu\n", i, s.ms, s.draws, s.jobs,
+                std::fprintf(f, "%zu,%.4f,%u,%u,%016llx,%d,%llu,%llu,%llu,%llu,%.4f\n", i, s.ms, s.draws, s.jobs,
                              static_cast<unsigned long long>(s.hash), s.grabbed ? 1 : 0,
                              static_cast<unsigned long long>(s.readbacks), static_cast<unsigned long long>(s.copies),
-                             static_cast<unsigned long long>(s.draw_calls));
+                             static_cast<unsigned long long>(s.draw_calls), static_cast<unsigned long long>(s.submits),
+                             static_cast<double>(s.gpu_ns) * 1e-6);
             }
             std::fclose(f);
         }
