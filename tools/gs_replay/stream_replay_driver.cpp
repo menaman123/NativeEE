@@ -150,12 +150,25 @@ void StreamReplayDriver::PresentWindow() {
     else be_->FlushCommands();   // play: the hidden window is never shown -- a flush, not a swap
 }
 
-void StreamReplayDriver::TakeGrab(FrameStat* st) {
+void StreamReplayDriver::TakeGrab(FrameStat* st, uint32_t row) {
     const gs::DrawPipeline::Frame& f = consumer_->LastFrame();
     st->grabbed = f.grabbed;
     st->hash = f.hash;
     st->w = f.w;
     st->h = f.h;
+    // --dump-ppm: the grab's image (and its alpha lane) under the row's index -- for a
+    // deferred grab this runs when the row's grab lands, one boundary later.
+    if (opt_.dump_dir && opt_.dump_range.Contains(row) && f.grabbed && !f.rgba.empty()) {
+        char name[64];
+        std::snprintf(name, sizeof(name), "/g%u.ppm", row);
+        WritePpm(std::string(opt_.dump_dir) + name, f.rgba, f.w, f.h);
+        std::snprintf(name, sizeof(name), "/a%u.pgm", row);
+        if (std::FILE* af = std::fopen((std::string(opt_.dump_dir) + name).c_str(), "wb")) {
+            std::fprintf(af, "P5\n%d %d\n255\n", f.w, f.h);
+            for (size_t i = 3; i < f.rgba.size(); i += 4) std::fputc(f.rgba[i], af);
+            std::fclose(af);
+        }
+    }
 }
 
 void StreamReplayDriver::ChainHash(const FrameStat& st) {
@@ -187,15 +200,15 @@ void StreamReplayDriver::OnFrameDone(const gs::JobRec& vsync) {
     if (opt_.deferred_grab) {
         // The previous row's queued grab landed at this boundary: it is that row's.
         if (pending_row_ >= 0 && cc.grabs_completed != grabs_completed_seen_) {
-            TakeGrab(&frames_[static_cast<size_t>(pending_row_)]);
+            TakeGrab(&frames_[static_cast<size_t>(pending_row_)], static_cast<uint32_t>(pending_row_));
             pending_row_ = -1;
         }
         grabs_completed_seen_ = cc.grabs_completed;
         if (cc.grabs_deferred != grabs_deferred_seen_) pending_row_ = static_cast<long>(frame_index);   // filled later
-        else TakeGrab(&st);
+        else TakeGrab(&st, frame_index);
         grabs_deferred_seen_ = cc.grabs_deferred;
     } else {
-        TakeGrab(&st);
+        TakeGrab(&st, frame_index);
     }
     frames_.push_back(st);
     total_ms_ += st.ms;
@@ -205,19 +218,9 @@ void StreamReplayDriver::OnFrameDone(const gs::JobRec& vsync) {
                     st.grabbed ? "grab" : pending_row_ == static_cast<long>(frame_index) ? "pending" : "nograb",
                     static_cast<unsigned long long>(st.readbacks),
                     static_cast<unsigned long long>(st.copies), static_cast<unsigned long long>(st.draw_calls));
-    const gs::DrawPipeline::Frame& f = consumer_->LastFrame();
-    if (opt_.dump_dir && opt_.dump_range.Contains(frame_index) && f.grabbed && !f.rgba.empty() && !opt_.deferred_grab) {
+    // The route trace of a dumped frame (how every draw was lowered) next to its image.
+    if (opt_.dump_dir && opt_.dump_range.Contains(frame_index)) {
         char name[64];
-        std::snprintf(name, sizeof(name), "/g%u.ppm", frame_index);
-        WritePpm(std::string(opt_.dump_dir) + name, f.rgba, f.w, f.h);
-        // The grab's alpha lane as a PGM (the stored GS alpha byte per pixel).
-        std::snprintf(name, sizeof(name), "/a%u.pgm", frame_index);
-        if (std::FILE* af = std::fopen((std::string(opt_.dump_dir) + name).c_str(), "wb")) {
-            std::fprintf(af, "P5\n%d %d\n255\n", f.w, f.h);
-            for (size_t i = 3; i < f.rgba.size(); i += 4) std::fputc(f.rgba[i], af);
-            std::fclose(af);
-        }
-        // The route trace of the dumped frame (how every draw was lowered) next to its image.
         std::snprintf(name, sizeof(name), "/r%u.txt", frame_index);
         if (std::FILE* tf = std::fopen((std::string(opt_.dump_dir) + name).c_str(), "w")) {
             pipe_->RouteTrace().Write(tf);
@@ -368,7 +371,7 @@ done:
     reader_thread_.join();
     if (!reader_error_.empty()) std::fprintf(stderr, "[GSSTREAM] note: %s (tail kept)\n", reader_error_.c_str());
     // --deferred-grab: the last row's queued grab lands now.
-    if (pending_row_ >= 0 && consumer_->FlushPendingGrab()) TakeGrab(&frames_[static_cast<size_t>(pending_row_)]);
+    if (pending_row_ >= 0 && consumer_->FlushPendingGrab()) TakeGrab(&frames_[static_cast<size_t>(pending_row_)], static_cast<uint32_t>(pending_row_));
     pending_row_ = -1;
     for (const FrameStat& st : frames_) ChainHash(st);
     WriteOutputs();

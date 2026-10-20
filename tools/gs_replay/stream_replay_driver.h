@@ -121,7 +121,7 @@ private:
     bool PopRecord(gs::GsStreamReader::Record* out);
     void PresentWindow();   // the device's swap callback: the window image read (as play) + swap
     void OnFrameDone(const gs::JobRec& vsync);
-    void TakeGrab(FrameStat* st);   // the consumer's published grab into the row
+    void TakeGrab(FrameStat* st, uint32_t row);   // the consumer's published grab into the row (+ its --dump-ppm)
     void ChainHash(const FrameStat& st);
     void WriteOutputs() const;
     static void WritePpm(const std::string& path, const std::vector<uint8_t>& rgba, int w, int h);
