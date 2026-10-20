@@ -52,7 +52,12 @@ bool CdDirtySet::CopyBox(int rx0, int ry0, int rx1, int ry1, Rect* box) const {
 }
 
 void CdDirtySet::Covered(const Rect& box) {
-    if (overflow_) { Clear(); return; }
+    if (overflow_) {
+        // The box held the whole union when THIS set decided it; a box another set decided
+        // (the alpha-only read) may not -- then everything stays dirty.
+        if (union_.x0 >= box.x0 && union_.y0 >= box.y0 && union_.x1 <= box.x1 && union_.y1 <= box.y1) Clear();
+        return;
+    }
     int kept = 0;
     for (int i = 0; i < count_; ++i) {
         const Rect& r = rects_[i];

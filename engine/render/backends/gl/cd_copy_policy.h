@@ -17,6 +17,14 @@
 // may read the whole target". All rectangles are half-open logical pixels.
 // The rects are recorded by the target's post-draw tail into gs::CdDirtySet (the ir
 // library: one definition, no backend include in gs/hle/targets).
+//
+// Channel awareness: the tail records every write in `dirty` and the writes whose colour
+// mask included ALPHA in `dirty_alpha` as well. A read that consumes only the copy's
+// alpha (`reads_rgb = false`: the destination alpha test of a draw blended by the fixed
+// function or not blended) is decided on `dirty_alpha` alone -- the shadow-volume counter
+// strips (FBMSK ff000000 set, DATE) then copy once per frame instead of once per strip.
+// Every copy refreshes all channels of its box, so a copy drops the rects of BOTH sets
+// inside the box.
 #pragma once
 
 #include <cstdint>
@@ -31,7 +39,7 @@ public:
     // Returns true when a copy must be performed; out = {x, y, w, h} (w == 0 => whole
     // target). On copy the tracker becomes valid with an empty dirty union.
     static bool Decide(CdCopyState& st, int rx0, int ry0, int rw, int rh, bool force_full,
-                       int tw, int th, int out[4]);
+                       int tw, int th, int out[4], bool reads_rgb = true);
     // The copy can no longer be assumed to mirror the attachment.
     static void Invalidate(CdCopyState& st);
     static bool DirtyEmpty(const CdCopyState& st) { return st.dirty.Empty(); }

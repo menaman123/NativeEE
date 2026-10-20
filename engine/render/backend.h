@@ -112,6 +112,11 @@ struct CdCopyState {
     // The rects written since the last copy (gs::CdDirtySet: the union and the rects
     // themselves; CdCopyPolicy decides on them, the target's post-draw tail records them).
     gs::CdDirtySet dirty;
+    // The subset of those rects written by draws whose colour mask included ALPHA. A read
+    // that consumes only the copy's alpha (the destination alpha test of a draw that is
+    // not shader-blended) is decided on this set alone: a run of DATE strips that masks
+    // alpha (FBMSK ff000000 set) refreshes the copy once, not per strip.
+    gs::CdDirtySet dirty_alpha;
     int8_t last_route = -1;
 };
 
@@ -157,6 +162,8 @@ struct DrawResult {
     uint32_t fbmsk16 = 0;            // FRAME.FBMSK folded to the 5551 layout
     bool cd_copy_performed = false;
     Rect cd_copy_rect;               // logical rect copied (w == 0 => whole target)
+    bool wrote_alpha = true;         // the draw's colour mask included ALPHA (the Cd-copy
+                                     // tracker's alpha-dirty set; true = conservative)
     bool halfword_shuffle = false;   // the 16-bit column pass ran as a half-word copy over the
                                      // 32-bit image (the target keeps its 32-bit tags)
     Rect write_rect;                 // bbox_all ∩ scissor ∩ target, logical, half-open

@@ -80,7 +80,10 @@ private:
         bool idx_self_serve = false;
         bool wrap_route = false;
         bool needs_rt_copy = false;
-        bool sw_blend_active = false;
+        bool sw_blend_active = false;   // the destination copy is bound on unit 1
+        bool ff_with_copy = false;      // ... but the blend itself is fixed-function (DATE reads the copy)
+        bool reads_cd_rgb = true;       // the copy's RGB is consumed (false: alpha-only read = DATE)
+        bool wrote_alpha = true;        // the colour mask included A (conservative default)
         int copy_x = 0, copy_y = 0, copy_w = 0, copy_h = 0;
         bool cd_copied = false;
         Rect cd_rect;
@@ -111,7 +114,8 @@ private:
     void BlendState(const gs::DrawIr& ir, const DrawParams& p, Step& s);
     void DepthState(const gs::DrawIr& ir, const DrawParams& p, const Step& s);
     void ScissorState(const gs::DrawIr& ir, const Step& s);
-    void ColorMaskState(const gs::DrawIr& ir, const Step& s);
+    // Returns whether the mask written includes ALPHA.
+    bool ColorMaskState(const gs::DrawIr& ir, const Step& s);
     DrawResult MakeResult(const gs::DrawIr& ir, const DrawParams& p, const Step& s) const;
 
     GlDevice& dev_;

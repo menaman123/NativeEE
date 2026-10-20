@@ -35,7 +35,8 @@ public:
     bool CopyBox(int rx0, int ry0, int rx1, int ry1, Rect* box) const;
     // A copy covered `box`: the listed rects inside it are fresh and dropped, the others stay
     // (a partly covered rect stays whole); the union is rebuilt. After an overflow everything
-    // is cleared (the box held the whole union).
+    // is cleared when the box holds the whole union (always the case for a box this set
+    // decided); a box another set decided that misses part of the union keeps it all.
     void Covered(const Rect& box);
 
     static bool Intersect(const Rect& a, int bx0, int by0, int bx1, int by1) {

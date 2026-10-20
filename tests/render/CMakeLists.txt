@@ -17,6 +17,7 @@ ps2r_render_test(test_gl_device_smoke)
 ps2r_render_test(test_gl_raster_rule)
 ps2r_render_test(test_gl_alpha_convention)
 ps2r_render_test(test_gl_alpha_fail_split)
+ps2r_render_test(test_gl_date_blend)
 target_link_libraries(test_gl_alpha_convention PRIVATE ps2r_gs_hle_texsrc ps2r_gs_format)
 ps2r_render_test(test_gl_present)
 ps2r_render_test(test_blend_equation_pin)
@@ -90,6 +91,12 @@ set_tests_properties(Render_AlphaConvention PROPERTIES TIMEOUT 120 SKIP_RETURN_C
 # masks for the failing pixels, FBMSK / ZMSK for the passing ones, As untouched by the test.
 add_test(NAME Render_AlphaFailSplit COMMAND test_gl_alpha_fail_split)
 set_tests_properties(Render_AlphaFailSplit PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+
+# A DATE-only destination copy of a blended draw: the draw's OWN ALPHA tuple, once (fixed-
+# function when exact -- the shadow counter's self-overlapping faces accumulate -- else the
+# shader arm), the copy tracker channel-aware (alpha-masking strips do not re-copy).
+add_test(NAME Render_DateBlend COMMAND test_gl_date_blend)
+set_tests_properties(Render_DateBlend PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 
 # Window-pixel pins: logical content crop, orientation, allocation scale and
 # failure before clear/swap. Includes the unchanged full-image present mapping.

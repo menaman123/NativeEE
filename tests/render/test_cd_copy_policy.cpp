@@ -95,6 +95,48 @@ int main() {
         st.dirty.Extend(5, 5, 5, 9);
         CHECK(st.dirty.Count() == 0 && st.dirty.Empty(), "degenerate ignored");
     }
+    // Channel awareness: an alpha-only read (reads_rgb = false: DATE without a shader blend)
+    // is decided on the alpha-dirty set. The shadow strips mask alpha (recorded in `dirty`
+    // only): after the first copy the next strips skip; an RGB read of the same band copies;
+    // an alpha-writing draw (recorded in both) makes the next alpha-only read copy; a copy
+    // drops the rects of both sets inside its box.
+    {
+        CdCopyState st;
+        CdCopyPolicy::Decide(st, 0, 0, 0, 0, true, tw, th, o);   // valid, clean
+        st.dirty.Extend(0, 0, 512, 32);                           // strip A: RGB only
+        CHECK(st.dirty.Count() == 1 && st.dirty_alpha.Empty(), "an alpha-masked write dirties RGB only");
+        CHECK(!CdCopyPolicy::Decide(st, 0, 8, 512, 8, false, tw, th, o, /*reads_rgb=*/false), "alpha-only read of A: skip");
+        CHECK(st.dirty.Count() == 1, "the skip keeps the RGB rect");
+        CHECK(CdCopyPolicy::Decide(st, 0, 8, 512, 8, false, tw, th, o, /*reads_rgb=*/true), "an RGB read of A copies");
+        CHECK(o[1] == 0 && o[3] == 32 && st.dirty.Empty(), "the box = A, A dropped");
+        st.dirty.Extend(0, 64, 512, 96); st.dirty_alpha.Extend(0, 64, 512, 96);   // B: alpha written
+        st.dirty.Extend(0, 128, 512, 160);                                          // C: RGB only
+        CHECK(!CdCopyPolicy::Decide(st, 0, 140, 512, 8, false, tw, th, o, false), "alpha-only read of C: skip");
+        CHECK(CdCopyPolicy::Decide(st, 0, 70, 512, 8, false, tw, th, o, false), "alpha-only read of B copies");
+        CHECK(o[1] == 64 && o[3] == 32, "the box = B");
+        CHECK(st.dirty_alpha.Empty() && st.dirty.Count() == 1 && st.dirty.At(0).y0 == 128, "B dropped from both sets, C stays RGB-dirty");
+        CHECK(!CdCopyPolicy::Decide(st, 0, 70, 512, 8, false, tw, th, o, true), "B fresh for RGB too");
+        // A whole-target alpha-only read with only RGB dirty skips; with alpha dirty copies all.
+        CHECK(!CdCopyPolicy::Decide(st, 0, 0, 0, 0, false, tw, th, o, false), "whole alpha-only read, RGB dirty only: skip");
+        st.dirty.Extend(1, 1, 2, 2); st.dirty_alpha.Extend(1, 1, 2, 2);
+        CHECK(CdCopyPolicy::Decide(st, 0, 0, 0, 0, false, tw, th, o, false) && o[2] == 0, "whole alpha-only read, alpha dirty: whole copy");
+        CHECK(st.dirty.Empty() && st.dirty_alpha.Empty(), "both sets clean");
+        // The first copy (not valid) takes everything dirty whatever is read, and clears both.
+        CdCopyPolicy::Invalidate(st);
+        st.dirty.Extend(0, 0, 10, 10);
+        CHECK(CdCopyPolicy::Decide(st, 100, 100, 20, 20, false, tw, th, o, false), "first copy, alpha-only read");
+        CHECK(o[0] == 0 && o[2] == 120 && st.dirty.Empty() && st.dirty_alpha.Empty(), "box = R u dirty, both clean");
+        // Overflow of the RGB set: a box the alpha set decided does not clear the RGB set.
+        for (int i = 0; i <= CdDirtySet::kMaxRects; ++i) st.dirty.Extend(0, i * 20, 512, i * 20 + 8);
+        st.dirty_alpha.Extend(0, 400, 512, 408);
+        st.dirty.Extend(0, 400, 512, 408);
+        CHECK(st.dirty.Overflow(), "RGB set overflowed");
+        CHECK(CdCopyPolicy::Decide(st, 0, 402, 512, 2, false, tw, th, o, false) && o[1] == 400 && o[3] == 8, "alpha read copies the alpha rect");
+        CHECK(st.dirty.Overflow() && !st.dirty.Empty(), "the RGB overflow stays dirty (its union exceeds the box)");
+        CHECK(st.dirty_alpha.Empty(), "the alpha set is clean");
+        CHECK(CdCopyPolicy::Decide(st, 0, 402, 512, 2, false, tw, th, o, true), "an RGB read of the same band still copies");
+        CHECK(st.dirty.Empty(), "the overflow clears on the box that holds its union");
+    }
     std::printf("test_cd_copy_policy: %d checks, %d failures\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

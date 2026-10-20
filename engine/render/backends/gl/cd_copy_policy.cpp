@@ -9,26 +9,32 @@ namespace render {
 void CdCopyPolicy::Invalidate(CdCopyState& st) {
     st.valid = false;
     st.dirty.Clear();
+    st.dirty_alpha.Clear();
 }
 
 bool CdCopyPolicy::Decide(CdCopyState& st, int rx0, int ry0, int rw, int rh, bool force_full,
-                          int tw, int th, int out[4]) {
+                          int tw, int th, int out[4], bool reads_rgb) {
     if (force_full) {
         out[0] = 0; out[1] = 0; out[2] = 0; out[3] = 0;
         st.valid = true;
         st.dirty.Clear();
+        st.dirty_alpha.Clear();
         return true;
     }
+    // The set that decides: every written rect for an RGB(A) read, the alpha-written
+    // rects alone for an alpha-only read (the copy itself always refreshes all channels).
+    const gs::CdDirtySet& deciding = reads_rgb ? st.dirty : st.dirty_alpha;
     const bool full_r = (rw <= 0 || rh <= 0);
     gs::CdDirtySet::Rect box;
     if (full_r) {
-        if (st.valid && st.dirty.Empty()) return false;
+        if (st.valid && deciding.Empty()) return false;
         box = gs::CdDirtySet::Rect{0, 0, tw, th};
     } else if (st.valid) {
         // The copy holds every pixel R can read unless R touches a written rect.
-        if (!st.dirty.CopyBox(rx0, ry0, rx0 + rw, ry0 + rh, &box)) return false;
+        if (!deciding.CopyBox(rx0, ry0, rx0 + rw, ry0 + rh, &box)) return false;
     } else {
-        // Not valid yet: the first copy takes R plus everything recorded as dirty.
+        // Not valid yet: the first copy takes R plus everything recorded as dirty
+        // (both sets are cleared below, so the whole set decides, whatever is read).
         box = gs::CdDirtySet::Rect{rx0, ry0, rx0 + rw, ry0 + rh};
         if (!st.dirty.Empty()) {
             const gs::CdDirtySet::Rect& u = st.dirty.Union();
@@ -49,8 +55,13 @@ bool CdCopyPolicy::Decide(CdCopyState& st, int rx0, int ry0, int rw, int rh, boo
     }
     const bool was_valid = st.valid;
     st.valid = true;
-    if (out[2] == 0 || !was_valid) st.dirty.Clear();   // the whole target or the first copy: all fresh
-    else st.dirty.Covered(box);
+    if (out[2] == 0 || !was_valid) {   // the whole target or the first copy: all fresh
+        st.dirty.Clear();
+        st.dirty_alpha.Clear();
+    } else {
+        st.dirty.Covered(box);
+        st.dirty_alpha.Covered(box);
+    }
     return true;
 }
 

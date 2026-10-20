@@ -24,8 +24,13 @@ render::SurfaceDesc ColorDesc(const TargetIdentity& id, bool renderable) {
     return d;
 }
 
-// The Cd-copy tracker's dirty set (gs::CdDirtySet: the union + the rect list).
-void ExtendCdDirty(render::CdCopyState& cd, int x0, int y0, int x1, int y1) { cd.dirty.Extend(x0, y0, x1, y1); }
+// The Cd-copy tracker's dirty sets (gs::CdDirtySet: the union + the rect list): every
+// write lands in `dirty`; a write whose colour mask included ALPHA in `dirty_alpha` too
+// (an alpha-only read of the copy -- DATE without a shader blend -- is decided on that).
+void ExtendCdDirty(render::CdCopyState& cd, int x0, int y0, int x1, int y1, bool wrote_alpha) {
+    cd.dirty.Extend(x0, y0, x1, y1);
+    if (wrote_alpha) cd.dirty_alpha.Extend(x0, y0, x1, y1);
+}
 
 }  // namespace
 
@@ -137,12 +142,12 @@ void RenderTarget::MarkMaterialized(int x0, int y0, int x1, int y1, bool alt16,
     CoherenceState& c = coherence;
     if (alt16) {
         c.alt16_drawn.Union(x0, y0, x1, y1);
-        ExtendCdDirty(c.cd_copy, x0, y0, x1, y1);
+        ExtendCdDirty(c.cd_copy, x0, y0, x1, y1, /*wrote_alpha=*/true);
         views.alt16_has_content = true;
     } else {
         c.valid_rect.ExpandToInclude(x0, y0, x1, y1);
         c.drawn_since_sync.Union(x0, y0, x1, y1);
-        ExtendCdDirty(c.cd_copy, x0, y0, x1, y1);
+        ExtendCdDirty(c.cd_copy, x0, y0, x1, y1, /*wrote_alpha=*/true);
         if (views.alt16.id) c.alt16_stale.Union(x0, y0, x1, y1);
         c.has_content = true;
     }
@@ -221,7 +226,7 @@ void RenderTarget::AfterDraw(const DrawIr& ir, const render::DrawResult& res,
         // tags and content flag describe the 32-bit image and stay untouched.
         if (drawn) {
             c.alt16_drawn.Union(dx0, dy0, dx1, dy1);
-            ExtendCdDirty(c.cd_copy, dx0, dy0, dx1, dy1);
+            ExtendCdDirty(c.cd_copy, dx0, dy0, dx1, dy1, res.wrote_alpha);
         }
         views.alt16_has_content = true;
     } else {
@@ -231,7 +236,7 @@ void RenderTarget::AfterDraw(const DrawIr& ir, const render::DrawResult& res,
         if (drawn) {
             c.drawn_since_sync.Union(dx0, dy0, dx1, dy1);
             c.main_drawn_since_deposit.Union(dx0, dy0, dx1, dy1);
-            ExtendCdDirty(c.cd_copy, dx0, dy0, dx1, dy1);
+            ExtendCdDirty(c.cd_copy, dx0, dy0, dx1, dy1, res.wrote_alpha);
             if (views.alt16.id) {
                 // The companion no longer mirrors rows the main route wrote; a
                 // write covering everything the companion drew drops its content
