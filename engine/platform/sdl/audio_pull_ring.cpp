@@ -46,16 +46,33 @@ void AudioPullRing::Prime() {
     for (int q = 0; q < lead; ++q) Push(silence.data(), kQuantumFrames);
 }
 
-// Pad mode, consumer side: the previous quantum's tail, cyclic and phase-continuous.
+// Pad mode, consumer side: the previous quantum, cyclic, phase-continuous
+// across the pulls of ONE pad event. A new pad event starts at the quantum's
+// first frame -- the stream stopped at its last, so the seam is one loop-back
+// of 800 frames, de-clicked by a kCrossFadeFrames linear cross-fade from the
+// quantum's last frames (what the device just played) into its first. The
+// frames handed out are counted in pad_phase_: the producer's re-latch pushes
+// only the quantum's UNPLAYED remainder, so the stream resumes where the pad
+// left it (one seam per pad event, not two).
 void AudioPullRing::PadFromTail(float* dst, int frames, uint64_t write_pos) {
     const uint64_t tail_start = write_pos - static_cast<uint64_t>(kQuantumFrames);
+    if (!in_pad_) { in_pad_ = true; pad_phase_ = 0; }
     for (int i = 0; i < frames; ++i) {
-        const uint64_t pos = tail_start + (pad_phase_ % static_cast<uint64_t>(kQuantumFrames));
-        const float* src = &samples_[static_cast<size_t>(Slot(pos)) * kChannels];
-        dst[static_cast<size_t>(i) * kChannels]     = src[0];
-        dst[static_cast<size_t>(i) * kChannels + 1] = src[1];
+        const uint64_t phase = pad_phase_ % static_cast<uint64_t>(kQuantumFrames);
+        const float* src = &samples_[static_cast<size_t>(Slot(tail_start + phase)) * kChannels];
+        float l = src[0], r = src[1];
+        if (pad_phase_ < static_cast<uint64_t>(kCrossFadeFrames)) {
+            // The seam: the frames the device just played fade out under the quantum's first frames.
+            const float t = static_cast<float>(pad_phase_ + 1) / static_cast<float>(kCrossFadeFrames + 1);
+            const float* out_src = &samples_[static_cast<size_t>(Slot(write_pos - static_cast<uint64_t>(kCrossFadeFrames) + pad_phase_)) * kChannels];
+            l = out_src[0] * (1.0f - t) + l * t;
+            r = out_src[1] * (1.0f - t) + r * t;
+        }
+        dst[static_cast<size_t>(i) * kChannels]     = l;
+        dst[static_cast<size_t>(i) * kChannels + 1] = r;
         ++pad_phase_;
     }
+    pad_phase_published_.store(static_cast<uint32_t>(pad_phase_ % static_cast<uint64_t>(kQuantumFrames)), std::memory_order_release);
 }
 
 // Pad mode, producer side after a push: a late burst that left more than the
@@ -80,10 +97,14 @@ void AudioPullRing::TrimToLead(uint64_t write_pos) {
 void AudioPullRing::Push(const float* interleaved, int frames) {
     if (frames <= 0) return;
     if (PadWithTail()) {
-        // A pad happened since the last push: rebuild one quantum of lead with
-        // the previous quantum (the held buffer the device re-read), then the new.
+        // A pad happened since the last push: rebuild the lead with the UNPLAYED
+        // remainder of the previous quantum (the pad handed out its first
+        // `phase` frames; the stream resumes at frame `phase` without a seam),
+        // then the new audio.
         if (relatch_.exchange(false, std::memory_order_acq_rel) && last_quantum_frames_ > 0) {
-            PushRaw(last_quantum_, last_quantum_frames_);
+            const int phase = std::min(static_cast<int>(pad_phase_published_.load(std::memory_order_acquire)), last_quantum_frames_);
+            if (phase < last_quantum_frames_)
+                PushRaw(last_quantum_ + static_cast<size_t>(phase) * kChannels, last_quantum_frames_ - phase);
             relatches_.fetch_add(1, std::memory_order_relaxed);
             // The lead was shorter than the producer's cadence: keep the re-pushed
             // quantum as standing lead from now on.
@@ -169,7 +190,11 @@ void AudioPullRing::PullInto(float* out, int frames) {
         }
     }
 
-    if (got < frames) {
+    if (got == frames) {
+        in_pad_ = false;   // the pad event (if any) ended: the next one restarts at the quantum's first frame
+        return;
+    }
+    {
         const int missing = frames - got;
         const uint64_t w = write_.load(std::memory_order_acquire);
         if (PadWithTail()) {
@@ -208,6 +233,7 @@ uint64_t AudioPullRing::DiscardStopped() {
     const uint64_t discarded = write - read;
     tail_valid_.store(false, std::memory_order_release);
     relatch_.store(false, std::memory_order_release);
+    pad_phase_published_.store(0, std::memory_order_release);
     last_quantum_frames_ = 0;
     dropped_.fetch_add(discarded, std::memory_order_relaxed);
     return discarded;

@@ -14,12 +14,14 @@
 //   * Pad-with-tail (SetPadWithTail, the clock contract rule 4; the play host
 //     turns it on): the device never hears a gap, a skip or a pitch change
 //     because the game thread was late. A pull the ring cannot fill repeats
-//     the PREVIOUS QUANTUM's tail (the last kQuantumFrames pushed, cyclically,
-//     phase-continuous across pulls) instead of zeros -- counted `padded`
-//     frames, never an underrun -- and marks a RE-LATCH: the next Push first
-//     re-pushes the previous quantum once (`relatches`; the stream's lead is
-//     rebuilt by one quantum, as the device would re-read a held buffer),
-//     then the new audio. The lead is bounded the other way: a Push that
+//     the PREVIOUS QUANTUM (the last kQuantumFrames pushed, from its first
+//     frame, cyclically, phase-continuous across the pulls of one pad event;
+//     the seam into it is a kCrossFadeFrames cross-fade from the frames just
+//     played) instead of zeros -- counted `padded` frames, never an underrun
+//     -- and marks a RE-LATCH: the next Push first re-pushes the UNPLAYED
+//     remainder of that quantum (`relatches`; the stream resumes exactly
+//     where the pad left it, so the lead is rebuilt by one quantum with a
+//     single seam per pad event), then the new audio. The lead is bounded the other way: a Push that
 //     leaves more than TrimFrames() in the ring (a late game thread catching
 //     up in a burst) discards the OLDEST frames down to the standing lead
 //     (`trimmed`: the late audio the pad already stood in for), so latency
@@ -76,6 +78,7 @@ public:
     static constexpr int kMaxLeadQuanta = kCapacityQuanta - 2;             // the lead never fills the ring (167 ms)
     static constexpr int kTrimSlackQuanta = 2;                             // trim a push that leaves more than lead + this
     static constexpr int kDecayPushes = 600;                               // pushes without a pad before the lead steps down
+    static constexpr int kCrossFadeFrames = 64;                            // the pad seam's cross-fade (1.3 ms)
     void SetPadWithTail(bool on) { pad_with_tail_.store(on, std::memory_order_release); }
     bool PadWithTail() const { return pad_with_tail_.load(std::memory_order_acquire); }
     // Producer side, once before the stream (and after a restore's discard):
@@ -137,7 +140,9 @@ private:
     int                   pushes_since_pad_ = 0;      // producer-owned: the lead's decay clock
     PullTap               tap_fn_ = nullptr;   // consumer-side capture tap (set before the device runs)
     void*                 tap_ctx_ = nullptr;
-    uint64_t              pad_phase_ = 0;  // consumer-owned: position inside the repeated tail
+    uint64_t              pad_phase_ = 0;  // consumer-owned: frames handed out by the current pad event
+    bool                  in_pad_ = false; // consumer-owned: the last pull ended short (a pad event is open)
+    std::atomic<uint32_t> pad_phase_published_{0};   // consumer -> producer: the pad's phase inside the quantum (the re-latch's resume point)
     float                 last_quantum_[kQuantumFrames * kChannels] = {};   // producer-owned: the previous push
     int                   last_quantum_frames_ = 0;
 };

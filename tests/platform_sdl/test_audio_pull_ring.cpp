@@ -327,6 +327,64 @@ void TestPadWithTail() {
                 (unsigned long long)late->underruns(), (unsigned long long)zero->underruns());
 }
 
+// F2 (the pad seam): a pad event starts at the previous quantum's FIRST frame
+// (cross-faded from the frames just played over kCrossFadeFrames), and the
+// re-latch pushes only the quantum's UNPLAYED remainder, so the device stream
+// after a pad of P frames is Q[0..P) (the pad), Q[P..800) (the re-latch), then
+// the new audio -- one quantum repeated once, continuous at the re-latch seam.
+// Pinned with a ramp (sample value = stream frame index): every frame handed
+// out after the cross-fade is the ramp value its position in that sequence
+// predicts, and the quantum repeated is exactly 800 frames long.
+void TestPadResumesAtPhase() {
+    AudioPullRing ring;
+    ring.SetPadWithTail(true);
+    ring.Prime();   // kLeadQuanta of silence
+    std::vector<float> q(static_cast<size_t>(kQ) * kCh), chunk;
+    auto push_ramp = [&](int quantum) {
+        for (int i = 0; i < kQ; ++i) {
+            const float v = static_cast<float>(quantum * kQ + i);
+            q[static_cast<size_t>(i) * kCh] = v;
+            q[static_cast<size_t>(i) * kCh + 1] = -v;
+        }
+        ring.Push(q.data(), kQ);
+    };
+    auto pull = [&](int frames) {
+        chunk.assign(static_cast<size_t>(frames) * kCh, 12345.0f);
+        ring.Pull(chunk.data(), frames);
+    };
+    for (int k = 0; k < 4; ++k) { push_ramp(k); pull(kQ); }   // a steady device: the ring holds the lead (Q1..Q3)
+    // Drain Q1..Q3 exactly, then pad P = 300 frames (the producer is late).
+    pull(AudioPullRing::kLeadQuanta * kQ);
+    CHECK(chunk[static_cast<size_t>(AudioPullRing::kLeadQuanta * kQ - 1) * kCh] == static_cast<float>(4 * kQ - 1));
+    CHECK(ring.padded() == 0);
+    const int P = 300;
+    pull(P);
+    CHECK(ring.padded() == static_cast<uint64_t>(P));
+    // The pad is Q3 from its first frame: past the cross-fade, frame i == Q3[i].
+    bool pad_ok = true;
+    for (int i = AudioPullRing::kCrossFadeFrames; i < P; ++i)
+        if (chunk[static_cast<size_t>(i) * kCh] != static_cast<float>(3 * kQ + i)) pad_ok = false;
+    CHECK(pad_ok);
+    // The cross-fade's first frame is mostly the frame just played (Q3's last), its last mostly Q3[63].
+    CHECK(std::fabs(chunk[0] - static_cast<float>(4 * kQ - AudioPullRing::kCrossFadeFrames)) < static_cast<float>(kQ) * 0.05f);
+    // The producer catches up: the re-latch must push Q3[P..800) (500 frames), then Q4.
+    push_ramp(4);
+    CHECK(ring.relatches() == 1);
+    CHECK(ring.Available() == (kQ - P) + kQ);
+    pull((kQ - P) + kQ);
+    bool resume_ok = true;
+    for (int i = 0; i < (kQ - P) + kQ; ++i)
+        if (chunk[static_cast<size_t>(i) * kCh] != static_cast<float>(3 * kQ + P + i)) resume_ok = false;
+    CHECK(resume_ok);   // Q3[300..800) then Q4[0..800): continuous at the re-latch seam
+    CHECK(ring.underruns() == 0 && ring.dropped() == 0);
+    // A second pad event restarts the phase at Q4's first frame (not where the first pad stopped).
+    pull(100);
+    CHECK(ring.padded() == static_cast<uint64_t>(P + 100));
+    CHECK(chunk[static_cast<size_t>(AudioPullRing::kCrossFadeFrames) * kCh] == static_cast<float>(4 * kQ + AudioPullRing::kCrossFadeFrames));
+    std::printf("pad resumes at phase: pad %d frames, re-latch %d frames, padded=%llu relatches=%llu\n", P, kQ - P,
+                (unsigned long long)ring.padded(), (unsigned long long)ring.relatches());
+}
+
 }  // namespace
 
 int main() {
@@ -337,6 +395,7 @@ int main() {
     TestNoDrift();
     TestSpsc();
     TestPadWithTail();
+    TestPadResumesAtPhase();
     if (g_failures != 0) {
         std::fprintf(stderr, "test_audio_pull_ring: %d failure(s)\n", g_failures);
         return 1;
