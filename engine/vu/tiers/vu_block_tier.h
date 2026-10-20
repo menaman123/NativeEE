@@ -98,6 +98,8 @@ struct VuBlock {
     int branch_idx = -1;        // op whose branch verdict counts (the terminal when it is a branch kind)
     bool has_ds = false;        // ops[n_body] is the merged delay slot
     bool e_bit = false;         // the terminal ends the program after its delay slot
+    bool head_nop = false;      // ops[0] is a NOP pair (the block is one bundle of the sled)
+    bool ds_nop = false;        // has_ds and the delay slot is a NOP pair (the sled count starts at 1)
     int32_t static_target = -1; // B / BAL / IBxx: the target address; -1 = JR / JALR (read at run time)
     VuBlock* fall = nullptr;    // the block after this one (fall-through / after the delay slot)
     VuBlock* jump = nullptr;    // the block at `static_target`
