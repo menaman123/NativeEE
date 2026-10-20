@@ -337,6 +337,43 @@ static void Path3Finish() {
     CHECK(r.counting.DrawHash() != CountingDrawIrSink::kHashOffset && r.capture.draws.size() == 1, "counting sink hashed and forwarded the draw");
 }
 
+// A play session without a recorder turns the recorder-only work off: the
+// counting sink's FNV chains (SetHashing) and DrawFlush's snapshot extras
+// (SetRecordSnapshot: vertex_hash, bbox). The draws themselves -- count, kind,
+// vertices -- are unchanged; only those fields stay at their initial values.
+static void RecorderExtrasOff() {
+    auto feed_triangle = [](Rig& r) {
+        Bytes a;
+        put_tag(a, 3, true, true, 4 /* strip */, kPacked, {0x05});
+        put_u64(a, 0); put_u64(a, 0x100);
+        put_u64(a, 160); put_u64(a, 0x100);
+        put_u64(a, (uint64_t)160 << 32); put_u64(a, 0x100);
+        Feed(r, a, GifPath::Path3);
+    };
+    Rig on;
+    Init(on);
+    feed_triangle(on);
+    Rig off;
+    Init(off);
+    off.counting.SetHashing(false);
+    off.gs.Flush().SetRecordSnapshot(false);
+    feed_triangle(off);
+    CHECK(on.counting.Draws() == 1 && off.counting.Draws() == 1 && on.capture.draws.size() == 1 && off.capture.draws.size() == 1,
+          "both rigs flushed one triangle");
+    CHECK(on.counting.DrawHash() != CountingDrawIrSink::kHashOffset && on.counting.Hashing(), "hashing on: the DrawRec chain moved");
+    CHECK(off.counting.DrawHash() == CountingDrawIrSink::kHashOffset && off.counting.JobHash() == CountingDrawIrSink::kHashOffset,
+          "hashing off: both chains stay at the offset basis");
+    if (on.capture.draws.size() == 1 && off.capture.draws.size() == 1) {
+        const auto& a = on.capture.draws[0];
+        const auto& b = off.capture.draws[0];
+        CHECK(a.snapshot.vertex_hash != 0 && a.bbox[3] > a.bbox[0], "snapshot on: vertex_hash and bbox filled");
+        CHECK(b.snapshot.vertex_hash == 0 && b.bbox[0] == 0 && b.bbox[3] == 0 && b.snapshot.verts_incl == 1,
+              "snapshot off: vertex_hash and bbox stay 0, the vertices are still included");
+        CHECK(a.verts.size() == b.verts.size() && a.prim_type == b.prim_type && a.vertex_count == b.vertex_count,
+              "the draw itself is the same either way");
+    }
+}
+
 // The identity stamp (invariant 28) crosses the arbiter queue: a staged identity
 // rides the next PATH1 submit and is applied when the drain delivers THAT
 // packet (not the submit); an unstaged PATH1 packet is raw; a PATH3 packet
@@ -470,6 +507,7 @@ int main(int argc, char** argv) {
     if (c == "eop" || c == "all") EopFlush();
     if (c == "fanout" || c == "all") Fanout();
     if (c == "path3" || c == "all") Path3Finish();
+    if (c == "extras" || c == "all") RecorderExtrasOff();
     if (c == "identity" || c == "all") IdentityStamp();
     if (c == "attribution" || c == "all") Attribution();
     std::printf("test_gs_state_sink %s: %d checks, %d failures\n", c.c_str(), g_checks, g_fail);

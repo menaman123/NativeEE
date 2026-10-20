@@ -21,6 +21,12 @@ public:
     explicit CountingDrawIrSink(DrawIrSink* next = nullptr) : next_(next) {}
 
     void SetNext(DrawIrSink* next) { next_ = next; }
+    // The FNV chains (DrawHash / JobHash) are the DrawIR observable of a leg under
+    // test; a play session that reads only Draws()/Frames() turns them off (the
+    // DrawRec copy + a byte-wise FNV per draw, ~1 ms/frame on the drain thread).
+    // On by default; the hashes stay at kHashOffset while off.
+    void SetHashing(bool on) { hashing_ = on; }
+    bool Hashing() const { return hashing_; }
 
     void OnDraw(const DrawIr& draw) override;
     void OnDrawOwned(DrawIr&& draw) override;
@@ -37,6 +43,7 @@ public:
 
 private:
     DrawIrSink* next_;
+    bool hashing_ = true;
     uint64_t draws_ = 0;
     uint64_t jobs_ = 0;
     uint64_t frames_ = 0;

@@ -82,7 +82,7 @@ target_link_libraries(test_gs_state_sink PRIVATE ps2r_gif_hle)
 target_compile_options(test_gs_state_sink PRIVATE -Wall -Wextra -Werror -O2)
 foreach(pair "GsStateSinkAdWrites;ad" "GsStateSinkPackedItems;packed" "GsStateSinkPackedFlat;packedflat"
         "GsStateSinkImageUpload;image"
-        "GsStateSinkEopFlush;eop" "GsSinkFanoutForwards;fanout" "GsStateSinkFinishPath3;path3"
+        "GsStateSinkEopFlush;eop" "GsSinkFanoutForwards;fanout" "GsStateSinkFinishPath3;path3" "GsStateSinkRecorderExtrasOff;extras"
         "GsStateSinkIdentityStamp;identity" "GsStateSinkAttribution;attribution")
     list(GET pair 0 tname)
     list(GET pair 1 arg)

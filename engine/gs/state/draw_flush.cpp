@@ -84,9 +84,11 @@ bool DrawFlush::Flush(FlushKind kind) {
     d.seq = seq_ ? (*seq_)++ : 0;
     d.src_frame = src_frame_ ? *src_frame_ : 0;
     d.vram_epoch = vram_epoch_ ? *vram_epoch_ : 0;
-    d.snapshot.vertex_hash = GsdlFormat::VertexHash(d.verts.data(), d.verts.size());
     d.snapshot.verts_incl = 1;
-    GsdlFormat::Bbox(d.verts.data(), d.verts.size(), d.bbox);
+    if (record_snapshot_) {   // recorder extras only (SetRecordSnapshot); nothing downstream reads them
+        d.snapshot.vertex_hash = GsdlFormat::VertexHash(d.verts.data(), d.verts.size());
+        GsdlFormat::Bbox(d.verts.data(), d.verts.size(), d.bbox);
+    }
     emitted_++;
     if (sink_) sink_->OnDrawOwned(std::move(d));
     kick_->DrawBuffer().reserve(512);

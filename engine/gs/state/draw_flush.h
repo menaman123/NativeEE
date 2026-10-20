@@ -46,6 +46,13 @@ public:
     void SetJobContext(uint32_t* seq_counter, const uint32_t* src_frame, const uint64_t* vram_epoch);
     // Called before the draw is built (the observation boundary settles VRAM writes).
     void SetBeforeFlushHook(std::function<void()> hook) { before_ = std::move(hook); }
+    // The on-disk snapshot extras of each DrawIr -- snapshot.vertex_hash (an FNV over
+    // the whole vertex array) and bbox -- are what a .gsstream RECORDER stores and the
+    // reader's hash oracle re-computes; no renderer reads them. On by default (every
+    // tool and test sees the complete record); a play session without a recorder
+    // turns them off and the fields stay 0 (-1 ms/frame of FNV on the drain thread).
+    void SetRecordSnapshot(bool on) { record_snapshot_ = on; }
+    bool RecordSnapshot() const { return record_snapshot_; }
 
     // No-op when nothing is queued. Returns true when a draw was emitted.
     bool Flush(FlushKind kind);
@@ -68,6 +75,7 @@ private:
     const uint64_t* vram_epoch_ = nullptr;
     std::function<void()> before_;
     uint32_t emitted_ = 0;
+    bool record_snapshot_ = true;
 };
 
 }  // namespace gs
