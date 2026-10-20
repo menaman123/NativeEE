@@ -7,7 +7,15 @@
 //
 //   PumpAtBoundary     -> BoundarySequencer::Step::IopDispatch (slot 5):
 //                         advance the frame clock by one quantum, then dispatch
-//                         with forced advances bounded by the frame ceiling.
+//                         with forced advances bounded by the frame ceiling --
+//                         once per FIELD the boundary delivered (`fields`, min
+//                         1): the IOP's frame clock follows the title's field
+//                         clock (EmuDomain::DomainTick), not the boundary
+//                         count, so a late play-mode boundary that delivers N
+//                         fields (BoundarySequencer rule 3) also runs the IOP's
+//                         N quanta -- BEFORE the Verify slot mixes the N SPU
+//                         quanta of those fields. Under the deterministic
+//                         profile every boundary is exactly one field.
 //   PumpAfterEeService -> Step::EeStreamRpc (slot 6): after the EE services a
 //                         worker marshal (reply copy-back + NotifyEeReply), the
 //                         woken parkee runs within the same boundary.
@@ -87,7 +95,8 @@ public:
     bool Booted() const { return booted_; }
 
     // FRAME-policy pump points (no-ops otherwise / before boot).
-    void PumpAtBoundary();
+    // `fields` = the fields this boundary delivered (0 is treated as 1).
+    void PumpAtBoundary(uint64_t fields = 1);
     void PumpAfterEeService();
     void PumpFromParkLoop();
     bool PumpWithinFrame();
