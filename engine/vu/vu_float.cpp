@@ -10,10 +10,6 @@ alignas(16) const uint32_t VuFloat::kLaneMask[16][4] = {
     {~0u, ~0u, 0u, 0u},   {~0u, ~0u, 0u, ~0u},   {~0u, ~0u, ~0u, 0u},   {~0u, ~0u, ~0u, ~0u},
 };
 
-void VuFloat::CommitQStatus(VUregs& regs, uint16_t q_status) {
-    regs.status_flag = static_cast<uint16_t>((regs.status_flag & 0xFCFu) | (q_status & 0xC30u));
-}
-
 void VuFloat::ApplyMinMaxRaw(VR_reg& dest, const VR_reg& fs_raw, const uint32_t ft_raw[4], uint8_t mask,
                              bool protect_vf0, MinMaxFn fn) {
     if (protect_vf0) return;
