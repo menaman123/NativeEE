@@ -375,6 +375,8 @@ bool Config::Set(const std::string& key, const std::string& value, std::string* 
     return f->set(*this, value, err);
 }
 
+bool Config::FingerprintExcludes(const std::string& key) { return ExcludedFromFingerprint(key); }
+
 std::string Config::Fingerprint() const {
     static const Config defaults;
     std::string out;

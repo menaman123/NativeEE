@@ -42,6 +42,7 @@ void DeterministicProfile::Apply(Config& c) {
     c.cdvd.mc_latency_polls = 0;
     c.cdvd.load_turbo = false;
     c.engine.mtvu = false;
+    c.engine.mtvu_early_finish = false;   // the parser-raised FINISH: the oracle lanes' schedule (inert without a worker anyway)
     c.engine.pacing = Pacing::Freerun;
     c.engine.time_regime_pin = 1;
     c.time.tick_sync = true;
