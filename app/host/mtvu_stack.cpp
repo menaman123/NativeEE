@@ -1,9 +1,12 @@
 #include "app/host/mtvu_stack.h"
 
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <thread>
 
+#include "engine/ee/cpu/shadow_call_stack.h"
+#include "engine/ee/sched/ee_run_token.h"
 #include "engine/gif/gif_arbiter.h"
 #include "engine/gif/gif_regs.h"
 #include "engine/platform/host/platform.h"
@@ -165,6 +168,20 @@ uint64_t MtvuStack::Vif1Gate::Read(uint32_t addr, unsigned size) {
         // VIF1_STAT: VPS=3 | VEW | FQC=16 while the worker has segments in flight.
         uint32_t stat = 0;
         if (stack_.sync_.TryVif1StatBusyView(&stat)) {
+            // The poll's site (hazard census): which guest thread, from which function.
+            Vif1PollCensus& pc = stack_.vif1_poll_census_;
+            const int tid = EeRunToken::Instance().CurrentTid();
+            if (tid >= 0 && tid < 8) ++pc.by_tid[tid];
+            if (pc.first_func == 0) {
+                ShadowCallStack::Frame f{};
+                if (ShadowCallStack::Top(0, f)) pc.first_func = f.func_addr;
+                pc.first_tid = tid;
+            }
+            if (stack_.vif1_idle_view_) {
+                // E427: the EE-side register file (idle: the walk completed its staging).
+                ++pc.idle_views;
+                return inner_.Read(addr, size);
+            }
             // Under the early FINISH the title's sync-path poll reaches here while the
             // worker still replays the frame: park on its progress instead of spinning.
             stack_.sync_.ParkVif1StatPoll(stack_.early_finish_);
@@ -261,6 +278,18 @@ std::string MtvuStack::GifReadsCensus() const {
     return s;
 }
 
+// ",vif1_stat_poll_site=tid<n>@0x<func>:tid0=..:tid1=.." when any busy-view poll happened.
+std::string MtvuStack::Vif1PollSiteCensus() const {
+    const Vif1PollCensus& c = vif1_poll_census_;
+    if (c.first_tid < 0) return "";
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "@0x%x", c.first_func);
+    std::string s = ",vif1_stat_poll_site=tid" + std::to_string(c.first_tid) + buf + ":idle_views=" + std::to_string(c.idle_views);
+    for (int t = 0; t < 8; ++t)
+        if (c.by_tid[t]) s += ":tid" + std::to_string(t) + "=" + std::to_string(c.by_tid[t]);
+    return s;
+}
+
 std::string MtvuStack::Census() const {
     std::string s = "on,worker=" + std::string(worker_.IsRunning() ? "1" : "0") +
                     ",drain=" + std::to_string(drain_.PassGeneration()) +
@@ -282,11 +311,12 @@ std::string MtvuStack::Census() const {
          ",mirrors=" + std::to_string(mirrors_) +
          ",kick_drop=" + (backpressure_.DropMode() ? "on" : "off") +
          ",defer=" + (defer_boundaries_ ? "on" : "off") +
-         ",early_finish=" + (early_finish_ ? "on" : "off") + ",pre_raised=" + std::to_string(arbiter_.PreRaisedFinishTotal()) +
+         ",early_finish=" + (early_finish_ ? "on" : "off") + ",vif1_idle_view=" + (vif1_idle_view_ ? "on" : "off") + ",pre_raised=" + std::to_string(arbiter_.PreRaisedFinishTotal()) +
          "/" + std::to_string(arbiter_.PreRaisedPath3Total()) + "/" + std::to_string(arbiter_.PreRaisedFinish()) +
          ",consumed=" + std::to_string(arbiter_.ConsumedFinishTotal()) +
          ",idle_waits=" + std::to_string(sync_.ProgressWaits()) + "/" + std::to_string(sync_.ProgressIdle()) +
          ",vif1_stat_polls=" + std::to_string(sync_.Vif1StatPolls()) + "/" + std::to_string(sync_.Vif1StatParks()) +
+         Vif1PollSiteCensus() +
          ",drop=" + std::to_string(backpressure_.DropFrames()) + "/" + std::to_string(backpressure_.DropSegments()) + "/" +
          std::to_string(backpressure_.DropEpisodes()) + "/" + std::to_string(backpressure_.DropValveFrames()) +
          ",kicks_dropped=" + std::to_string(worker_.DroppedKicks()) + ",lag_max=" + std::to_string(backpressure_.LagMaxFrames()) +

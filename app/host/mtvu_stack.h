@@ -116,6 +116,16 @@ public:
     // fence re-serialises the frame once per frame: census gif_fences).
     void SetComposedGifStat(bool on) { composed_gif_stat_ = on; }
     bool ComposedGifStat() const { return composed_gif_stat_; }
+    // E427: a VIF1_STAT read while the worker still replays answers the EE's
+    // own register file (the inline composition's view: every transfer the EE
+    // staged is complete at its observation point, as the early FINISH already
+    // says of the GS) instead of the busy view -- the title's sceGsSyncPath
+    // poll on the vsync thread (census vif1_stat_poll_site) returns at once and
+    // the logic thread runs under the worker. Every other VIF1 register and
+    // every write still syncs (VU1 memory / the VIF1 unit are the worker's).
+    // Off = the busy view (parked under the early FINISH: ParkVif1StatPoll).
+    void SetVif1IdleView(bool on) { vif1_idle_view_ = on; }
+    bool Vif1IdleView() const { return vif1_idle_view_; }
     // E425 early FINISH (off until enabled; the composition root's knob). The
     // EE raises the GS FINISH when it has STAGED the packet carrying the write:
     // every span staged to the worker is scanned for PATH2 DIRECT A+D FINISH
@@ -187,6 +197,7 @@ public:
     // run.meta `mtvu=`: on,worker=<0|1>,drain=<passes>,redirects=<n>,syncs=<12 counts ':'>,skipped=<12 counts ':'>,...
     std::string Census() const;
     std::string GifReadsCensus() const;
+    std::string Vif1PollSiteCensus() const;
 
 private:
     class Vif1Gate final : public MmioHandler {
@@ -242,6 +253,13 @@ private:
     std::atomic<uint64_t> presented_{0};
     std::atomic<uint64_t> gif_fences_{0};
     GifWindowCensus gif_window_census_;   // EE thread only (the window's reader)
+    struct Vif1PollCensus {               // busy-view VIF1_STAT polls: who, from where (EE thread only)
+        uint64_t by_tid[8] = {};
+        uint64_t idle_views = 0;   // busy-worker STAT reads answered idle (E427)
+        uint32_t first_func = 0;
+        int first_tid = -1;
+    };
+    Vif1PollCensus vif1_poll_census_;
     uint64_t deferred_boundaries_ = 0;
     uint64_t terminal_syncs_ = 0;
     uint64_t quiesce_laps_ = 0;
@@ -249,6 +267,7 @@ private:
     bool defer_boundaries_ = true;
     bool early_finish_ = false;
     bool composed_gif_stat_ = false;
+    bool vif1_idle_view_ = false;
     VifFinishScan vif1_scan_;   // producer (EE) thread only
     BoundaryPresented boundary_presented_;
     std::unique_ptr<Vif1Gate> vif1_gate_;
