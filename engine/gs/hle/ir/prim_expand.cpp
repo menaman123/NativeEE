@@ -46,10 +46,13 @@ size_t PrimExpand::ToTriangles(const VertexRec* v, size_t n, uint8_t prim_type, 
         const float len = std::sqrt(dx * dx + dy * dy);
         float nx, ny;
         if (len > 1e-6f && std::isfinite(len)) {
-            // Perpendicular of half-width 0.5 px: the quad covers the sample points
-            // within half a pixel of the segment -- the GS's one-pixel line.
-            nx = -dy / len * kHalfWidth;
-            ny = dx / len * kHalfWidth;
+            // Widen along the MINOR axis by half a pixel: for an x-major segment the
+            // quad spans y(x) +- 0.5, so every column holds exactly the one sample
+            // point nearest the line (the GS DDA / Bresenham line, one pixel per
+            // major step); a perpendicular band would take two pixels per step near
+            // 45 degrees. Vertical / horizontal lines are the same under both.
+            if (std::fabs(dx) >= std::fabs(dy)) { nx = 0.0f; ny = kHalfWidth; }
+            else { nx = kHalfWidth; ny = 0.0f; }
         } else {
             // A zero-length line is the GS's single pixel at its endpoint: draw the
             // point cell (no direction to widen along).

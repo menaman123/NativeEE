@@ -32,14 +32,6 @@ static bool Covered(const std::vector<VertexRec>& t, int i, int j) {
         if (InTri(static_cast<float>(i), static_cast<float>(j), t[k], t[k + 1], t[k + 2])) return true;
     return false;
 }
-static float DistToSegment(float px, float py, const VertexRec& a, const VertexRec& b, float* u_out = nullptr) {
-    const float dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
-    float u = l2 > 0 ? ((px - a.x) * dx + (py - a.y) * dy) / l2 : 0.0f;
-    if (u_out) *u_out = u;
-    u = u < 0 ? 0 : (u > 1 ? 1 : u);
-    const float qx = a.x + u * dx - px, qy = a.y + u * dy - py;
-    return std::sqrt(qx * qx + qy * qy);
-}
 
 int main() {
     std::vector<VertexRec> out;
@@ -55,21 +47,28 @@ int main() {
     // Horizontal line 200.3 -> 204.8 at y = 142.75 (Sly 2's ink line 63307 in the Paris twin).
     VertexRec ln[2] = {V(200.3125f, 142.75f, 57931, 16, 7), V(204.8125f, 141.75f, 57447, 16, 9)};
     CHECK(PrimExpand::ToTriangles(ln, 2, 1, out) == 6, "one line -> 6 vertices");
-    // Every integer sample within 0.5 px of the segment is covered, none farther than 0.5*sqrt(2).
-    int covered = 0, missed_near = 0, hit_far = 0;
-    for (int j = 138; j <= 146; ++j)
-        for (int i = 196; i <= 209; ++i) {
-            const bool c = Covered(out, i, j);
-            float u = 0;
-            const float d = DistToSegment(static_cast<float>(i), static_cast<float>(j), ln[0], ln[1], &u);
-            covered += c;
-            if (d <= 0.45f && u >= 0.0f && u <= 1.0f && !c) missed_near++;
-            if (d > 0.75f && c) hit_far++;
+    // x-major: every column between the endpoints holds exactly the one sample nearest the line.
+    int covered = 0, bad_cols = 0;
+    for (int i = 196; i <= 209; ++i) {
+        int c = 0, want = 0;
+        const float t = (i - ln[0].x) / (ln[1].x - ln[0].x);
+        const float yl = ln[0].y + t * (ln[1].y - ln[0].y);
+        for (int j = 138; j <= 146; ++j) {
+            if (Covered(out, i, j)) { c++; covered++; }
+            if (t >= 0.0f && t <= 1.0f && std::fabs(j - yl) < 0.5f) want++;
         }
-    CHECK(covered >= 4 && covered <= 6, "a 4.6 px long line covers 4..6 sample points");
-    CHECK(missed_near == 0, "no sample point within 0.45 px of the line is missed");
-    CHECK(hit_far == 0, "no sample point farther than 0.75 px is drawn");
+        if (c != want) bad_cols++;
+    }
+    CHECK(covered == 4, "the 200.3..204.8 line covers its 4 interior columns once each");
+    CHECK(bad_cols == 0, "each column holds exactly the nearest sample (DDA line)");
+    // A 45-degree-ish line offset by half a pixel still takes ONE pixel per step.
+    VertexRec hl[2] = {V(0.5f, 0.0f, 1, 1), V(8.5f, 7.0f, 1, 1)};
+    PrimExpand::ToTriangles(hl, 2, 1, out);
+    int per_col_max = 0, cols_hit = 0;
+    for (int i = 1; i <= 8; ++i) { int c = 0; for (int j = -1; j <= 9; ++j) c += Covered(out, i, j); if (c) cols_hit++; if (c > per_col_max) per_col_max = c; }
+    CHECK(per_col_max == 1 && cols_hit == 8, "near-diagonal line: one pixel per column, every column");
     // Attributes follow the endpoint; z / fog / colour / STQ / UV copied.
+    PrimExpand::ToTriangles(ln, 2, 1, out);
     int from_a = 0, from_b = 0;
     for (const VertexRec& v : out) {
         if (v.z == 57931.0f && v.fog == 7 && v.s == ln[0].s && v.uv_u == ln[0].uv_u) from_a++;
@@ -77,10 +76,12 @@ int main() {
         CHECK(v.r == 16 && v.a == 0x80, "colour copied");
     }
     CHECK(from_a == 3 && from_b == 3, "each endpoint owns three quad corners");
-    // Half-width: the far corners are 0.5 px from the segment.
+    // Minor-axis widening: the corners sit exactly 0.5 px above / below the endpoints.
+    PrimExpand::ToTriangles(ln, 2, 1, out);
     for (const VertexRec& v : out)
-        CHECK(std::fabs(DistToSegment(v.x, v.y, ln[0], ln[1]) - 0.5f) < 1e-4f || DistToSegment(v.x, v.y, ln[0], ln[1]) < 0.5f + 1e-4f,
-              "corner within the half-width band");
+        CHECK((std::fabs(v.x - ln[0].x) < 1e-5f && std::fabs(std::fabs(v.y - ln[0].y) - 0.5f) < 1e-5f) ||
+              (std::fabs(v.x - ln[1].x) < 1e-5f && std::fabs(std::fabs(v.y - ln[1].y) - 0.5f) < 1e-5f),
+              "corner at an endpoint x, +-0.5 in y");
     // Vertical and diagonal lines cover one sample per row / step.
     VertexRec vl[2] = {V(10.3f, 20.0f, 1, 1), V(10.3f, 25.0f, 1, 1)};
     PrimExpand::ToTriangles(vl, 2, 2, out);

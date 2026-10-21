@@ -8,10 +8,11 @@
 // its one pixel (GS User's Manual 3.4.2 / 3.4.3: pixel (i, j) is drawn when the
 // INTEGER sample point (i, j) of the XYOFFSET-relative primitive space lies on the
 // primitive; the vertex shader translates by +0.5 so that grid meets GL's). A
-// segment becomes the quad of half-width 0.5 px around it (two triangles, six
-// vertices; z / fog / colour / STQ / UV copied from the endpoint each corner
-// belongs to -- IIP=0 colour was already flattened by the kick); a point becomes
-// the 1x1 quad centred on it. The end caps are not extended: GL's own line
+// segment becomes the parallelogram spanning +-0.5 px along its MINOR axis (two
+// triangles, six vertices; z / fog / colour / STQ / UV copied from the endpoint
+// each corner belongs to -- IIP=0 colour was already flattened by the kick): one
+// sample point per major-axis step, the GS DDA line; a point becomes the 1x1
+// quad centred on it. The end caps are not extended: GL's own line
 // rasteriser (what PCSX2's HW renderer draws these with, AA1 ignored) is half
 // open at the far end as well, so a quad bounded by the endpoints covers the same
 // sample points within the +-1 px the judges allow.
