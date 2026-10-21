@@ -5,7 +5,6 @@
 #include <cstring>
 #include <thread>
 
-#include "engine/ee/cpu/shadow_call_stack.h"
 #include "engine/ee/sched/ee_run_token.h"
 #include "engine/gif/gif_arbiter.h"
 #include "engine/gif/gif_regs.h"
@@ -172,9 +171,8 @@ uint64_t MtvuStack::Vif1Gate::Read(uint32_t addr, unsigned size) {
             Vif1PollCensus& pc = stack_.vif1_poll_census_;
             const int tid = EeRunToken::Instance().CurrentTid();
             if (tid >= 0 && tid < 8) ++pc.by_tid[tid];
-            if (pc.first_func == 0) {
-                ShadowCallStack::Frame f{};
-                if (ShadowCallStack::Top(0, f)) pc.first_func = f.func_addr;
+            if (pc.first_tid < 0) {
+                pc.first_func = stack_.vif1_poll_site_fn_ ? stack_.vif1_poll_site_fn_(stack_.vif1_poll_site_user_) : 0;
                 pc.first_tid = tid;
             }
             if (stack_.vif1_idle_view_) {

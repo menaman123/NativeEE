@@ -126,6 +126,11 @@ public:
     // Off = the busy view (parked under the early FINISH: ParkVif1StatPoll).
     void SetVif1IdleView(bool on) { vif1_idle_view_ = on; }
     bool Vif1IdleView() const { return vif1_idle_view_; }
+    // The poll-site census' function lookup (the title's shadow call stack: the
+    // guest function the first busy-view VIF1_STAT poll came from; 0 = unknown).
+    // The engine keeps no recompiled-runtime symbol here.
+    using PollSiteFn = uint32_t (*)(void* user);
+    void SetVif1PollSite(PollSiteFn fn, void* user) { vif1_poll_site_fn_ = fn; vif1_poll_site_user_ = user; }
     // E425 early FINISH (off until enabled; the composition root's knob). The
     // EE raises the GS FINISH when it has STAGED the packet carrying the write:
     // every span staged to the worker is scanned for PATH2 DIRECT A+D FINISH
@@ -268,6 +273,8 @@ private:
     bool early_finish_ = false;
     bool composed_gif_stat_ = false;
     bool vif1_idle_view_ = false;
+    PollSiteFn vif1_poll_site_fn_ = nullptr;
+    void* vif1_poll_site_user_ = nullptr;
     VifFinishScan vif1_scan_;   // producer (EE) thread only
     BoundaryPresented boundary_presented_;
     std::unique_ptr<Vif1Gate> vif1_gate_;
