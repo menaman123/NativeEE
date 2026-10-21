@@ -7,6 +7,7 @@
 add_library(ps2r_vif STATIC
     vif.cpp
     vif_fast_span.cpp
+    vif_finish_scan.cpp
     vif_mmio_gate.cpp
     vif_unpack.cpp
     vif_unpack_bulk.cpp

@@ -190,6 +190,21 @@ void EeRunToken::WaitVblank() {
                 if (r.valid) return false;
             return true;  // every other thread blocked: idle, the vblank is now
         });
+        // Rejoin the ready set under the lock that ends the wait. Between the waiter's
+        // leave below and BlockEnd's MakeReady there was an instant with no owner, no
+        // READY thread and no vblank waiter: a thread that had just blocked (its
+        // IdleWhileBlocked) took the idle grant there and passed a field of its own over
+        // this thread's boundary -- one extra idle field (VBON / TIM2 +1, ee_yield isrs
+        // +2) in 3 of 12 Paris 600 lockstep runs with the early FINISH, none without it
+        // (the window is wider when the logic thread blocks while the worker still runs).
+        // The slot assigned here makes BlockEnd's MakeReady the idempotent no-op; a wall
+        // tick wake (WakeVblankWaitersForWallTick) assigned it already.
+        if (!shutdown_) {
+            if (Ready* r = SlotFor(tid)) {
+                r->prio = t_prio;
+                if (r->seq == 0) r->seq = NextSeq();
+            }
+        }
         --vblank_waiters_;
         for (auto& w : vblank_waiter_)
             if (w.tid == tid) w.tid = kNone;

@@ -11,8 +11,10 @@
 //   the readied waiter returned KE_OK; the other thread stayed WAITING until its
 //   own signal; a READY thread refuses the grant (TryIdleAcquire false) and
 //   PreemptPoint is a no-op under the grant; an unbound yield point idles nothing.
+#include <atomic>
 #include <cstdio>
 #include <memory>
+#include <thread>
 
 #include "engine/ee/cpu/cpu_state.h"
 #include "engine/ee/hle/alarms.h"
@@ -207,12 +209,54 @@ static void TestGrantGuards() {
     TM().JoinAll();
 }
 
+// --- 3: a vblank waiter's wake never leaves a window for the idle grant ---
+// tid 3 (the vsync thread) sleeps in WaitVblank while tid 1 runs; tid 1 blocks
+// (BlockBegin) and, nothing being READY, asks for the idle grant at once. The
+// waiter's wake ("every other thread blocked: the vblank is now") must have
+// rejoined the ready set under the lock that ends its wait: a grant taken in
+// the gap would pass a field of its own over the waiter's boundary (one idle
+// field, VBON / TIM2 +1 in 3 of 12 Paris 600 runs with the early FINISH).
+static void TestVblankWakeNoIdleGap() {
+    std::printf("[3] a vblank waiter's wake leaves no instant for the idle grant\n");
+    TestEeIdleWait rig;
+    constexpr int kVsyncTid = 3, kVsyncPrio = 2, kIters = 4000;
+    std::atomic<int> grants{0};
+    std::atomic<bool> done{false}, entered{false};
+    std::thread vsync([&] {
+        TOK().GuestEnter(kVsyncTid, kVsyncPrio);   // first in: holds the token; tid 1 is elected by the vblank wait's release
+        entered.store(true);
+        for (int i = 0; i < kIters; ++i) {
+            TOK().MakeReady(kMainTid, kMainPrio);   // tid 1 runs while this thread sleeps on the vblank
+            TOK().WaitVblank();                      // returns when tid 1 blocked: idle, the vblank is now
+        }
+        done.store(true);
+        TOK().MakeReady(kMainTid, kMainPrio);
+        TOK().GuestExit(kVsyncTid);
+    });
+    while (!entered.load()) std::this_thread::yield();
+    TOK().GuestEnter(kMainTid, kMainPrio);
+    for (;;) {
+        if (done.load()) break;
+        TOK().BlockBegin(kMainTid);   // a blocking wait's first half: nothing READY now
+        if (TOK().TryIdleAcquire(kMainTid)) {   // the gap: no owner, nothing READY, no vblank waiter
+            grants.fetch_add(1);
+            TOK().IdleRelease(kMainTid);
+        }
+        TOK().BlockEnd(kMainTid);
+    }
+    vsync.join();
+    CHECK(grants.load() == 0, "3a: no idle grant while the vblank waiter wakes (4000 wakes)");
+    TOK().GuestExit(kMainTid);
+    TM().JoinAll();
+}
+
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("EeIdleWait\n");
     BindMemory();
     TestIdleReadiesWaiter();
     TestGrantGuards();
+    TestVblankWakeNoIdleGap();
     if (g_fail) std::printf("FAILURES: %d (%d passed)\n", g_fail, g_pass);
     else std::printf("ALL PASS (%d)\n", g_pass);
     return g_fail ? 1 : 0;

@@ -98,6 +98,18 @@ bool MtvuSync::TryVif1StatBusyView(uint32_t* stat) const {
     return true;
 }
 
+void MtvuSync::ParkVif1StatPoll(bool park) {
+    vif1_stat_polls_.fetch_add(1, std::memory_order_relaxed);
+    if (!park || !worker_.IsRunning() || worker_.OnWorkerThread() || worker_.InEagerDrain()) return;
+    if (worker_.WorkerIdle()) return;
+    vif1_stat_parks_.fetch_add(1, std::memory_order_relaxed);
+    ps2r::ee::TickProfile::Scope scope(ps2r::ee::TickProfile::Vu1Wait);
+    const uint64_t seen = worker_.SealCount();
+    worker_.EnterSyncWait();
+    worker_.WaitIdleOrSeal(kPollNs, seen);
+    worker_.LeaveSyncWait();
+}
+
 void MtvuSync::TryEagerDrain() {
     if (!worker_.IsRunning() || worker_.OnWorkerThread() || worker_.InEagerDrain()) return;
     if (!arbiter_.hasSealedReady()) return;

@@ -101,6 +101,9 @@ public:
         // FINISH; the runner re-evaluates (a pending cause, a readied thread, the next wait).
         // False = the pipeline owes nothing: the field may pass. MtvuSync::WaitProgress bound.
         std::function<bool()> pipeline_wait;
+        // An idle field passed (optional, triage): the domain tick it landed on and the
+        // blocked guest thread that ran the idle. Census idle_first= records the first.
+        std::function<void(uint64_t tick, int tid)> on_idle_field;
         std::function<bool()> inhibit;         // true = refuse this trip (boundary in flight ...)
         uint32_t budget = kDefaultBudget;      // back-edges per trip (0 = kDefaultBudget)
     };
@@ -116,6 +119,8 @@ public:
         uint64_t idle_wakes = 0;   // idle grants whose field park ended on a foreign wake before the tick (no field passed)
         uint64_t wall_wakes = 0;   // WakeVblankIfWallFieldDue: a vblank waiter readied by a due wall field
         uint64_t deferred_collects = 0;   // RunField / idle grants that collected a latched device cause (Intc::CollectDeferred)
+        uint64_t idle_first_tick = 0;     // the domain tick the first idle field passed at (0 = none)
+        int idle_first_tid = -1;          // ... and the blocked guest thread that ran the idle
         uint64_t contended = 0;    // trips that found another READY thread before PreemptPoint
         uint64_t nested = 0;       // refused: inside a trip
         uint64_t inhibited = 0;    // refused: inhibit() or an INTC dispatch in progress

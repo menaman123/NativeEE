@@ -1,6 +1,6 @@
 // tests/gs/state/test_gs_mmio_handler.cpp -- GsMmioHandler: the EE's view of the
 // GS privileged page over a GsState. Usage: test_gs_mmio_handler <case>
-//   csr | halves | jobs | widen | all
+//   csr | halves | jobs | widen | early_finish | all
 #include <cstdint>
 #include <cstdio>
 #include <string>
@@ -110,9 +110,53 @@ static void Widen() {
     CHECK(h.Read(imr, 8) == 0x12340000CDEFAB00ull, "a halfword in the upper half lands at bits 48-63");
 }
 
+// E425 early FINISH: FinishNow (the EE's raise at the staging point) sets CSR.FINISH, counts
+// the interrupt and runs the observer ONCE; the parser's later Finish() with a consumer that
+// says "pre-raised" sets nothing, counts nothing and raises nothing -- after the guest's W1C
+// clear the bit stays clear (one INTC edge per FINISH write); a consumer that says no (nothing
+// pre-raised) raises as before. The EE read census splits CSR reads by the FINISH bit carried.
+static void EarlyFinish() {
+    GsState gs;
+    GsMmioHandler h(gs);
+    int observed = 0;
+    uint32_t last_event = 0;
+    gs.Priv().SetInterruptObserver([&](uint32_t ev) { ++observed; last_event = ev; });
+    bool pre_raised = false;
+    int consults = 0;
+    gs.Priv().SetFinishConsumer([&] { ++consults; const bool r = pre_raised; pre_raised = false; return r; });
+    h.Write(kCsr, 8, GsPrivRegs::kCsrReset);
+    // 1. The EE's early raise.
+    pre_raised = true;                      // the arbiter's count: one staged FINISH
+    gs.Priv().FinishNow();
+    CHECK(observed == 1 && last_event == GsPrivRegs::kCsrFinish, "FinishNow raised the observer once");
+    CHECK((h.Read(kCsr, 8) & GsPrivRegs::kCsrFinish) != 0, "CSR.FINISH set at the raise");
+    CHECK(gs.Priv().TakeInterrupts() == 1, "one interrupt counted at the raise");
+    CHECK(consults == 0, "FinishNow never consults the consumer (it would eat its own count)");
+    // 2. The guest's ISR clears the bit (W1C), then the parser reaches the write.
+    h.Write(kCsr, 4, GsPrivRegs::kCsrFinish);
+    gs.WriteRegister(0x61, 0);              // the parser's A+D FINISH
+    CHECK(consults == 1 && !pre_raised, "the parser's Finish consumed the pre-raised count");
+    CHECK(observed == 1, "no second observer call: one INTC edge per FINISH write");
+    CHECK((h.Read(kCsr, 8) & GsPrivRegs::kCsrFinish) == 0, "the consumed Finish did not re-set CSR.FINISH after the W1C clear");
+    CHECK(gs.Priv().TakeInterrupts() == 0, "no interrupt counted for the consumed write");
+    CHECK(gs.Priv().FinishesConsumed() == 1, "consumed census");
+    // 3. Nothing pre-raised: the parser's Finish raises as before.
+    gs.WriteRegister(0x61, 0);
+    CHECK(consults == 2 && observed == 2, "an unraised FINISH write raises at the parser");
+    CHECK((h.Read(kCsr, 8) & GsPrivRegs::kCsrFinish) != 0, "... and sets the bit");
+    // 4. The EE read census: CSR reads with / without the FINISH bit, the W1C clears.
+    const GsMmioHandler::ReadCensus& c = h.Census();
+    CHECK(c.csr == 3, "three CSR reads");
+    CHECK(c.csr_finish_set == 2, "two of them carried FINISH");
+    CHECK(c.csr_clear_finish == 1, "one W1C clear of FINISH");
+    h.Read(kBase + GsPrivRegs::kSiglblid, 8);
+    CHECK(h.Census().siglblid == 1, "SIGLBLID read counted");
+}
+
 int main(int argc, char** argv) {
     const std::string c = argc > 1 ? argv[1] : "all";
     if (c == "csr" || c == "all") Csr();
+    if (c == "early_finish" || c == "all") EarlyFinish();
     if (c == "halves" || c == "all") Halves();
     if (c == "jobs" || c == "all") Jobs();
     if (c == "widen" || c == "all") Widen();

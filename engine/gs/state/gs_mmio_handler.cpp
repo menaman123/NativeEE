@@ -23,10 +23,33 @@ void GsMmioHandler::WriteHalf(uint32_t addr, uint32_t value) {
         gs_.Priv().WriteLower(addr & kRegMask, value);
 }
 
+void GsMmioHandler::NoteRead(uint32_t addr, uint64_t word) {
+    switch (addr & 0xFFF0u) {
+        case GsPrivRegs::kCsr:
+            ++census_.csr;
+            if (word & GsPrivRegs::kCsrFinish) ++census_.csr_finish_set;
+            if (word & GsPrivRegs::kCsrSignal) ++census_.csr_signal_set;
+            return;
+        case GsPrivRegs::kSiglblid: ++census_.siglblid; return;
+        default: ++census_.other; return;
+    }
+}
+
+void GsMmioHandler::NoteWrite(uint32_t addr, uint64_t word) {
+    if ((addr & 0xFFF0u) != GsPrivRegs::kCsr) return;
+    if (word & GsPrivRegs::kCsrFinish) ++census_.csr_clear_finish;
+    if (word & GsPrivRegs::kCsrSignal) ++census_.csr_clear_signal;
+}
+
 uint64_t GsMmioHandler::Read(uint32_t addr, unsigned size) {
     ++reads_;
-    if (size == 8) return gs_.ReadPrivileged(addr & kRegMask);
+    if (size == 8) {
+        const uint64_t full = gs_.ReadPrivileged(addr & kRegMask);
+        NoteRead(addr, full);
+        return full;
+    }
     const uint32_t half = ReadHalf(addr);
+    NoteRead(addr, (addr & 4u) ? 0 : half);   // the event bits live in the lower half
     if (size == 4) return half;
     if (size == 2) return (half >> ((addr & 2u) * 8u)) & 0xFFFFu;
     return (half >> ((addr & 3u) * 8u)) & 0xFFu;
@@ -35,10 +58,12 @@ uint64_t GsMmioHandler::Read(uint32_t addr, unsigned size) {
 void GsMmioHandler::Write(uint32_t addr, unsigned size, uint64_t value) {
     ++writes_;
     if (size == 8) {
+        NoteWrite(addr, value);
         gs_.WritePrivileged(addr & kRegMask, value);
         return;
     }
     if (size == 4) {
+        if (!(addr & 4u)) NoteWrite(addr, value);
         WriteHalf(addr, static_cast<uint32_t>(value));
         return;
     }

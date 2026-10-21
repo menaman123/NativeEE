@@ -189,6 +189,18 @@ struct EngineConfig {
     // dropped). off = the bytes/frames PARK (the Mecha-Bandicoot 560 ms stall
     // of 2026-10-13; kept as the red-before and the deterministic lanes' path).
     bool    mtvu_kick_drop = true;
+    // E425/E426/E427 (MTVU only): the GS FINISH is raised when the EE has
+    // STAGED the packet carrying it (not when the parser reaches it behind the
+    // worker); in the paced play composition the frame boundary is also
+    // deferred (no terminal sync, no VSync drain fence, GIF_STAT and the
+    // sceGsSyncPath VIF1_STAT poll answered from the EE's own view) -- the
+    // frame becomes max(worker, logic) instead of their sum. A guest-observable
+    // scheduling change, ON since its gates held (Paris 600 lockstep census
+    // equal incl. gs_irq 1800 / isrs 140 / syscall_count, the <=294 cold-boot
+    // oracle inert, savestate round trip, loader + hub routes park=none;
+    // pictures/s p50 +3..+15 under host load, equal at the GS-consumer cap).
+    // The deterministic profile pins it off (run.meta mtvu= early_finish).
+    bool    mtvu_early_finish = true;
     int     ee_runahead = 2;
     Pacing  pacing = Pacing::Realtime;
     int     time_regime_pin = -1;         // -1 = none (adaptive)
@@ -579,6 +591,11 @@ public:
     // Harness plumbing (harness.*), paths.* and meta.source_fingerprint are
     // excluded -- they legitimately differ per leg.
     std::string Fingerprint() const;
+    // True for a key Fingerprint() leaves out: harness.* / paths.* / meta.* /
+    // diag.* and the named host-scheduling / toolchain keys (config.cpp
+    // ExcludedFromFingerprint). The settings-table check and
+    // tools/gen_settings_table.py derive the preset's golden with the same set.
+    static bool FingerprintExcludes(const std::string& key);
     // FNV-1a64 over Fingerprint() (run.meta env_hash semantics: each
     // `key=value` entry folded followed by ";").
     uint64_t FingerprintHash() const;

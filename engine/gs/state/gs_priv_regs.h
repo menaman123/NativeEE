@@ -73,6 +73,9 @@ public:
     // General-register events (0x60 SIGNAL, 0x61 FINISH, 0x62 LABEL).
     void Signal(uint64_t value);
     void Finish();
+    // The raise itself (CSR.FINISH, the interrupt count, the observer) with no
+    // consumer consult: the EE's early raise (E425) and Finish()'s own body.
+    void FinishNow();
     void Label(uint64_t value);
     void SetVsint() { csr_.fetch_or(kCsrVsint, std::memory_order_relaxed); }
     // Routes the DrawIR job a display-register write emits: the deferrer runs
@@ -89,6 +92,12 @@ public:
     // wrote the general register -- the composition root's hook to raise the INTC
     // GS cause in-line, gated by its IMR view. TakeInterrupts still counts them.
     void SetInterruptObserver(std::function<void(uint32_t csr_event)> observer) { interrupt_observer_ = std::move(observer); }
+    // E425: the FINISH consumer. Finish() asks it first; true = this FINISH write
+    // was already raised by the EE at the staging point (CSR.FINISH set, the
+    // interrupt counted and observed there): nothing happens here. Null = every
+    // Finish() raises. Runs on the parser's thread.
+    void SetFinishConsumer(std::function<bool()> consumer) { finish_consumer_ = std::move(consumer); }
+    uint64_t FinishesConsumed() const { return finishes_consumed_.load(std::memory_order_relaxed); }
 
 private:
     std::atomic<uint64_t>& Slot(uint32_t addr);
@@ -111,6 +120,8 @@ private:
     const uint32_t* src_frame_ = nullptr;
     std::function<uint64_t()> vram_epoch_;
     std::function<void(uint32_t)> interrupt_observer_;
+    std::function<bool()> finish_consumer_;
+    std::atomic<uint64_t> finishes_consumed_{0};
     JobDeferrer job_deferrer_;
     std::atomic<uint64_t> none_{0};
 };

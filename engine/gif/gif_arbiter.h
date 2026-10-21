@@ -38,6 +38,7 @@
 #include <mutex>
 #include <vector>
 
+#include "engine/gif/gif_finish_scan.h"
 #include "engine/gif/gif_mtvu_marker.h"
 #include "engine/gif/gif_tag.h"
 
@@ -71,6 +72,9 @@ public:
     static constexpr size_t kMarkerReservePackets = 64;
 
     explicit GifArbiter(GifParser& parser, GifBoundaryHook* boundary_hook = nullptr);
+    // Replace the boundary consumer (set before producer traffic; null = count only).
+    void SetBoundaryHook(GifBoundaryHook* hook) { boundary_hook_ = hook; }
+    GifBoundaryHook* BoundaryHook() const { return boundary_hook_; }
 
     // Queue a copy of `size` bytes on `path`; payloads shorter than a GIFtag are dropped.
     void submit(GifPath path, const uint8_t* data, size_t size, bool is_directhl = false);
@@ -157,6 +161,35 @@ public:
     uint64_t DrainedPackets() const;
     size_t PoolSize() const;
 
+    // ---- E425 early FINISH ----
+    // The EE raises the GS FINISH interrupt when it has STAGED the packet that
+    // carries the A+D FINISH write (not when the parser reaches it, behind the
+    // worker and the drain thread): `raiser` performs the raise (the GS CSR bit +
+    // the INTC edge), on the staging thread. Each pre-raise is counted here;
+    // the parser's Finish() CONSUMES one count (ConsumePreRaisedFinish) instead
+    // of raising again, so every FINISH write produces exactly one edge. Null =
+    // off (the parser raises, as before). While on, every PATH3 submit from the
+    // EE thread under a running worker is scanned (GifFinishScan) and its
+    // FINISH writes pre-raised; the PATH2 side is scanned at the VIF1 staging
+    // point by the stack and reported through PreRaiseFinish.
+    using FinishRaiser = void (*)(void* user);
+    void SetEarlyFinish(FinishRaiser raiser, void* user);
+    bool EarlyFinishOn() const { return finish_raiser_ != nullptr; }
+    // `n` FINISH writes were staged by the EE: count them and raise each.
+    void PreRaiseFinish(uint32_t n);
+    // The parser reached a FINISH write: true = it was pre-raised (consume one;
+    // the caller raises nothing), false = raise as before.
+    bool ConsumePreRaisedFinish();
+    // Pre-raised, not yet consumed (the savestate quiesce requires 0).
+    uint32_t PreRaisedFinish() const { return pre_raised_finish_.load(std::memory_order_acquire); }
+    uint64_t PreRaisedFinishTotal() const { return pre_raised_total_.load(std::memory_order_relaxed); }
+    uint64_t ConsumedFinishTotal() const { return consumed_total_.load(std::memory_order_relaxed); }
+    uint64_t PreRaisedPath3Total() const { return pre_raised_path3_.load(std::memory_order_relaxed); }
+    // Drop the outstanding count and the PATH3 scan state (clear(), a restore).
+    void ResetEarlyFinish();
+    // The EE-side PATH3 transfer view (the composed GIF_STAT: OPH / APATH 3).
+    const GifFinishScan& Path3Scan() const { return path3_scan_; }
+
     // Byte tap on every accepted submit (path, payload, size), called before
     // the packet is queued; null = absent. Tools record PATH1 kicks with it.
     using SubmitObserver = void (*)(void* user, GifPath path, const uint8_t* data, size_t size);
@@ -185,6 +218,7 @@ private:
     // Producer side: a fault the drain thread caught is thrown here, once.
     void RethrowDrainFault();
     bool WorkerRunning() const;
+    void ScanPath3ForFinish(const uint8_t* data, size_t size);
 
     GifParser& parser_;
     GifBoundaryHook* boundary_hook_;
@@ -194,6 +228,13 @@ private:
     void* drain_observer_user_ = nullptr;
     GifMarkerOwner* owner_ = nullptr;
     GifDrainThread* drain_thread_ = nullptr;
+    FinishRaiser finish_raiser_ = nullptr;
+    void* finish_raiser_user_ = nullptr;
+    GifFinishScan path3_scan_;                       // EE thread only (the PATH3 producer)
+    std::atomic<uint32_t> pre_raised_finish_{0};     // EE ++ / drain owner -- (CAS)
+    std::atomic<uint64_t> pre_raised_total_{0};
+    std::atomic<uint64_t> pre_raised_path3_{0};
+    std::atomic<uint64_t> consumed_total_{0};
     std::vector<GifArbiterPacket> queue_;
     mutable std::mutex mtvu_mtx_;
     std::deque<InboxSlot> inbox_;

@@ -93,6 +93,19 @@ target_include_directories(test_frame_pacer PRIVATE ${CMAKE_SOURCE_DIR})
 target_compile_options(test_frame_pacer PRIVATE -Wall -Wextra -Werror)
 add_test(NAME FramePacerCadence COMMAND test_frame_pacer)
 
+# MtvuStackEarlyFinish (E425/E426): the stack over a real worker + drain thread -- a staged
+# DIRECT FINISH pre-raises once at the staging call (on the staging thread), the parser's
+# consumer takes the count on the drain thread and Quiesce drains pre_raised to 0; an
+# unconsumed pre-raise HOLDS the quiesce until ResyncEarlyFinish; off = inert; a deferred
+# FrameSync declares the frame and the boundary slot's delivery presents it. Threads: serial.
+add_executable(test_mtvu_stack_early_finish test_mtvu_stack_early_finish.cpp
+    "${CMAKE_SOURCE_DIR}/app/host/mtvu_stack.cpp" "${CMAKE_SOURCE_DIR}/tests/gif/counting_gs_sink.cpp")
+target_include_directories(test_mtvu_stack_early_finish PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/tests/gif)
+target_link_libraries(test_mtvu_stack_early_finish PRIVATE ps2r_vif ps2r_dmac ps2r_gif ps2r_gs_ir ps2r_platform)
+target_compile_options(test_mtvu_stack_early_finish PRIVATE -Wall -Wextra -Werror -O2)
+add_test(NAME MtvuStackEarlyFinish COMMAND test_mtvu_stack_early_finish)
+set_tests_properties(MtvuStackEarlyFinish PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
+
 # Vu1AotCacheManifest: the AOT tier's persistent side on a temp root -- the manifest row
 # grammar round-trips, the build-id directory name is sanitised, a corpus on disk is
 # verified by the thread and its verdict published to the tier and persisted, a second

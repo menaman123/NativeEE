@@ -45,6 +45,20 @@ ps2r_gif_test(test_gif_arbiter_order GifArbiterOrder)
 # Order/count/thread-identity checks only.
 ps2r_gif_test(test_gif_drain_thread GifDrainThread)
 
+# GifEarlyFinish (E425): GifFinishScan counts exactly the parser's A+D FINISH
+# writes (PACKED found; REGLIST / IMAGE / FLG 3 / NLOOP 0 not; split anywhere);
+# VifFinishScan agrees with the real Vif + parser on 120 randomized VIF1 streams
+# (every UNPACK format / CL-WL mode, MPG, STMASK/STROW/STCOL, DIRECT/DIRECTHL,
+# TTE quadwords, latch resets); the arbiter pre-raises a PATH3 FINISH once on the
+# EE thread while the worker runs, delivers it in stream order behind the
+# unsealed marker (GifArbiterOrder with a pre-raised FINISH in flight), the
+# consume rule, inert without a worker / raiser, clear(). Links ps2r_vif for the Vif.
+add_executable(test_gif_early_finish test_gif_early_finish.cpp counting_gs_sink.cpp)
+target_link_libraries(test_gif_early_finish PRIVATE ps2r_vif ps2r_gif ps2r_gs_ir)
+target_compile_options(test_gif_early_finish PRIVATE -Wall -Wextra -Werror -O2)
+add_test(NAME GifEarlyFinish COMMAND test_gif_early_finish)
+set_tests_properties(GifEarlyFinish PROPERTIES TIMEOUT 120)
+
 # GifDeferBoundaryOrder: frame boundaries as ordered command slots under
 # inline drains -- the directed interleaving matrix (sealed before/after the
 # enqueue, stop at the first unsealed marker, two boundaries in flight, EE

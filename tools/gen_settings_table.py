@@ -47,7 +47,14 @@ ROOT = os.path.abspath(os.path.join(HERE, ".."))
 LEDGER = os.path.join(ROOT, "docs", "filemap", "FLAG_LEDGER.md")
 PLAN = os.path.join(ROOT, "docs", "phases", "PHASE1_PLAN.md")
 PROFILE_NAME = "deterministic"
-FINGERPRINT_EXCLUDED_PREFIXES = ("harness.", "paths.", "meta.")
+FINGERPRINT_EXCLUDED_PREFIXES = ("harness.", "paths.", "meta.", "diag.")
+# Keys Config::Fingerprint() excludes by name (engine/core/config/config.cpp
+# FingerprintExcluded): host scheduling / toolchain choices that change nothing
+# the title executes or an image carries. A preset may pin them (det column)
+# without entering the fingerprint.
+FINGERPRINT_EXCLUDED_KEYS = ("engine.mtvu_kick_drop", "engine.mtvu_early_finish", "engine.vu1_aot_corpus",
+                             "engine.vu1_aot_codegen", "engine.vu1_aot_compiler", "engine.vu1_aot_prelude",
+                             "engine.vu1_aot_opt", "engine.vu1_aot_pack", "save.restore_mode")
 
 # key, type, peak, det ("=" = unchanged by the preset), source_var
 ROWS = [
@@ -68,6 +75,7 @@ ROWS = [
     ("engine.ee_runahead", "int", "2", "=", "PS2_EE_RUNAHEAD"),
     ("engine.mtvu", "bool", "on", "off", "PS2_MTVU"),
     ("engine.mtvu_depth", "int", "2", "=", "PS2_MTVU_MAX_FRAMES"),
+    ("engine.mtvu_early_finish", "bool", "on", "off", "-"),
     ("engine.mtvu_kick_drop", "bool", "on", "=", "-"),
     ("engine.pacing", "enum(realtime|freerun)", "realtime", "freerun", "PS2_VBLANK_FREERUN"),
     ("engine.shutdown_wait_s", "int", "10", "=", "PS2_SHUTDOWN_WAIT"),
@@ -281,7 +289,7 @@ def ledger_master_outcomes():
 def fingerprint(rows):
     parts = []
     for key, _t, peak, det, _s in rows:
-        if key.startswith(FINGERPRINT_EXCLUDED_PREFIXES):
+        if key.startswith(FINGERPRINT_EXCLUDED_PREFIXES) or key in FINGERPRINT_EXCLUDED_KEYS:
             continue
         if det != "=" and det != peak:
             parts.append("%s=%s;" % (key, det))
