@@ -411,7 +411,7 @@ DrawIrThreadQueue::Counters DrawIrThreadQueue::Count() const {
 void DrawIrThreadQueue::Deliver(Record& r) {
     switch (r.kind) {
         case Kind::Draw:
-            next_.OnDraw(r.draw);
+            next_.OnDrawOwned(std::move(r.draw));   // the record is done with: no vertex copy for a held draw
             break;
         case Kind::Job:
             if (r.has_payload) {

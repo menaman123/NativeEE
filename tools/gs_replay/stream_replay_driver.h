@@ -76,6 +76,7 @@ public:
                                            // boundary, or the stream's end) -- row-for-row comparable to the sync run
         bool swap_hidden_window = false;   // --swap: SDL_GL_SwapWindow on the hidden window instead of a flush
         bool cd_barrier = false;           // --cd-barrier: the NV_texture_barrier destination read (not tile-coherent on Apple)
+        bool coalesce = true;              // --no-coalesce: every record delivered as it arrives (DrawIrQueueConsumer::SetCoalesce)
         bool metal = false;                // --backend metal: the Metal device (macOS builds; exit 77 when absent)
         bool metal_hw_depth = false;       // --metal-hw-depth: the rasterizer's depth instead of the shader-written one
         uint32_t metal_commit_draws = 256; // --metal-commit-draws N: draws per command buffer (0 = one per frame)

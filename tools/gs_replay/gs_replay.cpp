@@ -31,7 +31,7 @@ int Usage() {
                  "usage: gs_replay stream <in.gsstream> [--scale N] [--warmup N] [--max-frames N]\n"
                  "                 [--csv f] [--json f] [--dump-ppm DIR] [--dump-frames a-b] [--no-grab] [--deferred-grab] [--phash]\n"
                  "                 [--quiet] [--sync-capture] [--swap] [--cd-barrier] [--backend gl|metal] [--metal-hw-depth] [--metal-commit-draws N] [--trace-draw N@F]\n"
-                 "                 [--force-shader-blend] [--draw-limit N[@F]]\n"
+                 "                 [--force-shader-blend] [--draw-limit N[@F]] [--no-coalesce]\n"
                  "                 (exit 77 = no GL / Metal device)\n");
     return 2;
 }
@@ -60,6 +60,7 @@ int MainStream(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--sync-capture")) opt.deferred_capture = false;
         else if (!std::strcmp(argv[i], "--no-grab")) opt.grab = false;
         else if (!std::strcmp(argv[i], "--deferred-grab")) opt.deferred_grab = true;
+        else if (!std::strcmp(argv[i], "--no-coalesce")) opt.coalesce = false;
         else if (!std::strcmp(argv[i], "--sync-deposit")) opt.deferred_deposit = false;
         else if (!std::strcmp(argv[i], "--gate-trace")) opt.gate_trace = true;
         else if (!std::strcmp(argv[i], "--phash")) opt.phash = true;
