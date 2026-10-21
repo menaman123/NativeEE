@@ -38,10 +38,15 @@
 // The text of an op is the body of ExecUpperK / ExecLowerK (vu_cached_tier_
 // exec.inl) with the operands named: the VuFloat lane kernels, vu_cached_exec's
 // helpers (WriteMaskClampD<D>, QwAddr, Le32, StoreLe32, IlwOffset), the
-// FlagPipeline entries, XgKick::Arm, and the interpreter's shared bodies for
-// CLIP (RunClip), DIV (DivLanes) and the GENERIC words. The same-bundle rules
-// are kept op for op (the lower sees the pre-upper VF as `pre`, the I bit
-// loads I after the upper read it, a discarded lower does not issue). No lane
+// FlagPipeline entries, XgKick::Arm, the interpreter's inline judgements for
+// CLIP (ClipJudge) and DIV (DivQuotient), and -- for the GENERIC words the
+// decoder has no fast kind for -- either a native body of the interpreter's
+// expression on the resident registers (the Q / I FMAC and ACC forms, OPMULA /
+// OPMSUB, ABS, MAXi; MFP, WAITP and the lane-arithmetic EFU ops) or the
+// interpreter's body itself with a flush / reload around it (ClassifyGeneric*
+// in the .cpp). The same-bundle rules are kept op for op (the lower sees the
+// pre-upper VF as `pre`, the I bit loads I after the upper read it, a
+// discarded lower does not issue). No lane
 // rule is restated here: the corpus (regs, data, clock, bundles, kicked bytes
 // vs the interpreter) is the oracle and the runtime gate re-verifies every
 // library before install.

@@ -71,6 +71,9 @@ public:
         bool deferred_deposit = true;      // --sync-deposit: the display deposit's GPU read at once (the A/B of the deferral)
         bool grab = true;                  // --no-grab: the play composition with no frames-lane reader (grab_wanted false;
                                            // the per-frame hash column reads 0 -- a timing run, not an identity run)
+        bool deferred_grab = false;        // --deferred-grab: the play composition's queued grab (DrawIrQueueConsumer::
+                                           // SetGrabDeferred): the row's hash is filled when its grab lands (the next frame
+                                           // boundary, or the stream's end) -- row-for-row comparable to the sync run
         bool swap_hidden_window = false;   // --swap: SDL_GL_SwapWindow on the hidden window instead of a flush
         bool cd_barrier = false;           // --cd-barrier: the NV_texture_barrier destination read (not tile-coherent on Apple)
         bool metal = false;                // --backend metal: the Metal device (macOS builds; exit 77 when absent)
@@ -90,6 +93,7 @@ public:
         uint64_t hash = 0;
         uint64_t phash = 0;      // the presented window image read at this frame's PresentWindow (0 = none read)
         bool grabbed = false;
+        int w = 0, h = 0;        // the grab's size (the STREAM_HASH chain folds it in)
         uint64_t readbacks = 0, copies = 0, draw_calls = 0;   // backend census deltas
         uint64_t submits = 0, gpu_ns = 0;                     // (the GPU time lands when its command buffers complete)
     };
@@ -117,6 +121,8 @@ private:
     bool PopRecord(gs::GsStreamReader::Record* out);
     void PresentWindow();   // the device's swap callback: the window image read (as play) + swap
     void OnFrameDone(const gs::JobRec& vsync);
+    void TakeGrab(FrameStat* st, uint32_t row);   // the consumer's published grab into the row (+ its --dump-ppm)
+    void ChainHash(const FrameStat& st);
     void WriteOutputs() const;
     static void WritePpm(const std::string& path, const std::vector<uint8_t>& rgba, int w, int h);
     static double NowMs();
@@ -153,6 +159,10 @@ private:
     uint32_t frame_draws_ = 0, frame_jobs_ = 0;
     render::CallCensus census_at_frame_{};
     uint64_t stream_hash_ = kHashSeed;
+    // --deferred-grab: the row whose grab is still queued (-1 = none) and the
+    // consumer's completion count at the last boundary.
+    long pending_row_ = -1;
+    uint64_t grabs_completed_seen_ = 0, grabs_deferred_seen_ = 0;
     uint64_t vram_ops_ = 0, uploads_ = 0;
     double total_ms_ = 0;
     // The prefetch queue (reader thread -> the consumer loop).

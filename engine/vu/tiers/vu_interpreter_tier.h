@@ -65,6 +65,17 @@ public:
     // DIV over operand VALUES (the register-resident generated blocks pass
     // their locals): DoDiv's body with the two source registers named.
     void DivLanes(VuUnit& u, const VR_reg& fs_raw, uint32_t fsf, const VR_reg& ft_raw, uint32_t ftf);
+    // The EFU lane arithmetic RunEfu and the generated blocks share: the sum of
+    // squares of a CLAMPED vector as the fused chain the reference's compiler
+    // formed, and the reciprocal with the EFU's zero rule (1/0 = FLT_MAX).
+    static float EfuSumSq(const VR_reg& clamped);
+    static float EfuRecip(float v);
+    // The CLIP judgement over the RAW operands (RunClip's body: the six outside
+    // bits, the PushClip is the caller's) and the FDIV quotient + status bits
+    // over the CLAMPED operands (DivLanes' body, the PushQ the caller's) --
+    // inline so a generated block does not call out of the dylib per word.
+    static uint32_t ClipJudge(const VR_reg& fs_raw, const VR_reg& ft_raw);
+    static float DivQuotient(float num, float den, uint16_t& status);
     // Program end / yield / park: every pipe drained, a pending kick completed.
     void DrainAll(VuUnit& u);
 

@@ -318,6 +318,37 @@ void TestFrameSkip() {
         q.SetFrameSkip(true);
         CHECK(!q.FrameSkip(), "frame skip is a pipelined-only rule (lockstep stays lockstep)");
     }
+    // Depth 2 (play): the consumer parked on frame 1, frames 2 AND 3 whole in the ring --
+    // frame 3's push drops nothing (two pending pictures are allowed), frame 4's push
+    // drops the OLDEST whole one (frame 2); frame 3 is delivered whole after frame 1.
+    {
+        TestDrawIrThreadQueue sink;
+        sink.block_at_seq = 1;
+        DrawIrThreadQueue q(sink, DrawIrThreadQueue::Hooks{}, DrawIrThreadQueue::Policy::Pipelined, 2);
+        sink.q = &q;
+        q.SetFrameSkip(true, 2);
+        CHECK(q.FrameSkip() && q.FrameSkipDepth() == 2, "frame skip depth 2 set on the pipelined queue");
+        q.Start();
+        q.OnDraw(Draw(1, 1));
+        while (!sink.blocked.load()) std::this_thread::yield();
+        q.OnFrame(Job(JobKind::VSync, 11));
+        q.OnDraw(Draw(2, 1));
+        q.OnJob(Job(JobKind::InvalidateTextures, 22));
+        q.OnFrame(Job(JobKind::VSync, 12));
+        q.OnDraw(Draw(3, 1));
+        q.OnFrame(Job(JobKind::VSync, 13));   // two whole pending frames: allowed at depth 2
+        CHECK(q.Count().frames_dropped == 0, "depth 2: the second pending frame is kept");
+        q.OnDraw(Draw(4, 1));
+        q.OnFrame(Job(JobKind::VSync, 14));   // a third would exceed the depth: the oldest (frame 2) is dropped
+        CHECK(q.Count().frames_dropped == 1, "depth 2: the third pending frame drops the oldest whole one");
+        sink.gate = true;
+        q.WaitFrame(4);
+        q.Stop();
+        std::string joined;
+        for (const auto& e : sink.log) joined += e + " ";
+        CHECK(joined == "D1v1 F11 J22t8 D3v1 F13 D4v1 F14 ", ("stream after the drop: D1 F1 J2 D3 F3 D4 F4 (no D2, no F2): " + joined).c_str());
+        CHECK(q.Count().frames == 4 && q.Count().consumed == q.Count().enqueued, "4 frames pushed, every record consumed (delivered or dropped)");
+    }
 }
 
 // The clock contract, rule 2 (review loop 1): the EE's local->local source in

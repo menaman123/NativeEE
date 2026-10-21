@@ -72,6 +72,8 @@ public:
         uint64_t grab_empty = 0;        // frames with no grabbable target
         uint64_t forgotten_frames = 0;  // ForgetLastFrame calls (the live restore)
         uint64_t grabs_skipped = 0;     // boundaries presented without a grab (grab_wanted false)
+        uint64_t grabs_deferred = 0;    // boundaries whose grab was queued (SetGrabDeferred): published one boundary late
+        uint64_t grabs_completed = 0;   // queued grabs that landed and were published
     };
 
     DrawIrQueueConsumer(DrawPipeline& pipe, Hooks hooks);
@@ -102,6 +104,17 @@ public:
     // FrameHasher::HashNativeScale over the grab's bytes.
     void SetFrameHashScale(int scale) { hash_scale_ = scale; }
     int FrameHashScale() const { return hash_scale_; }
+    // The deferred grab (DrawPipeline::SetDeferredGrab; play, pipelined): a
+    // boundary's Target grab is queued on the GPU and published at the NEXT
+    // boundary (LastFrame then lags the stream by one picture; its hash is still
+    // HashNativeScale over that picture's bytes). The scanout deposit must be
+    // deferred with it (RenderTargetCache::SetDeferredDeposit). Off = the grab is
+    // synchronous and published at its own boundary (the deterministic lane).
+    void SetGrabDeferred(bool on) { pipe_.SetDeferredGrab(on); }
+    bool GrabDeferred() const { return pipe_.DeferredGrab(); }
+    // Consumer thread: lands and publishes a queued grab now (the stream's end, a
+    // reader that needs the latest picture). False when none was pending.
+    bool FlushPendingGrab();
     const DrawPipeline& Pipeline() const { return pipe_; }
     // Consumer thread (inside RunOrdered): the pipeline the ordered work mutates.
     DrawPipeline& Pipeline() { return pipe_; }
@@ -117,6 +130,7 @@ private:
     void Enter();
     void DrainPendingUpload();
     void Stamp(uint32_t src_frame, uint64_t vram_epoch);
+    void HashAndPublish(DrawPipeline::Frame* grab);   // the lane hash, then the swap into frame_ under the lock
 
     DrawPipeline& pipe_;
     Hooks hooks_;

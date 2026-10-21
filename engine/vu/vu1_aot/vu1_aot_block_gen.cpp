@@ -67,6 +67,123 @@ std::string DestName(int d) {
     return s.empty() ? "-" : s;
 }
 
+// ---- the GENERIC words with a native body here -------------------------------
+//
+// The decoder gives these no fast kind (the block tier runs the interpreter's
+// body for them); the generated text runs the same arithmetic on the resident
+// registers instead of a FlushAll / interpreter call / ReloadAll per word. Each
+// shape is the interpreter's body (vu_interpreter_tier_upper.cpp RunUpper /
+// RunSpecial2Upper, _lower.cpp RunEfu / RunLowerSpecial) with the operands
+// named; the MAC results join the deferred delivery like the FMAC / ACC kinds.
+struct GenUpper {
+    enum Shape : uint8_t { kNone, kFmacQ, kFmacI, kAccQ, kAccI, kAccVec, kOpmsub, kOpmula, kAbs, kMaxI };
+    enum Arith : uint8_t { kAdd, kSub, kMul, kMadd, kMsub };
+    Shape shape = kNone;
+    Arith arith = kAdd;
+    bool mac() const { return shape != kNone && shape != kAbs && shape != kMaxI; }  // delivers a MAC result
+};
+
+GenUpper ClassifyGenericUpper(uint32_t u) {
+    GenUpper g;
+    const uint32_t func = u & 0x3Fu;
+    const uint32_t bc = func & 3u;
+    auto set = [&](GenUpper::Shape sh, GenUpper::Arith ar) { g.shape = sh; g.arith = ar; };
+    if (func >= 0x3C) {
+        switch ((u >> 6) & 0x1Fu) {  // the special-2 row; the column is the func's low two bits
+            case 0x07:
+                if (bc == 0) set(GenUpper::kAccQ, GenUpper::kMul);       // MULAq
+                else if (bc == 1) set(GenUpper::kAbs, GenUpper::kAdd);   // ABS
+                else if (bc == 2) set(GenUpper::kAccI, GenUpper::kMul);  // MULAi (bc 3 = CLIP: a kind)
+                break;
+            case 0x08:
+                if (bc == 0) set(GenUpper::kAccQ, GenUpper::kAdd);        // ADDAq
+                else if (bc == 1) set(GenUpper::kAccQ, GenUpper::kMadd);  // MADDAq
+                else if (bc == 2) set(GenUpper::kAccI, GenUpper::kAdd);   // ADDAi
+                else set(GenUpper::kAccI, GenUpper::kMadd);               // MADDAi
+                break;
+            case 0x09:
+                if (bc == 0) set(GenUpper::kAccQ, GenUpper::kSub);        // SUBAq
+                else if (bc == 1) set(GenUpper::kAccQ, GenUpper::kMsub);  // MSUBAq
+                else if (bc == 2) set(GenUpper::kAccI, GenUpper::kSub);   // SUBAi
+                else set(GenUpper::kAccI, GenUpper::kMsub);               // MSUBAi
+                break;
+            case 0x0A:
+                if (bc == 0) set(GenUpper::kAccVec, GenUpper::kAdd);  // ADDA (MADDA / MULA are kinds; bc 3 stays generic)
+                break;
+            case 0x0B:
+                if (bc == 0) set(GenUpper::kAccVec, GenUpper::kSub);        // SUBA
+                else if (bc == 1) set(GenUpper::kAccVec, GenUpper::kMsub);  // MSUBA
+                else if (bc == 2) set(GenUpper::kOpmula, GenUpper::kMul);   // OPMULA (bc 3 = NOP: a kind)
+                break;
+            default: break;
+        }
+        return g;
+    }
+    switch (func) {
+        case 0x1D: set(GenUpper::kMaxI, GenUpper::kAdd); break;    // MAXi
+        case 0x20: set(GenUpper::kFmacQ, GenUpper::kAdd); break;   // ADDq
+        case 0x21: set(GenUpper::kFmacQ, GenUpper::kMadd); break;  // MADDq
+        case 0x23: set(GenUpper::kFmacI, GenUpper::kMadd); break;  // MADDi
+        case 0x24: set(GenUpper::kFmacQ, GenUpper::kSub); break;   // SUBq
+        case 0x25: set(GenUpper::kFmacQ, GenUpper::kMsub); break;  // MSUBq
+        case 0x26: set(GenUpper::kFmacI, GenUpper::kSub); break;   // SUBi
+        case 0x27: set(GenUpper::kFmacI, GenUpper::kMsub); break;  // MSUBi
+        case 0x2E: set(GenUpper::kOpmsub, GenUpper::kMsub); break;  // OPMSUB
+        default: break;
+    }
+    return g;
+}
+
+// The lane kernel of an arithmetic on (s1, b, acc): the FMAC kinds' text.
+std::string ArithKernel(GenUpper::Arith a, const std::string& s1, const std::string& b) {
+    switch (a) {
+        case GenUpper::kAdd: return "VuFloat::Add4(" + s1 + ", " + b + ")";
+        case GenUpper::kSub: return "VuFloat::Sub4(" + s1 + ", " + b + ")";
+        case GenUpper::kMul: return "VuFloat::Mul4(" + s1 + ", " + b + ")";
+        case GenUpper::kMadd: return "VuFloat::Fma4(" + s1 + ", " + b + ", acc)";
+        default: return "VuFloat::Fms4(" + s1 + ", " + b + ", acc)";
+    }
+}
+
+// The GENERIC lower words with a native body: the P-pipe family (MFP, WAITP
+// and the EFU ops whose bodies are plain lane arithmetic; the libm ones --
+// EATAN* / ESIN / EEXP -- stay generic).
+enum GenLower : uint8_t { GL_NONE, GL_MFP, GL_WAITP, GL_ESADD, GL_ERSADD, GL_ELENG, GL_ERLENG, GL_ESUM, GL_ESQRT, GL_ERSQRT, GL_ERCPR };
+
+GenLower ClassifyGenericLower(uint32_t l) {
+    if (((l >> 25) & 0x7Fu) != 0x40u) return GL_NONE;
+    const uint32_t fn = l & 0x3Fu;
+    if (fn < 0x3Cu) return GL_NONE;
+    const uint32_t t3 = fn - 0x3Cu;
+    switch ((l >> 6) & 0x1Fu) {
+        case 0x19: return t3 == 0 ? GL_MFP : GL_NONE;
+        case 0x1C: return t3 == 0 ? GL_ESADD : t3 == 1 ? GL_ERSADD : t3 == 2 ? GL_ELENG : GL_ERLENG;
+        case 0x1D: return t3 == 2 ? GL_ESUM : GL_NONE;
+        case 0x1E: return t3 == 0 ? GL_ESQRT : t3 == 1 ? GL_ERSQRT : t3 == 2 ? GL_ERCPR : GL_WAITP;
+        default: return GL_NONE;
+    }
+}
+
+const char* GenLowerName(GenLower g) {
+    static const char* const kNames[] = {"GENERIC", "MFP", "WAITP", "ESADD", "ERSADD", "ELENG", "ERLENG", "ESUM", "ESQRT", "ERSQRT", "ERCPR"};
+    return kNames[g];
+}
+std::string GenUpperName(const GenUpper& g) {
+    static const char* const kArith[] = {"ADD", "SUB", "MUL", "MADD", "MSUB"};
+    switch (g.shape) {
+        case GenUpper::kFmacQ: return std::string(kArith[g.arith]) + "q";
+        case GenUpper::kFmacI: return std::string(kArith[g.arith]) + "i";
+        case GenUpper::kAccQ: return std::string(kArith[g.arith]) + "Aq";
+        case GenUpper::kAccI: return std::string(kArith[g.arith]) + "Ai";
+        case GenUpper::kAccVec: return std::string(kArith[g.arith]) + "A";
+        case GenUpper::kOpmsub: return "OPMSUB";
+        case GenUpper::kOpmula: return "OPMULA";
+        case GenUpper::kAbs: return "ABS";
+        case GenUpper::kMaxI: return "MAXi";
+        default: return "GENERIC";
+    }
+}
+
 }  // namespace
 
 // ---- the region --------------------------------------------------------------
@@ -411,9 +528,14 @@ void Vu1AotBlockGen::EmitOp(int bi, int i, uint32_t pc) {
     const VuBlockOp& op = blk.ops[static_cast<size_t>(i)];
     const VuDecodedSlot& s = *op.slot;
     const uint16_t f = op.flags;
+    // The GENERIC words with a native body here (see ClassifyGeneric*): they
+    // neither observe the ring nor run the interpreter.
+    const GenUpper gu = (op.upper != nullptr && s.upper_kind == VUK_U_GENERIC) ? ClassifyGenericUpper(s.upper) : GenUpper{};
+    const GenLower gl = (op.lower != nullptr && s.lower_kind == VUK_L_GENERIC) ? ClassifyGenericLower(s.lower) : GL_NONE;
     body_ += "        // op " + Dec(i) + " @ " + Pc4(pc) + "  upper=" + Hex(s.upper) + " lower=" + Hex(s.lower) + "  " +
-             (op.upper ? UpperName(s.upper_kind) : "nop") + "." + DestName(s.u_dest) + " | " +
-             (op.lower ? LowerName(s.lower_kind) : (f & VuBlockOp::kIBit) ? "I" : "-") + "\n";
+             (op.upper ? (s.upper_kind == VUK_U_GENERIC ? GenUpperName(gu) : UpperName(s.upper_kind)) : "nop") + "." +
+             DestName(s.u_dest) + " | " +
+             (op.lower ? (s.lower_kind == VUK_L_GENERIC ? GenLowerName(gl) : LowerName(s.lower_kind)) : (f & VuBlockOp::kIBit) ? "I" : "-") + "\n";
     cur_op_ = i;
     Line("++cycle;");
     EmitStall(i, op, s);
@@ -423,13 +545,13 @@ void Vu1AotBlockGen::EmitOp(int bi, int i, uint32_t pc) {
     Line("}");
     // The ring's observers: the STATUS / MAC readers (RetireMacStatus) and the
     // GENERIC words (the interpreter's own pushes) see every earlier result.
-    const bool observes = (op.upper != nullptr && s.upper_kind == VUK_U_GENERIC) ||
-                          (op.lower != nullptr && (s.lower_kind == VUK_L_GENERIC || s.lower_kind == VUK_L_FSEQ ||
+    const bool observes = (op.upper != nullptr && s.upper_kind == VUK_U_GENERIC && gu.shape == GenUpper::kNone) ||
+                          (op.lower != nullptr && ((s.lower_kind == VUK_L_GENERIC && gl == GL_NONE) || s.lower_kind == VUK_L_FSEQ ||
                                                    s.lower_kind == VUK_L_FSSET || s.lower_kind == VUK_L_FSAND ||
                                                    s.lower_kind == VUK_L_FSOR || s.lower_kind == VUK_L_FMEQ ||
                                                    s.lower_kind == VUK_L_FMAND || s.lower_kind == VUK_L_FMOR));
     if (observes) Deliver(i);
-    if (op.upper != nullptr && (IsFmac(s.upper_kind) || IsAcc(s.upper_kind))) Line("VR_reg m" + Dec(i) + ";");
+    if (op.upper != nullptr && (IsFmac(s.upper_kind) || IsAcc(s.upper_kind) || gu.mac())) Line("VR_reg m" + Dec(i) + ";");
 
     // The two words (one scope per op: `pre`, `r`, `a` are per-op names). The
     // lower of a hide-upper bundle reads the pre-upper value of the VF the
@@ -573,10 +695,85 @@ void Vu1AotBlockGen::EmitUpper(const VuBlockOp& op, const VuDecodedSlot& s) {
     const int fd = s.u_fd, fs = s.u_fs, ft = s.u_ft, bc = s.u_bc, D = s.u_dest;
     const std::string Ds = Dec(D);
     if (K == VUK_U_GENERIC) {
-        FlushAll();
-        Line("g.RunUpper(unit, " + Hex(s.upper) + "u);");
-        if (op.flags & VuBlockOp::kTouchHw) Line("VuBlockTier::PinHardwired(regs);");
-        ReloadAll();
+        const GenUpper g = ClassifyGenericUpper(s.upper);
+        if (g.shape == GenUpper::kNone) {
+            FlushAll();
+            Line("g.RunUpper(unit, " + Hex(s.upper) + "u);");
+            if (op.flags & VuBlockOp::kTouchHw) Line("VuBlockTier::PinHardwired(regs);");
+            ReloadAll();
+            return;
+        }
+        // RunUpper's prologue: the sources read clamped, the ACC clamped for
+        // every upper word (ABS / MAXi included).
+        EnsureAccClean();
+        const std::string m = "m" + Dec(cur_op_);
+        const std::string q = "VuFloat::Splat4(pipes.VisibleQ(regs))";
+        const std::string iv = "VuFloat::Splat4(VuFloat::ClampFloat(VuFloat::Bits2F(regs.I)))";
+        switch (g.shape) {
+            case GenUpper::kFmacQ: case GenUpper::kFmacI: {
+                // write_fd: the clamped result into fd's dest lanes (VF00 protected), the flags on the raw one.
+                const std::string s1 = VfC(fs);
+                Line(m + " = " + ArithKernel(g.arith, s1, g.shape == GenUpper::kFmacQ ? q : iv) + ";");
+                if (fd != 0) Line("vu_cached_exec::WriteMaskClampD<" + Ds + ">(v" + Dec(fd) + ", " + m + ", " + Ds + ");");
+                NoteMac(cur_op_, D);
+                if (fd != 0) WroteVf(fd, D == 0xF, true);
+                return;
+            }
+            case GenUpper::kAccQ: case GenUpper::kAccI: case GenUpper::kAccVec: {
+                // acc_s / acc_v + acc_tail: every lane computed, the flags judge the dest lanes, the
+                // dest lanes of the ACC take the clamped result and the others keep the incoming ACC.
+                const std::string s1 = VfC(fs);
+                const std::string b = g.shape == GenUpper::kAccQ ? q : g.shape == GenUpper::kAccI ? iv : VfC(ft);
+                Line(m + " = " + ArithKernel(g.arith, s1, b) + ";");
+                NoteMac(cur_op_, D);
+                Line("vu_cached_exec::WriteMaskClampD<" + Ds + ">(acc, " + m + ", " + Ds + ");");
+                return;
+            }
+            case GenUpper::kOpmula: {  // ACC.xyz = the outer product of the clamped sources, w untouched
+                const std::string a = VfC(fs), b = VfC(ft);
+                Line(m + ".F[0] = " + a + ".F[1] * " + b + ".F[2];");
+                Line(m + ".F[1] = " + a + ".F[2] * " + b + ".F[0];");
+                Line(m + ".F[2] = " + a + ".F[0] * " + b + ".F[1];");
+                Line(m + ".I[3] = acc.I[3];");
+                NoteMac(cur_op_, D);
+                Line("vu_cached_exec::WriteMaskClampD<" + Ds + ">(acc, " + m + ", " + Ds + ");");
+                return;
+            }
+            case GenUpper::kOpmsub: {  // fd.xyz = ACC - the outer product (one rounding per lane), w = ACC.w
+                const std::string a = VfC(fs), b = VfC(ft);
+                Line(m + ".F[0] = std::fmaf(-" + a + ".F[1], " + b + ".F[2], acc.F[0]);");
+                Line(m + ".F[1] = std::fmaf(-" + a + ".F[2], " + b + ".F[0], acc.F[1]);");
+                Line(m + ".F[2] = std::fmaf(-" + a + ".F[0], " + b + ".F[1], acc.F[2]);");
+                Line(m + ".I[3] = acc.I[3];");
+                if (fd != 0) Line("vu_cached_exec::WriteMaskClampD<" + Ds + ">(v" + Dec(fd) + ", " + m + ", " + Ds + ");");
+                NoteMac(cur_op_, D);
+                if (fd != 0) WroteVf(fd, D == 0xF, true);
+                return;
+            }
+            case GenUpper::kAbs: {  // the raw source with the sign cleared (fabs is the bit operation), no flags
+                if (ft == 0) return;
+                Line("{");
+                Line("const VR_reg src = " + Vf(fs) + ";  // copied first: fs may equal ft");
+                for (int k = 0; k < 4; ++k) {
+                    if (D & (8 >> k)) Line("v" + Dec(ft) + ".I[" + Dec(k) + "] = src.I[" + Dec(k) + "] & 0x7FFFFFFFu;");
+                }
+                Line("}");
+                WroteVf(ft, false, false);
+                return;
+            }
+            case GenUpper::kMaxI: {  // MINI_I's body with the max rule
+                if (fd == 0) return;
+                const std::string src = Vf(fs);
+                Line("{");
+                Line("VR_reg b4;");
+                Line("b4.I[0] = b4.I[1] = b4.I[2] = b4.I[3] = regs.I;");
+                Line("VuFloat::ApplyMinMax4(v" + Dec(fd) + ", " + src + ", b4, " + Ds + ", false, true);");
+                Line("}");
+                WroteVf(fd, false, false);
+                return;
+            }
+            default: break;
+        }
         return;
     }
     EnsureAccClean();
@@ -667,9 +864,9 @@ void Vu1AotBlockGen::EmitUpper(const VuBlockOp& op, const VuDecodedSlot& s) {
             WroteVf(ft, false, false);
             return;
         }
-        case VUK_U_CLIP: {
+        case VUK_U_CLIP: {  // RunClip's body inline: the raw operands judged, the clip ring pushed
             const std::string a = Vf(fs), b = Vf(ft);
-            Line("g.RunClip(unit, " + a + ", " + b + ");");
+            Line("pipes.PushClip(regs, (pipes.clip_latest() << 6) | VuInterpreterTier::ClipJudge(" + a + ", " + b + "));");
             return;
         }
         default: break;
@@ -845,9 +1042,14 @@ void Vu1AotBlockGen::EmitLower(const VuBlockOp& op, const VuDecodedSlot& s, uint
             SetVi(vit, Dec(link) + "u");
             if (verdict_op) Line("t = true;");
             return;
-        case VUK_L_DIV: {
+        case VUK_L_DIV: {  // DivLanes' body inline: the clamped lanes, the quotient + status into the Q pipe
             const std::string a = Vf(fs), b = Vf(ft);
-            Line("g.DivLanes(unit, " + a + ", " + Dec(s.l_fsf) + ", " + b + ", " + Dec((s.lower >> 23) & 3u) + ");");
+            Line("{");
+            Line("uint16_t qst;");
+            Line("const float q = VuInterpreterTier::DivQuotient(VuFloat::ClampFloat(" + a + ".F[" + Dec(s.l_fsf) + "]), VuFloat::ClampFloat(" +
+                 b + ".F[" + Dec((s.lower >> 23) & 3u) + "]), qst);");
+            Line("pipes.PushQ(regs, q, FlagPipeline::kDivDelay, qst);");
+            Line("}");
             return;
         }
         case VUK_L_FCGET:
@@ -916,6 +1118,44 @@ void Vu1AotBlockGen::EmitLower(const VuBlockOp& op, const VuDecodedSlot& s, uint
             Line("}");
             return;
         default: break;
+    }
+    if (K == VUK_L_GENERIC) {
+        const GenLower g = ClassifyGenericLower(s.lower);
+        if (g != GL_NONE) {
+            // RunEfu's bodies: the source read clamped (the vector for the sum
+            // family, the fsf lane otherwise), the result into the P pipe with
+            // the op's latency; WAITP's wait is the stall model's (EmitStall:
+            // ReleasePEarly), its body is empty; MFP reads the visible P.
+            switch (g) {
+                case GL_WAITP: return;
+                case GL_MFP: write_lanes_all(ft, "VuFloat::F2Bits(pipes.VisibleP(regs))"); return;
+                case GL_ESADD: case GL_ERSADD: case GL_ELENG: case GL_ERLENG: case GL_ESUM: {
+                    // The raw read (the `pre` rule applies: a lower never reads the clamp cache the upper refreshed).
+                    Line("{");
+                    Line("const VR_reg e = VuFloat::ClampVec(" + Vf(fs) + ");");
+                    if (g == GL_ESUM) {
+                        Line("pipes.PushP(regs, e.F[0] + e.F[1] + e.F[2] + e.F[3], FlagPipeline::kEfuEsum);");
+                    } else {
+                        Line("const float ss = VuInterpreterTier::EfuSumSq(e);");
+                        if (g == GL_ESADD) Line("pipes.PushP(regs, ss, FlagPipeline::kEfuEsadd);");
+                        else if (g == GL_ERSADD) Line("pipes.PushP(regs, VuInterpreterTier::EfuRecip(ss), FlagPipeline::kEfuErsadd);");
+                        else if (g == GL_ELENG) Line("pipes.PushP(regs, std::sqrt(ss), FlagPipeline::kEfuEleng);");
+                        else Line("pipes.PushP(regs, VuInterpreterTier::EfuRecip(std::sqrt(ss)), FlagPipeline::kEfuErleng);");
+                    }
+                    Line("}");
+                    return;
+                }
+                default: {  // ESQRT / ERSQRT / ERCPR: the clamped fsf lane
+                    Line("{");
+                    Line("const float lane = VuFloat::ClampFloat(" + Vf(fs) + ".F[" + Dec(s.l_fsf) + "]);");
+                    if (g == GL_ESQRT) Line("pipes.PushP(regs, std::sqrt(std::fabs(lane)), FlagPipeline::kEfuEsqrt);");
+                    else if (g == GL_ERSQRT) Line("pipes.PushP(regs, VuInterpreterTier::EfuRecip(std::sqrt(std::fabs(lane))), FlagPipeline::kEfuErsqrt);");
+                    else Line("pipes.PushP(regs, VuInterpreterTier::EfuRecip(lane), FlagPipeline::kEfuErcpr);");
+                    Line("}");
+                    return;
+                }
+            }
+        }
     }
     // GENERIC (and any kind without an arm): the interpreter's body against the
     // unit, its verdict in scratch locals (the body clears them at entry; only

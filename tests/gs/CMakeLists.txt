@@ -209,9 +209,10 @@ add_test(NAME Present_ViewportMath COMMAND test_present viewport)
 add_test(NAME Present_CrtcClassifier COMMAND test_present crtc)
 add_test(NAME Present_GrabDisplayFallback COMMAND test_present grab)
 add_test(NAME Present_GrabLocalMemory COMMAND test_present grab_local)
+add_test(NAME Present_BeginGrabDisplay COMMAND test_present begin_grab)
 add_test(NAME Present_DrawScanoutSource COMMAND test_present drawscanout)
 set_tests_properties(Present_ViewportMath Present_CrtcClassifier Present_GrabDisplayFallback
-                     Present_GrabLocalMemory Present_DrawScanoutSource PROPERTIES TIMEOUT 120)
+                     Present_GrabLocalMemory Present_BeginGrabDisplay Present_DrawScanoutSource PROPERTIES TIMEOUT 120)
 
 # The title profile fills the layout; an empty layout is false everywhere.
 

@@ -25,27 +25,31 @@ uint64_t Chain(uint64_t seed, const void* p, size_t n) {
 
 void CountingDrawIrSink::OnDraw(const DrawIr& draw) {
     ++draws_;
-    const DrawRec rec = draw.ToDrawRec();
-    draw_hash_ = Chain(draw_hash_, &rec, sizeof(rec));
+    if (hashing_) {
+        const DrawRec rec = draw.ToDrawRec();
+        draw_hash_ = Chain(draw_hash_, &rec, sizeof(rec));
+    }
     if (next_) next_->OnDraw(draw);
 }
 
 void CountingDrawIrSink::OnDrawOwned(DrawIr&& draw) {
     ++draws_;
-    const DrawRec rec = draw.ToDrawRec();
-    draw_hash_ = Chain(draw_hash_, &rec, sizeof(rec));
+    if (hashing_) {
+        const DrawRec rec = draw.ToDrawRec();
+        draw_hash_ = Chain(draw_hash_, &rec, sizeof(rec));
+    }
     if (next_) next_->OnDrawOwned(std::move(draw));
 }
 
 void CountingDrawIrSink::OnJob(const JobRec& job) {
     ++jobs_;
-    job_hash_ = Chain(job_hash_, &job, sizeof(job));
+    if (hashing_) job_hash_ = Chain(job_hash_, &job, sizeof(job));
     if (next_) next_->OnJob(job);
 }
 
 void CountingDrawIrSink::OnFrame(const JobRec& vsync) {
     ++frames_;
-    job_hash_ = Chain(job_hash_, &vsync, sizeof(vsync));
+    if (hashing_) job_hash_ = Chain(job_hash_, &vsync, sizeof(vsync));
     if (next_) next_->OnFrame(vsync);
 }
 

@@ -43,16 +43,17 @@
 //     FRAME snapshot (published at each frame record once armed) with the
 //     staleness counted -- never a block.
 //   * Frame skip (SetFrameSkip, Pipelined only -- the clock contract, rule 2: the
-//     renderer never blocks the game): the ring holds at most ONE complete
-//     pending frame. When a frame record is pushed while the consumer is still
-//     busy with an earlier frame and the previous frame is still whole in the
-//     ring (not started), that OLDER frame is dropped: its Draw records are
-//     erased and its frame record is delivered as a drop (no present, no grab;
-//     counted `frames_dropped`), while its jobs (uploads, window/front-buffer
-//     state, invalidations), VRAM op-logs and ordered work stay in stream order
-//     so the consumer image and the texture state remain current. Pushes never
-//     wait for ring room under frame skip (the drop rule bounds the ring), and
-//     the host does not call WaitFrame at the boundary (frame_waits = 0).
+//     renderer never blocks the game): the ring holds at most `pending_frames`
+//     (1 or 2) complete pending frames. When a frame record is pushed while the
+//     consumer is still busy with an earlier frame and that many older frames are
+//     still whole in the ring (not started), the OLDEST of them is dropped: its
+//     Draw records are erased and its frame record is delivered as a drop (no
+//     present, no grab; counted `frames_dropped`), while its jobs (uploads,
+//     window/front-buffer state, invalidations), VRAM op-logs and ordered work
+//     stay in stream order so the consumer image and the texture state remain
+//     current. Pushes never wait for ring room under frame skip (the drop rule
+//     bounds the ring), and the host does not call WaitFrame at the boundary
+//     (frame_waits = 0).
 // A fault on the consumer thread (an exception out of the next sink -- the GS
 // pipeline's refusals and GXSL errors) is caught there, the remaining records
 // are dropped (counted as consumed so no waiter hangs), and the exception is
@@ -137,9 +138,15 @@ public:
     void Stop();
     bool Running() const { return running_; }
     Policy policy() const { return policy_; }
-    // Producer side, Pipelined only: one pending frame, drop the older (see above).
-    void SetFrameSkip(bool on);
+    // Producer side, Pipelined only: at most `pending_frames` complete, unstarted
+    // frames in the ring; the push that would make one more drops the OLDEST (see
+    // above). 1 = the original rule (the previous frame is dropped as soon as the
+    // consumer is still on the one before it); 2 lets the consumer lag a whole
+    // field behind the stream before a picture is lost -- the same draws, delivered
+    // one field later, so the pictures are identical by construction.
+    void SetFrameSkip(bool on, uint32_t pending_frames = 1);
     bool FrameSkip() const;
+    uint32_t FrameSkipDepth() const;
     // The consumer thread threw out of the next sink (see the header comment).
     bool Faulted() const;
 
@@ -275,6 +282,7 @@ private:
     uint64_t enqueued_ = 0, consumed_ = 0;
     uint64_t frames_pushed_ = 0, frames_consumed_ = 0;
     bool frame_skip_ = false;
+    uint32_t frame_skip_depth_ = 1;     // complete pending frames the ring may hold (SetFrameSkip)
     uint64_t consuming_frame_ = 0;      // frame ordinal of the record the consumer popped last
     Counters n_;
     bool faulted_ = false;              // consumer threw; records are dropped from here on

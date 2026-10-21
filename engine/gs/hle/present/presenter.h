@@ -33,6 +33,11 @@ public:
     bool Grab(std::vector<uint8_t>* out, int* w, int* h, const VramImage* vram = nullptr) {
         return scanout_.GrabDisplay(out, w, h, vram);
     }
+    // The deferred form (ScanoutComposer::BeginGrabDisplay): a Target's read is
+    // queued and named by *fence; the Mirror arm lands in `out` at once.
+    bool BeginGrab(render::FenceId* fence, std::vector<uint8_t>* out, int* w, int* h, const VramImage* vram = nullptr) {
+        return scanout_.BeginGrabDisplay(fence, out, w, h, vram);
+    }
     // The display quad into the window (after the grab) and the frame counter advance.
     ScanoutComposer::DrawResult Present(VramImage& vram, const VramLayout& layout,
                                         const CrtcClassifier::Snapshot& crtc, uint64_t gfx_epoch,

@@ -212,6 +212,58 @@ void GrabLocalMemory() {
     CHECK(sc.GrabDisplay(&fb, &w, &h, &vram) && w == 64 && h == 4 && sc.LastGrabSource() == ScanoutComposer::Source::Target);
 }
 
+// The deferred grab (BeginGrabDisplay): the same source pick as GrabDisplay; a Target's
+// read is queued and named by the fence -- its bytes are the attachment's AS OF Begin
+// (a later write does not reach it) and land at PollReadback; the local-memory arm is
+// a CPU read landing at once with no fence; nothing readable = false, no fence.
+void BeginGrab() {
+    test::FakeBackend be;
+    VramImage vram;
+    VramLayout layout;
+    ScalePolicy scale(ScaleSettings{1}, &layout);
+    RenderTargetCache cache(be, vram, scale);
+    ScanoutComposer sc(be, cache);
+    Presenter pr(sc);
+    std::vector<uint8_t> fb;
+    int w = 0, h = 0;
+    render::FenceId fence{7};
+    sc.SetScanoutFbp(0x70000);
+    CHECK(!sc.BeginGrabDisplay(&fence, &fb, &w, &h) && fence.id == 0 && w == 0 && h == 0);   // nothing readable
+    CHECK(sc.LastGrabSource() == ScanoutComposer::Source::None && be.readback_pending() == 0);
+    RenderTarget& d = cache.GetOrCreate(0x70000, 128, 64, 0x00, 0);
+    be.SetPixel(d.views.color, 3, 2, 10, 20, 30, 40);
+    fb.assign(5, 0xEE);   // untouched by a queued Target read
+    CHECK(sc.BeginGrabDisplay(&fence, &fb, &w, &h) && fence.id != 0 && w == 128 && h == 64);
+    CHECK(sc.LastGrabSource() == ScanoutComposer::Source::Target && sc.LastGrabFbp() == 0x70000 && !sc.LastGrabFallback());
+    CHECK(fb.size() == 5 && be.readback_pending() == 1);
+    be.SetPixel(d.views.color, 3, 2, 1, 2, 3, 4);   // after Begin: not in the queued read
+    std::vector<uint8_t> landed(size_t(w) * h * 4, 0);
+    CHECK(be.PollReadback(fence, landed.data(), size_t(w) * 4) && be.readback_pending() == 0);
+    const size_t at = (size_t(2) * 128 + 3) * 4;
+    CHECK(landed[at] == 10 && landed[at + 1] == 20 && landed[at + 2] == 30 && landed[at + 3] == 40);
+    CHECK(!be.PollReadback(fence, landed.data(), 0));   // consumed
+    // The synchronous form reads the same attachment, now with the later pixel.
+    CHECK(sc.GrabDisplay(&fb, &w, &h) && fb[at] == 1 && fb[at + 3] == 4);
+    // The Presenter wrapper and the most-recently-drawn fallback through the deferred form.
+    sc.SetScanoutFbp(0x40000);
+    cache.NoteDrawn(0x70000);
+    CHECK(pr.BeginGrab(&fence, &fb, &w, &h) && fence.id != 0 && sc.LastGrabFallback() && w == 128);
+    CHECK(be.PollReadback(fence, nullptr, 0));   // dropped: the handle is released
+    // The local-memory arm: a CPU read, landing at once, no fence.
+    const uint32_t base = 0x2000;
+    const uint16_t px = static_cast<uint16_t>(2 | (5 << 5) | 0x8000u);
+    const uint8_t two[2] = {static_cast<uint8_t>(px & 0xFF), static_cast<uint8_t>(px >> 8)};
+    vram.WriteStream(PsmLayout::PixelByteAddress(Psm::CT16, 5, 0, base / PsmLayout::kBlockBytes, 1), two, 2);
+    vram.SettleWrites();
+    sc.SetScanoutFbp(base);
+    sc.SetGrabPolicy(ScanoutComposer::GrabPolicy::LocalMemory);
+    sc.SetDispfb(64, 0x02);
+    sc.SetContentDimensions(64, 1);
+    fence = render::FenceId{9};
+    CHECK(sc.BeginGrabDisplay(&fence, &fb, &w, &h, &vram) && fence.id == 0 && w == 64 && h == 1 && fb.size() == 64u * 4);
+    CHECK(sc.LastGrabSource() == ScanoutComposer::Source::Mirror && fb[5 * 4 + 0] == ((2 << 3) | (2 >> 2)) && be.readback_pending() == 0);
+}
+
 void Fill(test::FakeBackend& be, RenderTarget& t, uint8_t r, uint8_t g, uint8_t b) {
     for (int y = 0; y < t.identity.height; ++y)
         for (int x = 0; x < t.identity.width; ++x) be.SetPixel(t.views.color, x, y, r, g, b, 0xFF);
@@ -477,6 +529,7 @@ int main(int argc, char** argv) {
     if (all || which == "crtc") Crtc();
     if (all || which == "grab") Grab();
     if (all || which == "grab_local") GrabLocalMemory();
+    if (all || which == "begin_grab") BeginGrab();
     if (all || which == "drawscanout") { DrawScanoutSource(); DrawScanoutOrderAndTail(); }
     std::printf("test_present %s: %d checks, %d failures\n", which.c_str(), g_checks, g_fail);
     return g_fail ? 1 : 0;

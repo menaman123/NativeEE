@@ -360,24 +360,17 @@ void VuInterpreterTier::RunEfu(VuUnit& u, uint32_t l, uint32_t funct2, uint32_t 
     const VR_reg v = Clamp4(regs.VF[fs]);
     const float lane = VuFloat::ClampFloat(regs.VF[fs].F[fsf]);
     auto push = [&](float value, int cycles) { pipes.PushP(regs, value, cycles); };
-    // Sum of squares as the fused chain the reference's compiler formed.
-    auto sum_sq = [&]() { return std::fmaf(v.z, v.z, std::fmaf(v.x, v.x, v.y * v.y)); };
+    // Sum of squares as the fused chain the reference's compiler formed; the
+    // helpers are the generated blocks' too (vu_interpreter_tier.inl).
+    auto sum_sq = [&]() { return EfuSumSq(v); };
 
     switch (funct2) {
         case 0x1C:
             switch (t3) {
-                case 0: push(sum_sq(), FlagPipeline::kEfuEsadd); break;  // ESADD
-                case 1: {                                                // ERSADD
-                    const float s = sum_sq();
-                    push(s != 0.0f ? 1.0f / s : FLT_MAX, FlagPipeline::kEfuErsadd);
-                    break;
-                }
-                case 2: push(std::sqrt(sum_sq()), FlagPipeline::kEfuEleng); break;  // ELENG
-                default: {                                                          // ERLENG
-                    const float len = std::sqrt(sum_sq());
-                    push(len != 0.0f ? 1.0f / len : FLT_MAX, FlagPipeline::kEfuErleng);
-                    break;
-                }
+                case 0: push(sum_sq(), FlagPipeline::kEfuEsadd); break;              // ESADD
+                case 1: push(EfuRecip(sum_sq()), FlagPipeline::kEfuErsadd); break;   // ERSADD
+                case 2: push(std::sqrt(sum_sq()), FlagPipeline::kEfuEleng); break;   // ELENG
+                default: push(EfuRecip(std::sqrt(sum_sq())), FlagPipeline::kEfuErleng); break;  // ERLENG
             }
             break;
         case 0x1D:
@@ -390,13 +383,9 @@ void VuInterpreterTier::RunEfu(VuUnit& u, uint32_t l, uint32_t funct2, uint32_t 
             break;
         case 0x1E:
             switch (t3) {
-                case 0: push(std::sqrt(std::fabs(lane)), FlagPipeline::kEfuEsqrt); break;  // ESQRT
-                case 1: {                                                                  // ERSQRT
-                    const float s = std::sqrt(std::fabs(lane));
-                    push(s != 0.0f ? 1.0f / s : FLT_MAX, FlagPipeline::kEfuErsqrt);
-                    break;
-                }
-                case 2: push(lane != 0.0f ? 1.0f / lane : FLT_MAX, FlagPipeline::kEfuErcpr); break;  // ERCPR
+                case 0: push(std::sqrt(std::fabs(lane)), FlagPipeline::kEfuEsqrt); break;            // ESQRT
+                case 1: push(EfuRecip(std::sqrt(std::fabs(lane))), FlagPipeline::kEfuErsqrt); break;  // ERSQRT
+                case 2: push(EfuRecip(lane), FlagPipeline::kEfuErcpr); break;                         // ERCPR
                 default: break;  // WAITP: the busy-wait already ran in the stall model
             }
             break;

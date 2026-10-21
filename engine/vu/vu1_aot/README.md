@@ -29,8 +29,11 @@ above it in the ladder (`VuTierDispatch`: HLE hook -> MTVU hook -> aot -> fallba
    cycle) and the ring arm (lazy / eager, `FlagPipeline::kDefaultLazy`) decided at generation (recorded in the
    exports, checked by the installer). Each op's text is the `ExecUpperK` / `ExecLowerK` body of its kind with
    the operands named: the `VuFloat` lane kernels, `vu_cached_exec`'s helpers (`WriteMaskClampD<D>`, `QwAddr`,
-   ...), the `FlagPipeline` entries, `XgKick::Arm`, the interpreter's shared bodies for CLIP (`RunClip`), DIV
-   (`DivLanes`) and the GENERIC words (flush / reload around). The same-bundle rules are kept op for op. A
+   ...), the `FlagPipeline` entries, `XgKick::Arm`, the interpreter's inline judgements for CLIP (`ClipJudge`)
+   and DIV (`DivQuotient`); a GENERIC word (no fast kind in the decoder) gets a native body of the interpreter's
+   expression where the generator has one (`ClassifyGenericUpper` / `ClassifyGenericLower`: the Q / I FMAC and
+   ACC forms, OPMULA / OPMSUB, ABS, MAXi; MFP, WAITP, the lane-arithmetic EFU ops) and the interpreter's body with
+   a flush / reload around it otherwise. The same-bundle rules are kept op for op. A
    function covers a REGION: its block and, within `kRegionBlockCap` / `kRegionOpCap`, the blocks it reaches over
    fall-through / static targets, each a labelled scope with `goto` edges -- a block whose branch targets its own
    head loops inside the function with its registers resident (the default caps keep the regions to the block

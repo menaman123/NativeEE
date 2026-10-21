@@ -273,19 +273,8 @@ void VuInterpreterTier::RunSpecial2Upper(VuUnit& u, uint32_t upper) {
 }
 
 void VuInterpreterTier::RunClip(VuUnit& u, const VR_reg& fs_raw, const VR_reg& ft_raw) {
-    // Integer-compare clip judgement: |w| as an int (a zero/denormal w compares
-    // as the largest denormal), each of +x/-x/+y/-y/+z/-z tested "outside" as a
-    // signed compare with the sign bit flipped for the negative side.
-    const int32_t wbits = static_cast<int32_t>(ft_raw.I[3]);
-    const int32_t value = (wbits & 0x7F800000) ? (wbits & 0x7FFFFFFF) : 0x007FFFFF;
-    uint32_t nf = 0;
-    for (int k = 0; k < 3; ++k) {
-        const uint32_t b = fs_raw.I[k];
-        if (static_cast<int32_t>(b) > value) nf |= 1u << (2 * k);
-        if (static_cast<int32_t>(b ^ 0x80000000u) > value) nf |= 1u << (2 * k + 1);
-    }
     FlagPipeline& pipes = u.flags();
-    pipes.PushClip(u.regs(), (pipes.clip_latest() << 6) | nf);
+    pipes.PushClip(u.regs(), (pipes.clip_latest() << 6) | ClipJudge(fs_raw, ft_raw));
 }
 
 void VuInterpreterTier::DoDiv(VuUnit& u, uint32_t fs, uint32_t fsf, uint32_t ft, uint32_t ftf) {
@@ -295,17 +284,8 @@ void VuInterpreterTier::DoDiv(VuUnit& u, uint32_t fs, uint32_t fsf, uint32_t ft,
 
 void VuInterpreterTier::DivLanes(VuUnit& u, const VR_reg& fs_raw, uint32_t fsf, const VR_reg& ft_raw, uint32_t ftf) {
     VUregs& regs = u.regs();
-    const float num = VuFloat::ClampFloat(fs_raw.F[fsf]);
-    const float den = VuFloat::ClampFloat(ft_raw.F[ftf]);
-    float q;
     uint16_t st;
-    if (den != 0.0f) {
-        q = num / den;
-        st = 0;
-    } else {
-        st = (num == 0.0f) ? static_cast<uint16_t>(I | IS) : static_cast<uint16_t>(D | DS);
-        q = VuFloat::Bits2F(((VuFloat::F2Bits(num) ^ VuFloat::F2Bits(den)) & VuFloat::kSignBit) | VuFloat::kMaxFloatBits);
-    }
+    const float q = DivQuotient(VuFloat::ClampFloat(fs_raw.F[fsf]), VuFloat::ClampFloat(ft_raw.F[ftf]), st);
     u.flags().PushQ(regs, q, FlagPipeline::kDivDelay, st);
 }
 

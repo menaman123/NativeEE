@@ -89,6 +89,26 @@ void DrawIrQueueConsumer::OnJob(const JobRec& j) {
     }
 }
 
+void DrawIrQueueConsumer::HashAndPublish(DrawPipeline::Frame* grab) {
+    // The lane hash on the grab's thread: the same function the boundary
+    // applies to the reference frame (HashNativeScale; 0 for no grab).
+    grab->hashed = hash_scale_ > 0;
+    grab->hash = grab->hashed && grab->grabbed
+                     ? verify::FrameHasher::HashNativeScale(grab->rgba.data(), grab->w, grab->h, hash_scale_)
+                     : 0;
+    std::lock_guard<std::mutex> lk(frame_mu_);
+    std::swap(frame_, *grab);
+}
+
+bool DrawIrQueueConsumer::FlushPendingGrab() {
+    if (!pipe_.GrabPending()) return false;
+    Enter();
+    if (!pipe_.CompletePendingGrab(&scratch_)) return false;
+    HashAndPublish(&scratch_);
+    n_.grabs_completed++;
+    return true;
+}
+
 void DrawIrQueueConsumer::OnFrame(const JobRec& vsync) {
     Enter();
     Stamp(vsync.src_frame + 1, vsync.vram_epoch);
@@ -102,21 +122,26 @@ void DrawIrQueueConsumer::OnFrame(const JobRec& vsync) {
     const bool wanted = !hooks_.grab_wanted || hooks_.grab_wanted();
     auto* grab = (vsync.arg1 == 2 || !wanted) ? nullptr : &scratch_;
     if (!wanted) n_.grabs_skipped++;
+    // Deferred grabs: the previous boundary's queued read lands and is published
+    // first (one frame late; see DrawPipeline::SetDeferredGrab).
+    if (grab && pipe_.GrabPending()) {
+        if (pipe_.CompletePendingGrab(&scratch_)) {
+            HashAndPublish(&scratch_);
+            n_.grabs_completed++;
+        }
+    }
     if (hooks_.owned_frame && hooks_.owned_frame(vsync.arg1 == 1, grab)) {
         presentable = true;
     } else {
         const CrtcClassifier::Snapshot crtc = hooks_.crtc ? hooks_.crtc() : CrtcClassifier::Snapshot{};
         pipe_.OnFrameEnd(vsync.arg1 == 1, crtc, grab);
     }
-    if (grab) {
-        // The lane hash on the grab's thread: the same function the boundary
-        // applies to the reference frame (HashNativeScale; 0 for no grab).
-        grab->hashed = hash_scale_ > 0;
-        grab->hash = grab->hashed && grab->grabbed
-                         ? verify::FrameHasher::HashNativeScale(grab->rgba.data(), grab->w, grab->h, hash_scale_)
-                         : 0;
-        std::lock_guard<std::mutex> lk(frame_mu_);
-        std::swap(frame_, scratch_);
+    if (grab && pipe_.GrabPending()) {
+        // Queued: nothing to publish for this boundary -- the lane reads the
+        // previous completed picture until the next boundary lands this one.
+        n_.grabs_deferred++;
+    } else if (grab) {
+        HashAndPublish(grab);
     } else if (!wanted) {
         // No grab this boundary: the published frame says so (a reader that
         // wants pixels asked for none).
@@ -125,7 +150,7 @@ void DrawIrQueueConsumer::OnFrame(const JobRec& vsync) {
     }
     n_.frames++;
     if (presentable) n_.presents++;
-    if (wanted && !frame_.grabbed) n_.grab_empty++;
+    if (wanted && !frame_.grabbed && !pipe_.GrabPending()) n_.grab_empty++;
 }
 
 DrawPipeline::Frame DrawIrQueueConsumer::LastFrameCopy() const {
@@ -134,6 +159,7 @@ DrawPipeline::Frame DrawIrQueueConsumer::LastFrameCopy() const {
 }
 
 void DrawIrQueueConsumer::ForgetLastFrame() {
+    pipe_.DropPendingGrab();   // a queued read of the previous session's picture
     std::lock_guard<std::mutex> lk(frame_mu_);
     frame_ = DrawPipeline::Frame{};
     scratch_ = DrawPipeline::Frame{};
