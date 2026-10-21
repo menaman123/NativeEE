@@ -1,6 +1,6 @@
 // tests/gs/state/test_gs_state.cpp -- GsRegisters / VertexKick / DrawFlush /
 // GsState units. Usage: test_gs_state <case>
-//   inv01 inv02 inv28 inv32 inv38 decode kick facade priv
+//   inv01 inv02 inv02b inv28 inv32 inv38 decode kick facade priv
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -81,15 +81,15 @@ static void Inv01() {
     // before the completing kick is what the draw carries.
     CHECK(sink.draws.size() == 2 && sink.draws[1].tex_enabled, "latch re-taken while the buffer is still empty");
     CHECK(gs.Regs().prim.texture, "live TME is 1 after PRMODE");
-    // With a triangle already in the buffer, a same-type PRIM flipping TME is
-    // deferred: the queued draw flushes with ITS latched TME at the next kick.
+    // With a triangle already in the buffer, a same-type PRIM flipping TME flushes
+    // it at once (the attributes in force at ITS kicks): the draw keeps TME=1.
     gs.WriteRegister(0x1A, 1);
     gs.WriteRegister(0x00, Prim(3, 0, 1, 0, 0, 0, 0, 0));
     KickAt(gs, 1, 1); KickAt(gs, 2, 1); KickAt(gs, 1, 2);
     gs.WriteRegister(0x00, Prim(3, 0, 0, 0, 0, 0, 0, 0));
-    CHECK(sink.draws.size() == 2, "attribute-only PRIM does not flush");
+    CHECK(sink.draws.size() == 3 && sink.draws[2].tex_enabled, "attribute PRIM flushes: draw keeps TME=1 of its kicks");
     KickAt(gs, 5, 5);
-    CHECK(sink.draws.size() == 3 && sink.draws[2].tex_enabled, "deferred flush: draw keeps TME=1 of its first kick");
+    CHECK(sink.draws.size() == 3, "the next kick opens the new draw");
     KickAt(gs, 6, 5); KickAt(gs, 5, 6);
     gs.KickBoundary();
     CHECK(sink.draws.size() == 4 && !sink.draws[3].tex_enabled, "next draw latched TME=0 at its first kick");
@@ -111,10 +111,11 @@ static void Inv02() {
     gs.WriteRegister(0x4C, 0x10);  // FRAME_1 -> flush
     CHECK(sink.draws.size() == 1 && sink.draws[0].raster.frame.fbp == 0, "FRAME flushed the draw with the OLD frame");
     CHECK(sink.draws[0].raster.dthe == 1 && sink.draws[0].raster.dimx == 0x1234, "dither state captured at flush");
-    // PRIM with the same type: no flush.
+    // PRIM with the same type and only IIP changed: no flush (flat colour is
+    // applied per primitive by the kick).
     KickAt(gs, 0, 0); KickAt(gs, 1, 0); KickAt(gs, 0, 1);
     gs.WriteRegister(0x00, Prim(3, 1, 0, 0, 0, 0, 0, 0));
-    CHECK(sink.draws.size() == 1, "same-type PRIM does not flush");
+    CHECK(sink.draws.size() == 1, "same-type IIP-only PRIM does not flush");
     KickAt(gs, 5, 5); KickAt(gs, 6, 5); KickAt(gs, 5, 6);
     gs.WriteRegister(0x00, Prim(6, 0, 0, 0, 0, 0, 0, 0));  // type change -> flush
     CHECK(sink.draws.size() == 2 && sink.draws[1].verts.size() == 6 && sink.draws[1].prim_type == 3, "type change flushes both triangles");
@@ -129,18 +130,58 @@ static void Inv02() {
         CHECK(sink.draws.size() == n + 1, "setter flushed");
         n = sink.draws.size();
     }
-    // Deferred flush at the kick: a DIRTY register that changes the draw state (FRAME) with pending verts.
+    // A same-type PRIM changing TME with pending verts flushes them at once (Inv02b);
+    // the StateChange flush resets the strip parity.
     gs.WriteRegister(0x00, Prim(4, 0, 0, 0, 0, 0, 0, 0));  // strip
     KickAt(gs, 0, 0); KickAt(gs, 1, 0); KickAt(gs, 0, 1);
     n = sink.draws.size();
-    gs.WriteRegister(0x00, Prim(4, 0, 1, 0, 0, 0, 0, 0));  // same type, TME change: dirty PRIM, no immediate flush
-    CHECK(sink.draws.size() == n, "PRIM attribute change defers");
+    gs.WriteRegister(0x00, Prim(4, 0, 1, 0, 0, 0, 0, 0));  // same type, TME change: immediate flush
+    CHECK(sink.draws.size() == n + 1 && sink.draws.back().verts.size() == 3 && !sink.draws.back().tex_enabled,
+          "PRIM attribute change flushes the strip with its own TME");
     KickAt(gs, 1, 1);
-    CHECK(sink.draws.size() == n + 1 && sink.draws.back().verts.size() == 3, "deferred flush at the next kick");
+    CHECK(sink.draws.size() == n + 1, "the next kick starts the new draw");
     CHECK(gs.Kick().StripCount() == 0, "StateChange flush reset the strip parity");
 }
 
 // Invariant 28: every emitted draw carries the identity stamp + seq/epoch fields.
+// Invariant 2b: a same-type PRIM that changes a draw-carried attribute (ABE here)
+// flushes the queued primitives with the OLD bits -- Sly 2's ink lines: LINE
+// PRIM 0xc1 (ABE AA1) + TEST RGB_ONLY + 2 kicks, then PRIM 0x01 + TEST ZB_ONLY +
+// the same 2 kicks. The colour pass must carry ABE=1, the Z pass ABE=0.
+static void Inv02b() {
+    GsState gs;
+    CaptureSink sink;
+    gs.SetSink(&sink);
+    gs.WriteRegister(0x00, 0xc1);                 // LINE, ABE, AA1
+    gs.WriteRegister(0x47, 0x73001);              // ATE ATST NEVER AFAIL RGB_ONLY ZTE ZTST GREATER
+    KickAt(gs, 200, 143); KickAt(gs, 204, 141);
+    CHECK(sink.draws.empty(), "line queued");
+    gs.WriteRegister(0x00, 0x01);                 // LINE, no ABE: the Z-only pass
+    CHECK(sink.draws.size() == 1, "attribute change flushed the colour pass at once");
+    CHECK(sink.draws[0].alpha_blend && sink.draws[0].prim_type == 1 && sink.draws[0].verts.size() == 2,
+          "colour pass keeps ABE=1 with its two vertices");
+    CHECK(sink.draws[0].raster.test.afail == 3, "colour pass keeps TEST RGB_ONLY");
+    gs.WriteRegister(0x47, 0x72001);              // AFAIL ZB_ONLY
+    KickAt(gs, 200, 143); KickAt(gs, 204, 141);
+    gs.KickBoundary();
+    CHECK(sink.draws.size() == 2 && !sink.draws[1].alpha_blend && sink.draws[1].raster.test.afail == 2,
+          "Z pass: ABE=0, ZB_ONLY");
+    // FGE / FST / CTXT flips split too; AA1 alone (not draw-carried) does not.
+    gs.WriteRegister(0x00, Prim(3, 0, 0, 0, 0, 0, 0, 0));
+    KickAt(gs, 0, 0); KickAt(gs, 1, 0); KickAt(gs, 0, 1);
+    gs.WriteRegister(0x00, Prim(3, 0, 0, 0, 0, 1, 0, 0));
+    CHECK(sink.draws.size() == 2, "AA1-only PRIM does not flush");
+    gs.WriteRegister(0x00, Prim(3, 0, 0, 1, 0, 0, 0, 0));
+    CHECK(sink.draws.size() == 3 && !sink.draws[2].fog, "FGE flip flushes the queued triangle with FGE=0");
+    KickAt(gs, 0, 0); KickAt(gs, 1, 0); KickAt(gs, 0, 1);
+    gs.WriteRegister(0x00, Prim(3, 0, 0, 1, 0, 0, 1, 0));
+    CHECK(sink.draws.size() == 4 && !sink.draws[3].use_fst, "FST flip flushes with FST=0");
+    KickAt(gs, 0, 0); KickAt(gs, 1, 0); KickAt(gs, 0, 1);
+    gs.WriteRegister(0x00, Prim(3, 0, 0, 1, 0, 0, 1, 1));
+    CHECK(sink.draws.size() == 5 && sink.draws[4].ctx == 0, "CTXT flip flushes with the old context");
+    gs.KickBoundary();
+}
+
 static void Inv28() {
     GsState gs;
     CaptureSink sink;
@@ -811,6 +852,7 @@ int main(int argc, char** argv) {
     const std::string c = argc > 1 ? argv[1] : "all";
     if (c == "inv01" || c == "all") Inv01();
     if (c == "inv02" || c == "all") Inv02();
+    if (c == "inv02b" || c == "all") Inv02b();
     if (c == "inv28" || c == "all") Inv28();
     if (c == "inv32" || c == "all") Inv32();
     if (c == "inv38" || c == "all") Inv38();

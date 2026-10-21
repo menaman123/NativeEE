@@ -17,7 +17,8 @@ add_library(ps2r_gs_ir STATIC
     counting_draw_ir_sink.cpp
     drawlist_ring.cpp
     register_op_stream.cpp
-    cd_dirty_set.cpp)
+    cd_dirty_set.cpp
+    prim_expand.cpp)
 target_include_directories(ps2r_gs_ir PUBLIC ${CMAKE_SOURCE_DIR})
 target_compile_options(ps2r_gs_ir PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(ps2r_gs_ir PUBLIC ps2r_gs_format ps2r_core)

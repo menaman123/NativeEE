@@ -69,6 +69,8 @@ set_tests_properties(GsAlphaFailMask PROPERTIES TIMEOUT 60)
 # scissor, FBA, TCC = 0, DTHE); Fbmsk16From32 folds RGBA8 onto 5551.
 ps2r_gs_ir_test(test_halfword_shuffle)
 add_test(NAME GsHalfwordShuffle COMMAND test_halfword_shuffle)
+ps2r_gs_ir_test(test_prim_expand)
+add_test(NAME GsPrimExpand COMMAND test_prim_expand)
 set_tests_properties(GsHalfwordShuffle PROPERTIES TIMEOUT 60)
 
 # G1: every .gsdl struct size / field offset (compile-time and run-time), the hash
@@ -117,6 +119,7 @@ ps2r_gs_state_test(state test_gs_mmio_handler)
 # G3: GsState units (register decode vectors, kick sequences, flush, façade, priv regs).
 foreach(pair
         "Gs_Inv01_FirstKickTmeSnapshot;inv01" "Gs_Inv02_SetterFlushesPending;inv02"
+        "Gs_Inv02b_PrimAttributeFlush;inv02b"
         "Gs_Inv28_IdentityStamp;inv28" "Gs_Inv32_DitherInMergeKey;inv32"
         "Gs_Inv38_RoundSpriteNormalise;inv38" "Gs_Inv40_Tex1KSignExtended;inv40" "GsRegistersDecodeVectors;decode"
         "GsVertexKickSequences;kick" "GsVertexKickFlatShading;flat" "GsStateFacadeEmitsDrawIr;facade"

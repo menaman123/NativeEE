@@ -9,6 +9,7 @@
 
 #include "engine/gs/hle/ir/alpha_fail_mask.h"
 #include "engine/gs/hle/ir/draw_ir.h"
+#include "engine/gs/hle/ir/prim_expand.h"
 #include "engine/gs/hle/texsrc/texture_source.h"
 #include "engine/render/backends/gl/blend_ff_map.h"
 #include "engine/render/backends/gl/cd_copy_policy.h"
@@ -133,7 +134,8 @@ DrawResult GlDrawExecutor::Draw(const gs::DrawIr& ir, const gs::TextureSource& t
     Step s;
     DrawResult none;
     const size_t n = ir.verts.size();
-    if (n < 3) return none;
+    // Points / lines draw from 1 / 2 vertices (expanded to triangles in ConvertVertices).
+    if (n < gs::PrimExpand::MinVerts(ir.prim_type)) return none;
     // A 16-bit FRAME over 32-bit content (the companion route) that is the texture
     // shuffle's column pass runs as an exact half-word copy over the 32-bit image.
     if (p.alt16_route) {
@@ -526,7 +528,15 @@ void GlDrawExecutor::TextureUniforms(const gs::DrawIr& ir, const gs::TextureSour
 // ((u - rx*q)/q = u/q - rx per pixel); shuffle U scale for STQ; optional column snap.
 bool GlDrawExecutor::ConvertVertices(const gs::DrawIr& ir, const gs::TextureSource& tex, Step& s) {
     const auto& t = tex.transform;
-    const size_t n = ir.verts.size();
+    // POINT / LINE / LINESTRIP: the kick's 1 / 2 vertices per primitive become the
+    // one-pixel-wide quads of PrimExpand (the GS line is one pixel wide; GL draws
+    // triangles only here). Triangle types pass through untouched.
+    const gs::VertexRec* src = ir.verts.data();
+    size_t n = ir.verts.size();
+    if (gs::PrimExpand::IsThin(ir.prim_type)) {
+        n = gs::PrimExpand::ToTriangles(src, n, ir.prim_type, thin_scratch_);
+        src = thin_scratch_.data();
+    }
     scratch_.resize(n);
     // Untextured iff no enabled texture with a positive u_tex_size (uv_tex_w/h);
     // the STQ prescale operands (uv_pre_w/h) are a separate input.
@@ -535,7 +545,7 @@ bool GlDrawExecutor::ConvertVertices(const gs::DrawIr& ir, const gs::TextureSour
         !textured ? VertexConvert::UvMode::Untextured
                   : (ir.tex.fst ? VertexConvert::UvMode::UvFixed : VertexConvert::UvMode::Stq);
     const VertexConvert::FusedBboxes bb =
-        VertexConvert::Convert(ir.verts.data(), n, scratch_.data(), mode, t.uv_pre_w, t.uv_pre_h);
+        VertexConvert::Convert(src, n, scratch_.data(), mode, t.uv_pre_w, t.uv_pre_h);
     s.bb_valid = bb.valid;
     s.bb_tri[0] = bb.tri.x0; s.bb_tri[1] = bb.tri.y0; s.bb_tri[2] = bb.tri.x1; s.bb_tri[3] = bb.tri.y1;
     s.bb_all[0] = bb.all.x0; s.bb_all[1] = bb.all.y0; s.bb_all[2] = bb.all.x1; s.bb_all[3] = bb.all.y1;

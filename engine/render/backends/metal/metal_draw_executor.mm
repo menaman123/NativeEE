@@ -8,6 +8,7 @@
 
 #include "engine/gs/hle/ir/alpha_fail_mask.h"
 #include "engine/gs/hle/ir/draw_ir.h"
+#include "engine/gs/hle/ir/prim_expand.h"
 #include "engine/gs/hle/texsrc/texture_source.h"
 #include "engine/render/backends/gl/blend_ff_map.h"
 #include "engine/render/backends/gl/cd_copy_policy.h"
@@ -101,7 +102,7 @@ DrawResult MetalDrawExecutor::Draw(const gs::DrawIr& ir, const gs::TextureSource
     if (p.program != StencilProgram::None) return none;   // the stencil-composite recipe: not on this arm
     Step s;
     const size_t n = ir.verts.size();
-    if (n < 3) return none;
+    if (n < gs::PrimExpand::MinVerts(ir.prim_type)) return none;   // points / lines: 1 / 2 vertices
     if (p.alt16_route) {
         gs::HalfwordShuffle::Op op;
         if (gs::HalfwordShuffle::Detect(ir, &op)) {
@@ -322,12 +323,18 @@ void MetalDrawExecutor::TextureUniforms(const gs::DrawIr& ir, const gs::TextureS
 
 bool MetalDrawExecutor::ConvertVertices(const gs::DrawIr& ir, const gs::TextureSource& tex, Step& s) {
     const auto& t = tex.transform;
-    const size_t n = ir.verts.size();
+    // POINT / LINE / LINESTRIP -> one-pixel quads (PrimExpand), as on the GL arm.
+    const gs::VertexRec* src = ir.verts.data();
+    size_t n = ir.verts.size();
+    if (gs::PrimExpand::IsThin(ir.prim_type)) {
+        n = gs::PrimExpand::ToTriangles(src, n, ir.prim_type, thin_scratch_);
+        src = thin_scratch_.data();
+    }
     scratch_.resize(n);
     const bool textured = tex.enabled && t.uv_tex_w > 0 && t.uv_tex_h > 0;
     const VertexConvert::UvMode mode = !textured ? VertexConvert::UvMode::Untextured
                                                  : (ir.tex.fst ? VertexConvert::UvMode::UvFixed : VertexConvert::UvMode::Stq);
-    const VertexConvert::FusedBboxes bb = VertexConvert::Convert(ir.verts.data(), n, scratch_.data(), mode, t.uv_pre_w, t.uv_pre_h);
+    const VertexConvert::FusedBboxes bb = VertexConvert::Convert(src, n, scratch_.data(), mode, t.uv_pre_w, t.uv_pre_h);
     s.bb_valid = bb.valid;
     s.bb_tri[0] = bb.tri.x0; s.bb_tri[1] = bb.tri.y0; s.bb_tri[2] = bb.tri.x1; s.bb_tri[3] = bb.tri.y1;
     s.bb_all[0] = bb.all.x0; s.bb_all[1] = bb.all.y0; s.bb_all[2] = bb.all.x1; s.bb_all[3] = bb.all.y1;

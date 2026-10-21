@@ -165,9 +165,25 @@ bool GsRegisters::WriteEnvReg(uint8_t addr, uint64_t v) {
 // PRIM (5.x): PRIM 0-2 IIP 3 TME 4 FGE 5 ABE 6 AA1 7 FST 8 CTXT 9 FIX 10. Every
 // PRIM write restarts the vertex queue (the kick owner observes kDirtyPrim); the
 // attribute bits load only while PRMODECONT selects PRIM.
+//
+// A queued draw is flushed first when the type changes, and -- like SetPrmode --
+// when a draw-carried attribute (TME, FGE, ABE, FST, CTXT) would change under a
+// same-type PRIM: the GS applies the attributes in force at each primitive's kick,
+// while DrawFlush reads them at flush time. Deferring that flush to the next kick
+// (the former behaviour) emitted the queued primitives with the NEW bits: Sly 2's
+// ink lines (PRIM 0xc1 = LINE ABE AA1, then PRIM 0x01 for the Z-only pass over
+// the same two vertices) came out with ABE=0 on the colour pass. IIP is applied
+// per primitive by the kick (flat colour) and needs no split; AA1 is not modelled.
 void GsRegisters::SetPrim(uint64_t v) {
     const uint8_t new_type = v & 7;
-    if (new_type != prim.type && has_pending && has_pending()) FlushBeforeStateChange();
+    if (has_pending && has_pending()) {
+        bool would_change = new_type != prim.type;
+        if (!would_change && env.prmodecont)
+            would_change = prim.texture != (((v >> 4) & 1) != 0) || prim.fog != (((v >> 5) & 1) != 0) ||
+                           prim.alpha_blend != (((v >> 6) & 1) != 0) || prim.use_uv != (((v >> 8) & 1) != 0) ||
+                           prim.context != ((v >> 9) & 1);
+        if (would_change) FlushBeforeStateChange();
+    }
     dirty_regs |= kDirtyPrim;
     prim.type = new_type;
     if (env.prmodecont) LoadPrmodeBits(v);
