@@ -54,6 +54,20 @@
 //     current. Pushes never wait for ring room under frame skip (the drop rule
 //     bounds the ring), and the host does not call WaitFrame at the boundary
 //     (frame_waits = 0).
+// The producer's lock traffic (pipeline2, Paris: ~5600 records a frame, two mu_
+// round trips each, 36 % of the drain thread's busy time waiting on the
+// consumer's 64-record pop):
+//   * the EE image's op log is CARRIED BY the next record (Record::ops, replayed
+//     right before the record's own delivery) instead of travelling as its own
+//     record -- the same point in stream order, half the records (every flush
+//     settles the EE image, so an op log preceded nearly every draw);
+//   * Pipelined pushes are STAGED on the producer (kStage records, or until a
+//     frame / ordered-work record, a wait, or EndOfPass -- the drain pass is over
+//     and nothing more arrives until the next kick) and enter the ring under one
+//     lock. Lockstep pushes are never staged (each one waits for its delivery).
+//     The staged records are producer-owned: Depth() counts the ring alone.
+//   * the fault check at every push reads an atomic first; mu_ is taken only
+//     when a fault is pending.
 // A fault on the consumer thread (an exception out of the next sink -- the GS
 // pipeline's refusals and GXSL errors) is caught there, the remaining records
 // are dropped (counted as consumed so no waiter hangs), and the exception is
@@ -195,8 +209,17 @@ public:
     // records; behind the backlog it would run a frame late. Never waits; false
     // when no consumer thread runs or it faulted (nothing queued).
     bool PostPresenterWork(std::function<bool()> work);
-    // ANY thread: records queued and not yet popped (the consumer's backlog).
+    // ANY thread: records queued and not yet popped (the consumer's backlog; the
+    // producer's staged records are not in it).
     size_t Depth() const;
+    // Producer side: the drain pass is over -- hand the staged records to the ring
+    // now (nothing more arrives until the next kick). No-op when nothing is staged.
+    void EndOfPass();
+    // Producer side, before Start: how many Pipelined records may be staged before
+    // the ring sees them (1 = every push enters the ring at once, the pre-staging
+    // behaviour). Default kStage.
+    void SetStageDepth(uint32_t records);
+    uint32_t StageDepth() const { return stage_depth_; }
     // ANY thread: the consumer thread was idle (waiting for records) within the
     // last `within` -- it keeps up with the stream; a consumer busy for longer is
     // behind. False before the thread first slept.
@@ -227,15 +250,18 @@ private:
         CrtcClassifier::Snapshot crtc{};
         std::function<bool()> work;                     // Kind::Work body (RunOrdered)
         std::shared_ptr<std::promise<bool>> done;       // its waiter (false when dropped)
+        bool has_ops = false;                           // ops carried: replayed right before this record
         VramOpLog ops;
     };
     void AttachPendingPayload();
-    void FlushVramOps();
+    void FlushVramOps();                 // the pending op log as its own record (a wait follows)
+    void CarryVramOps(Record& r);        // the pending op log rides on `r`
     void WaitDrainedLocked(std::unique_lock<std::mutex>& lk);
     void PublishSnapshot(uint64_t frame);   // consumer side, at a frame record, when armed
     void DropOlderPendingFrameLocked(uint64_t arriving);   // frame skip: mu_ held
     void RethrowPendingFault();   // producer side; throws at most once
     void Push(Record&& r);
+    void FlushStaged();           // producer side: the staged records enter the ring under one lock
     void Deliver(Record& r);
     void ThreadMain();
     // The consumer's bookkeeping since its last lock (ThreadMain folds it in batches).
@@ -244,6 +270,7 @@ private:
         uint64_t draw_ns = 0, frame_ns = 0, other_ns = 0;
     };
     static constexpr size_t kBatch = 64;   // records popped per lock, at most (a frame record ends a batch)
+    static constexpr uint32_t kStage = 64; // records staged per lock on the producer, at most
     void FoldPendingLocked(Pending& p);
 
     DrawIrSink& next_;
@@ -258,6 +285,10 @@ private:
     // Producer-owned: the EE image's calls since the last record (split image).
     VramImage* const mirror_target_;
     VramOpLog ops_;
+    // Producer-owned: the Pipelined records not yet in the ring (FlushStaged).
+    std::vector<Record> staged_;
+    uint32_t stage_depth_ = kStage;
+    uint64_t frames_staged_ = 0;         // frames_pushed_ as the producer sees it (its own writes)
 
     mutable std::mutex mu_;
     std::condition_variable cv_work_;    // consumer waits for records
@@ -278,6 +309,7 @@ private:
     std::deque<std::function<bool()>> presenter_work_;   // PostPresenterWork: served before the ring
     std::thread thread_;
     bool running_ = false;
+    std::atomic<bool> running_flag_{false};   // running_ for the producer's lock-free read
     bool stop_ = false;
     uint64_t enqueued_ = 0, consumed_ = 0;
     uint64_t frames_pushed_ = 0, frames_consumed_ = 0;
@@ -287,6 +319,7 @@ private:
     Counters n_;
     bool faulted_ = false;              // consumer threw; records are dropped from here on
     std::exception_ptr fault_;          // the exception, until the producer rethrew it
+    std::atomic<bool> fault_pending_{false};   // fault_ is set (the producer's lock-free check)
 
     // The last completed frame's image (play, the local->local source): the
     // consumer copies the pipeline image's bytes and page authors/epochs here at

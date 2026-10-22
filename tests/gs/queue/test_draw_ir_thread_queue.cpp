@@ -281,6 +281,7 @@ void TestFrameSkip() {
         CHECK(q.FrameSkip(), "frame skip set on the pipelined queue");
         q.Start();
         q.OnDraw(Draw(1, 1));                 // frame 1: the consumer parks here
+        q.EndOfPass();                        // the producer's pass is over: the staged draw enters the ring
         while (!sink.blocked.load()) std::this_thread::yield();
         q.OnFrame(Job(JobKind::VSync, 11));   // frame 1's record (in the ring behind the parked draw)
         q.OnDraw(Draw(2, 1));                 // frame 2, whole in the ring, never started
@@ -330,6 +331,7 @@ void TestFrameSkip() {
         CHECK(q.FrameSkip() && q.FrameSkipDepth() == 2, "frame skip depth 2 set on the pipelined queue");
         q.Start();
         q.OnDraw(Draw(1, 1));
+        q.EndOfPass();
         while (!sink.blocked.load()) std::this_thread::yield();
         q.OnFrame(Job(JobKind::VSync, 11));
         q.OnDraw(Draw(2, 1));
@@ -471,6 +473,82 @@ void TestBatchedConsumption() {
     CHECK(q.Count().consumed == seq - 1, "Stop drained with the counts folded");
 }
 
+// Producer-side staging (pipeline2): Pipelined pushes are held on the producer
+// until kStage records, a frame / ordered-work record, a wait or EndOfPass; the
+// consumer sees them in push order with the counters exact; the stage never holds
+// a record past a wait; Lockstep never stages (every push is delivered on return).
+void TestProducerStaging() {
+    {
+        TestDrawIrThreadQueue sink;
+        DrawIrThreadQueue q(sink, DrawIrThreadQueue::Hooks{}, DrawIrThreadQueue::Policy::Pipelined, 100000);
+        sink.q = &q;
+        q.Start();
+        CHECK(q.StageDepth() == 64, "the default stage is 64 records");
+        for (uint32_t i = 1; i <= 10; ++i) q.OnDraw(Draw(i, 1));
+        CHECK(q.Depth() == 0 && q.Count().enqueued == 0, "ten draws stay on the producer (nothing in the ring)");
+        q.EndOfPass();
+        CHECK(q.Count().enqueued == 10, "EndOfPass hands the staged records to the ring");
+        q.Sync();
+        CHECK(sink.log.size() == 10 && sink.log[0] == "D1v1" && sink.log[9] == "D10v1", "delivered in push order");
+        for (uint32_t i = 11; i <= 80; ++i) q.OnDraw(Draw(i, 1));   // 70 > kStage: the 64th flushes on its own
+        CHECK(q.Count().enqueued == 74, "a full stage (64) enters the ring without a pass end");
+        q.OnFrame(Job(JobKind::VSync, 81));
+        CHECK(q.Count().enqueued == 81, "a frame record flushes the stage with it");
+        q.WaitFrame(1);
+        CHECK(sink.log.size() == 81 && sink.log.back() == "F81", "every record delivered through the frame");
+        q.OnDraw(Draw(82, 1));
+        bool ran = q.RunOrdered([] { return true; });
+        CHECK(ran && sink.log.size() == 82 && sink.log.back() == "D82v1", "ordered work flushes the staged draw ahead of it");
+        q.OnDraw(Draw(83, 1));
+        q.Stop();
+        CHECK(sink.log.size() == 83 && q.Count().consumed == q.Count().enqueued, "Stop flushes the stage and drains");
+    }
+    {
+        TestDrawIrThreadQueue sink;
+        DrawIrThreadQueue q(sink, DrawIrThreadQueue::Hooks{}, DrawIrThreadQueue::Policy::Lockstep, 8);
+        sink.q = &q;
+        q.Start();
+        q.OnDraw(Draw(1, 1));
+        CHECK(sink.log.size() == 1 && q.Count().consumed == 1, "lockstep: the push returns delivered (never staged)");
+        q.Stop();
+    }
+    {
+        // Stage depth 1 = the pre-staging behaviour (every push enters the ring at once).
+        TestDrawIrThreadQueue sink;
+        DrawIrThreadQueue q(sink, DrawIrThreadQueue::Hooks{}, DrawIrThreadQueue::Policy::Pipelined, 8);
+        sink.q = &q;
+        q.SetStageDepth(1);
+        q.Start();
+        for (uint32_t i = 1; i <= 5; ++i) q.OnDraw(Draw(i, 1));
+        CHECK(q.Count().enqueued == 5, "stage depth 1: every push enters the ring");
+        q.Stop();
+    }
+    {
+        // The split image: the EE's calls between records ride on the next record and
+        // land on the target before it (the order the separate op records had), draws
+        // dropped by frame skip keep their carried calls.
+        VramImage ee, pipeline;
+        TestDrawIrThreadQueue sink;
+        sink.target = &pipeline;
+        DrawIrThreadQueue q(sink, DrawIrThreadQueue::Hooks{}, DrawIrThreadQueue::Policy::Pipelined, 100000, &pipeline);
+        sink.q = &q;
+        ee.SetMirror(q.ProducerMirror());
+        q.Start();
+        const uint8_t a[4] = {0x11, 0x22, 0x33, 0x44};
+        ee.WriteStream(0x40000, a, 4);
+        q.OnDraw(Draw(1, 1));            // sees 0x11 at 0x40000
+        const uint8_t b[4] = {0x55, 0x66, 0x77, 0x88};
+        ee.WriteStream(0x40000, b, 4);
+        q.OnDraw(Draw(2, 1));            // sees 0x55
+        q.OnFrame(Job(JobKind::VSync, 3));
+        q.WaitFrame(1);
+        CHECK(sink.seen_at_draw.size() == 2 && sink.seen_at_draw[0] == 0x11 && sink.seen_at_draw[1] == 0x55,
+              "each draw sees the EE's writes up to it, replayed right before it");
+        CHECK(q.Count().vram_ops == 2 && q.Count().enqueued == 3, "two op logs carried by their records (no records of their own)");
+        q.Stop();
+    }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -486,6 +564,7 @@ int main(int argc, char** argv) {
     if (which == "frameskip" || which == "all") TestFrameSkip();
     if (which == "l2lsource" || which == "all") TestLocalToLocalSource();
     if (which == "batched" || which == "all") TestBatchedConsumption();
+    if (which == "staged" || which == "all") TestProducerStaging();
     std::printf("%s: %d checks, %d failures\n", argv[0], g_checks, g_fails);
     return g_fails ? 1 : 0;
 }

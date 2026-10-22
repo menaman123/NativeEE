@@ -38,6 +38,11 @@ void GifArbiter::SetDrainObserver(DrainObserver fn, void* user) {
     drain_observer_user_ = user;
 }
 
+void GifArbiter::SetPassEndHook(PassEndHook fn, void* user) {
+    pass_end_ = fn;
+    pass_end_user_ = user;
+}
+
 void GifArbiter::SetMarkerOwner(GifMarkerOwner* owner) { owner_ = owner; }
 
 // ---- E425 early FINISH ---------------------------------------------------------
@@ -382,6 +387,7 @@ bool GifArbiter::DrainPassDelivered() {
     }
     if (had_path3) parser_.FinishPath3();
     SettleDeliveredQueue();
+    if (pass_end_) pass_end_(pass_end_user_);
     return true;
 }
 
