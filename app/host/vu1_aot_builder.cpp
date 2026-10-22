@@ -111,6 +111,23 @@ bool Vu1AotBuilder::FindCompiler(const std::string& preferred, bool search_defau
     return false;
 }
 
+// Whether the compiler behind `--version`'s first line has a guaranteed tail call
+// (VU1_AOT_HAS_MUSTTAIL in vu1_aot_prelude.h): any clang (clang-cl, Apple clang
+// included), or a GCC whose first dotted number is >= 15.
+bool Vu1AotBuilder::CompilerChains(const std::string& version_line) {
+    if (version_line.find("clang") != std::string::npos) return true;
+    bool gnuish = false;
+    for (const char* tok : {"g++", "gcc", "GCC", "c++"}) gnuish = gnuish || version_line.find(tok) != std::string::npos;
+    if (!gnuish) return false;
+    // "g++ (Ubuntu 15.1.0-1) 15.1.0": the version is the first "N." group after the ')' if any, else the first digit run.
+    size_t i = version_line.find(')');
+    i = i == std::string::npos ? 0 : i + 1;
+    while (i < version_line.size() && (version_line[i] < '0' || version_line[i] > '9')) ++i;
+    int major = 0;
+    while (i < version_line.size() && version_line[i] >= '0' && version_line[i] <= '9') major = major * 10 + (version_line[i++] - '0');
+    return major >= 15;
+}
+
 // The engine's VU semantic flags (engine/vu/CMakeLists.txt: -fno-strict-aliasing
 // -fwrapv, no fast-math; GCC adds -ffp-contract=off -frounding-math at the
 // root) plus the definitions this binary was built with, so the bodies compile
@@ -226,6 +243,14 @@ bool Vu1AotBuilder::Open(std::string* note) {
                                                      : std::string()) +
                           ")";
     }
+    // A chained TU needs a guaranteed tail call (vu1_aot_prelude.h: clang, gcc >= 15);
+    // a toolchain without one would #error every image and the tier would fall back
+    // to the block tier. Generate the unchained shape for it instead, and say so.
+    std::string chain_why;
+    if (settings_.region.chain && !compiler_.empty() && !CompilerChains(compiler_version_)) {
+        settings_.region.chain = false;
+        chain_why = " (chain off: " + compiler_version_ + " has no guaranteed tail call)";
+    }
     std::error_code ec;
     fs::create_directories(BuildDir(settings_.root, abi_key_), ec);
     include_dir_ = IncludeDir(settings_.root, abi_key_);
@@ -259,7 +284,8 @@ bool Vu1AotBuilder::Open(std::string* note) {
     open_ = true;
     if (note) {
         *note = "vu1_aot codegen: abi=" + abi_key_ + " compiler=" + (compiler_.empty() ? "none (" + no_compiler_why + ")" : compiler_ + " (" + compiler_version_ + ")") +
-                " opt=O" + std::to_string(settings_.opt_level) + " region=" + Vu1AotEmitter::PolicyName(settings_.region) + " cache=" + BuildDir(settings_.root, abi_key_) +
+                " opt=O" + std::to_string(settings_.opt_level) + " region=" + Vu1AotEmitter::PolicyName(settings_.region) + chain_why +
+                " cache=" + BuildDir(settings_.root, abi_key_) +
                 " pack=" + (pack_dir_.empty() ? std::string("none") : pack_dir_ + " (" + std::to_string(pack_.rows.size()) + " images)") +
                 " workers=" + std::to_string(settings_.workers);
     }

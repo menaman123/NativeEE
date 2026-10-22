@@ -83,7 +83,7 @@ ROWS = [
     ("engine.shutdown_wait_s", "int", "10", "=", "PS2_SHUTDOWN_WAIT"),
     ("engine.time_regime_pin", "int", "-1", "1", "PS2_TIME_EMU_REGIME"),
     ("engine.turbo", "int", "0", "=", "-"),
-    ("engine.vu1_aot_chain", "bool", "off", "=", "-"),
+    ("engine.vu1_aot_chain", "bool", "on", "=", "-"),
     ("engine.vu1_aot_codegen", "bool", "on", "=", "-"),
     ("engine.vu1_aot_compiler", "str", "", "=", "-"),
     ("engine.vu1_aot_corpus", "str", "", "=", "-"),

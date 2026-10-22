@@ -108,6 +108,16 @@ int main(int argc, char** argv) {
     }
     std::printf("corpus: %zu cases, %zu images\n", total_cases, images.size());
 
+    // --- in-process: which toolchains the builder lets chain (Policy::chain needs a guaranteed tail call) ---
+    Check(ps2r::app::Vu1AotBuilder::CompilerChains("Apple clang version 17.0.0 (clang-1700.0.13.3)"), "Apple clang chains");
+    Check(ps2r::app::Vu1AotBuilder::CompilerChains("clang version 18.1.8"), "clang chains");
+    Check(ps2r::app::Vu1AotBuilder::CompilerChains("clang-cl version 17.0.3"), "clang-cl chains");
+    Check(ps2r::app::Vu1AotBuilder::CompilerChains("g++ (GCC) 15.1.0"), "gcc 15 chains");
+    Check(ps2r::app::Vu1AotBuilder::CompilerChains("c++ (Ubuntu 15.1.0-1ubuntu1) 15.1.0"), "c++ = gcc 15 chains");
+    Check(!ps2r::app::Vu1AotBuilder::CompilerChains("g++ (Homebrew GCC 14.2.0) 14.2.0"), "gcc 14 does not chain");
+    Check(!ps2r::app::Vu1AotBuilder::CompilerChains("c++ (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0"), "c++ = gcc 13 does not chain");
+    Check(!ps2r::app::Vu1AotBuilder::CompilerChains("Microsoft (R) C/C++ Optimizing Compiler Version 19.40.33811 for x64"), "msvc does not chain");
+
     // --- in-process, no compiler: the gate refuses code that does nothing ---
     {
         const auto& first = *images.begin();

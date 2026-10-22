@@ -146,6 +146,10 @@ public:
     static std::string IncludeDir(const std::string& root, const std::string& build_id);
     static std::string LibraryPath(const std::string& root, const std::string& build_id, uint64_t image_hash, int opt);
     static std::string SourcePath(const std::string& root, const std::string& build_id, uint64_t image_hash);
+    // Whether `--version`'s first line names a compiler with a guaranteed tail call
+    // (clang; gcc >= 15): a chained TU (Policy::chain) needs one, Open() generates the
+    // unchained shape for any other and says so in its note.
+    static bool CompilerChains(const std::string& version_line);
     // Probe `preferred` then the defaults with `--version`; the first that runs wins.
     static bool FindCompiler(const std::string& preferred, bool search_defaults, std::string* path, std::string* version);
     // The compile line: `compiler` + the engine's VU semantic flags + -O<opt> + the include root.
