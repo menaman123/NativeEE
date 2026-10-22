@@ -213,8 +213,10 @@ struct EngineConfig {
     // that never blocked (Paris: 20 parks / 15 ms a frame = 100 % of vu1wait).
     // Host scheduling only (what the EE observes is unchanged: the wait's body
     // runs the same either way); fingerprint-excluded like mtvu_early_finish.
-    // Off until its gates hold (run.meta mtvu_waits= idle_nonblocking).
-    bool    mtvu_wait_probe = false;
+    // On by default since 2026-10-22 (gates: Paris 600 lockstep census and
+    // frames.fhash equal to the baseline, h600 <=294 oracle 0, hub warps / loader
+    // route / F5-F8 park=none); the deterministic profile pins it off.
+    bool    mtvu_wait_probe = true;
     // E432: the back-edge yield point's spin gate (EeYieldPoint header). A trip
     // passes a field of its own only when its thread SPUN -- no run-token acquire
     // and no boundary since the previous trip; the 2^18th back-edge of code that
@@ -225,9 +227,11 @@ struct EngineConfig {
     // slack. Changes the fields the guest observes (fewer); the deterministic
     // profile pins it off (the frozen oracles' schedule). Fingerprint-excluded: a
     // slot restores under either setting (the yield budget is not in the image).
-    // Off until its gates hold (run.meta ee_yield= spin_trips / sched_trips /
-    // due_fields).
-    bool    ee_yield_spin_gate = false;
+    // On by default since 2026-10-22 (gates as mtvu_wait_probe; Paris / hub_ep3 /
+    // hub_ep6 window 54 -> 60 pictures/s p50, judge_pacing GREEN, Metal and GL);
+    // the deterministic profile pins it off. Census ee_yield= spin_trips /
+    // sched_trips / due_fields.
+    bool    ee_yield_spin_gate = true;
     int     ee_runahead = 2;
     Pacing  pacing = Pacing::Realtime;
     int     time_regime_pin = -1;         // -1 = none (adaptive)
