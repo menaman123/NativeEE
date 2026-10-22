@@ -190,10 +190,11 @@ DrawResult GlDrawExecutor::Draw(const gs::DrawIr& ir, const gs::TextureSource& t
         dev_.CensusMut().draw_calls++;
         glDrawArrays(GL_TRIANGLES, s.first, static_cast<GLsizei>(s.tri_verts));
     }
-    // Masks return to their open defaults after every draw, so any raw GL pass
-    // that follows (clear, refresh, present) inherits writable colour and depth.
-    st.ColorMask(true, true, true, true);
-    st.DepthMask(true);
+    // The write masks stay as this draw left them: every raw GL pass sets its own
+    // (FrameClear, GlDevice::Clear / DrawConstQuad / CopyRect / WriteAlphaLane /
+    // Present; blits and readbacks ignore the masks), and the next draw's
+    // DepthState / ColorMaskState set theirs. Resetting them here cost two GL calls
+    // per draw (4000 glDepthMask a Paris frame) that the shadow could never elide.
     return MakeResult(ir, p, s);
 }
 
@@ -375,13 +376,15 @@ DrawResult GlDrawExecutor::DrawHalfwordShuffle(const gs::DrawIr& ir, const gs::T
     return r;
 }
 
-// Scissor off before any framebuffer operation; bind the main or companion
-// attachment; viewport = physical size; u_screen_size stays logical so PS2 px -> NDC
-// is unchanged and rasterisation scales through the viewport alone.
+// Bind the main or companion attachment; viewport = physical size; u_screen_size
+// stays logical so PS2 px -> NDC is unchanged and rasterisation scales through the
+// viewport alone. The scissor is left as it is: nothing between here and
+// ScissorState honours it (the FBO bind, texture binds, uniforms, a CdCopy's
+// glCopyTexSubImage2D) except FrameClear's glClear, which turns it off itself.
+// (Disabling it here and re-enabling it in ScissorState was two GL calls per draw.)
 bool GlDrawExecutor::BindTarget(const gs::DrawIr& ir, const DrawParams& p, Step& s) {
     (void)ir;
     GlStateCache& st = dev_.State();
-    st.Disable(GL_SCISSOR_TEST);
     s.render_w = p.render_w;
     s.render_h = p.render_h;
     s.scale = std::max<int>(1, p.scale);
@@ -397,6 +400,7 @@ bool GlDrawExecutor::BindTarget(const gs::DrawIr& ir, const DrawParams& p, Step&
 void GlDrawExecutor::FrameClear(const DrawParams& p) {
     if (!p.do_frame_clear) return;
     GlStateCache& st = dev_.State();
+    st.Disable(GL_SCISSOR_TEST);   // glClear honours the scissor; the clear covers the target
     st.DepthMask(true);
     glClearDepth(0.0);
     GLbitfield bits = GL_DEPTH_BUFFER_BIT;
@@ -591,11 +595,15 @@ void GlDrawExecutor::RegisterUniforms(const gs::DrawIr& ir, const DrawParams& p)
     u.Set1i(L.atst, r.test.atst);
     u.Set1i(L.aref, r.test.aref);
     u.Set1i(L.afail, r.test.afail);
-    u.Set1i(L.afail_pass, 0);   // every fragment; Draw's two-pass split re-sets it per pass
+    // Every fragment -- except for a two-pass split, whose Draw sets 1 then 2 before
+    // each of its glDrawArrays (writing 0 first was a third glUniform per split draw).
+    if (!gs::AlphaFailMask::SplitsPopulations(r.test)) u.Set1i(L.afail_pass, 0);
     u.Set1i(L.date, r.test.date ? 1 : 0);
     u.Set1i(L.datm, r.test.datm ? 1 : 0);
     u.Set1i(L.fog_enabled, ir.fog ? 1 : 0);
-    u.Set3f(L.fogcol, r.fogcol_r / 255.0f, r.fogcol_g / 255.0f, r.fogcol_b / 255.0f);
+    // The program reads u_fogcol only under u_fog_enabled; the game rewrites FOGCOL
+    // between the lit mesh's two passes (1836 glUniform3f a Paris frame, fog off).
+    if (ir.fog) u.Set3f(L.fogcol, r.fogcol_r / 255.0f, r.fogcol_g / 255.0f, r.fogcol_b / 255.0f);
 }
 
 // fbmsk16 analysis, the exact-GL route, the Cd read rect (bbox ∩ scissor ∩ target),
