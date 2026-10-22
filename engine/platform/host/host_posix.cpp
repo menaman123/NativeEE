@@ -15,6 +15,7 @@
 #include <spawn.h>
 #include <strings.h>
 #include <sys/stat.h>
+#include <sys/resource.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -197,6 +198,11 @@ uint64_t ProcessFootprintBytes() {
     if (got != 2) return 0;
     return static_cast<uint64_t>(resident) * static_cast<uint64_t>(::sysconf(_SC_PAGESIZE));
 #endif
+}
+uint64_t ProcessPageFaults() {
+    rusage ru{};
+    if (::getrusage(RUSAGE_SELF, &ru) != 0) return 0;
+    return static_cast<uint64_t>(ru.ru_minflt) + static_cast<uint64_t>(ru.ru_majflt);
 }
 uint64_t ProcessPeakFootprintBytes() {
 #if defined(__APPLE__)

@@ -242,6 +242,12 @@ uint64_t ProcessFootprintBytes() {
     if (!GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmc), sizeof pmc)) return 0;
     return static_cast<uint64_t>(pmc.PrivateUsage);
 }
+uint64_t ProcessPageFaults() {
+    PROCESS_MEMORY_COUNTERS_EX pmc{};
+    pmc.cb = sizeof pmc;
+    if (!GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmc), sizeof pmc)) return 0;
+    return static_cast<uint64_t>(pmc.PageFaultCount);
+}
 uint64_t ProcessPeakFootprintBytes() {
     PROCESS_MEMORY_COUNTERS_EX pmc{};
     pmc.cb = sizeof pmc;

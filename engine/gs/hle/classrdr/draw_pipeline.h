@@ -29,6 +29,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <cstdio>
 #include <vector>
 
@@ -219,8 +220,38 @@ public:
     void NotePublished(const DrawIr& ir, const render::DrawResult& res) {
         route_trace_.Note(ir, TextureSource{}, res, static_cast<uint32_t>(draw_seq_));
     }
+    // The warm-up census: the consumer's work per 1 s window of its clock from
+    // the first frame end on -- frame ends, pipeline draws and the backend call
+    // census deltas (draw calls, uploads, readbacks, copies, binds). Read next to
+    // the per-second CPU series, it tells "more work per frame" from "slower per
+    // unit of work" in the first seconds after a load.
+    struct WarmWindow {
+        uint32_t frames = 0;
+        uint32_t draws = 0;          // pipeline draws (DrawSeq advance)
+        uint32_t draw_calls = 0;
+        uint32_t uploads = 0;
+        uint32_t upload_kb = 0;
+        uint32_t readbacks = 0;
+        uint32_t readback_kb = 0;
+        uint32_t copies = 0;
+        uint32_t program_binds = 0;
+        uint32_t framebuffer_binds = 0;
+        uint32_t texture_binds = 0;
+    };
+    static constexpr size_t kWarmWindowsMax = 120;
+    // "frames/draws/draw_calls/uploads/upload_kb/readbacks/readback_kb/copies/program_binds/framebuffer_binds/texture_binds"
+    // per closed second, comma-separated (empty before the first closes).
+    std::string WarmSeries() const;
+    const std::vector<WarmWindow>& WarmWindows() const { return warm_done_; }
 
 private:
+    void RollWarmWindow(uint64_t now_ns);
+    WarmWindow warm_cur_;
+    std::vector<WarmWindow> warm_done_;
+    uint64_t warm_window_start_ns_ = 0;   // 0 = no frame end seen yet
+    uint64_t warm_last_draw_seq_ = 0;
+    render::CallCensus warm_last_census_;
+    bool warm_have_census_ = false;
     DrawRouteTrace route_trace_;
     TargetDump target_dump_;
     static uint64_t NowNs();

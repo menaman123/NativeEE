@@ -248,6 +248,11 @@ int ProcessRun(const char* image, char* const argv[], bool search_path, std::str
 // census row): phys_footprint on Darwin, VmRSS on Linux, PagefileUsage+WorkingSet on Win32.
 uint64_t ProcessFootprintBytes();
 uint64_t ProcessPeakFootprintBytes();
+// The process's page-fault count so far (minor + major: getrusage ru_minflt + ru_majflt on
+// POSIX, PageFaultCount on Win32); 0 when unavailable. The clock census differences it per
+// second: first-touch memory (lazily faulted heap growth) shows as the first windows'
+// faults standing far above the steady state.
+uint64_t ProcessPageFaults();
 // The absolute path of the running executable image (_NSGetExecutablePath / readlink
 // /proc/self/exe / GetModuleFileNameW). Empty + *err on failure. The target folders'
 // ExecutablePath() statics forward here; the F8 relaunch and the build-id check read it.

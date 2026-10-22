@@ -32,6 +32,13 @@
 // `fields` count keeps every delivered field, fast-forward ones included:
 // field_hz reads 60*N during an engaged fast-forward while game_hz stays 60.
 //
+// gs_cpu_ms: the presenter thread's own CPU time per window, the same way --
+// NotePresent reads the calling thread's CPU clock and credits the delta since
+// the previous present. The presenter is the GS consumer thread (the renderer's
+// bound), so the series reads as the renderer's CPU cost per second independent
+// of the host's load; next to render_fps, a warm-up (first-use work) shows as
+// the first windows' gs_cpu_ms per present standing above the steady state.
+//
 // Threads: NoteBoundary runs on the game thread, NotePresent on the presenter's
 // thread; a short lock orders them. Windows open at the first boundary; the
 // partial last window is not part of the series.
@@ -53,6 +60,9 @@ public:
         uint32_t fields = 0;
         uint32_t presents = 0;
         uint32_t cpu_ms = 0;     // the game thread's CPU time credited to this window
+        uint32_t gs_cpu_ms = 0;  // the presenter (GS consumer) thread's CPU time credited to this window
+        uint32_t faults = 0;     // process page faults (minor + major) taken during this window
+        int32_t footprint_kb = 0;   // process footprint change over this window (KiB, signed)
     };
 
     // The wall edge of pacer tick `tick` (1-based; == the domain tick it became),
@@ -65,20 +75,29 @@ public:
     void NoteBoundary(uint64_t domain_tick, uint64_t fast_forward_fields = 0) {
         NoteBoundaryAt(domain_tick, Clock::now(), ThreadCpuNs(), fast_forward_fields);
     }
+    // Process-wide memory counters read at a boundary (the game thread): the page
+    // faults so far and the footprint; the window takes the deltas. Call right
+    // after NoteBoundary so the readings land in the same window.
+    void NoteMemory(uint64_t page_faults, uint64_t footprint_bytes);
     // Presenter thread: one frame reached the window.
-    void NotePresent() { NotePresentAt(Clock::now()); }
+    void NotePresent() { NotePresentAt(Clock::now(), ThreadCpuNs()); }
     // Explicit-time forms (tests).
     void NoteBoundaryAt(uint64_t domain_tick, Clock::time_point now);
     // ... with the game thread's CPU clock reading at the boundary (ns; the
     // default form reads it from the calling thread) and the fast-forward total.
     void NoteBoundaryAt(uint64_t domain_tick, Clock::time_point now, uint64_t thread_cpu_ns, uint64_t fast_forward_fields = 0);
     void NotePresentAt(Clock::time_point now);
+    // ... with the presenter thread's CPU clock reading (ns).
+    void NotePresentAt(Clock::time_point now, uint64_t thread_cpu_ns);
 
     // The completed windows' series as "n,n,n" (empty before the first completes).
     std::string GameHzSeries() const;
     std::string FieldHzSeries() const;
     std::string RenderFpsSeries() const;
     std::string EeCpuMsSeries() const;
+    std::string GsCpuMsSeries() const;
+    std::string FaultsSeries() const;
+    std::string FootprintKbSeries() const;
     // The game thread's CPU time over every boundary noted so far (ms).
     uint64_t EeCpuTotalMs() const;
     std::vector<Window> Windows() const;
@@ -99,6 +118,11 @@ private:
     uint64_t last_domain_tick_ = 0;   // the domain tick of the previous boundary (the fields count)
     uint64_t last_cpu_ns_ = 0;      // the game thread's CPU clock at the previous boundary
     uint64_t cpu_carry_ns_ = 0;     // sub-millisecond remainder carried into the next credit
+    uint64_t gs_last_cpu_ns_ = 0;   // the presenter thread's CPU clock at the previous present (0 = none yet)
+    uint64_t gs_cpu_carry_ns_ = 0;
+    uint64_t last_faults_ = 0;      // the process fault count at the previous NoteMemory (0 = none yet)
+    uint64_t last_footprint_ = 0;
+    bool have_memory_ = false;
     uint64_t cpu_total_ns_ = 0;
     Window current_{};
     std::vector<Window> done_;

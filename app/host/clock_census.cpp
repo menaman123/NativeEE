@@ -61,11 +61,36 @@ void ClockCensus::NoteBoundaryAt(uint64_t domain_tick, Clock::time_point now, ui
     if (pacer_tick > last_tick_) last_tick_ = pacer_tick;
 }
 
-void ClockCensus::NotePresentAt(Clock::time_point now) {
+void ClockCensus::NotePresentAt(Clock::time_point now) { NotePresentAt(now, 0); }
+
+void ClockCensus::NotePresentAt(Clock::time_point now, uint64_t thread_cpu_ns) {
     std::lock_guard<std::mutex> lk(mu_);
+    // The presenter's CPU clock is tracked from its first present on, so the
+    // first credited delta never spans the run-up before the first boundary.
+    const bool have_cpu = thread_cpu_ns != 0;
+    const bool first_cpu = have_cpu && gs_last_cpu_ns_ == 0;
+    if (first_cpu) gs_last_cpu_ns_ = thread_cpu_ns;
     if (!started_) return;   // presents before the first boundary belong to no window
     RollLocked(now);
     current_.presents++;
+    if (have_cpu && !first_cpu && thread_cpu_ns >= gs_last_cpu_ns_) {
+        const uint64_t delta = thread_cpu_ns - gs_last_cpu_ns_ + gs_cpu_carry_ns_;
+        current_.gs_cpu_ms += static_cast<uint32_t>(delta / 1000000ull);
+        gs_cpu_carry_ns_ = delta % 1000000ull;
+    }
+    if (have_cpu) gs_last_cpu_ns_ = thread_cpu_ns;
+}
+
+void ClockCensus::NoteMemory(uint64_t page_faults, uint64_t footprint_bytes) {
+    std::lock_guard<std::mutex> lk(mu_);
+    if (have_memory_ && started_) {
+        if (page_faults >= last_faults_) current_.faults += static_cast<uint32_t>(page_faults - last_faults_);
+        const int64_t d = static_cast<int64_t>(footprint_bytes) - static_cast<int64_t>(last_footprint_);
+        current_.footprint_kb += static_cast<int32_t>(d / 1024);
+    }
+    have_memory_ = true;
+    last_faults_ = page_faults;
+    last_footprint_ = footprint_bytes;
 }
 
 std::string ClockCensus::SeriesLocked(uint32_t Window::*field) const {
@@ -95,6 +120,26 @@ std::string ClockCensus::RenderFpsSeries() const {
 std::string ClockCensus::EeCpuMsSeries() const {
     std::lock_guard<std::mutex> lk(mu_);
     return SeriesLocked(&Window::cpu_ms);
+}
+
+std::string ClockCensus::GsCpuMsSeries() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    return SeriesLocked(&Window::gs_cpu_ms);
+}
+
+std::string ClockCensus::FaultsSeries() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    return SeriesLocked(&Window::faults);
+}
+
+std::string ClockCensus::FootprintKbSeries() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    std::string s;
+    for (const Window& w : done_) {
+        if (!s.empty()) s += ',';
+        s += std::to_string(w.footprint_kb);
+    }
+    return s;
 }
 
 uint64_t ClockCensus::EeCpuTotalMs() const {

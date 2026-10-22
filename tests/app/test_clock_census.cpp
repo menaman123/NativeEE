@@ -157,6 +157,29 @@ int main() {
         drive(without, false);
         CHECK(without.GameHzSeries() == "60,59,61", ("fast-forward NOT subtracted: the lookup misses from the engaged stretch on and the late edge-120 answer straddles (60,59,61): " + without.GameHzSeries()).c_str());
     }
+    {
+        // The warm-up series: the presenter's CPU per window (seeded by the first
+        // present, credited from the second), the process faults / footprint deltas
+        // (seeded by the first NoteMemory, credited from the second).
+        ClockCensus w;
+        const auto t0 = ClockCensus::Clock::time_point(seconds(2000));
+        w.NotePresentAt(t0 - milliseconds(1), 7'000'000);   // before the stream: seeds the CPU clock only
+        w.NoteBoundaryAt(1, t0, 0);
+        w.NoteMemory(1000, 100u << 20);
+        w.NotePresentAt(t0 + milliseconds(10), 7'000'000 + 30'500'000);   // 30.5 ms since the seed
+        w.NotePresentAt(t0 + milliseconds(20), 7'000'000 + 61'000'000);   // +30.5 ms -> 61 whole ms, 0 carry
+        w.NoteBoundaryAt(2, t0 + milliseconds(500), 0);
+        w.NoteMemory(1000 + 15000, (100u << 20) + (72u << 20));            // 15000 faults, +72 MiB
+        w.NoteBoundaryAt(3, t0 + seconds(1), 0);                           // closes window 0
+        w.NoteMemory(1000 + 15000 + 200, (100u << 20) + (72u << 20) - (40u << 20));   // window 1: 200, -40 MiB
+        w.NotePresentAt(t0 + seconds(1) + milliseconds(10), 7'000'000 + 61'000'000 + 14'200'000);
+        w.NotePresentAt(t0 + seconds(1) + milliseconds(30), 7'000'000 + 61'000'000 + 28'400'000);   // 28.4 ms -> 28, carry 0.4
+        w.NoteBoundaryAt(4, t0 + seconds(2), 0);                           // closes window 1
+        CHECK(w.GsCpuMsSeries() == "61,28", ("gs_cpu_ms per window from the presenter's CPU clock (61,28): " + w.GsCpuMsSeries()).c_str());
+        CHECK(w.FaultsSeries() == "15000,200", ("faults per window as NoteMemory deltas (15000,200): " + w.FaultsSeries()).c_str());
+        CHECK(w.FootprintKbSeries() == "73728,-40960", ("footprint_kb per window, signed (73728,-40960): " + w.FootprintKbSeries()).c_str());
+        CHECK(w.RenderFpsSeries() == "2,2", ("presents still counted (2,2): " + w.RenderFpsSeries()).c_str());
+    }
     std::printf("ClockCensus: %s\n", g_failures ? "FAIL" : "ALL PASS");
     return g_failures ? 1 : 0;
 }
