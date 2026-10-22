@@ -122,7 +122,7 @@ public:
     int AspectSetting() const { return aspect_setting_.load(); }
     int RenderRateSetting() const { return render_rate_.load(); }
     // The presented-frame cadence in force (video.frame_cap's index; FramePacer::Cap) and
-    // the pacer's census row ("cap=..:admitted=..:held=..:superseded=..:late=.."). Any thread
+    // the pacer's census row ("cap=..:admitted=..:held=..:superseded=..:late=..:slipped=..:slip_ms=.."). Any thread
     // for the index; the row is read after Run (main).
     int FrameCapSetting() const { return frame_cap_.load(); }
     std::string FrameCapCensus() const { return pacer_.CensusRow(); }
@@ -231,6 +231,7 @@ private:
     struct Frame {
         std::vector<uint8_t> rgba;
         int width = 0, height = 0;
+        uint64_t posted_ns = 0;   // Park::NowNs() at PostFrame (the pacer's lateness input)
     };
     void PumpMain();
     void Publish();
@@ -265,10 +266,12 @@ private:
     bool display_rows_ = false;
     std::atomic<int> scale_setting_{1}, effective_scale_{1}, scale_request_{0}, aspect_setting_{0}, render_rate_{0},
         display_mode_{0}, frame_cap_{2};
-    // The presented-frame cadence (video.frame_cap): the pacer admits the pending picture
-    // (the newest posted, main-thread only) at its edges; between edges it waits.
+    // The presented-frame cadence (video.frame_cap): the pacer admits the OLDEST waiting
+    // picture at its edges (at once when the edge stood open); the one behind it waits
+    // its turn (main-thread only). A third arrival drops the oldest (Supersede).
     FramePacer pacer_;
-    Frame pending_frame_;
+    Frame pending_frame_;   // the oldest waiting picture
+    Frame queued_frame_;    // the one posted behind it
     int display_hz_ = 0;
     std::function<void(std::chrono::steady_clock::time_point, bool)> present_observer_;
     bool picture_fresh_ = false;   // a picture uploaded since the last draw (the observer's new_picture)

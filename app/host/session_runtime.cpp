@@ -222,7 +222,7 @@ void SessionRuntime::PostFrame(std::vector<uint8_t> rgba, int width, int height)
         rgba.size() != static_cast<size_t>(width) * height * 4 || rgba.size() > (64u << 20)) return;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        incoming_frame_ = {std::move(rgba), width, height};
+        incoming_frame_ = {std::move(rgba), width, height, ps2r::Park::NowNs()};
     }
     wake_main_.Notify();
 }
@@ -470,10 +470,19 @@ void SessionRuntime::PumpMain() {
         request->wake.Notify();
     }
     if (!frame.rgba.empty()) {
-        // The newest posted picture waits for the pacer's edge (Run); a picture still waiting
-        // is superseded by it (the game's tick ran; only its picture is not shown).
-        if (!pending_frame_.rgba.empty()) pacer_.Supersede();
-        pending_frame_ = std::move(frame);
+        // The posted picture joins the two-deep queue the pacer admits from (Run) in order:
+        // two pictures inside one period are shown at consecutive edges, not the newer over
+        // the older. A third arrival drops the oldest unshown (the game's tick ran; only its
+        // picture is not shown).
+        if (pending_frame_.rgba.empty()) {
+            pending_frame_ = std::move(frame);
+        } else {
+            if (!queued_frame_.rgba.empty()) {
+                pacer_.Supersede();
+                pending_frame_ = std::move(queued_frame_);
+            }
+            queued_frame_ = std::move(frame);
+        }
     }
     PollCapture();
     PollRestore();
@@ -667,12 +676,14 @@ int SessionRuntime::Run(std::function<int()> game, unsigned shutdown_seconds) {
             std::fprintf(stderr, "Session restore exceeded %u seconds; terminating process.\n", shutdown_seconds);
             std::_Exit(2);
         }
-        // The presented-frame cadence (video.frame_cap; FramePacer): the pending picture is
-        // uploaded and drawn at the pacer's edge; the fps_cap train below keeps re-drawing the
-        // held picture (the menu, the overlays) between edges.
-        if (pacer_.Admit(now, !pending_frame_.rgba.empty())) {
+        // The presented-frame cadence (video.frame_cap; FramePacer): the oldest waiting picture
+        // is uploaded and drawn at the pacer's edge (at once when it was posted after an open
+        // edge: the train slips to it); the fps_cap train below keeps re-drawing the shown
+        // picture (the menu, the overlays) between edges.
+        if (pacer_.Admit(now, pending_frame_.posted_ns)) {
             window_.Upload(pending_frame_.rgba, pending_frame_.width, pending_frame_.height);
-            pending_frame_ = {};
+            pending_frame_ = std::move(queued_frame_);
+            queued_frame_ = {};
             picture_fresh_ = true;
             next_present = now;
         }
