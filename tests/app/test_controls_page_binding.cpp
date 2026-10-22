@@ -12,12 +12,12 @@
 #include <fstream>
 #include <sstream>
 #include <string>
-#include <sys/stat.h>
 #include <thread>
 
 #include "app/host/controls_page_binding.h"
 #include "app/host/platform_input.h"
 #include "engine/core/threads/park.h"
+#include "engine/platform/host/platform.h"
 
 using namespace ps2r::app;
 
@@ -97,7 +97,7 @@ uint16_t PressAndSample(PlatformInput& input, ps2r::Park& wake, SDL_Scancode sca
 int main(int argc, char** argv) {
     if (argc < 2) { std::printf("usage: test_controls_page_binding <scratch dir>\n"); return 2; }
     const std::string root = argv[1];
-    ::mkdir(root.c_str(), 0755);
+    ps2r::host::MakeDirectory(root.c_str());
     std::remove((root + "/bindings.ini").c_str());
     std::remove((root + "/ps2r.ini").c_str());
     if (SDL_Init(SDL_INIT_VIDEO) != 0) { std::printf("SDL_Init failed: %s\n", SDL_GetError()); return 3; }

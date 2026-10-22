@@ -94,6 +94,17 @@ bool MakeDirectory(const char* path) {
     if (::mkdir(path, 0755) == 0) return true;
     return errno == EEXIST && IsDirectory(path);
 }
+std::string MakeTempDirectory(const char* prefix, std::string* err) {
+    std::error_code ec;
+    std::filesystem::path root = std::filesystem::temp_directory_path(ec);
+    if (ec) root = "/tmp";
+    std::string templ = (root / (std::string(prefix ? prefix : "ps2r_") + "XXXXXX")).string();
+    if (::mkdtemp(templ.data()) == nullptr) {
+        if (err) *err = templ + ": " + std::strerror(errno);
+        return std::string();
+    }
+    return templ;
+}
 bool IsDirectory(const char* path) {
     struct stat st{};
     return ::stat(path, &st) == 0 && S_ISDIR(st.st_mode);
@@ -337,9 +348,28 @@ void PreciseSleepUntilNs(uint64_t deadline_ns) {
     }
 }
 
+void RequestFineTimerResolution() {}   // nothing to ask for on Darwin / Linux
+
+uint64_t ThreadCpuTimeNs() {
+    timespec ts{};
+    if (::clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) != 0) return 0;
+    return static_cast<uint64_t>(ts.tv_sec) * 1000000000ull + static_cast<uint64_t>(ts.tv_nsec);
+}
+
 bool GmTimeUtc(int64_t unix_seconds, struct tm* out) {
     const time_t t = static_cast<time_t>(unix_seconds);
     return ::gmtime_r(&t, out) != nullptr;
+}
+
+bool GlLoadEntryPoints(void* (*)(const char*), std::string* missing) {
+    // The GL entry points are linked directly on macOS (OpenGL.framework) and Linux
+    // (libOpenGL / libGL export the core set): nothing to load.
+    if (missing) missing->clear();
+    return true;
+}
+
+void* GlGetProcAddress(const char* name) {
+    return name ? ::dlsym(RTLD_DEFAULT, name) : nullptr;
 }
 
 int Backtrace(void** frames, int max_frames) {

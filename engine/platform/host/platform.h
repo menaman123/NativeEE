@@ -63,9 +63,11 @@
 #define PS2R_HOST_MACOS 0
 #define PS2R_HOST_LINUX 1
 #elif defined(_WIN32)
-// The Windows target (engine/platform/windows/, Track B2): PS2R_GL_HEADER is NOT defined yet --
-// the GL loader for Windows is B2's open gap 1 (docs/design/PLATFORMS.md section 4); a TU that
-// includes it fails to compile there by design until the loader lands.
+// The Windows target (engine/platform/windows/): opengl32.dll exports GL 1.1 only, so the GL
+// header is the tree's own generated loader header (tools/build/gen_gl_windows.py: the enums
+// and entry points the GL arm uses, each name a macro over a function pointer that
+// host::GlLoadEntryPoints fills once a context is current -- platform/sdl/gl_context.cpp).
+#define PS2R_GL_HEADER <engine/platform/host/gl_windows.h>
 #define PS2R_HOST_MACOS 0
 #define PS2R_HOST_LINUX 0
 #else
@@ -221,6 +223,10 @@ int StrNCaseCmp(const char* a, const char* b, size_t n);    // strncasecmp / _st
 // --- paths ---
 bool MakeDirectory(const char* path);   // true if created or already a directory
 bool IsDirectory(const char* path);
+// A fresh, uniquely named directory under the host's temp root (mkdtemp / GetTempPathW +
+// CreateDirectoryW with a random suffix): "<tmp>/<prefix>XXXXXX". Empty + *err on failure.
+// The tests' scratch directories (nothing of the game writes here).
+std::string MakeTempDirectory(const char* prefix, std::string* err);
 int64_t FileSeek64(std::FILE* f, int64_t offset, int whence);   // fseeko / _fseeki64
 int64_t FileTell64(std::FILE* f);                                // ftello / _ftelli64
 
@@ -291,8 +297,38 @@ uint64_t FastNowNs();
 // Returns at or after the deadline (never early); a deadline already passed returns at once.
 // The deadline is in MonotonicNowNs's domain (std::chrono::steady_clock's on every arm).
 void PreciseSleepUntilNs(uint64_t deadline_ns);
+// CPU time the CALLING thread has consumed, in ns (user + kernel): clock_gettime
+// CLOCK_THREAD_CPUTIME_ID on POSIX, GetThreadTimes on Win32 (100 ns units; the kernel's
+// quantum-sampled accounting, so individual reads are coarse but sums over a second are
+// right). 0 when the host cannot say. The app's clock census books per-thread CPU with it.
+uint64_t ThreadCpuTimeNs();
+// Ask the OS for the finest scheduler / timer granularity the process may have, once, at
+// boot (the target folder's RegisterSelf calls it). POSIX: nothing to ask (nanosleep,
+// condition-variable deadlines and mach_wait_until are already sub-millisecond). Win32: the
+// default timer resolution is 15.625 ms and every Sleep / SleepConditionVariable /
+// WaitForSingleObject timeout rounds UP to it -- a 60 Hz tick or a 4 ms pump wait cannot hold
+// -- so: timeBeginPeriod(1) (per-process since Windows 10 2004) and the process power-throttling
+// flag that keeps the 1 ms when the window is unfocused / minimized (Windows 11 otherwise
+// reverts a background process to 15.6 ms). The pacing lever on top of this is the pacing
+// track's PreciseSleepUntilNs (CREATE_WAITABLE_TIMER_HIGH_RESOLUTION on Win32).
+void RequestFineTimerResolution();
 // Thread-safe UTC broken-down time (gmtime_r / gmtime_s); false when the conversion fails.
 bool GmTimeUtc(int64_t unix_seconds, struct tm* out);
+
+// --- OpenGL entry points. Windows' opengl32.dll exports GL 1.1 only; every core 3.3 / 4.1
+//     name the backend calls is a per-context pointer from wglGetProcAddress. The Windows arm
+//     fills the generated table (gl_windows.h / gl_windows.cpp, tools/build/gen_gl_windows.py)
+//     through `resolve` (the SDL window layer passes SDL_GL_GetProcAddress, which falls back
+//     to opengl32.dll's exports for the 1.1 names; the arm falls back the same way when
+//     `resolve` returns null). Idempotent: the first successful load wins. On POSIX the names
+//     are linked directly and this returns true without touching anything. `missing` (when
+//     non-null) receives the space-joined names that resolved to null; false iff any did. ---
+bool GlLoadEntryPoints(void* (*resolve)(const char* name), std::string* missing);
+// One GL entry point by name, for the OPTIONAL extensions the backend probes after
+// HasExtension (glTextureBarrierNV): the process's own GL symbols on POSIX (dlsym
+// RTLD_DEFAULT -- the framework / libGL is linked in), the resolver GlLoadEntryPoints was
+// given (then opengl32.dll's exports) on Windows. Null when absent or before a context exists.
+void* GlGetProcAddress(const char* name);
 
 // --- diagnostics: stack walking and symbolisation (crash handler, triage bundle,
 //     word watch). Frames are return addresses, innermost first. ---

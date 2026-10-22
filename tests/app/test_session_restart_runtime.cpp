@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <thread>
 #include <unistd.h>
+#include "engine/platform/host/platform.h"
 
 // This product contract fixture executes no title body or live-stack capture.
 extern "C" uint32_t ee_get_call_stack_depth() { return 0; }
@@ -109,8 +110,9 @@ void ComposedRestart() {
     record.chain = {{0x1000, 0}};
     Blob thread_blob{TAG_THRD, 1, kSectionRequired, {}};
     ThreadSection::Emit({record}, thread_blob.payload);
-    char directory[] = "/tmp/session_restart_runtime_XXXXXX";
-    CHECK(mkdtemp(directory) != nullptr);
+    const std::string directory_s = ps2r::host::MakeTempDirectory("session_restart_runtime_", nullptr);
+    CHECK(!directory_s.empty());
+    const char* directory = directory_s.c_str();
     const std::string valid = std::string(directory) + "/valid.ps2st";
     const std::string missing = std::string(directory) + "/missing-owner.ps2st";
     FileMeta meta; meta.vsync_frame = 100;

@@ -34,3 +34,14 @@ add_test(NAME PlatformWindowsCrossSmoke
             --build ${CMAKE_BINARY_DIR} --clang ${PS2R_WIN_CROSS_CLANG}
             --out ${PS2R_TEST_SCRATCH_PLATFORM}/win_cross_smoke -j 4)
 set_tests_properties(PlatformWindowsCrossSmoke PROPERTIES TIMEOUT 600 SKIP_RETURN_CODE 77)
+
+# PlatformGlWindowsHeaderCurrent: the Windows arm's GL header + entry-point table
+# (engine/platform/host/gl_windows.{h,cpp}) are GENERATED from the GL names the tree uses
+# (tools/build/gen_gl_windows.py) and committed. A new glFoo( call or GL_FOO token anywhere a TU
+# includes PS2R_GL_HEADER makes them stale -> this test fails with the regenerate command, so the
+# Windows build never discovers the missing name first. SKIP 77 without a registry header
+# (the macOS SDK's gl3.h or /usr/include/GL/glcorearb.h).
+add_test(NAME PlatformGlWindowsHeaderCurrent
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/build/gen_gl_windows.py --tree ${CMAKE_SOURCE_DIR}
+            --check --skip-if-missing)
+set_tests_properties(PlatformGlWindowsHeaderCurrent PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)

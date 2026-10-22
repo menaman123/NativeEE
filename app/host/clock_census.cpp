@@ -1,14 +1,10 @@
 #include "app/host/clock_census.h"
 
-#include <ctime>
+#include "engine/platform/host/platform.h"
 
 namespace ps2r::app {
 
-uint64_t ClockCensus::ThreadCpuNs() {
-    timespec ts{};
-    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) != 0) return 0;
-    return static_cast<uint64_t>(ts.tv_sec) * 1000000000ull + static_cast<uint64_t>(ts.tv_nsec);
-}
+uint64_t ClockCensus::ThreadCpuNs() { return ps2r::host::ThreadCpuTimeNs(); }
 
 void ClockCensus::RollLocked(Clock::time_point now) {
     // Close every whole second that elapsed (an idle stretch yields zero windows).

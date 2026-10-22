@@ -5,6 +5,7 @@
 
 #include "engine/platform/host/platform.h"
 #include PS2R_GL_HEADER
+#include "engine/platform/sdl/gl_context.h"
 
 namespace ps2r::app {
 
@@ -32,6 +33,7 @@ bool SessionWindow::Open(std::string& error) {
     if (!window_) { error = SDL_GetError(); return false; }
     context_ = SDL_GL_CreateContext(window_);
     if (!context_) { error = SDL_GetError(); return false; }
+    if (!platform::GlContext::LoadEntryPoints(&error)) return false;
     // The main pump schedules presentation; SetVSync applies video.vsync.
     SDL_GL_SetSwapInterval(vsync_ ? 1 : 0);
     gui_ready_ = gui_.Initialize(window_, context_, error);

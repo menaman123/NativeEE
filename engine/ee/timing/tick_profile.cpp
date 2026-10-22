@@ -28,7 +28,9 @@ std::atomic<uint64_t> g_overrun_at_ns{~uint64_t{0}};
 // The tick in progress (its work origin; 0 = parked, nothing to sample).
 std::atomic<uint64_t> g_tick_from_ns{0};
 bool g_census = false;
-TickProfile::FrameReader g_frame_reader = nullptr;
+// Published by SetFrameReader for a reader that is not wired yet (kept for the API; clang-cl
+// -Wunused-but-set-global would otherwise fail the Windows build).
+[[maybe_unused]] TickProfile::FrameReader g_frame_reader = nullptr;
 thread_local bool t_game_thread = false;
 // The nested scopes' wall time of the innermost open scope (exclusive booking).
 thread_local uint64_t t_child_ns = 0;

@@ -7,7 +7,7 @@ if(TARGET ps2r_session_runtime)
 endif()
 if(PS2R_PRODUCT_TESTS)
     add_executable(test_session_files "${PS2R_PRODUCT_ROOT}/tests/app/test_session_files.cpp")
-    target_link_libraries(test_session_files PRIVATE ps2r_session_files)
+    target_link_libraries(test_session_files PRIVATE ps2r_session_files ps2r_host)   # host::MakeTempDirectory
     target_compile_options(test_session_files PRIVATE -Wall -Wextra -Werror)
     add_test(NAME SessionFiles COMMAND test_session_files)
     set_tests_properties(SessionFiles PROPERTIES TIMEOUT 10)

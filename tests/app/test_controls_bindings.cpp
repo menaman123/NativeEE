@@ -9,12 +9,12 @@
 
 #include <cstdio>
 #include <string>
-#include <sys/stat.h>
 
 #include "app/host/controls_bindings.h"
 #include "engine/platform/sdl/input/gamepad_convert.h"
 #include "engine/platform/sdl/input/input_backend.h"
 #include "engine/platform/sdl/input/input_mapper.h"
+#include "engine/platform/host/platform.h"
 
 using namespace ps2r::app;
 using namespace ps2r::platform::sdl;
@@ -40,7 +40,7 @@ static const std::string* RowValue(const std::vector<ControlsBindings::Row>& row
 int main(int argc, char** argv) {
     if (argc < 2) { std::printf("usage: test_controls_bindings <scratch dir>\n"); return 2; }
     const std::string root = argv[1];
-    ::mkdir(root.c_str(), 0755);
+    ps2r::host::MakeDirectory(root.c_str());
     std::remove((root + "/bindings.ini").c_str());
 
     ControlsBindings cb(root);

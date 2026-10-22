@@ -16,8 +16,16 @@ picks the selected TUs, and re-issues each compile with
   * the tree's own flags otherwise unchanged (-std, -I, -D, -O, -Wall -Wextra -Werror,
     -fwrapv, -ffp-contract=off ...), so a Windows-only diagnostic here is the diagnostic the
     windows-release preset (clang-cl + tools/build/clang_cl_shim.py) prints on the runner.
-  * `host/host_posix.cpp` is swapped for `host/host_windows.cpp` (+ `windows/platform_windows.cpp`)
-    with the same flags: the Windows arm is otherwise never compiled on this host.
+  * `host/host_posix.cpp` is swapped for `host/host_windows.cpp` (+ `windows/platform_windows.cpp`,
+    `host/gl_windows.cpp`: the generated GL entry-point table) with the same flags: the Windows
+    arm is otherwise never compiled on this host.
+  * `-iframework` and `-DPS2R_HAS_METAL=1` (the macOS Metal arm) are dropped; the Windows target
+    has neither. With `--sdl-include DIR` (the SDL2 VC development headers, what vcpkg's port
+    installs) Homebrew's `-isystem .../include/SDL2` is replaced by DIR, so the SDL TUs are a real
+    signal; likewise `--ffmpeg-include DIR` for Homebrew's `/opt/homebrew/include` (FFmpeg).
+  * `--all` = every .cpp under engine/ app/ games/ tools/ tests/ third_party/ + every recompiled
+    shard + the common TU (the whole tree, compile side; the link side is the windows-cross
+    toolchain: engine/platform/windows/toolchain_cross_macos.cmake).
   * PCH plumbing (`-Xclang -include-pch`, `-Winvalid-pch`, the cmake_pch include) is dropped: the
     shard TU includes recompiled.h itself.
 Objects land under --out (COFF, `file` says "Intel amd64 COFF"); with --syntax-only no object
@@ -72,7 +80,8 @@ def select_entries(entries, tree, select, shard, extra, prefixes):
             picked.append(("host", e))
         elif "host" in want and rel == "engine/platform/host/host_posix.cpp":
             picked.append(("host-arm", e))   # swapped for host_windows.cpp below
-        elif "shard" in want and is_recomp_tu(f, f"recompiled_shard_{shard:03d}.cpp"):
+        elif "shard" in want and (shard < 0 and re.search(r"recompiled_shard_\d+\.cpp$", f) and RECOMP_TAIL in f
+                                  or is_recomp_tu(f, f"recompiled_shard_{shard:03d}.cpp")):
             picked.append(("shard", e))
         elif "recomp_common" in want and is_recomp_tu(f, "recompiled.cpp"):
             picked.append(("recomp_common", e))
@@ -86,10 +95,11 @@ PCH_DROP = {"-Winvalid-pch"}
 # The root CMakeLists.txt's `if(WIN32) add_compile_definitions(...)` list, verbatim: the
 # UCRT/<windows.h> surface every TU sees on the Windows target.
 WIN_DEFINES = ["-D_CRT_SECURE_NO_WARNINGS", "-D_CRT_NONSTDC_NO_WARNINGS", "-D_USE_MATH_DEFINES",
-               "-DNOMINMAX", "-DWIN32_LEAN_AND_MEAN"]
+               "-DNOMINMAX", "-DWIN32_LEAN_AND_MEAN", "-D__PRFCHWINTRIN_H"]
 
 
-def rewrite(args, tree, clang, xwin, out_dir, obj_name, syntax_only, src_override=None):
+def rewrite(args, tree, clang, xwin, out_dir, obj_name, syntax_only, src_override=None,
+            sdl_include="", ffmpeg_include=""):
     new = [clang]
     i = 1
     skip_next = 0
@@ -127,6 +137,26 @@ def rewrite(args, tree, clang, xwin, out_dir, obj_name, syntax_only, src_overrid
         if a.startswith("-mmacosx-version-min") or a.startswith("--sysroot"):
             i += 1
             continue
+        if a == "-iframework":
+            i += 2
+            continue
+        if a == "-DPS2R_HAS_METAL=1":
+            new.append("-DPS2R_HAS_METAL=0")
+            i += 1
+            continue
+        if a == "-DPS2R_SIMD=1":
+            i += 1   # NEON only; the root CMakeLists forces PS2R_SIMD OFF on x86-64 (scalar twins)
+            continue
+        if a in ("-isystem", "-I") and i + 1 < len(args):
+            d = args[i + 1]
+            if sdl_include and ("/include/SDL2" in d or d.endswith("/SDL2")):
+                new += ["-isystem", sdl_include]
+                i += 2
+                continue
+            if ffmpeg_include and d.rstrip("/") in ("/opt/homebrew/include", "/usr/local/include"):
+                new += ["-isystem", ffmpeg_include]
+                i += 2
+                continue
         if i == len(args) - 1 and not a.startswith("-"):
             src = a
             i += 1
@@ -191,7 +221,17 @@ def main():
     ap.add_argument("--prefix", nargs="*", default=[],
                     help="also every .cpp whose tree-relative path starts with one of these (the sweep: "
                          "--prefix engine/ app/ games/ tools/ --syntax-only)")
+    ap.add_argument("--all", action="store_true",
+                    help="the whole tree: --prefix engine/ app/ games/ tools/ tests/ third_party/ "
+                         "--select shim,host,shard,recomp_common --shard -1 (every shard)")
+    ap.add_argument("--sdl-include", default="", help="SDL2 headers for the Windows target (SDL2-devel-*-VC/include); "
+                    "replaces Homebrew's -isystem .../include/SDL2")
+    ap.add_argument("--ffmpeg-include", default="", help="FFmpeg headers for the Windows target; replaces -isystem /opt/homebrew/include")
     a = ap.parse_args()
+    if a.all:
+        a.prefix = ["engine/", "app/", "games/", "tools/", "tests/", "third_party/"]
+        a.select = "shim,host,shard,recomp_common"
+        a.shard = -1
 
     if a.skip_if_missing:
         missing = []
@@ -229,14 +269,22 @@ def main():
             continue
         seen.add(rel)
         if kind == "host-arm":
-            for win_src in ("engine/platform/host/host_windows.cpp", "engine/platform/windows/platform_windows.cpp"):
+            for win_src in ("engine/platform/host/host_windows.cpp", "engine/platform/windows/platform_windows.cpp",
+                            "engine/platform/host/gl_windows.cpp"):
                 obj = win_src.replace("/", "_") + ".obj"
                 cmd, _ = rewrite(args, tree, a.clang, a.xwin, a.out, obj, a.syntax_only,
-                                 src_override=os.path.join(tree, win_src))
+                                 src_override=os.path.join(tree, win_src), sdl_include=a.sdl_include,
+                                 ffmpeg_include=a.ffmpeg_include)
                 jobs.append((win_src, cmd))
             continue
+        if rel in ("engine/platform/posix/fiber_posix.cpp", "engine/platform/posix/crash_handler.cpp",
+                   "engine/platform/macos/platform_macos.cpp", "engine/platform/linux/platform_linux.cpp",
+                   "tests/iop/test_fiber_guard.cpp") \
+                or rel.startswith("engine/render/backends/metal/"):
+            continue   # the POSIX / macOS arms (+ the fork-based fiber test, if(NOT WIN32)): never compiled on the Windows target
         obj = rel.replace("/", "_") + ".obj"
-        cmd, _ = rewrite(args, tree, a.clang, a.xwin, a.out, obj, a.syntax_only)
+        cmd, _ = rewrite(args, tree, a.clang, a.xwin, a.out, obj, a.syntax_only, sdl_include=a.sdl_include,
+                         ffmpeg_include=a.ffmpeg_include)
         jobs.append((rel, cmd))
 
     if "shim" in a.select.split(","):

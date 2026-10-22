@@ -21,6 +21,12 @@ public:
     Window(const Window&) = delete;
     Window& operator=(const Window&) = delete;
 
+    // SDL hints that must be set BEFORE the video subsystem initialises, the same on every
+    // host (a hint the platform does not know is ignored): on Windows, per-monitor-v2 DPI
+    // awareness -- without it a window on a scaled desktop is rendered at 96 dpi and bitmap-
+    // stretched by DWM (blurry, and the stretch is paid at every present). Called by Create
+    // and by the launcher's own video init.
+    static void RequestVideoHints();
     // headless => hidden 64x64; else a visible, resizable w x h window titled `title`.
     bool Create(bool headless, int w, int h, const char* title);
     void Destroy();

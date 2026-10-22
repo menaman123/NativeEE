@@ -90,7 +90,10 @@ const Platform& PlatformWindows::Instance() {
     return p;
 }
 
-void PlatformWindows::RegisterSelf() { Register(&Instance()); }
+void PlatformWindows::RegisterSelf() {
+    Register(&Instance());
+    arm::RequestFineTimerResolution();   // 1 ms scheduler granularity for the process (host_windows.cpp)
+}
 
 void PlatformWindows::PinCurrentThreadInteractive(const char* name) {
     static thread_local bool pinned = false;

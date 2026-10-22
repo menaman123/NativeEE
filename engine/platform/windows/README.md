@@ -14,7 +14,7 @@ host shim arm (`engine/platform/host/host_windows.cpp`); surface / input / audio
 | threads with a stack size + name + interactive pin | `_beginthreadex` (reservation), `SetThreadDescription`, `THREAD_PRIORITY_ABOVE_NORMAL` | the 1 GiB EE stack is a reservation, committed lazily |
 | coroutines (the EE thread model) | native fibers (`CreateFiberEx` / `SwitchToFiber`, float-switch flag) | the host thread converts itself on the first `fiber_current` |
 | files | stdio + UCRT fds; positioned reads via `ReadFile` + `OVERLAPPED` | 64-bit seek/tell (`_fseeki64`) -- LLP64 `long` is 32-bit |
-| crash handler | SEH / `AddVectoredExceptionHandler` + `CaptureStackBackTrace` + DbgHelp | NOT written yet: the macOS handler's counterpart (signals -> exceptions); the triage bundle's writer is shared |
+| crash handler | SEH `SetUnhandledExceptionFilter` + `CaptureStackBackTrace` + DbgHelp (`windows/crash_handler_windows.cpp`, behind `engine/platform/crash_handler.h`) | written (round 3); the triage bundle's writer is shared; first RUN on a Windows host pending |
 | memory footprint | `GetProcessMemoryInfo` private usage | not `phys_footprint`: the peak_mb pins are platform-keyed |
 | process relaunch (F8 restore) | `_spawnv` + exit | no `execv`; the relaunch gate must not pin the pid |
 | GL | `opengl32.dll` + a function loader | GAP shared with Linux: the GL backend includes `<OpenGL/gl3.h>` (docs/design/PLATFORMS.md section 4) |

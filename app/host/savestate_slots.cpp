@@ -10,8 +10,6 @@
 #include <system_error>
 #include <utility>
 
-#include <unistd.h>
-
 #include "engine/core/config/config.h"
 #include "engine/core/log/log.h"
 #include "engine/platform/host/platform.h"
@@ -204,8 +202,11 @@ bool SavestateSlots::PreflightComposition(const std::string& slot_path, const st
 std::string SavestateSlots::RunningImage(std::string* err) {
     const std::string image = ps2r::platform::host::ExecutablePath(err);
     if (image.empty()) return std::string();
-    if (::access(image.c_str(), X_OK) != 0) {
-        if (err) *err = image + ": " + std::strerror(errno);
+    // The running image must still be there to relaunch (the F8 restore): a regular file
+    // (POSIX' X_OK is not a Win32 notion; the image we are running from is executable).
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(image, ec)) {
+        if (err) *err = image + ": " + (ec ? ec.message() : std::string("not a regular file"));
         return std::string();
     }
     return image;

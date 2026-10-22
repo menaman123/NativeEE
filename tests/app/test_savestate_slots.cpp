@@ -15,11 +15,11 @@
 #include <thread>
 #include <vector>
 
-#include <unistd.h>
 
 #include "engine/core/config/config.h"
 #include "engine/core/savestate/savestate_format.h"
 #include "engine/core/savestate/section_registry.h"
+#include "engine/platform/host/platform.h"
 
 using ps2r::Config;
 using ps2r::app::SavestateSlots;
@@ -275,7 +275,7 @@ void RunningImageResolves() {
 }  // namespace
 
 int main() {
-    const fs::path dir = fs::temp_directory_path() / ("ps2r-savestate-slots-" + std::to_string(::getpid()));
+    const fs::path dir = fs::temp_directory_path() / ("ps2r-savestate-slots-" + std::to_string(ps2r::host::ProcessId()));
     fs::remove_all(dir);
     fs::create_directories(dir);
     PathsAndRootPrecedence();

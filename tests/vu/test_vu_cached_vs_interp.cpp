@@ -7,12 +7,11 @@
 // three retail VU0 fixture images from their entry points through the cached
 // and interpreter tiers the same way (VU0 never runs on the block tier). SKIP 77 when the corpus
 // directory is absent (the fixtures always run).
-#include <dirent.h>
-#include <sys/stat.h>
-
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <system_error>
 #include <string>
 #include <vector>
 
@@ -123,13 +122,11 @@ bool Same(const Outcome& a, const Outcome& b, const char* tag) {
 
 std::vector<std::string> ListCases(const char* dir) {
     std::vector<std::string> out;
-    DIR* d = opendir(dir);
-    if (d == nullptr) return out;
-    while (dirent* e = readdir(d)) {
-        const std::string name = e->d_name;
+    std::error_code ec;
+    for (const auto& e : std::filesystem::directory_iterator(dir, ec)) {
+        const std::string name = e.path().filename().string();
         if (name.size() > 4 && name.compare(name.size() - 4, 4, ".bin") == 0) out.push_back(std::string(dir) + "/" + name);
     }
-    closedir(d);
     std::sort(out.begin(), out.end());
     return out;
 }

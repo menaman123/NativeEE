@@ -4,8 +4,6 @@
 #include "engine/platform/host/platform.h"
 #include PS2R_GL_HEADER
 
-#include <dlfcn.h>
-
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -143,7 +141,7 @@ bool GlDevice::Init(std::function<void()> swap) {
     // destination read without the copy. Looked up by name; absent = the copy route.
     texture_barrier_ = nullptr;
     if (HasExtension("GL_NV_texture_barrier"))
-        texture_barrier_ = reinterpret_cast<TextureBarrierFn>(dlsym(RTLD_DEFAULT, "glTextureBarrierNV"));
+        texture_barrier_ = reinterpret_cast<TextureBarrierFn>(host::GlGetProcAddress("glTextureBarrierNV"));
     // OFF by default: Apple's GL-on-Metal barrier is not coherent at the 32-row
     // tile boundaries for a same-pass attachment read (1-px horizontal lines every
     // 32 rows on the Paris capture, 0.15-0.4 % of the pixels, delta up to 36); the
