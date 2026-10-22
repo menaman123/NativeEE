@@ -99,6 +99,7 @@ static void TestPeakDefaults() {
     CHECK(c.engine.mtvu == true);
     CHECK(c.engine.mtvu_depth == 2);
     CHECK(c.engine.mtvu_early_finish == true);   // E425/E426/E427 on by default (the finish track's gates)
+    CHECK(c.engine.mtvu_wait_probe == false);    // E430 off until the waitsites track's gates hold
     CHECK(c.engine.ee_runahead == 2);
     CHECK(c.engine.pacing == Pacing::Realtime);
     CHECK(c.engine.time_regime_pin == -1);
@@ -308,6 +309,7 @@ static void TestFingerprint() {
     c.diag.tick_census = true;           // an observer: excluded
     c.engine.mtvu_kick_drop = false;     // the worker's host scheduling: excluded
     c.engine.mtvu_early_finish = false;  // the FINISH raise / boundary scheduling (E425): excluded
+    c.engine.mtvu_wait_probe = true;     // the observation point's probe (E430): excluded
     CHECK(c.Fingerprint() == "engine.mtvu=off;video.scale=2;profile=default");
     // Hash semantics: FNV over each entry followed by ";".
     const std::string fp = c.Fingerprint();
@@ -341,6 +343,7 @@ static void TestDeterministicProfile() {
     CHECK(d.engine.pacing == Pacing::Freerun);                   // PS2_VBLANK_FREERUN=1
     CHECK(d.engine.mtvu == false);                               // PS2_MTVU=0
     CHECK(d.engine.mtvu_early_finish == false);                  // the parser-raised FINISH (E425 pinned off)
+    CHECK(d.engine.mtvu_wait_probe == false);                    // the unconditional idle loop (E430 pinned off)
     CHECK(d.engine.time_regime_pin == 1);                        // PS2_TIME_EMU_REGIME=1
     CHECK(d.cdvd.latency_model == CdvdLatencyModel::Instant);    // PS2_CDVD_INSTANT=1
     CHECK(d.cdvd.latency_scale == 0.0);                          // PS2_DVD_LATENCY_SCALE=0

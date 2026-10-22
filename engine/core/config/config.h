@@ -204,6 +204,17 @@ struct EngineConfig {
     // pictures/s p50 +3..+15 under host load, equal at the GS-consumer cap).
     // The deterministic profile pins it off (run.meta mtvu= early_finish).
     bool    mtvu_early_finish = true;
+    // E430 (MTVU only): the kernel-wait observation point (a blocking-class
+    // syscall entered with no other guest thread READY) asks the kernel object
+    // whether the wait would PARK before idling on the worker; a wait that
+    // returns at once (the semaphore the kick's FINISH handler signalled at this
+    // very entry) skips the idle loop. Without it the render thread sat behind
+    // the whole VU1 replay of the chain it had just kicked before a WaitSema
+    // that never blocked (Paris: 20 parks / 15 ms a frame = 100 % of vu1wait).
+    // Host scheduling only (what the EE observes is unchanged: the wait's body
+    // runs the same either way); fingerprint-excluded like mtvu_early_finish.
+    // Off until its gates hold (run.meta mtvu_waits= idle_nonblocking).
+    bool    mtvu_wait_probe = false;
     int     ee_runahead = 2;
     Pacing  pacing = Pacing::Realtime;
     int     time_regime_pin = -1;         // -1 = none (adaptive)
