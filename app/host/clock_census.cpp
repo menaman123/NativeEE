@@ -85,6 +85,18 @@ void ClockCensus::NotePresentAt(Clock::time_point now, uint64_t thread_cpu_ns) {
     if (have_cpu) gs_last_cpu_ns_ = thread_cpu_ns;
 }
 
+void ClockCensus::NoteMemory(uint64_t page_faults, uint64_t footprint_bytes) {
+    std::lock_guard<std::mutex> lk(mu_);
+    if (have_memory_ && started_) {
+        if (page_faults >= last_faults_) current_.faults += static_cast<uint32_t>(page_faults - last_faults_);
+        const int64_t d = static_cast<int64_t>(footprint_bytes) - static_cast<int64_t>(last_footprint_);
+        current_.footprint_kb += static_cast<int32_t>(d / 1024);
+    }
+    have_memory_ = true;
+    last_faults_ = page_faults;
+    last_footprint_ = footprint_bytes;
+}
+
 std::string ClockCensus::SeriesLocked(uint32_t Window::*field) const {
     std::string s;
     for (const Window& w : done_) {
@@ -117,6 +129,21 @@ std::string ClockCensus::EeCpuMsSeries() const {
 std::string ClockCensus::GsCpuMsSeries() const {
     std::lock_guard<std::mutex> lk(mu_);
     return SeriesLocked(&Window::gs_cpu_ms);
+}
+
+std::string ClockCensus::FaultsSeries() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    return SeriesLocked(&Window::faults);
+}
+
+std::string ClockCensus::FootprintKbSeries() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    std::string s;
+    for (const Window& w : done_) {
+        if (!s.empty()) s += ',';
+        s += std::to_string(w.footprint_kb);
+    }
+    return s;
 }
 
 uint64_t ClockCensus::EeCpuTotalMs() const {

@@ -114,6 +114,7 @@ public:
     // per frame with the platform ns clock). A first-use cost reads as the first
     // windows' decodes / ms standing above the steady state.
     struct WarmWindow {
+        uint32_t frames = 0;     // frame ends (RollWarmWindow calls) inside the window
         uint32_t lookups = 0;
         uint32_t decodes = 0;
         uint32_t decode_us = 0;
@@ -149,7 +150,7 @@ public:
     // Frame end on the consumer thread (`now_ns` = the platform's monotonic ns):
     // closes every whole second since the first call into the warm series.
     void RollWarmWindow(uint64_t now_ns);
-    // The closed windows as "lookups/decodes/decode_us/upload_us" per second,
+    // The closed windows as "frames/lookups/decodes/decode_us/upload_us" per second,
     // comma-separated (empty before the first closes).
     std::string WarmSeries() const;
     const std::vector<WarmWindow>& WarmWindows() const { return warm_done_; }

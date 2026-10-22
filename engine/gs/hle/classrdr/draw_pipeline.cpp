@@ -287,6 +287,7 @@ void DrawPipeline::FrameEndGrab(bool ee_frame_end, Frame* out) {
         d_.resolver->Trace().OnFrameEnd();
         d_.resolver->RollWarmWindow(frame_end_t0_);
     }
+    RollWarmWindow(frame_end_t0_);
     if (ee_frame_end) d_.presenter->MarkEeFrameEnd();
     d_.cache->FlushPending(PendingRtSyncLedger::Reason::Present, 0, 0, /*reader_pages_only=*/true);
     if (out && deferred_grab_) {
@@ -342,6 +343,56 @@ void DrawPipeline::FrameEndGrab(bool ee_frame_end, Frame* out) {
     }
 }
 
+// One frame end on the consumer thread: the backend census and the draw ordinal
+// since the previous frame end land in the current 1 s window; every whole
+// second since the first call closes a window.
+void DrawPipeline::RollWarmWindow(uint64_t now_ns) {
+    constexpr uint64_t kSecond = 1000000000ull;
+    if (warm_window_start_ns_ == 0) {
+        warm_window_start_ns_ = now_ns;
+    } else {
+        while (now_ns - warm_window_start_ns_ >= kSecond && warm_done_.size() < kWarmWindowsMax) {
+            warm_done_.push_back(warm_cur_);
+            warm_cur_ = WarmWindow{};
+            warm_window_start_ns_ += kSecond;
+        }
+    }
+    warm_cur_.frames++;
+    warm_cur_.draws += static_cast<uint32_t>(draw_seq_ - warm_last_draw_seq_);
+    warm_last_draw_seq_ = draw_seq_;
+    const render::CallCensus* census = d_.be->Census();
+    if (census) {
+        if (warm_have_census_) {
+            const render::CallCensus& a = warm_last_census_;
+            const render::CallCensus& b = *census;
+            auto d32 = [](uint64_t x, uint64_t y) { return static_cast<uint32_t>(y >= x ? y - x : 0); };
+            warm_cur_.draw_calls += d32(a.draw_calls, b.draw_calls);
+            warm_cur_.uploads += d32(a.uploads, b.uploads);
+            warm_cur_.upload_kb += d32(a.upload_bytes, b.upload_bytes) / 1024u;
+            warm_cur_.readbacks += d32(a.readbacks, b.readbacks);
+            warm_cur_.readback_kb += d32(a.readback_bytes, b.readback_bytes) / 1024u;
+            warm_cur_.copies += d32(a.copies, b.copies);
+            warm_cur_.program_binds += d32(a.program_binds, b.program_binds);
+            warm_cur_.framebuffer_binds += d32(a.framebuffer_binds, b.framebuffer_binds);
+            warm_cur_.texture_binds += d32(a.texture_binds, b.texture_binds);
+        }
+        warm_last_census_ = *census;
+        warm_have_census_ = true;
+    }
+}
+
+std::string DrawPipeline::WarmSeries() const {
+    std::string s;
+    for (const WarmWindow& w : warm_done_) {
+        if (!s.empty()) s += ',';
+        s += std::to_string(w.frames) + '/' + std::to_string(w.draws) + '/' + std::to_string(w.draw_calls) + '/' +
+             std::to_string(w.uploads) + '/' + std::to_string(w.upload_kb) + '/' + std::to_string(w.readbacks) + '/' +
+             std::to_string(w.readback_kb) + '/' + std::to_string(w.copies) + '/' + std::to_string(w.program_binds) + '/' +
+             std::to_string(w.framebuffer_binds) + '/' + std::to_string(w.texture_binds);
+    }
+    return s;
+}
+
 // The frame end's cost closes the route trace's frame (the grab, the reader-band
 // flush, the display deposit and the present all land in cost_frame_end).
 void DrawPipeline::CloseFrameTrace() {
@@ -373,10 +424,12 @@ void DrawPipeline::OnOwnedFrameEnd(bool ee_frame_end, uint32_t source_key) {
     d_.cache->FlushDeferred();
     route_trace_.OnFrameEnd();
     target_dump_.OnFrameEnd();
+    const uint64_t now = NowNs();
     if (d_.resolver) {
         d_.resolver->Trace().OnFrameEnd();
-        d_.resolver->RollWarmWindow(NowNs());
+        d_.resolver->RollWarmWindow(now);
     }
+    RollWarmWindow(now);
     if (ee_frame_end) d_.presenter->MarkEeFrameEnd();
     d_.presenter->RecordOwnedPresent(source_key);
 }

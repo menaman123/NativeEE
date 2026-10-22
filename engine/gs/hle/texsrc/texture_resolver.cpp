@@ -712,6 +712,7 @@ render::SurfaceId TextureResolver::DecodeAndUpload(const DrawIr& ir, const Conte
 void TextureResolver::RollWarmWindow(uint64_t now_ns) {
     if (warm_window_start_ns_ == 0) {
         warm_window_start_ns_ = now_ns;
+        warm_cur_.frames++;
         return;
     }
     constexpr uint64_t kSecond = 1000000000ull;
@@ -720,13 +721,14 @@ void TextureResolver::RollWarmWindow(uint64_t now_ns) {
         warm_cur_ = WarmWindow{};
         warm_window_start_ns_ += kSecond;
     }
+    warm_cur_.frames++;
 }
 
 std::string TextureResolver::WarmSeries() const {
     std::string s;
     for (const WarmWindow& w : warm_done_) {
         if (!s.empty()) s += ',';
-        s += std::to_string(w.lookups) + '/' + std::to_string(w.decodes) + '/' + std::to_string(w.decode_us) + '/' +
+        s += std::to_string(w.frames) + '/' + std::to_string(w.lookups) + '/' + std::to_string(w.decodes) + '/' + std::to_string(w.decode_us) + '/' +
              std::to_string(w.upload_us);
     }
     return s;
