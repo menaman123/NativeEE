@@ -125,7 +125,10 @@ void MetalDevice::Shutdown() {
     executor_.reset();
     for (auto& kv : surfaces_) ReleaseSurface(kv.second);
     surfaces_.clear();
+    for (auto& kv : readbacks_) if (kv.second.buf) [(id)kv.second.buf release];   // the GPU is idle (Commit(wait) above)
     readbacks_.clear();
+    for (auto& fb : free_readback_bufs_) [(id)fb.first release];
+    free_readback_bufs_.clear();
     for (auto& kv : scratch_depth_) [Tex(kv.second) release];
     scratch_depth_.clear();
     for (CaptureSlot& c : capture_) {
@@ -151,7 +154,7 @@ void MetalDevice::Shutdown() {
 Caps MetalDevice::QueryCaps() const {
     Caps c;
     c.max_texture_size = max_texture_size_;
-    c.staging_readback = false;
+    c.staging_readback = true;    // BeginReadback blits into a pooled shared buffer; Poll waits only if the GPU is behind
     c.reverse_subtract = true;
     c.depth_sample = true;
     c.texture_barrier = true;   // the framebuffer fetch: the destination read needs no copy
@@ -666,27 +669,90 @@ void MetalDevice::Readback(SurfaceId id, const Rect& rect, void* out, size_t str
     ReadTexture(*s, rect, out, stride);
 }
 
-FenceId MetalDevice::BeginReadback(SurfaceId id, const Rect& rect) {
-    const MetalSurface* s = Surface(id);
-    if (!s || rect.w <= 0 || rect.h <= 0) return FenceId{};
+// The deferred form: the blit lands in the OPEN command buffer (GPU-ordered after the
+// attachment's writes) into a pooled shared buffer; the command buffer is committed without a
+// wait so the GPU linearises the rows while the CPU encodes the next frame. Colour only
+// (RGBA8 / R8); a depth or out-of-bounds request takes the synchronous path into the buffer
+// so the fence still completes. Caps.staging_readback = true: the HLE layer defers deposits.
+FenceId MetalDevice::BeginReadback(SurfaceId sid, const Rect& rect) {   // `sid`: `id` is Objective-C's type below
+    MetalSurface* s = SurfaceMut(sid);
+    if (!s || !s->tex || rect.w <= 0 || rect.h <= 0) return FenceId{};
+    const size_t bpp = Bpp(s->desc.format);
     PendingReadback pr;
-    pr.stride = static_cast<size_t>(rect.w) * 4;
+    pr.stride = static_cast<size_t>(rect.w) * bpp;
     pr.rows = rect.h;
-    pr.bytes.resize(pr.stride * static_cast<size_t>(rect.h));
-    Readback(id, rect, pr.bytes.data(), pr.stride);
+    const size_t bytes = pr.stride * static_cast<size_t>(rect.h);
+    // A pooled buffer of enough capacity, else a new one.
+    for (size_t i = 0; i < free_readback_bufs_.size(); ++i) {
+        if (free_readback_bufs_[i].second >= bytes) {
+            pr.buf = free_readback_bufs_[i].first;
+            free_readback_bufs_[i] = free_readback_bufs_.back();
+            free_readback_bufs_.pop_back();
+            break;
+        }
+    }
+    if (!pr.buf) {
+        @autoreleasepool {
+            pr.buf = (void*)[(id<MTLDevice>)device_ newBufferWithLength:std::max<size_t>(bytes, 1u << 16)
+                                                                 options:MTLResourceStorageModeShared];
+        }
+        if (!pr.buf) return FenceId{};
+    }
+    const bool depth = s->desc.format == SurfaceFormat::Depth32f || s->desc.format == SurfaceFormat::DepthStencil24_8;
+    const bool in_bounds = rect.x >= 0 && rect.y >= 0 && uint64_t(rect.x) + uint32_t(rect.w) <= s->desc.width &&
+                           uint64_t(rect.y) + uint32_t(rect.h) <= s->desc.height;
+    if (depth || !in_bounds) {
+        // Not a blit's job: the synchronous read into the buffer; the fence is ready at once.
+        Readback(sid, rect, [(id<MTLBuffer>)pr.buf contents], pr.stride);
+        pr.serial = 0;
+    } else {
+        id<MTLBlitCommandEncoder> b = (id<MTLBlitCommandEncoder>)BlitEncoder();
+        [b copyFromTexture:Tex(s->tex) sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(rect.x, rect.y, 0)
+                sourceSize:MTLSizeMake(rect.w, rect.h, 1) toBuffer:(id<MTLBuffer>)pr.buf destinationOffset:0
+                destinationBytesPerRow:pr.stride destinationBytesPerImage:bytes];
+        pr.serial = serial_;
+        s->last_gpu_use = serial_;
+        Commit(/*wait=*/false);   // the GPU starts on it now; the caller polls a frame later
+        census_.readbacks++;
+        census_.readback_bytes += bytes;
+    }
     const uint64_t f = next_fence_++;
-    readbacks_[f] = std::move(pr);
+    readbacks_[f] = pr;
     return FenceId{f};
+}
+
+bool MetalDevice::ReadbackReady(FenceId fence) {
+    auto it = readbacks_.find(fence.id);
+    if (it == readbacks_.end()) return false;
+    return GpuIdle(it->second.serial);
 }
 
 bool MetalDevice::PollReadback(FenceId fence, void* out, size_t stride) {
     auto it = readbacks_.find(fence.id);
     if (it == readbacks_.end()) return false;
-    const PendingReadback& pr = it->second;
-    const size_t dst_stride = stride ? stride : pr.stride;
-    for (int r = 0; r < pr.rows; r++)
-        std::memcpy(static_cast<uint8_t*>(out) + dst_stride * r, pr.bytes.data() + pr.stride * r, std::min(pr.stride, dst_stride));
+    const PendingReadback pr = it->second;
     readbacks_.erase(it);
+    if (!out && !GpuIdle(pr.serial)) {
+        // Release-only (a dropped grab) while the blit is still in flight: no wait; the buffer
+        // dies with the command buffer's reference instead of rejoining the (GPU-idle) pool.
+        [(id)pr.buf release];
+        return true;
+    }
+    if (!GpuIdle(pr.serial)) {
+        census_.readback_waits++;
+        WaitSerial(pr.serial);
+    }
+    if (out) {
+        const size_t dst_stride = stride ? stride : pr.stride;
+        const uint8_t* src = static_cast<const uint8_t*>([(id<MTLBuffer>)pr.buf contents]);
+        if (dst_stride == pr.stride) {
+            std::memcpy(out, src, pr.stride * static_cast<size_t>(pr.rows));
+        } else {
+            for (int r = 0; r < pr.rows; r++)
+                std::memcpy(static_cast<uint8_t*>(out) + dst_stride * r, src + pr.stride * r, std::min(pr.stride, dst_stride));
+        }
+    }
+    free_readback_bufs_.emplace_back(pr.buf, static_cast<size_t>([(id<MTLBuffer>)pr.buf length]));
     return true;
 }
 
