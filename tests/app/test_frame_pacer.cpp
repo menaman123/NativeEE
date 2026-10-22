@@ -104,6 +104,7 @@ int main() {
         CHECK(shown.size() == 120, "60 Hz game under Hz60: %zu shown", shown.size());
         CHECK(AllNear(Gaps(shown), kField, 1), "every gap one field");
         CHECK(p.Count().superseded == 0 && p.Count().held == 0 && p.Count().slipped == 0, "census clean: %s", p.CensusRow().c_str());
+        CHECK(p.Count().doubled == 0, "no doubled frame on cadence: %s", p.CensusRow().c_str());
     }
     // Hz60 with a JITTERY 60 Hz producer (0..4 ms after its cadence, pseudo-random): the train slips
     // to the latest arrival a few times, then every picture is early and waits -- no gap reaches two
@@ -144,6 +145,7 @@ int main() {
         CHECK(rest_steady, "every other gap exactly one field");
         CHECK(p.Count().slipped == 1 && p.Count().slip_ns == 3 * kMs && p.Count().held == 0 && p.Count().superseded == 0,
               "census: %s", p.CensusRow().c_str());
+        CHECK(p.Count().doubled == 0, "a 3 ms slip (19.7 ms gap) is under the 1.2-field doubled line: %s", p.CensusRow().c_str());
     }
     // A consumer catch-up BURST: one picture 4 ms late, the next two 12 ms apart, then the cadence
     // again -- the FIFO shows them at consecutive edges: no gap over one field + 4 ms, nothing
@@ -169,6 +171,7 @@ int main() {
         const auto g = Gaps(shown);
         CHECK(shown.size() == 29 && g[14] == 2 * kField, "the miss: gap %llu", static_cast<unsigned long long>(g[14]));
         CHECK(p.Count().held == 1 && p.Count().slipped == 1 && p.Count().slip_ns == 0, "census: %s", p.CensusRow().c_str());
+        CHECK(p.Count().doubled == 1, "the miss is the one doubled frame (the F1 counter): %s", p.CensusRow().c_str());
     }
     // Three pictures inside one period (the harness drops the oldest): superseded counted once.
     {
@@ -190,6 +193,7 @@ int main() {
         CHECK(AllNear(Gaps(shown), 2 * kField, 1), "every gap two fields");
         CHECK(p.Count().superseded >= 58 && p.Count().held == 0, "superseded %llu held %llu",
               static_cast<unsigned long long>(p.Count().superseded), static_cast<unsigned long long>(p.Count().held));
+        CHECK(p.Count().doubled == 0, "Hz30's own 33 ms cadence is not a doubled frame: %s", p.CensusRow().c_str());
     }
     // Hz30 with a 40 fps game (irregular: 20 / 30 ms alternating): every gap STILL 33.33 ms --
     // the steadiness the cap buys; one of every four pictures superseded.
@@ -246,7 +250,7 @@ int main() {
         q.Admit(kMs, kMs);                                 // anchor + admit; next edge 2 fields + 1 ms
         q.Admit(4 * kField + 2 * kMs, 4 * kField + kMs);   // 2 fields + 1 ms behind: one empty period held, slipped 1 ms
         q.Supersede();
-        CHECK(q.CensusRow() == "cap=30:admitted=2:held=1:superseded=1:late=0:slipped=1:slip_ms=1", "row: %s", q.CensusRow().c_str());
+        CHECK(q.CensusRow() == "cap=30:admitted=2:held=1:superseded=1:late=0:slipped=1:slip_ms=1:doubled=1", "row: %s", q.CensusRow().c_str());
     }
     std::printf("test_frame_pacer: %d checks, %d failures\n", g_checks, g_fails);
     return g_fails ? 1 : 0;

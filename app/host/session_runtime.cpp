@@ -150,6 +150,7 @@ void SessionRuntime::Publish() {
     status_.frame = frame_.load();
     status_.game_hz = game_hz_.load();
     status_.render_fps = render_fps_.load();
+    status_.doubled_frames = doubled_frames_.load(std::memory_order_relaxed);
     status_.paused = paused_.load();
     status_.volume_percent = volume_.load();
     status_.fullscreen = window_.Fullscreen();
@@ -682,6 +683,7 @@ int SessionRuntime::Run(std::function<int()> game, unsigned shutdown_seconds) {
         // picture (the menu, the overlays) between edges.
         if (pacer_.Admit(now, pending_frame_.posted_ns)) {
             window_.Upload(pending_frame_.rgba, pending_frame_.width, pending_frame_.height);
+            doubled_frames_.store(pacer_.Count().doubled, std::memory_order_relaxed);
             pending_frame_ = std::move(queued_frame_);
             queued_frame_ = {};
             picture_fresh_ = true;

@@ -31,7 +31,9 @@
 // Census: admitted / held (whole periods that passed with no picture available: the
 // production's own misses) / superseded / late (the PUMP fell a period behind with a
 // picture already waiting: a display swap, a stalled main) / slipped (re-anchors to
-// a late picture) / slip_ns (their summed lateness).
+// a late picture) / slip_ns (their summed lateness) / doubled (a shown picture more
+// than 1.2 periods after the previous one: the previous stood a period too long -- the
+// F1 menu's live doubled-frame counter; under Hz60 the judge's ">20 ms" gate in-process).
 #pragma once
 
 #include <cstdint>
@@ -74,14 +76,17 @@ public:
         uint64_t late = 0;         // pump fell a period behind with a picture waiting (re-anchored)
         uint64_t slipped = 0;      // train re-anchored to a picture posted after its edge
         uint64_t slip_ns = 0;      // the summed lateness of the slips
+        uint64_t doubled = 0;      // shown pictures > 1.2 periods after the previous (a doubled frame; Off: fields)
     };
     const Census& Count() const { return n_; }
-    // "cap=60:admitted=n:held=n:superseded=n:late=n:slipped=n:slip_ms=n"
+    // "cap=60:admitted=n:held=n:superseded=n:late=n:slipped=n:slip_ms=n:doubled=n"
     std::string CensusRow() const;
 
 private:
+    void NoteShown(uint64_t now_ns);
     Cap cap_ = Cap::Hz60;
-    uint64_t next_edge_ = 0;   // 0 = unanchored
+    uint64_t next_edge_ = 0;       // 0 = unanchored
+    uint64_t last_shown_ns_ = 0;   // the previous admission (the doubled-frame census)
     Census n_;
 };
 

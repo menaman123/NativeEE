@@ -35,7 +35,7 @@ uint64_t FramePacer::PeriodNs() const {
 bool FramePacer::Admit(uint64_t now_ns, uint64_t posted_ns) {
     const uint64_t period = PeriodNs();
     if (period == 0) {
-        if (posted_ns) ++n_.admitted;
+        if (posted_ns) NoteShown(now_ns);
         return posted_ns != 0;
     }
     // Nothing waiting: nothing to decide. An edge already passed stays OPEN (the train
@@ -59,8 +59,18 @@ bool FramePacer::Admit(uint64_t now_ns, uint64_t posted_ns) {
     } else {
         next_edge_ += period;   // on time: the train stays
     }
-    ++n_.admitted;
+    NoteShown(now_ns);
     return true;
+}
+
+void FramePacer::NoteShown(uint64_t now_ns) {
+    ++n_.admitted;
+    // A doubled frame: this picture came more than 1.2 periods after the previous shown one
+    // (Hz60 / Off: 20 ms, the judge's gate; Hz30: 40 ms, its own cadence is not a double) --
+    // the previous picture stood a period too long.
+    const uint64_t period = PeriodNs() ? PeriodNs() : kFieldNs;
+    if (last_shown_ns_ != 0 && now_ns > last_shown_ns_ && now_ns - last_shown_ns_ > period + period / 5) ++n_.doubled;
+    last_shown_ns_ = now_ns;
 }
 
 uint64_t FramePacer::ToNextEdge(uint64_t now_ns) const {
@@ -71,7 +81,8 @@ uint64_t FramePacer::ToNextEdge(uint64_t now_ns) const {
 std::string FramePacer::CensusRow() const {
     return std::string("cap=") + CapName(cap_) + ":admitted=" + std::to_string(n_.admitted) + ":held=" + std::to_string(n_.held) +
            ":superseded=" + std::to_string(n_.superseded) + ":late=" + std::to_string(n_.late) +
-           ":slipped=" + std::to_string(n_.slipped) + ":slip_ms=" + std::to_string(n_.slip_ns / 1000000);
+           ":slipped=" + std::to_string(n_.slipped) + ":slip_ms=" + std::to_string(n_.slip_ns / 1000000) +
+           ":doubled=" + std::to_string(n_.doubled);
 }
 
 }  // namespace ps2r::app

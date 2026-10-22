@@ -53,6 +53,9 @@ public:
         // second (60 when the game keeps wall speed) and frames presented per second.
         uint32_t game_hz = 0;
         uint32_t render_fps = 0;
+        // The presenter's doubled frames so far (FramePacer census: a shown picture > 1.2
+        // fields after the previous) -- the F1 menu's live pacing readout.
+        uint64_t doubled_frames = 0;
         bool paused = false;
         int volume_percent = 100;
         bool fullscreen = false;

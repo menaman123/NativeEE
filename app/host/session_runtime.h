@@ -276,6 +276,7 @@ private:
     std::function<void(std::chrono::steady_clock::time_point, bool)> present_observer_;
     bool picture_fresh_ = false;   // a picture uploaded since the last draw (the observer's new_picture)
     std::atomic<uint64_t> presents_{0};
+    std::atomic<uint64_t> doubled_frames_{0};   // the pacer's doubled census, published for Publish()
     std::atomic<uint64_t> display_swaps_{0}, display_swap_max_us_{0}, display_swap_total_us_{0};
     Persist persist_;
     std::string window_dump_dir_;

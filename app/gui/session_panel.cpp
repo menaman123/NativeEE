@@ -39,8 +39,9 @@ void ResultLine(const SessionControls::Result& result) {
 
 void SessionPanel::DrawSession(SessionControls& controls, const SessionControls::Snapshot& snapshot) {
     const bool pause_busy = Busy(snapshot, Action::TogglePause) || Busy(snapshot, Action::Step);
-    ImGui::Text("%s  |  Game tick %llu  |  game %u Hz  |  render %u fps", snapshot.runtime.paused ? "Paused" : "Playing",
-                static_cast<unsigned long long>(snapshot.runtime.frame), snapshot.runtime.game_hz, snapshot.runtime.render_fps);
+    ImGui::Text("%s  |  Game tick %llu  |  game %u Hz  |  render %u fps  |  doubled %llu", snapshot.runtime.paused ? "Paused" : "Playing",
+                static_cast<unsigned long long>(snapshot.runtime.frame), snapshot.runtime.game_hz, snapshot.runtime.render_fps,
+                static_cast<unsigned long long>(snapshot.runtime.doubled_frames));
     ImGui::BeginDisabled(!snapshot.capabilities.pause || pause_busy || snapshot.closing);
     if (ImGui::Button(snapshot.runtime.paused ? "Resume (F9)" : "Pause (F9)"))
         controls.Submit(Action::TogglePause);
@@ -87,6 +88,8 @@ void SessionPanel::DrawPerfOverlay(const SessionControls::Snapshot& snapshot) {
     if (ImGui::Begin("Performance", nullptr, flags)) {
         ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "game %u Hz", snapshot.runtime.game_hz);
         ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "render %u fps", snapshot.runtime.render_fps);
+        // The pacer's doubled frames so far: a picture shown > 1.2 fields after the previous one.
+        ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "doubled %llu", static_cast<unsigned long long>(snapshot.runtime.doubled_frames));
     }
     ImGui::End();
     ImGui::PopStyleColor();
