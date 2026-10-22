@@ -82,6 +82,18 @@ bool BlendFfMap::Equal(const FfBlendMap& x, const FfBlendMap& y) {
            x.src_rgb == y.src_rgb && x.dst_rgb == y.dst_rgb;
 }
 
+bool BlendFfMap::Unified(const FfBlendMap& m) {
+    if (!m.matched || m.uses_fix || m.eq_rgb != kGlFuncAdd) return false;
+    const bool src_ok = m.src_rgb == kGlSrc1Alpha || m.src_rgb == kGlOne || m.src_rgb == kGlZero;
+    const bool dst_ok = m.dst_rgb == kGlOneMinusSrc1Alpha || m.dst_rgb == kGlOne || m.dst_rgb == kGlZero;
+    // 0201 -- (SRC1, ONE), Cs * As + Cd -- is NOT unified: with the destination factor
+    // formed as 1 - 0 on the SRC1 path instead of the constant ONE, 39 of 301 Paris
+    // frames moved one pixel by one LSB (the driver's blend arithmetic for a constant
+    // ONE factor differs in rounding from the general path). It keeps its own state.
+    if (m.src_rgb == kGlSrc1Alpha && m.dst_rgb == kGlOne) return false;
+    return src_ok && dst_ok;
+}
+
 bool BlendFfMap::RouteWrapBlend(bool alpha_blend, bool colclamp) {
     return alpha_blend && !colclamp;
 }

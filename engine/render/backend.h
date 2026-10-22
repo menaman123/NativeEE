@@ -38,6 +38,7 @@ struct Caps {
     bool compute = false;
     bool copy_pack5551 = false;      // CopyRect honours kCopyPack5551 (a GPU pass); false = the caller's CPU route
     bool alpha_lane_write = false;   // WriteAlphaLane is a GPU pass; false = the caller's CPU route
+    bool dual_source_blend = false;  // a second fragment output feeds the blend factors (GL_SRC1_*)
 };
 
 struct SurfaceId {
@@ -194,6 +195,8 @@ struct CallCensus {
     uint64_t submits = 0;            // command buffers committed (backends that batch work)
     uint64_t gpu_ns = 0;             // GPU busy time of the completed command buffers (backends that report it)
     uint64_t readback_waits = 0;     // PollReadback calls that found the GPU not yet done (a wait)
+    uint64_t state_sets = 0;         // fixed-function state calls ISSUED (blend / depth / mask / scissor / viewport / enable)
+    uint64_t uniform_sets = 0;       // uniform calls ISSUED (the shadow caches skip the rest)
 };
 
 // Surface preserves retained callers' sampling. Owned presentation declares

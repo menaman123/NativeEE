@@ -70,6 +70,7 @@ bool StreamReplayDriver::CreateContext() {
         renderer_name_ = ctx_.Renderer() ? ctx_.Renderer() : "";
         if (opt_.cd_barrier) gl_.SetCdCopyByBarrier(true);
         if (opt_.force_shader_blend) gl_.SetForceShaderBlend(true);
+        if (opt_.unified_blend >= 0) gl_.SetUnifiedBlend(opt_.unified_blend != 0);
     }
     be_->SetWindowSize(kNativeWindowW, kNativeWindowH);
     be_->ArmPresentCapture(true);   // play: every Present's window image is read back for the session window
@@ -116,6 +117,7 @@ void StreamReplayDriver::BuildScene() {
     consumer_ = std::make_unique<gs::DrawIrQueueConsumer>(*pipe_, std::move(hooks));
     consumer_->SetFrameHashScale(scale);   // play: the frames-lane hash where the grab is made
     consumer_->SetGrabDeferred(opt_.deferred_grab);   // play (pipelined): the grab queued, published one boundary late
+    consumer_->SetCoalesce(opt_.coalesce);
 }
 
 void StreamReplayDriver::Teardown() {
@@ -340,7 +342,7 @@ int StreamReplayDriver::Run() {
                 // render-target / depth state the limited frame starts from is the real one).
                 if (!opt_.draw_limit || !DrawLimitApplies(static_cast<uint32_t>(frames_.size())) ||
                     frame_draws_ < opt_.draw_limit)
-                    consumer_->OnDraw(rec.draw);
+                    consumer_->OnDrawOwned(std::move(rec.draw));   // the record is re-read next pop
                 ++frame_draws_;
                 break;
             case gs::GsStreamFormat::kJob:
@@ -423,6 +425,16 @@ void StreamReplayDriver::WriteOutputs() const {
                     static_cast<unsigned long long>(c->buffer_maps),
                     static_cast<unsigned long long>(c->submits), static_cast<double>(c->gpu_ns) * 1e-6);
     if (pipe_) pipe_->EmitCounters(stdout);
+    {
+        const gs::DrawCoalescer::Counters& k = consumer_->CoalesceCount();
+        std::printf("[GS-COALESCE] %s in=%llu passed=%llu out=%llu absorbed=%llu runs=%llu pairs=%llu "
+                    "reject_orphan_z=%llu reject_colour=%llu reject_state=%llu\n",
+                    consumer_->Coalesce() ? "on" : "off", static_cast<unsigned long long>(k.in),
+                    static_cast<unsigned long long>(k.passed), static_cast<unsigned long long>(k.out),
+                    static_cast<unsigned long long>(k.absorbed), static_cast<unsigned long long>(k.runs),
+                    static_cast<unsigned long long>(k.pairs), static_cast<unsigned long long>(k.reject_orphan_z),
+                    static_cast<unsigned long long>(k.reject_colour), static_cast<unsigned long long>(k.reject_state));
+    }
     std::printf("STREAM_HASH %016llx\n", static_cast<unsigned long long>(stream_hash_));
     if (opt_.csv_path) {
         if (std::FILE* f = std::fopen(opt_.csv_path, "w")) {

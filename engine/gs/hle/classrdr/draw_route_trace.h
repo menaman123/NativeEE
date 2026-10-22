@@ -38,6 +38,7 @@ public:
         uint32_t copies = 0, copy_bytes = 0;
         uint32_t uploads = 0, upload_bytes = 0;
         uint32_t draw_calls = 0, texture_binds = 0, program_binds = 0, framebuffer_binds = 0;
+        uint32_t state_sets = 0, uniform_sets = 0;   // GL calls the shadow caches did NOT elide
         // Census b - a (the deltas over a bracket; a null census reads zero).
         static Cost Delta(const render::CallCensus* a, const render::CallCensus* b, uint64_t ns);
         void Add(const Cost& o);

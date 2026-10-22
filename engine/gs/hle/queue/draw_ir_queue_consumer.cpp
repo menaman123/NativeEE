@@ -12,6 +12,7 @@ DrawIrQueueConsumer::DrawIrQueueConsumer(DrawPipeline& pipe, Hooks hooks) : pipe
 
 bool DrawIrQueueConsumer::RunOrdered(const std::function<bool()>& work) {
     if (!work) return false;
+    FlushCoalesced();
     Enter();
     return work();
 }
@@ -40,7 +41,7 @@ void DrawIrQueueConsumer::DrainPendingUpload() {
     n_.uploads++;
 }
 
-void DrawIrQueueConsumer::OnDraw(const DrawIr& ir) {
+void DrawIrQueueConsumer::Deliver(const DrawIr& ir) {
     Enter();
     Stamp(ir.src_frame, ir.vram_epoch);
     const char* name = nullptr;
@@ -49,7 +50,51 @@ void DrawIrQueueConsumer::OnDraw(const DrawIr& ir) {
     n_.draws++;
 }
 
+void DrawIrQueueConsumer::FlushCoalesced() {
+    if (!coalescer_.Pending()) return;
+    coalescer_.Flush(&coalesced_);
+    for (const DrawIr& d : coalesced_) Deliver(d);
+    coalesced_.clear();
+}
+
+void DrawIrQueueConsumer::SetCoalesce(bool on) {
+    if (!on) FlushCoalesced();
+    coalesce_ = on;
+}
+
+void DrawIrQueueConsumer::OnDraw(const DrawIr& ir) {
+    if (!coalesce_) {
+        Deliver(ir);
+        return;
+    }
+    // The held copy is a 2-vertex record (InkCandidate); anything else passes through.
+    if (!DrawCoalescer::InkCandidate(ir)) {
+        FlushCoalesced();
+        Deliver(ir);
+        return;
+    }
+    OnDrawOwned(DrawIr(ir));
+}
+
+void DrawIrQueueConsumer::OnDrawOwned(DrawIr&& ir) {
+    if (!coalesce_) {
+        Deliver(ir);
+        return;
+    }
+    // Push either keeps the draw or hands back the run before it (coalesced_), to be
+    // delivered ahead of this one.
+    if (coalescer_.Push(std::move(ir), &coalesced_)) {
+        for (const DrawIr& d : coalesced_) Deliver(d);
+        coalesced_.clear();
+        return;
+    }
+    for (const DrawIr& d : coalesced_) Deliver(d);
+    coalesced_.clear();
+    Deliver(ir);
+}
+
 void DrawIrQueueConsumer::OnJob(const JobRec& j) {
+    FlushCoalesced();
     Enter();
     Stamp(j.src_frame, j.vram_epoch);
     n_.jobs++;
@@ -101,6 +146,7 @@ void DrawIrQueueConsumer::HashAndPublish(DrawPipeline::Frame* grab) {
 }
 
 bool DrawIrQueueConsumer::FlushPendingGrab() {
+    FlushCoalesced();
     if (!pipe_.GrabPending()) return false;
     Enter();
     if (!pipe_.CompletePendingGrab(&scratch_)) return false;
@@ -110,6 +156,7 @@ bool DrawIrQueueConsumer::FlushPendingGrab() {
 }
 
 void DrawIrQueueConsumer::OnFrame(const JobRec& vsync) {
+    FlushCoalesced();
     Enter();
     Stamp(vsync.src_frame + 1, vsync.vram_epoch);
     bool presentable = pipe_.Scanout().ScanoutFbp() != DrawPipeline::kNoFbp;

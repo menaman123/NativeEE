@@ -20,6 +20,8 @@ DrawRouteTrace::Cost DrawRouteTrace::Cost::Delta(const render::CallCensus* a, co
     c.texture_binds = d32(a->texture_binds, b->texture_binds);
     c.program_binds = d32(a->program_binds, b->program_binds);
     c.framebuffer_binds = d32(a->framebuffer_binds, b->framebuffer_binds);
+    c.state_sets = d32(a->state_sets, b->state_sets);
+    c.uniform_sets = d32(a->uniform_sets, b->uniform_sets);
     return c;
 }
 
@@ -30,6 +32,7 @@ void DrawRouteTrace::Cost::Add(const Cost& o) {
     uploads += o.uploads; upload_bytes += o.upload_bytes;
     draw_calls += o.draw_calls; texture_binds += o.texture_binds;
     program_binds += o.program_binds; framebuffer_binds += o.framebuffer_binds;
+    state_sets += o.state_sets; uniform_sets += o.uniform_sets;
 }
 
 void DrawRouteTrace::Note(const DrawIr& ir, const TextureSource& src, const render::DrawResult& res,
@@ -93,9 +96,10 @@ void DrawRouteTrace::Write(std::FILE* f) const {
     auto row = [f](const char* tag, const Cost& c, size_t n) {
         std::fprintf(f,
                      "%s n=%zu us=%llu readbacks=%u readback_bytes=%u copies=%u copy_bytes=%u uploads=%u "
-                     "upload_bytes=%u draw_calls=%u tex_binds=%u prog_binds=%u fbo_binds=%u\n",
+                     "upload_bytes=%u draw_calls=%u tex_binds=%u prog_binds=%u fbo_binds=%u state_sets=%u uniform_sets=%u\n",
                      tag, n, (unsigned long long)(c.ns / 1000), c.readbacks, c.readback_bytes, c.copies, c.copy_bytes,
-                     c.uploads, c.upload_bytes, c.draw_calls, c.texture_binds, c.program_binds, c.framebuffer_binds);
+                     c.uploads, c.upload_bytes, c.draw_calls, c.texture_binds, c.program_binds, c.framebuffer_binds,
+                     c.state_sets, c.uniform_sets);
     };
     row("cost_draws", sum, last_.size());
     row("cost_frame_end", last_frame_end_, 1);
@@ -114,13 +118,13 @@ void DrawRouteTrace::Write(std::FILE* f) const {
                      "seq=%u vf=%u prim=%u abe=%u tex=%u ALPHA=%u%u%u%u fix=%02x tfx=%u tcc=%u "
                      "TEST(ate=%u atst=%u aref=%02x afail=%u date=%u zte=%u ztst=%u) zmsk=%u cc=%u pabe=%u fba=%u "
                      "FRAME=%06x fbmsk=%08x TEX=%06x psm=%u cbp=%06x owner=%s fmt=%u verts=%u rgba0=%08x "
-                     "drew=%u blend=%s rtcopy=%u copied=%u wrap=%u m16=%u ns=%llu rb=%u cp=%u up=%u upb=%u dc=%u\n",
+                     "drew=%u blend=%s rtcopy=%u copied=%u wrap=%u m16=%u ns=%llu rb=%u cp=%u up=%u upb=%u dc=%u ss=%u us=%u\n",
                      l.seq, l.src_frame, l.prim, l.abe, l.tex, l.a, l.b, l.c, l.d, l.fix, l.tfx, l.tcc, l.ate,
                      l.atst, l.aref, l.afail, l.date, l.zte, l.ztst, l.zmsk, l.colclamp, l.pabe, l.fba, l.fbp,
                      l.fbmsk, l.tbp, l.tpsm, l.cbp, owner, l.fmt_case, l.verts, l.rgba0, l.drew ? 1 : 0, blend,
                      l.needs_rt_copy ? 1 : 0, l.cd_copied ? 1 : 0, l.wrap_route ? 1 : 0,
                      l.fbmsk16_exact ? 1 : 0, (unsigned long long)l.cost.ns, l.cost.readbacks, l.cost.copies,
-                     l.cost.uploads, l.cost.upload_bytes, l.cost.draw_calls);
+                     l.cost.uploads, l.cost.upload_bytes, l.cost.draw_calls, l.cost.state_sets, l.cost.uniform_sets);
     }
 }
 

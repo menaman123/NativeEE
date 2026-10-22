@@ -76,12 +76,14 @@ public:
                                            // boundary, or the stream's end) -- row-for-row comparable to the sync run
         bool swap_hidden_window = false;   // --swap: SDL_GL_SwapWindow on the hidden window instead of a flush
         bool cd_barrier = false;           // --cd-barrier: the NV_texture_barrier destination read (not tile-coherent on Apple)
+        bool coalesce = true;              // --no-coalesce: every record delivered as it arrives (DrawIrQueueConsumer::SetCoalesce)
         bool metal = false;                // --backend metal: the Metal device (macOS builds; exit 77 when absent)
         bool metal_hw_depth = false;       // --metal-hw-depth: the rasterizer's depth instead of the shader-written one
         uint32_t metal_commit_draws = 256; // --metal-commit-draws N: draws per command buffer (0 = one per frame)
         uint32_t trace_draw = 0xFFFFFFFFu; // --trace-draw N@F: print draw N (0-based) of frame F (registers + vertices) on stderr
         uint32_t trace_draw_frame = 0;
         bool force_shader_blend = false;   // --force-shader-blend: GL's exact shader blend on every blended draw
+        int unified_blend = -1;            // --unified-blend 1 / --no-unified-blend 0: GlDevice::SetUnifiedBlend (-1 = the default)
         uint32_t draw_limit = 0;           // --draw-limit N[@F]: only the first N draws of frame F (default: every dumped frame) reach the consumer (0 = all; a bisection aid)
         uint32_t draw_limit_frame = kDrawLimitDumpRange;
     };

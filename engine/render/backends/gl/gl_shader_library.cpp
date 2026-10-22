@@ -165,6 +165,7 @@ void GlShaderLibrary::LookupLocations() {
     loc_.blend_d = L("u_blend_d");
     loc_.fix_alpha = L("u_fix_alpha");
     loc_.blend_enabled = L("u_blend_enabled");
+    loc_.ff_unified = L("u_ff_unified");
     loc_.tfx = L("u_tfx");
     loc_.tcc = L("u_tcc");
     loc_.fba = L("u_fba");

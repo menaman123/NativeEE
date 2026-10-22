@@ -43,6 +43,15 @@ bool GlDevice::Init(std::function<void()> swap) {
     swap_ = std::move(swap);
     state_.InvalidateAll();
     state_.SetCensus(&census_);
+    uniforms_.SetCensus(&census_);
+    // Dual-source blending (GL 3.3 core): the PS2 program's second fragment output
+    // carries the blend factors. Required by the fixed-function blend arm as is;
+    // the unified blend state (one state for every FUNC_ADD tuple) is gated on it too.
+    {
+        GLint dual = 0;
+        glGetIntegerv(GL_MAX_DUAL_SOURCE_DRAW_BUFFERS, &dual);
+        dual_source_ = dual >= 1;
+    }
     if (!shaders_.Build(uniforms_)) return false;
     if (!vertices_.Init(state_)) return false;
 
@@ -181,6 +190,7 @@ Caps GlDevice::QueryCaps() const {
     c.compute = false;
     c.copy_pack5551 = shaders_.Pack5551Program() != 0;
     c.alpha_lane_write = shaders_.AlphaLaneProgram() != 0;
+    c.dual_source_blend = dual_source_;
     return c;
 }
 

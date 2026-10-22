@@ -168,8 +168,10 @@ int main() {
     dev.Present(sd);
     CHECK(glGetError() == GL_NO_ERROR, "no GL error");
 
-    // Post-draw mask reset: a PSMCT24 draw (alpha mask FALSE) with ZBUF.ZMSK (depth mask
-    // FALSE) must leave colour and depth writable for the raw GL pass that follows.
+    // The write masks stay as the draw left them (no per-draw reset: it cost two GL
+    // calls per draw): a PSMCT24 draw (alpha mask FALSE) with ZBUF.ZMSK (depth mask
+    // FALSE) leaves them closed, and the device's own raw passes set their masks --
+    // GlDevice::Clear here (the production route) writes alpha and depth.
     ir.raster.scissor = {0, 0, 63, 63};
     ir.raster.frame.psm = 0x01;
     ir.raster.zbuf.zmsk = true;
@@ -180,13 +182,18 @@ int main() {
     CHECK(fb[2] == 255 && fb[3] == 0x80, "CT24 draw wrote blue and left alpha untouched");
     dev.BindTarget(color, depth);
     dev.State().Disable(GL_SCISSOR_TEST);
-    glClearColor(0.f, 0.f, 0.f, 0x77 / 255.0f);   // raw: no mask calls of its own
+    glClearColor(0.f, 0.f, 0.f, 0x77 / 255.0f);   // raw, no mask calls: the draw's masks hold
     glClearDepth(0.5);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     dev.Readback(color, render::Rect{8, 8, 1, 1}, fb.data(), 4);
-    CHECK(fb[0] == 0 && fb[2] == 0 && fb[3] == 0x77, "alpha writable again after the CT24 draw");
+    CHECK(fb[0] == 0 && fb[2] == 0 && fb[3] == 0x80, "a raw clear after the CT24 draw cannot write alpha (mask kept)");
     dev.Readback(depth, render::Rect{8, 8, 1, 1}, zb.data(), 4);
-    CHECK(zb[0] == 0.5f, "depth writable again after the ZMSK draw");
+    CHECK(zb[0] != 0.5f, "a raw clear after the ZMSK draw cannot write depth (mask kept)");
+    dev.Clear(color, depth, 0x77000000u, 0.5f, render::kClearColor | render::kClearDepth);
+    dev.Readback(color, render::Rect{8, 8, 1, 1}, fb.data(), 4);
+    CHECK(fb[0] == 0 && fb[2] == 0 && fb[3] == 0x77, "GlDevice::Clear sets its own colour mask: alpha written");
+    dev.Readback(depth, render::Rect{8, 8, 1, 1}, zb.data(), 4);
+    CHECK(zb[0] == 0.5f, "GlDevice::Clear sets its own depth mask: depth written");
 
     // The TEST register's static alpha-test arm (GS User's Manual: ATST NEVER fails
     // every pixel, AFAIL names what is still updated). The GS Z-clear idiom -- a

@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "engine/gs/hle/classrdr/draw_pipeline.h"
+#include "engine/gs/hle/ir/draw_coalescer.h"
 #include "engine/gs/hle/ir/draw_ir_sink.h"
 #include "engine/gs/hle/present/crtc_classifier.h"
 
@@ -79,6 +80,9 @@ public:
     DrawIrQueueConsumer(DrawPipeline& pipe, Hooks hooks);
 
     void OnDraw(const DrawIr& draw) override;
+    // The queue / replay driver hand the record over: a coalescer candidate is held
+    // without a vertex copy.
+    void OnDrawOwned(DrawIr&& draw) override;
     void OnJob(const JobRec& job) override;
     void OnFrame(const JobRec& vsync) override;
 
@@ -120,6 +124,12 @@ public:
     DrawPipeline& Pipeline() { return pipe_; }
     const Counters& Count() const { return n_; }
     bool HasPendingUpload() const { return pending_.valid; }
+    // DrawCoalescer (gs/hle/ir): runs of draws that are one draw's pixels fold into
+    // one record before the pipeline (the ink line pairs). Off = every record is
+    // delivered as it arrives (the A/B of one binary against itself). On by default.
+    void SetCoalesce(bool on);
+    bool Coalesce() const { return coalesce_; }
+    const DrawCoalescer::Counters& CoalesceCount() const { return coalescer_.Count(); }
 
 private:
     struct PendingUpload {
@@ -130,6 +140,8 @@ private:
     void Enter();
     void DrainPendingUpload();
     void Stamp(uint32_t src_frame, uint64_t vram_epoch);
+    void Deliver(const DrawIr& ir);        // the pipeline's draw (after the coalescer)
+    void FlushCoalesced();                 // the pending run, before any other event
     void HashAndPublish(DrawPipeline::Frame* grab);   // the lane hash, then the swap into frame_ under the lock
 
     DrawPipeline& pipe_;
@@ -140,6 +152,9 @@ private:
     DrawPipeline::Frame scratch_;          // the grab in progress (consumer-owned)
     mutable std::mutex frame_mu_;          // guards the publish / LastFrameCopy
     int hash_scale_ = 0;
+    bool coalesce_ = true;
+    DrawCoalescer coalescer_;
+    std::vector<DrawIr> coalesced_;        // the run's output, delivered in order
 };
 
 }  // namespace gs

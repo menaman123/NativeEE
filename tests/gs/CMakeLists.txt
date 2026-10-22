@@ -71,6 +71,10 @@ ps2r_gs_ir_test(test_halfword_shuffle)
 add_test(NAME GsHalfwordShuffle COMMAND test_halfword_shuffle)
 ps2r_gs_ir_test(test_prim_expand)
 add_test(NAME GsPrimExpand COMMAND test_prim_expand)
+# DrawCoalescer: the ink line-pair fold (A lane then B lane), its boundaries (any register
+# but AFAIL, target, colour, frame / epoch, a non-candidate, Flush) and the orphan-B rule.
+ps2r_gs_ir_test(test_draw_coalescer)
+add_test(NAME GsDrawCoalescer COMMAND test_draw_coalescer)
 set_tests_properties(GsHalfwordShuffle PROPERTIES TIMEOUT 60)
 
 # G1: every .gsdl struct size / field offset (compile-time and run-time), the hash

@@ -31,7 +31,7 @@ int Usage() {
                  "usage: gs_replay stream <in.gsstream> [--scale N] [--warmup N] [--max-frames N]\n"
                  "                 [--csv f] [--json f] [--dump-ppm DIR] [--dump-frames a-b] [--no-grab] [--deferred-grab] [--phash]\n"
                  "                 [--quiet] [--sync-capture] [--swap] [--cd-barrier] [--backend gl|metal] [--metal-hw-depth] [--metal-commit-draws N] [--trace-draw N@F]\n"
-                 "                 [--force-shader-blend] [--draw-limit N[@F]]\n"
+                 "                 [--force-shader-blend] [--draw-limit N[@F]] [--no-coalesce] [--unified-blend|--no-unified-blend]\n"
                  "                 (exit 77 = no GL / Metal device)\n");
     return 2;
 }
@@ -60,12 +60,15 @@ int MainStream(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--sync-capture")) opt.deferred_capture = false;
         else if (!std::strcmp(argv[i], "--no-grab")) opt.grab = false;
         else if (!std::strcmp(argv[i], "--deferred-grab")) opt.deferred_grab = true;
+        else if (!std::strcmp(argv[i], "--no-coalesce")) opt.coalesce = false;
         else if (!std::strcmp(argv[i], "--sync-deposit")) opt.deferred_deposit = false;
         else if (!std::strcmp(argv[i], "--gate-trace")) opt.gate_trace = true;
         else if (!std::strcmp(argv[i], "--phash")) opt.phash = true;
         else if (!std::strcmp(argv[i], "--swap")) opt.swap_hidden_window = true;
         else if (!std::strcmp(argv[i], "--cd-barrier")) opt.cd_barrier = true;
         else if (!std::strcmp(argv[i], "--force-shader-blend")) opt.force_shader_blend = true;
+        else if (!std::strcmp(argv[i], "--no-unified-blend")) opt.unified_blend = 0;
+        else if (!std::strcmp(argv[i], "--unified-blend")) opt.unified_blend = 1;
         else if (!std::strcmp(argv[i], "--metal-hw-depth")) opt.metal_hw_depth = true;
         else if (!std::strcmp(argv[i], "--trace-draw") && i + 1 < argc) {
             char* end = nullptr;
