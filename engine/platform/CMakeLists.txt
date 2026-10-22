@@ -40,12 +40,14 @@ target_compile_options(ps2r_host PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(ps2r_host PUBLIC Threads::Threads)
 
 # ps2r_platform -- the target folder (the filled-in Platform), the host:: forwarders
-# (host/platform.cpp) and the POSIX signal crash handler (the Windows target has the SEH
-# counterpart still to write: windows/README.md).
+# (host/platform.cpp) and the crash handler (engine/platform/crash_handler.h: the POSIX signal
+# arm, or the SEH arm windows/crash_handler_windows.cpp).
 add_library(ps2r_platform STATIC
     host/platform.cpp
     ${PS2R_HOST_TARGET_SOURCES})
-if(NOT WIN32)
+if(WIN32)
+    target_sources(ps2r_platform PRIVATE windows/crash_handler_windows.cpp)
+else()
     target_sources(ps2r_platform PRIVATE posix/crash_handler.cpp)
 endif()
 target_include_directories(ps2r_platform PUBLIC ${CMAKE_SOURCE_DIR})
