@@ -145,8 +145,11 @@ public:
     // the window (the display-rate render census and the camera interpolation);
     // `new_picture` = this draw showed a picture the window had not shown before
     // (a Live present), else the held picture again (a Hold: the presented-frame
-    // cadence a player sees is the train of the new_picture draws).
-    void SetPresentObserver(std::function<void(std::chrono::steady_clock::time_point, bool new_picture)> observer);
+    // cadence a player sees is the train of the new_picture draws); `tag` = the
+    // PostFrame tag of the picture on the window (the producer's frame ordinal; 0 =
+    // untagged) and `posted_ns` its PostFrame instant (Park::NowNs) -- the latency
+    // census's shown edge is matched to its picture by the tag, never by order.
+    void SetPresentObserver(std::function<void(std::chrono::steady_clock::time_point, bool new_picture, uint64_t tag, uint64_t posted_ns)> observer);
     uint64_t Presents() const { return presents_.load(); }
     // Main thread before Run: at the end of the session the presenter's LAST
     // window image (the picture plus the GUI overlays -- what the user saw) is
@@ -167,7 +170,9 @@ public:
     // End of a complete game boundary, holding the existing game run token.
     // False asks the caller to unwind. Paused waits retain that token.
     bool Boundary(uint64_t frame);
-    void PostFrame(std::vector<uint8_t> rgba, int width, int height);
+    // `tag`: the producer's ordinal for this picture (0 = none), handed back to the
+    // present observer when the picture is shown.
+    void PostFrame(std::vector<uint8_t> rgba, int width, int height, uint64_t tag = 0);
     // Any thread: a synthetic PRESS of F<number> (1..12) through the REAL key
     // route -- a SDL_KEYDOWN/SDL_KEYUP pair pushed into SDL's own queue, stamped
     // as SDL stamps a physical press (the keyboard-focus window's id; 0 when no
@@ -235,6 +240,7 @@ private:
         std::vector<uint8_t> rgba;
         int width = 0, height = 0;
         uint64_t posted_ns = 0;   // Park::NowNs() at PostFrame (the pacer's lateness input)
+        uint64_t tag = 0;         // the producer's ordinal (PostFrame tag; the observer's)
     };
     void PumpMain();
     void Publish();
@@ -276,8 +282,9 @@ private:
     Frame pending_frame_;   // the oldest waiting picture
     Frame queued_frame_;    // the one posted behind it
     int display_hz_ = 0;
-    std::function<void(std::chrono::steady_clock::time_point, bool)> present_observer_;
+    std::function<void(std::chrono::steady_clock::time_point, bool, uint64_t, uint64_t)> present_observer_;
     bool picture_fresh_ = false;   // a picture uploaded since the last draw (the observer's new_picture)
+    uint64_t shown_tag_ = 0, shown_posted_ns_ = 0;   // the picture on the window: its PostFrame tag / instant
     std::atomic<uint64_t> presents_{0};
     std::atomic<uint64_t> doubled_frames_{0};   // the pacer's doubled census, published for Publish()
     std::atomic<uint64_t> display_swaps_{0}, display_swap_max_us_{0}, display_swap_total_us_{0};
