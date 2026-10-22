@@ -96,8 +96,19 @@ public:
     // the reference parked until the NEXT vblank edge after the frame's
     // work). Returns true when it parked; a boundary that found a tick already
     // noted was LATE (frame work > period) and is counted, never burst-repaid.
-    bool ParkForPacerTick();
+    // E433: the park is REGISTERED with the event queue (as the timer wait is): a
+    // foreign wake -- the MTVU worker's i-bit stall latch (Intc::RaiseDeferred ->
+    // kDeferredLatched), a GS FINISH from the drain thread, an IOP completion --
+    // ends the wait early, `on_wake` runs on this (holder) thread with no tick
+    // fired (the caller applies the queue, collects the latched causes and
+    // dispatches the handlers: the console's interrupt landing on the thread
+    // that waits for the vblank), and the park resumes to the same deadline.
+    // Without it a worker stalled on an i-bit waited for the next wall edge
+    // whenever the EE was early (the hub load: 18 stalls a frame, 0 pictures/s
+    // windows). Census pace= wakes.
+    bool ParkForPacerTick(const std::function<void()>& on_wake = {});
     static constexpr uint32_t kBoundaryParkPeriods = 2;
+    uint64_t PaceWakes() const { return pace_wakes_; }
     uint64_t PaceParks() const { return pace_parks_; }
     uint64_t PaceLate() const { return pace_late_; }
     uint64_t PaceTimeouts() const { return pace_timeouts_; }
@@ -162,6 +173,7 @@ private:
     uint64_t waits_ = 0;
     uint64_t deferred_ = 0;
     uint64_t due_field_fires_ = 0;
+    uint64_t pace_wakes_ = 0;
     uint64_t pace_parks_ = 0;
     uint64_t pace_late_ = 0;
     uint64_t pace_timeouts_ = 0;
