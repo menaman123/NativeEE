@@ -9,7 +9,10 @@
 // AFAIL ZB_ONLY (the Z, no colour write); 474-516 pairs a frame, every pair in a
 // block under identical registers). A run A1 B1 A2 B2 ... An Bn becomes TWO draws,
 // A1..An then B1..Bn, which is pixel-identical because:
-//   - no draw of the run writes alpha, reads a texture, blends (ABE off) or fogs;
+//   - no draw of the run writes alpha, reads a texture or fogs, and none BLENDS in
+//     effect: ABE is off, or ABE is on with ALPHA 0/1/0/1 and As = 0x80, which the
+//     GS evaluates as ((Cs - Cd) * 0x80 >> 7) + Cd = Cs exactly (the game's colour
+//     pass is PRIM 0xc1 = LINE ABE AA1 with that tuple; its Z pass has ABE off);
 //   - every A writes one constant colour (all vertices of all A's carry the same
 //     RGBA): colour writes are idempotent, so what matters per pixel is only
 //     WHETHER some A wrote it;
@@ -28,7 +31,7 @@
 // and passes through on its own.
 //
 // Boundaries the fold never crosses: any field of the register state other than
-// AFAIL, the target (FRAME / ZBUF), the vertex colour, src_frame / vram_epoch, a
+// AFAIL and ABE (identity blend, see above), the target (FRAME / ZBUF), the vertex colour, src_frame / vram_epoch, a
 // non-candidate draw, a job (the caller flushes) and a frame record (the caller
 // flushes). Nothing here is host- or backend-specific.
 #pragma once
@@ -65,10 +68,13 @@ public:
     bool Pending() const { return have_run_; }
     const Counters& Count() const { return n_; }
 
-    // Rule 1's candidate: a 2-vertex LINE, untextured, unblended, unfogged, no DATE,
-    // ATST NEVER with AFAIL RGB_ONLY or ZB_ONLY, both vertices one colour.
+    // Rule 1's candidate: a 2-vertex LINE, untextured, unfogged, no DATE, ATST NEVER
+    // with AFAIL RGB_ONLY or ZB_ONLY, both vertices one colour, and no blend in
+    // effect (IdentityBlend).
     static bool InkCandidate(const DrawIr& d);
-    // Everything but AFAIL (and the vertices) equal.
+    // ABE off, or ABE on with ALPHA 0/1/0/1 and As = 0x80 (Cv = Cs exactly).
+    static bool IdentityBlend(const DrawIr& d);
+    // Everything but AFAIL, ABE (and the vertices) equal.
     static bool SameRegisters(const DrawIr& a, const DrawIr& b);
 
 private:

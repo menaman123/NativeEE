@@ -105,6 +105,24 @@ int main() {
         }
         CHECK(k.Count().runs == 2 && k.Count().passed == 1, "two runs, one pass-through");
     }
+    // 2b. The in-game pair: the colour pass carries PRIM.ABE (identity blend), the Z
+    //     pass does not -- ABE is no boundary, two pairs still fold into two draws.
+    {
+        DrawCoalescer k;
+        std::vector<DrawIr> in;
+        for (uint32_t i = 0; i < 2; ++i) {
+            DrawIr a = Line(10.f * i, 0, 1, 10.f * i + 5, 5, 1, 3, 2 * i + 1); a.alpha_blend = true;
+            in.push_back(a);
+            in.push_back(Line(10.f * i, 0, 1, 10.f * i + 5, 5, 1, 2, 2 * i + 2));
+        }
+        std::vector<DrawIr> out = Run(k, std::move(in));
+        CHECK(out.size() == 2, "mixed-ABE pairs -> two draws");
+        if (out.size() == 2) {
+            CHECK(out[0].alpha_blend && out[0].raster.test.afail == 3 && out[0].verts.size() == 4, "A lane keeps ABE, 4 verts");
+            CHECK(!out[1].alpha_blend && out[1].raster.test.afail == 2 && out[1].verts.size() == 4, "B lane ABE off, 4 verts");
+        }
+        CHECK(k.Count().pairs == 2 && k.Count().reject_state == 0 && k.Count().reject_orphan_z == 0, "no rejects");
+    }
     // 3. Boundaries the fold never crosses: a changed register (ZTST), target (FBP), colour,
     //    src_frame, vram_epoch, FBMSK, scissor -- each starts a new run.
     {
@@ -182,7 +200,13 @@ int main() {
         d.tex_enabled = true;
         CHECK(!DrawCoalescer::InkCandidate(d), "textured: no");
         d = Line(0, 0, 1, 5, 5, 1, 3, 1); d.alpha_blend = true;
-        CHECK(!DrawCoalescer::InkCandidate(d), "blended: no");
+        CHECK(DrawCoalescer::InkCandidate(d), "ABE on with ALPHA 0101 and As 0x80 (Cv = Cs): candidate");
+        d.raster.alpha.d = 2;
+        CHECK(!DrawCoalescer::InkCandidate(d), "ABE on, ALPHA 0102: no");
+        d = Line(0, 0, 1, 5, 5, 1, 3, 1); d.alpha_blend = true; d.verts[0].a = d.verts[1].a = 0x7f;
+        CHECK(!DrawCoalescer::InkCandidate(d), "ABE on, As 0x7f: no");
+        d = Line(0, 0, 1, 5, 5, 1, 3, 1); d.alpha_blend = true; d.raster.alpha.c = 2; d.raster.alpha.fix = 0x80;
+        CHECK(!DrawCoalescer::InkCandidate(d), "ABE on, C = FIX: no");
         d = Line(0, 0, 1, 5, 5, 1, 3, 1); d.raster.test.atst = 1;
         CHECK(!DrawCoalescer::InkCandidate(d), "ATST ALWAYS: no");
         d = Line(0, 0, 1, 5, 5, 1, 3, 1); d.raster.test.ate = false;

@@ -42,21 +42,30 @@ bool SameColour(const VertexRec& v, const uint8_t c[4]) {
 
 }  // namespace
 
+bool DrawCoalescer::IdentityBlend(const DrawIr& d) {
+    if (!d.alpha_blend) return true;
+    const DrawIr::Alpha& a = d.raster.alpha;
+    return a.a == 0 && a.b == 1 && a.c == 0 && a.d == 1 && d.verts[0].a == 0x80;
+}
+
 bool DrawCoalescer::InkCandidate(const DrawIr& d) {
     if ((d.prim_type & 7u) != 1 || d.verts.size() != 2) return false;
-    if (d.tex_enabled || d.alpha_blend || d.fog || d.identity.hle_handler != 0) return false;
+    if (d.tex_enabled || d.fog || d.identity.hle_handler != 0) return false;
     if (d.shuffle_type != 0) return false;
     const DrawIr::Test& t = d.raster.test;
     if (!t.ate || t.atst != AlphaFailMask::kAtstNever || t.date) return false;
     if (t.afail != AlphaFailMask::kAfailRgbOnly && t.afail != AlphaFailMask::kAfailZbOnly) return false;
     const VertexRec& a = d.verts[0];
     const VertexRec& b = d.verts[1];
-    return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
+    if (!(a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a)) return false;
+    return IdentityBlend(d);
 }
 
 bool DrawCoalescer::SameRegisters(const DrawIr& a, const DrawIr& b) {
+    // ABE is NOT compared: a candidate's blend is the identity (IdentityBlend), so the
+    // game's "ABE on the colour pass, off on the Z pass" pair is one run.
     return a.prim_type == b.prim_type && a.gouraud == b.gouraud && a.fog == b.fog && a.use_fst == b.use_fst &&
-           a.alpha_blend == b.alpha_blend && a.scanmsk == b.scanmsk && a.shuffle_type == b.shuffle_type &&
+           a.scanmsk == b.scanmsk && a.shuffle_type == b.shuffle_type &&
            a.shuffle_uv_scale_u == b.shuffle_uv_scale_u && a.tex_enabled == b.tex_enabled && a.ctx == b.ctx &&
            a.off_x == b.off_x && a.off_y == b.off_y && a.src_frame == b.src_frame && a.vram_epoch == b.vram_epoch &&
            a.identity.hle_handler == b.identity.hle_handler && SameRaster(a.raster, b.raster);
