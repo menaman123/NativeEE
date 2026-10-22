@@ -105,6 +105,7 @@ bool MtvuBackpressure::Engage() {
         }
     }
     pipeline_->LeaveSyncWait();
+    park_ns_ += clock_.NowNs() - t0;
     if (frame_valve_hit) ++frame_valve_hits_;
     return false;
 }

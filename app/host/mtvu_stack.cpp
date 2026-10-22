@@ -15,6 +15,13 @@
 namespace {
 const char kWorkerThreadName[] = "vu1worker";
 const char kDrainThreadName[] = "gifdrain";
+// The VIF1 gate's census slot: registers by (addr - base) / 16 (STAT FBRST ERR MARK CYCLE MODE NUM
+// MASK CODE ITOPS BASE OFST TOPS ITOP TOP), 15 = the FIFO window.
+unsigned Vif1Slot(uint32_t addr) {
+    if (addr >= Vif::kVif1FifoBase) return 15u;
+    const uint32_t slot = (addr - Vif::kVif1Base) >> 4;
+    return slot < 15u ? slot : 15u;
+}
 }  // namespace
 
 MtvuStack::MtvuStack(MtvuVifFeed& vif, ChainWalker& walker, GifArbiter& arbiter, VuTierDispatch& inline_vu1_dispatch,
@@ -186,12 +193,14 @@ uint64_t MtvuStack::Vif1Gate::Read(uint32_t addr, unsigned size) {
             return stat;
         }
     } else {
+        ++stack_.vif1_reg_reads_[Vif1Slot(addr)];
         stack_.sync_.Sync(SyncSite::Vif1RegRead);
     }
     return inner_.Read(addr, size);
 }
 
 void MtvuStack::Vif1Gate::Write(uint32_t addr, unsigned size, uint64_t value) {
+    ++stack_.vif1_reg_writes_[Vif1Slot(addr)];
     stack_.sync_.Sync(SyncSite::Vif1RegWrite);
     inner_.Write(addr, size, value);
 }
@@ -209,7 +218,33 @@ MmioHandler& MtvuStack::GifWindow(GifRegs& inner) {
 void MtvuStack::FenceDrain() {
     if (!drain_.Running()) return;
     gif_fences_.fetch_add(1, std::memory_order_relaxed);
+    MtvuSync::WaitScope wait_scope(sync_, WaitCause::GifFence);
     arbiter_.DrainFence();
+}
+
+void MtvuStack::VsyncFence() {
+    if (!drain_.Running()) return;
+    MtvuSync::WaitScope wait_scope(sync_, WaitCause::VsyncFence);
+    arbiter_.DrainFence();
+}
+
+// mtvu_waits=<cause>:<count>/<ns>,...;vif1_writes=<reg>=<n>:...;vif1_reads=<reg>=<n>:...
+std::string MtvuStack::WaitsCensus() const {
+    static const char* const kVif1Slot[16] = {"stat", "fbrst", "err", "mark", "cycle", "mode", "num", "mask",
+                                              "code", "itops", "base", "ofst", "tops", "itop", "top", "fifo"};
+    std::string s = sync_.WaitCensus();
+    if (backpressure_.Engagements()) {
+        if (s == "none") s.clear(); else s += ",";
+        s += std::string(MtvuSync::WaitCauseName(WaitCause::Backpressure)) + ":" + std::to_string(backpressure_.Engagements()) +
+             "/" + std::to_string(backpressure_.ParkNs());
+    }
+    std::string w, r;
+    for (int i = 0; i < 16; ++i) {
+        if (vif1_reg_writes_[i]) w += (w.empty() ? "" : ":") + std::string(kVif1Slot[i]) + "=" + std::to_string(vif1_reg_writes_[i]);
+        if (vif1_reg_reads_[i]) r += (r.empty() ? "" : ":") + std::string(kVif1Slot[i]) + "=" + std::to_string(vif1_reg_reads_[i]);
+    }
+    s += ";vif1_writes=" + (w.empty() ? std::string("none") : w) + ";vif1_reads=" + (r.empty() ? std::string("none") : r);
+    return s;
 }
 
 // GIF_STAT from the EE's side: M3R / IMT (MODE) and PSE (CTRL) are the EE's own

@@ -106,6 +106,33 @@ bool SyscallTable::IsBlockingWait(int num) {
     }
 }
 
+bool SyscallTable::WouldBlockNow(int num, const CpuContext& ctx) {
+    switch (num) {
+        case 50: {   // SleepThread: a banked WakeupThread is consumed at once (R4)
+            auto info = ThreadManager::Instance().Current();
+            if (!info) return false;
+            std::lock_guard<std::mutex> lk(info->m);
+            return info->wakeup_count <= 0;
+        }
+        case 55:   // SuspendThread (self)
+        case 59:   // JoinThread
+            return true;
+        case 68: {   // WaitSema: count > 0 -> count--, return (S3)
+            SemaStatus st;
+            if (Semaphores::Instance().ReferStatus(As(ctx, 0), st) != KE_OK) return false;
+            return st.count <= 0;
+        }
+        case 86: {   // WaitEventFlag: the pattern test (E2); an error return is not a park
+            const uint32_t wait_bits = A(ctx, 1), mode = A(ctx, 2);
+            if ((mode & ~WEF_MODE_MASK) != 0 || wait_bits == 0) return false;
+            EventFlagStatus st;
+            if (EventFlags::Instance().ReferStatus(As(ctx, 0), st) != KE_OK) return false;
+            return !EventFlags::Satisfied(st.bits, wait_bits, mode);
+        }
+        default: return false;
+    }
+}
+
 void SyscallTable::SetGuestCall(GuestCall fn) { guest_call_ = std::move(fn); }
 void SyscallTable::SetTickClock(std::function<uint64_t()> now) { tick_now_ = std::move(now); }
 uint32_t SyscallTable::CustomSyscallAddress(int num) const {

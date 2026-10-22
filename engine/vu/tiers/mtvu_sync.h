@@ -20,6 +20,7 @@
 // relaxed atomics. Redirect runs on whichever thread kicks the inline unit.
 #include <atomic>
 #include <cstdint>
+#include <string>
 
 class GifArbiter;
 class MtvuWorker;
@@ -43,12 +44,65 @@ enum class SyncSite : uint8_t {
     Count
 };
 
+// The producer-side WAIT CAUSES (E430 census): every park of an EE thread on
+// the worker / the drain thread, keyed by what the EE was observing when it
+// parked. The first twelve mirror SyncSite (a Sync(site) books under the same
+// index); the rest are the waits that are not register syncs. Published as
+// run.meta `mtvu_waits=<cause>:<count>/<ns>,...` (MtvuSync::WaitCensus).
+enum class WaitCause : uint8_t {
+    Vif1RegRead = 0,       // Sync: a VIF1 register read other than STAT
+    Vif1RegWrite,          // Sync: a VIF1 register write (FBRST / MARK / ERR / ...)
+    Vu1Mem,                // Sync: a VU1 micro / data memory window access from the EE
+    SceGsSyncV,            // Sync: the terminal boundary sync (FrameSync with the deferral off)
+    SceGsSyncPath,         // Sync: sceGsSyncPath's HLE row
+    SceGsResetPath,
+    SceDmaSync,
+    SceGifSyncDma,
+    WaitVblank,
+    Vu1EeKick,             // Sync: an EE kick of the inline unit redirected to the worker
+    Other,                 // Sync: Quiesce (savestate) and unnamed callers
+    PrivPush,
+    Vif1StatPoll,          // ParkVif1StatPoll: the busy-view VIF1_STAT poll parked
+    IdleWaitBlocking,      // WaitProgress from a kernel wait that WOULD block (true idle: nothing else to run)
+    IdleWaitNonBlocking,   // WaitProgress from a kernel wait that would NOT block (the wait returns at once
+                           // after it: the EE serialised itself behind the worker for nothing)
+    IdleWaitVblankWaiter,  // WaitProgress from a kernel wait that would block while a vblank waiter exists
+                           // (the block itself would have woken it: the vblank is "now" on an idle EE)
+    IdleWaitField,         // WaitProgress from the yield point's idle runner (pipeline_wait)
+    IdleWaitOther,         // WaitProgress from an unclassified caller
+    Backpressure,          // MtvuBackpressure::Engage parked the producer (bytes / frames bound)
+    GifFence,              // MtvuStack::FenceDrain: a GIF register access fenced the drain thread
+    VsyncFence,            // the boundary's VSync job fenced the drain thread (terminal composition)
+    Count
+};
+
 class MtvuSync {
 public:
     static constexpr uint32_t kVif1StatBusyView = 0x03u | (1u << 2) | (16u << 24);
     static constexpr uint64_t kPollNs = 500'000;
 
     MtvuSync(MtvuWorker& worker, GifArbiter& arbiter);
+
+    // The wait ledger: NoteWait books one park of `ns` under `cause` (any thread; relaxed
+    // atomics). WaitScope books the enclosed block. WaitCensus() = "<cause>:<count>/<ns>,..."
+    // for the causes that occurred ("none" when nothing parked).
+    void NoteWait(WaitCause cause, uint64_t ns);
+    uint64_t WaitCount(WaitCause cause) const;
+    uint64_t WaitNs(WaitCause cause) const;
+    std::string WaitCensus() const;
+    static const char* WaitCauseName(WaitCause cause);
+    class WaitScope {
+    public:
+        WaitScope(MtvuSync& sync, WaitCause cause);
+        ~WaitScope();
+        WaitScope(const WaitScope&) = delete;
+        WaitScope& operator=(const WaitScope&) = delete;
+
+    private:
+        MtvuSync& sync_;
+        WaitCause cause_;
+        uint64_t t0_;
+    };
 
     // Wait until the worker is idle (eager-draining meanwhile), then fence the
     // drain thread. Immediate when the worker is down or on the worker thread.
@@ -112,8 +166,9 @@ public:
     // delivered and the pipeline still runs (the caller applies the queued
     // events, re-checks its interrupts and calls again). Immediate (true) when
     // the worker is down, on the worker thread, or nested inside a drain.
-    // Booked as `vu1wait`; counted (ProgressWaits / ProgressIdle).
-    bool WaitProgress();
+    // Booked as `vu1wait`; counted (ProgressWaits / ProgressIdle) and in the
+    // wait ledger under `cause` (the caller's classification of its kernel wait).
+    bool WaitProgress(WaitCause cause = WaitCause::IdleWaitOther);
     uint64_t ProgressWaits() const { return progress_waits_.load(std::memory_order_relaxed); }
     uint64_t ProgressIdle() const { return progress_idle_.load(std::memory_order_relaxed); }
     // Frame boundaries are deferred: the worker runs.
@@ -137,6 +192,8 @@ private:
     std::atomic<uint64_t> vif1_stat_polls_{0};
     std::atomic<uint64_t> vif1_stat_parks_{0};
     std::atomic<uint64_t> progress_idle_{0};
+    std::atomic<uint64_t> wait_count_[static_cast<size_t>(WaitCause::Count)];
+    std::atomic<uint64_t> wait_ns_[static_cast<size_t>(WaitCause::Count)];
     void (*after_sync_)(void* user) = nullptr;
     void* after_sync_user_ = nullptr;
     int (*irq_service_)(void* user) = nullptr;

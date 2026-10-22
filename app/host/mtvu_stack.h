@@ -168,9 +168,19 @@ public:
     // GifRegs form also enables the composed STAT view (SetComposedGifStat).
     MmioHandler& GifWindow(MmioHandler& inner);
     MmioHandler& GifWindow(GifRegs& inner);
-    // Fences the drain thread (immediate with the drain inline); counted.
+    // Fences the drain thread (immediate with the drain inline); counted (and
+    // booked in the wait ledger as gif_fence).
     void FenceDrain();
+    // The boundary's VSync-job fence (the terminal composition's ordered_submit):
+    // the same fence booked as vsync_fence.
+    void VsyncFence();
     uint64_t GifFences() const { return gif_fences_.load(std::memory_order_relaxed); }
+    // run.meta `mtvu_waits=`: every producer-side park on the pipeline by cause --
+    // MtvuSync's ledger (syncs by site, the STAT poll park, the kernel-wait idle
+    // loop by classification, the fences) plus the backpressure park; then
+    // `vif1_writes=<reg>=<n>:...` (which VIF1 registers the EE wrote through the
+    // gate: each write is a full sync).
+    std::string WaitsCensus() const;
     // The E425 hazard census of the GIF register window: accesses per register
     // slot ((addr - base) / 16: CTRL MODE STAT - TAG0..3 CNT P3CNT P3TAG), and
     // of the STAT reads how many returned OPH (bit 9, a tag in transfer) -- the
@@ -258,6 +268,8 @@ private:
     std::atomic<uint64_t> presented_{0};
     std::atomic<uint64_t> gif_fences_{0};
     GifWindowCensus gif_window_census_;   // EE thread only (the window's reader)
+    uint64_t vif1_reg_writes_[16] = {};   // VIF1 register writes through the gate, by slot ((addr - base) / 16)
+    uint64_t vif1_reg_reads_[16] = {};    // ... and the non-STAT reads (each a full sync)
     struct Vif1PollCensus {               // busy-view VIF1_STAT polls: who, from where (EE thread only)
         uint64_t by_tid[8] = {};
         uint64_t idle_views = 0;   // busy-worker STAT reads answered idle (E427)

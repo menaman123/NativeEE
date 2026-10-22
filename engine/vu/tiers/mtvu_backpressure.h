@@ -81,6 +81,7 @@ public:
 
     uint64_t DepthFrames() const;
     uint64_t Engagements() const { return engagements_; }
+    uint64_t ParkNs() const { return park_ns_; }   // total ns the producer spent parked in Engage
     uint64_t FrameValveHits() const { return frame_valve_hits_; }
     uint64_t StallValveHits() const { return stall_valve_hits_; }
     // Drop census: frames whose kicks were dropped, segments tagged, drop
@@ -110,6 +111,7 @@ private:
     const std::atomic<uint64_t>* presented_ = nullptr;
     const std::atomic<bool>* running_ = nullptr;
     uint64_t engagements_ = 0;
+    uint64_t park_ns_ = 0;
     uint64_t frame_valve_hits_ = 0;
     uint64_t stall_valve_hits_ = 0;
     bool drop_mode_ = false;

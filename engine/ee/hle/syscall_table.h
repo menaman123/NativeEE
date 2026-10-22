@@ -40,6 +40,15 @@ public:
     // (SleepThread, SuspendThread, JoinThread, WaitSema, WaitEventFlag): the
     // points where the EE gives the bus to its DMA (Dmac::ObserveAtKernelWait).
     static bool IsBlockingWait(int num);
+    // Of a blocking wait about to be dispatched with `ctx`'s arguments: would its
+    // body PARK the calling thread now? WaitSema: the count is 0; WaitEventFlag:
+    // the pattern is not satisfied; SleepThread: no banked wakeup; SuspendThread /
+    // JoinThread: yes. A wait that returns at once (a signalled semaphore -- the
+    // kick's FINISH handler ran at this very entry -- an unknown id, a satisfied
+    // flag) is not a park: the observation points that idle "because nothing else
+    // is READY" have nothing to wait for before it. False for non-waits. Reads
+    // the objects under their locks; no state changes.
+    static bool WouldBlockNow(int num, const CpuContext& ctx);
 
     // Guest-code call hook (DispatchTable::Invoke in the composition root):
     // SetSysCall-redirected numbers and alarm handlers run guest code through it.
