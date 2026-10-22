@@ -155,7 +155,7 @@ public:
     // resumes after.
     void EnterIrqStall(void (*raise)(void* user), void* user);
     void ReleaseIrqStall();
-    bool IrqStalled() const { return irq_stalled_.load(std::memory_order_acquire); }
+    bool IrqStalled() const override { return irq_stalled_.load(std::memory_order_acquire); }
     bool Quiescent() const { return WorkerIdle() || IrqStalled(); }
     uint64_t IrqStalls() const { return irq_stalls_.load(std::memory_order_relaxed); }
     // Wall ns the worker spent parked on i-bit stalls (also inside wait_ns).

@@ -340,7 +340,7 @@ std::string MtvuStack::Census() const {
          ",batches=" + std::to_string(worker_.BatchSegmentsProcessed()) +
          ",stage_cap=" + std::to_string(worker_.StagedCapacity()) + ",pending_bytes=" + std::to_string(worker_.PendingBytes()) +
          ",bp=" + std::to_string(backpressure_.Engagements()) + "/" + std::to_string(backpressure_.FrameValveHits()) +
-         "/" + std::to_string(backpressure_.StallValveHits()) + ",quiesce_laps=" + std::to_string(quiesce_laps_) +
+         "/" + std::to_string(backpressure_.StallValveHits()) + "/" + std::to_string(backpressure_.IrqStallBreaks()) + ",quiesce_laps=" + std::to_string(quiesce_laps_) +
          ",mirrors=" + std::to_string(mirrors_) +
          ",kick_drop=" + (backpressure_.DropMode() ? "on" : "off") +
          ",defer=" + (defer_boundaries_ ? "on" : "off") +

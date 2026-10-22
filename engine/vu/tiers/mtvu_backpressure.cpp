@@ -81,6 +81,18 @@ bool MtvuBackpressure::Engage() {
         const uint64_t before = total;
         const uint64_t seen = pipeline_->SealCount();
         pipeline_->EagerDrain();
+        // E431: a worker parked on a VIFcode i-bit stall is quiescent -- no seal,
+        // no shrink, no present can come until the EE serves the VIF1 interrupt
+        // (FBRST.STC), and the EE is THIS thread, inside a chain walk: its next
+        // dispatch point is after the walk. Waiting here waits for ourselves
+        // (every span of the walk then rode the 100 ms frame valve: 25 s of
+        // Engage per watchdog on the title->attract load with the kernel-wait
+        // probe on). The park ends; the bound is exceeded by the rest of this
+        // walk, no more.
+        if (pipeline_->IrqStalled()) {
+            ++irq_stall_breaks_;
+            break;
+        }
         total = pipeline_->PipelineBytes();
         if (bytes_need) {
             if (total <= kLowWaterBytes) {
