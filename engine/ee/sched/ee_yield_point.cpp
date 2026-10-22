@@ -27,7 +27,7 @@ std::string EeYieldPoint::Census::Format() const {
            ":idle_isrs=" + std::to_string(idle_isrs) + ":idle_pipeline_waits=" + std::to_string(idle_pipeline_waits) +
            ":idle_wakes=" + std::to_string(idle_wakes) + ":wall_wakes=" + std::to_string(wall_wakes) +
            ":deferred_collects=" + std::to_string(deferred_collects) + ":idle_first=" + std::to_string(idle_first_tick) +
-           "@tid" + std::to_string(idle_first_tid);
+           "@tid" + std::to_string(idle_first_tid) + ":reloads=" + std::to_string(reloads);
 }
 
 void EeYieldPoint::Bind(Deps deps) {
@@ -42,6 +42,12 @@ void EeYieldPoint::Unbind() {
     bound_ = false;
     budget_ = kDefaultBudget;
     g_ee_backedge_budget = budget_;
+}
+
+void EeYieldPoint::NoteKernelCall() {
+    if (!bound_ || !deps_.reload_on_kernel_call) return;
+    g_ee_backedge_budget = budget_;
+    ++census_.reloads;
 }
 
 void EeYieldPoint::Trip(CpuContext& ctx) {

@@ -64,6 +64,18 @@
 // Budget: one dec+branch per loop iteration. ~295 MHz / 60 Hz is ~4.9 M cycles
 // per field and a loop body is a few to a few dozen instructions, so 2^18
 // back-edges per trip is about one field of a tight spin -- kDefaultBudget.
+//
+// The budget is reloaded by a trip. With `reload_on_kernel_call` (E432,
+// Config engine.ee_yield_kernel_reload) a kernel call reloads it too
+// (NoteKernelCall from SyscallTable::Dispatch): the count is then "back-edges
+// since the last scheduling point", and a trip means what the header says -- a
+// loop that reached NO kernel call for a field's worth of iterations. Without
+// it the counter runs across every kernel call the guest makes: ordinary code
+// that calls the kernel dozens of times a frame trips once per 2^18 back-edges
+// anyway (Paris: every ~9 frames), and the trip's field is a WALL field under
+// Play -- the thread parks to the next pacer tick (16.7 ms of `other` in the
+// frame work, one extra VBON/TIM2 per trip: 670 VBON per 600 boundaries, 54
+// pictures/s from a 60 Hz logic with 60 % slack).  Census `reloads`.
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -106,6 +118,7 @@ public:
         std::function<void(uint64_t tick, int tid)> on_idle_field;
         std::function<bool()> inhibit;         // true = refuse this trip (boundary in flight ...)
         uint32_t budget = kDefaultBudget;      // back-edges per trip (0 = kDefaultBudget)
+        bool reload_on_kernel_call = false;    // E432: NoteKernelCall reloads the budget (header)
     };
 
     struct Census {
@@ -125,6 +138,7 @@ public:
         uint64_t nested = 0;       // refused: inside a trip
         uint64_t inhibited = 0;    // refused: inhibit() or an INTC dispatch in progress
         uint64_t non_holder = 0;   // refused: not the run-token holder / not a guest thread
+        uint64_t reloads = 0;      // NoteKernelCall reloads (E432; 0 when the reload is off)
         std::string Format() const;
     };
 
@@ -138,6 +152,11 @@ public:
 
     // The seam body (seams.cpp: ps2r_ee_yield_point). Reloads g_ee_backedge_budget first.
     void Trip(CpuContext& ctx);
+    // A kernel call (SyscallTable::Dispatch): with Deps::reload_on_kernel_call the
+    // back-edge budget starts over -- the loop that reaches a kernel call is not a
+    // spin (E432). A no-op otherwise.
+    void NoteKernelCall();
+    bool ReloadOnKernelCall() const { return bound_ && deps_.reload_on_kernel_call; }
     // The wall vblank landing on a RUNNING thread (a scheduling point of the
     // holder: the title's syscall entry). When `wall_field_due` holds and a
     // thread sleeps in WaitVblank, that thread is readied (no field passes

@@ -8,6 +8,7 @@
 #include "engine/ee/hle/kernl_boot.h"
 #include "engine/ee/hle/semaphores.h"
 #include "engine/ee/hle/thread_manager.h"
+#include "engine/ee/sched/ee_yield_point.h"
 #include "engine/ee/mem/main_memory.h"
 #include "engine/ee/recomp_abi/host_app/memory.h"
 
@@ -149,6 +150,7 @@ void SyscallTable::RunGuest(uint32_t addr, CpuContext& ctx) {
 
 void SyscallTable::Dispatch(uint32_t v1, CpuContext& ctx) {
     const int num = Normalize(v1);
+    EeYieldPoint::Instance().NoteKernelCall();   // a scheduling point: the back-edge budget starts over (E432)
     if (trace_) trace_(num, NameOf(num));
     if (pre_dispatch_) pre_dispatch_(num, ctx);
     if (custom_syscall_[num] != 0) {  // SetSysCall redirected this number to guest code
