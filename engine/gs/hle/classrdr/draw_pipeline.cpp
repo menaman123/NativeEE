@@ -283,7 +283,10 @@ void DrawPipeline::FrameEndGrab(bool ee_frame_end, Frame* out) {
     // most): the GPU had the whole frame to finish its read.
     d_.cache->FlushDeferred();
     target_dump_.OnFrameEnd();
-    if (d_.resolver) d_.resolver->Trace().OnFrameEnd();
+    if (d_.resolver) {
+        d_.resolver->Trace().OnFrameEnd();
+        d_.resolver->RollWarmWindow(frame_end_t0_);
+    }
     if (ee_frame_end) d_.presenter->MarkEeFrameEnd();
     d_.cache->FlushPending(PendingRtSyncLedger::Reason::Present, 0, 0, /*reader_pages_only=*/true);
     if (out && deferred_grab_) {
@@ -370,7 +373,10 @@ void DrawPipeline::OnOwnedFrameEnd(bool ee_frame_end, uint32_t source_key) {
     d_.cache->FlushDeferred();
     route_trace_.OnFrameEnd();
     target_dump_.OnFrameEnd();
-    if (d_.resolver) d_.resolver->Trace().OnFrameEnd();
+    if (d_.resolver) {
+        d_.resolver->Trace().OnFrameEnd();
+        d_.resolver->RollWarmWindow(NowNs());
+    }
     if (ee_frame_end) d_.presenter->MarkEeFrameEnd();
     d_.presenter->RecordOwnedPresent(source_key);
 }
