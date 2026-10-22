@@ -7,9 +7,10 @@
 //
 // and the table it returns names, per generated block, the block's entry pc
 // and the function that runs it (VuBlock::NativeFn: the block tier's RunOps
-// for that one block with every slot a compile-time constant). The block
-// table stays the dispatcher: a function runs ONE block and returns the ops it
-// executed; the loop reads the branch verdict and picks the successor.
+// for that block's region with every slot a compile-time constant). The block
+// table stays the dispatcher: a function runs its region (and, when generated
+// with block chaining, tail-calls the successor's function) and returns the
+// ops executed; the loop reads the branch verdict and picks the successor.
 //
 // A library is accepted only when every field below agrees with the running
 // engine (abi version, slot layout size, image hash, engine build id) AND its
@@ -20,7 +21,7 @@
 
 #include "engine/vu/tiers/vu_block_tier.h"
 
-constexpr uint32_t kVu1AotAbiVersion = 2;  // 2: flags_lazy (the MAC ring arm the pushes were generated for)
+constexpr uint32_t kVu1AotAbiVersion = 3;  // 2: flags_lazy (the MAC ring arm the pushes were generated for); 3: NativeFn carries `done` (block chaining)
 constexpr char kVu1AotExportsPrefix[] = "vu1_aot_exports_";
 
 struct Vu1AotBlockExport {

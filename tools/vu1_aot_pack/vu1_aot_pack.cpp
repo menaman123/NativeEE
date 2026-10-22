@@ -3,6 +3,7 @@
 //
 //   vu1_aot_pack build --corpus <dir> [--corpus <dir>]... --out <pack dir>
 //                      [--compiler <c++>] [--opt 1|2] [--prelude <dir>] [--keep-work]
+//                      [--region-blocks N] [--region-ops N] [--region-taken 0|1] [--chain 0|1]
 //   vu1_aot_pack check --corpus <dir> [--corpus <dir>]... --pack <pack dir>
 //   vu1_aot_pack key   [--prelude <dir>]
 //
@@ -73,6 +74,7 @@ void LoadDir(const std::string& dir, Images& images) {
 int Usage() {
     std::fprintf(stderr,
                  "usage: vu1_aot_pack build --corpus <dir>... --out <pack dir> [--compiler <c++>] [--opt 1|2] [--prelude <dir>] [--keep-work]\n"
+                 "                          [--region-blocks N] [--region-ops N] [--region-taken 0|1] [--chain 0|1]   (the generator's region policy)\n"
                  "       vu1_aot_pack check --corpus <dir>... --pack <pack dir>\n"
                  "       vu1_aot_pack key [--prelude <dir>]\n");
     return 2;
@@ -83,6 +85,7 @@ struct Args {
     std::vector<std::string> corpus;
     std::string out, pack, compiler, prelude;
     int opt = 2;
+    Vu1AotBlockGen::Policy region;
     bool keep_work = false;
 };
 
@@ -98,6 +101,10 @@ bool Parse(int argc, char** argv, Args* a) {
         else if (s == "--compiler") { if (!next(&a->compiler)) return false; }
         else if (s == "--prelude") { if (!next(&a->prelude)) return false; }
         else if (s == "--opt") { std::string v; if (!next(&v)) return false; a->opt = std::atoi(v.c_str()); }
+        else if (s == "--region-blocks") { std::string v; if (!next(&v)) return false; a->region.block_cap = std::atoi(v.c_str()); }
+        else if (s == "--region-ops") { std::string v; if (!next(&v)) return false; a->region.op_cap = std::atoi(v.c_str()); }
+        else if (s == "--region-taken") { std::string v; if (!next(&v)) return false; a->region.taken_targets = std::atoi(v.c_str()) != 0; }
+        else if (s == "--chain") { std::string v; if (!next(&v)) return false; a->region.chain = std::atoi(v.c_str()) != 0; }
         else if (s == "--keep-work") a->keep_work = true;
         else return false;
     }
@@ -127,6 +134,7 @@ int RunImages(const Args& a, Images& images, bool with_compiler, const std::stri
     bs.root = root;
     bs.build_id = "vu1_aot_pack";
     bs.opt_level = a.opt;
+    bs.region = a.region;
     bs.prelude_dir = a.prelude;
     if (with_compiler) {
         bs.compiler = a.compiler;

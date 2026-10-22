@@ -259,7 +259,7 @@ bool Vu1AotBuilder::Open(std::string* note) {
     open_ = true;
     if (note) {
         *note = "vu1_aot codegen: abi=" + abi_key_ + " compiler=" + (compiler_.empty() ? "none (" + no_compiler_why + ")" : compiler_ + " (" + compiler_version_ + ")") +
-                " opt=O" + std::to_string(settings_.opt_level) + " cache=" + BuildDir(settings_.root, abi_key_) +
+                " opt=O" + std::to_string(settings_.opt_level) + " region=" + Vu1AotEmitter::PolicyName(settings_.region) + " cache=" + BuildDir(settings_.root, abi_key_) +
                 " pack=" + (pack_dir_.empty() ? std::string("none") : pack_dir_ + " (" + std::to_string(pack_.rows.size()) + " images)") +
                 " workers=" + std::to_string(settings_.workers);
     }
@@ -495,8 +495,9 @@ Vu1AotBuilder::Built Vu1AotBuilder::BuildOne(uint64_t image, const std::vector<c
     const std::vector<uint32_t> pcs = Vu1AotEmitter::ReachableBlocks(scratch, entries, 8192);
     Vu1AotEmitter::Options opt;
     opt.engine_build = abi_key_;
+    opt.region = settings_.region;
     opt.note = "corpus cases: " + std::to_string(cases.size()) + "; engine build: " + settings_.build_id + "; compiler: " +
-               compiler_version_ + "; -O" + std::to_string(settings_.opt_level);
+               compiler_version_ + "; -O" + std::to_string(settings_.opt_level) + "; region " + Vu1AotEmitter::PolicyName(settings_.region);
     const Vu1AotEmitter::Output out = Vu1AotEmitter::Emit(scratch, pcs, opt);
     b.blocks = out.blocks;
     b.ops = out.ops;

@@ -59,28 +59,57 @@ struct VuBlockOp;
 struct VuBlockProgram;
 struct VuDecodedSlot;
 
+// The region policy -- a parameter of the GENERATION, not of the ABI (a
+// library built under any policy is binary-compatible with the engine and
+// passes the same corpus gate; the pack tool, the run-time builder and the
+// corpus test take it as an option).
+struct Vu1AotRegionPolicy {
+    int block_cap = 1;          // blocks a region holds at most (the head always)
+    int op_cap = 48;            // ops a region holds at most (the head block always)
+    bool taken_targets = true;  // grow over static branch targets too (not only fall-through)
+    // Block CHAINING: a block end whose successor is a block of the TU but
+    // not of this region hands over to that block's own function with a
+    // tail call (`VU1_AOT_MUSTTAIL return Blk_<pc>(..., done)`: the
+    // registers stored back, the stall model made whole, `done` carried)
+    // instead of returning to the dispatcher. The successor's head check
+    // is the budget check the dispatcher would have made (it exits with
+    // native_resume when the cap will not hold it); a NOP-pair block, a
+    // wrapped delay slot, an E-bit end, a JR / JALR and a block outside the
+    // TU still return to the loop. Nothing is duplicated: every block has
+    // one function, the chain is a jump between them.
+    bool chain = false;
+};
+
 class Vu1AotBlockGen {
 public:
-    static constexpr int kRegionOpCap = 48;     // ops a region holds at most (the head block always)
-    static constexpr int kRegionBlockCap = 1;   // blocks a region holds at most
-    static constexpr bool kRegionTakenTargets = true;  // grow over static branch targets too (not only fall-through)
+    using Policy = Vu1AotRegionPolicy;
+    static constexpr int kRegionOpCap = 48;     // Policy{} defaults (the recorded round-2 shape)
+    static constexpr int kRegionBlockCap = 1;
+    static constexpr bool kRegionTakenTargets = true;
 
     // The region of `head`: the head first, then its fall-through chain (built
     // if absent) within the caps and among `emitted` (the pcs the TU emits slots
     // for; a block outside is an exit); a taken static branch into the chain is
     // an edge, any other taken branch, a NOP-pair block, a wrapped delay slot
     // and an E-bit end are exits.
-    static std::vector<const VuBlock*> Region(VuBlockProgram& prog, const VuBlock& head, const std::vector<uint32_t>& emitted);
+    static std::vector<const VuBlock*> Region(VuBlockProgram& prog, const VuBlock& head, const std::vector<uint32_t>& emitted,
+                                              const Policy& policy = Policy{});
 
     // The function text of `head`'s region named `fn_name`; the op slots are
     // the `static constexpr VuDecodedSlot S_<pc4>_<k>` objects the caller
-    // emitted for every block of the TU (SlotName).
+    // emitted for every block of the TU (SlotName). The function's signature
+    // is VuBlock::NativeFn; the function of block <pc> is `Blk_<pc4>` (the
+    // chain names it; the TU declares every one before the bodies).
     static std::string EmitFunction(VuBlockProgram& prog, const VuBlock& head, const std::string& fn_name,
-                                    const std::vector<uint32_t>& emitted);
+                                    const std::vector<uint32_t>& emitted, const Policy& policy = Policy{});
     static std::string SlotName(uint32_t block_pc, int k);
+    static std::string FunctionName(uint32_t block_pc);
+    // The signature of a block function after its name (NativeFn's parameter list).
+    static const char* Signature();
 
 private:
-    Vu1AotBlockGen(std::vector<const VuBlock*> blocks, const std::string& fn_name);
+    Vu1AotBlockGen(VuBlockProgram& prog, std::vector<const VuBlock*> blocks, const std::string& fn_name,
+                   const std::vector<uint32_t>& emitted, const Policy& policy);
     void ResetPassState();
     // Two passes over the region: the first learns the touched / written sets
     // and the clamped-read counts (the prologue and the flush / reload sets
@@ -100,6 +129,11 @@ private:
     void EmitExitEnd(int last);
     // An exit at the head of block `bi` (the budget would not hold it).
     void EmitExitHead(int bi);
+    // The successor at `pc` of the current block after op `last`, when the
+    // policy chains and the block is one of the TU's (not a NOP pair, not in
+    // the region): the tail call. False = not chainable (the caller exits).
+    bool EmitChain(uint32_t pc, int last);
+    bool Chainable(uint32_t pc) const;
     void EmitUpper(const VuBlockOp& op, const VuDecodedSlot& s);
     void EmitLower(const VuBlockOp& op, const VuDecodedSlot& s, uint32_t pc);
     std::string Prologue() const;
@@ -128,8 +162,11 @@ private:
     void ReloadAll();
     void Line(const std::string& s);
 
+    VuBlockProgram& prog_;
     std::vector<const VuBlock*> blocks_;  // the region, head first
     std::string fn_;
+    const std::vector<uint32_t>& emitted_;  // the TU's block pcs, sorted
+    Policy policy_;
     std::string body_;
     int indent_ = 1;
     bool analysing_ = false;

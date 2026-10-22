@@ -54,7 +54,9 @@ FINGERPRINT_EXCLUDED_PREFIXES = ("harness.", "paths.", "meta.", "diag.")
 # without entering the fingerprint.
 FINGERPRINT_EXCLUDED_KEYS = ("engine.mtvu_kick_drop", "engine.mtvu_early_finish", "engine.vu1_aot_corpus",
                              "engine.vu1_aot_codegen", "engine.vu1_aot_compiler", "engine.vu1_aot_prelude",
-                             "engine.vu1_aot_opt", "engine.vu1_aot_pack", "save.restore_mode")
+                             "engine.vu1_aot_opt", "engine.vu1_aot_pack", "engine.vu1_aot_region_blocks",
+                             "engine.vu1_aot_region_ops", "engine.vu1_aot_region_taken", "engine.vu1_aot_chain",
+                             "save.restore_mode")
 
 # key, type, peak, det ("=" = unchanged by the preset), source_var
 ROWS = [
@@ -81,6 +83,7 @@ ROWS = [
     ("engine.shutdown_wait_s", "int", "10", "=", "PS2_SHUTDOWN_WAIT"),
     ("engine.time_regime_pin", "int", "-1", "1", "PS2_TIME_EMU_REGIME"),
     ("engine.turbo", "int", "0", "=", "-"),
+    ("engine.vu1_aot_chain", "bool", "off", "=", "-"),
     ("engine.vu1_aot_codegen", "bool", "on", "=", "-"),
     ("engine.vu1_aot_compiler", "str", "", "=", "-"),
     ("engine.vu1_aot_corpus", "str", "", "=", "-"),
@@ -88,6 +91,9 @@ ROWS = [
     ("engine.vu1_aot_opt", "int", "2", "=", "-"),
     ("engine.vu1_aot_pack", "str", "", "=", "-"),
     ("engine.vu1_aot_prelude", "str", "", "=", "-"),
+    ("engine.vu1_aot_region_blocks", "int", "1", "=", "-"),
+    ("engine.vu1_aot_region_ops", "int", "48", "=", "-"),
+    ("engine.vu1_aot_region_taken", "bool", "on", "=", "-"),
     ("engine.vu1_aot_verify", "bool", "on", "=", "-"),
     ("engine.vu1_mode", "enum(hle|cached|interp|block|aot)", "cached", "=", "PS2_VU_MODE"),
     ("fixes.look_rest_seconds", "bool", "off", "=", "-"),

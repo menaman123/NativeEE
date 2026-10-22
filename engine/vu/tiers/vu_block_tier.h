@@ -88,10 +88,13 @@ struct VuBlockOp {
 // the block runs whole (not cut by the cycle cap) and keeps every other duty --
 // successor, TPC, delay slot, yield, sled -- for itself.
 struct VuBlock {
-    // Runs the whole block from its entry pc (the merged delay slot included);
-    // the branch op's verdict lands in `taken` / `target`; returns the ops
-    // executed (< ops.size() only on an XTOP yield, left flagged on the unit).
-    using NativeFn = int (*)(VuUnit& unit, VuInterpreterTier& g, bool& taken, uint32_t& target);
+    // Runs the region from this block's entry pc (the merged delay slot
+    // included) and, when the generated code chains, the blocks it hands over
+    // to; the verdict of the block whose end was reached lands in `taken` /
+    // `target`; returns the ops executed in total (`done` = the ops already
+    // counted against Vu1State::native_budget before the call: 0 from the
+    // dispatcher, the running count from a chained predecessor).
+    using NativeFn = int (*)(VuUnit& unit, VuInterpreterTier& g, bool& taken, uint32_t& target, int done);
 
     uint32_t pc = 0;            // entry byte address
     int n_body = 0;             // ops up to and including the terminal

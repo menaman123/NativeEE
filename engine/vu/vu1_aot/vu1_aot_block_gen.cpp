@@ -189,8 +189,11 @@ std::string GenUpperName(const GenUpper& g) {
 // ---- the region --------------------------------------------------------------
 
 std::string Vu1AotBlockGen::SlotName(uint32_t block_pc, int k) { return "S_" + Pc4(block_pc) + "_" + Dec(k); }
+std::string Vu1AotBlockGen::FunctionName(uint32_t block_pc) { return "Blk_" + Pc4(block_pc & VuBlockTier::kPcMask); }
+const char* Vu1AotBlockGen::Signature() { return "(VuUnit& unit, VuInterpreterTier& g, bool& taken, uint32_t& target, int done)"; }
 
-std::vector<const VuBlock*> Vu1AotBlockGen::Region(VuBlockProgram& prog, const VuBlock& head, const std::vector<uint32_t>& emitted) {
+std::vector<const VuBlock*> Vu1AotBlockGen::Region(VuBlockProgram& prog, const VuBlock& head, const std::vector<uint32_t>& emitted,
+                                                   const Policy& policy) {
     std::vector<const VuBlock*> out{&head};
     int ops = static_cast<int>(head.ops.size());
     auto in_region = [&](uint32_t pc) {
@@ -202,24 +205,24 @@ std::vector<const VuBlock*> Vu1AotBlockGen::Region(VuBlockProgram& prog, const V
     auto consider = [&](uint32_t pc) {
         pc &= VuBlockTier::kPcMask;
         if (in_region(pc)) return;
-        if (static_cast<int>(out.size()) >= kRegionBlockCap) return;
+        if (static_cast<int>(out.size()) >= policy.block_cap) return;
         if (!std::binary_search(emitted.begin(), emitted.end(), pc)) return;  // no slots / no function of its own
         const VuBlock* b = VuBlockTier::BuildBlock(prog, pc >> 3);
         if (b->ops[0].flags & VuBlockOp::kNopPair) return;  // the sled rule is the loop's
-        if (ops + static_cast<int>(b->ops.size()) > kRegionOpCap) return;
+        if (ops + static_cast<int>(b->ops.size()) > policy.op_cap) return;
         ops += static_cast<int>(b->ops.size());
         out.push_back(b);
     };
     // Breadth-first over the successors the function can take itself: the
-    // fall-through and, when kRegionTakenTargets, the static branch target
-    // (a taken branch to a block outside the region is an exit).
+    // fall-through and, when taken_targets, the static branch target (a taken
+    // branch to a block outside the region is an exit, or a chain).
     for (size_t i = 0; i < out.size(); ++i) {
         const VuBlock* b = out[i];
         if (b->e_bit) continue;
         const uint32_t after_body = b->pc + 8u * static_cast<uint32_t>(b->n_body);
         const uint32_t fall = b->has_ds ? after_body + 8u : after_body;
         if (fall <= VuBlockTier::kPcMask) consider(fall);  // the wrap to 0 is the loop's
-        if (kRegionTakenTargets && b->branch_idx >= 0 && b->static_target >= 0 && b->has_ds) {
+        if (policy.taken_targets && b->branch_idx >= 0 && b->static_target >= 0 && b->has_ds) {
             consider(static_cast<uint32_t>(b->static_target));
         }
     }
@@ -227,8 +230,8 @@ std::vector<const VuBlock*> Vu1AotBlockGen::Region(VuBlockProgram& prog, const V
 }
 
 std::string Vu1AotBlockGen::EmitFunction(VuBlockProgram& prog, const VuBlock& head, const std::string& fn_name,
-                                         const std::vector<uint32_t>& emitted) {
-    Vu1AotBlockGen gen(Region(prog, head, emitted), fn_name);
+                                         const std::vector<uint32_t>& emitted, const Policy& policy) {
+    Vu1AotBlockGen gen(prog, Region(prog, head, emitted, policy), fn_name, emitted, policy);
     gen.analysing_ = true;
     gen.EmitBody();  // pass 1: the sets
     gen.body_.clear();
@@ -240,15 +243,16 @@ std::string Vu1AotBlockGen::EmitFunction(VuBlockProgram& prog, const VuBlock& he
     o += "// region of " + Pc4(head.pc) + ": " + Dec(static_cast<long long>(gen.blocks_.size())) + " block(s)";
     for (const VuBlock* b : gen.blocks_) o += " " + Pc4(b->pc);
     o += "\n";
-    o += "int " + fn_name + "(VuUnit& unit, VuInterpreterTier& g, bool& taken, uint32_t& target) {\n";
+    o += "int " + fn_name + Signature() + " {\n";
     o += gen.Prologue();
     o += gen.body_;
     o += "}\n\n";
     return o;
 }
 
-Vu1AotBlockGen::Vu1AotBlockGen(std::vector<const VuBlock*> blocks, const std::string& fn_name)
-    : blocks_(std::move(blocks)), fn_(fn_name) {
+Vu1AotBlockGen::Vu1AotBlockGen(VuBlockProgram& prog, std::vector<const VuBlock*> blocks, const std::string& fn_name,
+                               const std::vector<uint32_t>& emitted, const Policy& policy)
+    : prog_(prog), blocks_(std::move(blocks)), fn_(fn_name), emitted_(emitted), policy_(policy) {
     ResetPassState();
 }
 
@@ -422,7 +426,7 @@ std::string Vu1AotBlockGen::Prologue() const {
     o += "    Vu1State& st = unit.state();\n    VUregs& regs = st.regs;\n    FlagPipeline& pipes = unit.flags();\n"
          "    StallModel& stalls = unit.stalls();\n    XgKick* const xgk = unit.xgkick();\n    uint64_t& cycle = pipes.cycle();\n"
          "    uint8_t* const data = st.data;\n    const uint32_t mask = unit.mem_mask();\n"
-         "    const uint32_t budget = st.native_budget;\n    int done = 0;\n"
+         "    const uint32_t budget = st.native_budget;\n"
          "    taken = false;\n    bool t = false;\n    uint32_t tg = 0;\n"
          "    constexpr uint64_t kNever = ~0ull;\n"
          "    uint64_t pace_due = (xgk != nullptr && xgk->armed()) ? xgk->next_due() : kNever;\n"
@@ -505,7 +509,7 @@ void Vu1AotBlockGen::EmitBlock(int bi) {
             if (target_bi >= 0) {
                 EmitMaterialize(n - VuBlockTier::kRingWindow, n - 1);
                 Line("goto L_" + Pc4(static_cast<uint32_t>(blk.static_target)) + ";");
-            } else {
+            } else if (!(blk.static_target >= 0 && blk.has_ds && EmitChain(static_cast<uint32_t>(blk.static_target), n - 1))) {
                 EmitExitEnd(n - 1);
             }
             Line("}");
@@ -515,7 +519,7 @@ void Vu1AotBlockGen::EmitBlock(int bi) {
         if (fall_bi >= 0) {
             EmitMaterialize(n - VuBlockTier::kRingWindow, n - 1);
             Line("goto L_" + Pc4(fall) + ";");
-        } else {
+        } else if (!(fall_raw <= VuBlockTier::kPcMask && EmitChain(fall, n - 1))) {
             EmitExitEnd(n - 1);
         }
     }
@@ -684,6 +688,32 @@ void Vu1AotBlockGen::EmitExitHead(int bi) {
     Line("st.native_resume = true;");
     Line("st.native_exit_pc = " + Hex(blk.pc) + "u;");
     Line("return done;");
+}
+
+// The chain (Policy::chain): the successor's own function continues the run
+// with the registers stored back and the model made whole -- exactly the state
+// an exit leaves for the loop, minus the exit's bookkeeping and the loop's
+// round trip. The successor must be a block of the TU (it has a function),
+// outside this region (inside, the edge is a goto) and not a NOP pair (the
+// sled rule is the loop's). Its head check is the budget check the loop would
+// have made before calling it (`done + n > budget` with the carried `done` is
+// the loop's `n <= cycle_limit` on the remaining cap).
+bool Vu1AotBlockGen::Chainable(uint32_t pc) const {
+    if (!policy_.chain) return false;
+    pc &= VuBlockTier::kPcMask;
+    if (BlockIndex(pc) >= 0) return false;
+    if (!std::binary_search(emitted_.begin(), emitted_.end(), pc)) return false;
+    const VuBlock* b = VuBlockTier::BuildBlock(prog_, pc >> 3);
+    return (b->ops[0].flags & VuBlockOp::kNopPair) == 0;
+}
+
+bool Vu1AotBlockGen::EmitChain(uint32_t pc, int last) {
+    if (!Chainable(pc)) return false;
+    pc &= VuBlockTier::kPcMask;
+    EmitMaterialize(last - VuBlockTier::kRingWindow + 1, last);
+    Line("store_back();");
+    Line("VU1_AOT_MUSTTAIL return " + FunctionName(pc) + "(unit, g, taken, target, done);  // chain");
+    return true;
 }
 
 void Vu1AotBlockGen::EmitUpper(const VuBlockOp& op, const VuDecodedSlot& s) {

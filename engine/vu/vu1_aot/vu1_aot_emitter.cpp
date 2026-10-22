@@ -97,8 +97,12 @@ std::string Vu1AotEmitter::EmitSlot(const VuDecodedSlot& s, const std::string& n
 // locals (Vu1AotBlockGen). The slots are emitted once per block of the TU
 // (EmitBlockSlots), named by the block's pc.
 std::string Vu1AotEmitter::EmitBlock(VuBlockProgram& prog, const VuBlock& blk, const std::string& fn_name,
-                                     const std::vector<uint32_t>& emitted) {
-    return Vu1AotBlockGen::EmitFunction(prog, blk, fn_name, emitted);
+                                     const std::vector<uint32_t>& emitted, const Vu1AotBlockGen::Policy& policy) {
+    return Vu1AotBlockGen::EmitFunction(prog, blk, fn_name, emitted, policy);
+}
+
+std::string Vu1AotEmitter::PolicyName(const Vu1AotBlockGen::Policy& p) {
+    return "blocks=" + Dec(p.block_cap) + ":ops=" + Dec(p.op_cap) + ":taken=" + (p.taken_targets ? "1" : "0") + ":chain=" + (p.chain ? "1" : "0");
 }
 
 std::string Vu1AotEmitter::EmitBlockSlots(const VuBlock& blk) {
@@ -151,20 +155,28 @@ Vu1AotEmitter::Output Vu1AotEmitter::Emit(VuBlockProgram& prog, const std::vecto
     o += "// One function per block of the block tier's table: the block's ops with the VU register file\n"
          "// resident in locals (Vu1AotBlockGen), every slot a compile-time constant, the engine's own lane\n"
          "// kernels (VuFloat) and pipelines (FlagPipeline, StallModel, XgKick) as the primitives.\n";
-    o += "#include \"engine/vu/vu1_aot/vu1_aot_prelude.h\"\n\nnamespace {\n\n";
+    o += "// region policy: " + PolicyName(opt.region) + "\n";
+    o += "#include \"engine/vu/vu1_aot/vu1_aot_prelude.h\"\n\n";
+    if (opt.region.chain) {
+        o += "#if !VU1_AOT_HAS_MUSTTAIL\n#error \"this TU chains its block functions: it needs a compiler with a guaranteed tail call (clang, gcc >= 15)\"\n#endif\n\n";
+    }
+    o += "namespace {\n\n";
     o += "constexpr VR_reg kVf0 = {{0.0f, 0.0f, 0.0f, 1.0f}};  // VF00, hard-wired\n\n";
     std::vector<uint32_t> emitted(block_pcs);
     for (uint32_t& pc : emitted) pc &= VuBlockTier::kPcMask;
     std::sort(emitted.begin(), emitted.end());
     // The slots of every block first (a region names the slots of the blocks it
-    // reaches), then one region function per block.
+    // reaches), then the declaration of every block function (a chain names
+    // its successor's), then one region function per block.
     for (uint32_t pc : emitted) o += EmitBlockSlots(*VuBlockTier::BuildBlock(prog, pc >> 3));
+    o += "\n";
+    for (uint32_t pc : emitted) o += "int " + Vu1AotBlockGen::FunctionName(pc) + Vu1AotBlockGen::Signature() + ";\n";
     o += "\n";
     std::vector<std::string> names;
     for (uint32_t pc : block_pcs) {
         const VuBlock* blk = VuBlockTier::BuildBlock(prog, (pc & VuBlockTier::kPcMask) >> 3);
-        const std::string fn = "Blk_" + Pc4(blk->pc);
-        o += EmitBlock(prog, *blk, fn, emitted);
+        const std::string fn = Vu1AotBlockGen::FunctionName(blk->pc);
+        o += EmitBlock(prog, *blk, fn, emitted, opt.region);
         names.push_back(fn);
         ++out.blocks;
         out.ops += blk->ops.size();

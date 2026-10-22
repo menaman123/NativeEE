@@ -30,6 +30,8 @@
 #include <string>
 #include <vector>
 
+#include "engine/vu/vu1_aot/vu1_aot_block_gen.h"
+
 struct VuBlockProgram;
 struct VuBlock;
 struct VuDecodedSlot;
@@ -39,6 +41,7 @@ public:
     struct Options {
         std::string engine_build;   // the g_build_id string the table carries
         std::string note;           // free text for the TU's header comment (the corpus, the toolchain)
+        Vu1AotBlockGen::Policy region;  // the region / chaining policy of every function of the TU
     };
     struct Output {
         std::string source;         // the TU
@@ -66,7 +69,9 @@ public:
     // notes' excerpt), and the block's slots as constexpr objects named by
     // its pc (one set per block of the TU; a region names its blocks' slots).
     static std::string EmitBlock(VuBlockProgram& prog, const VuBlock& blk, const std::string& fn_name,
-                                 const std::vector<uint32_t>& emitted);
+                                 const std::vector<uint32_t>& emitted, const Vu1AotBlockGen::Policy& policy = Vu1AotBlockGen::Policy{});
+    // The policy as the TU's header comment / the census name it: "blocks=<n>:ops=<n>:taken=<0|1>:chain=<0|1>".
+    static std::string PolicyName(const Vu1AotBlockGen::Policy& policy);
     static std::string EmitBlockSlots(const VuBlock& blk);
     // One slot as a constexpr initialiser (every field by name).
     static std::string EmitSlot(const VuDecodedSlot& s, const std::string& name);

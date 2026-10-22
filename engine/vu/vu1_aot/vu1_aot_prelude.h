@@ -25,6 +25,22 @@
 #include "engine/vu/vu_float.h"
 #include "engine/vu/vu_unit.h"
 
+// Block chaining (Vu1AotBlockGen::Policy::chain): a block function hands over
+// to its successor's function with a GUARANTEED tail call -- a chain of
+// hundreds of blocks per kick must not grow the stack. A compiler without the
+// attribute cannot build a chained TU (the generator emits the #error guard
+// when it chains; the pack tool / the builder choose the policy).
+#if defined(__clang__)
+#define VU1_AOT_MUSTTAIL [[clang::musttail]]
+#define VU1_AOT_HAS_MUSTTAIL 1
+#elif defined(__GNUC__) && __GNUC__ >= 15
+#define VU1_AOT_MUSTTAIL [[gnu::musttail]]
+#define VU1_AOT_HAS_MUSTTAIL 1
+#else
+#define VU1_AOT_MUSTTAIL
+#define VU1_AOT_HAS_MUSTTAIL 0
+#endif
+
 // The compiler's own version string for the exports table.
 #if defined(__VERSION__)
 #define VU1_AOT_COMPILER __VERSION__

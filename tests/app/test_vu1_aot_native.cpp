@@ -46,7 +46,7 @@ void Check(bool ok, const char* what) {
 }
 
 // A block function that executes nothing: the gate must refuse it.
-int BadBlock(VuUnit&, VuInterpreterTier&, bool& taken, uint32_t& target) {
+int BadBlock(VuUnit&, VuInterpreterTier&, bool& taken, uint32_t& target, int) {
     taken = false;
     target = 0;
     return 1;
@@ -81,10 +81,15 @@ int main(int argc, char** argv) {
     std::string compiler;
     int opt = 1;
     uint32_t excerpt_pc = 0xFFFFFFFFu;
+    Vu1AotBlockGen::Policy region;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--keep" && i + 1 < argc) keep = argv[++i];
         else if (a == "--opt" && i + 1 < argc) opt = std::atoi(argv[++i]);
+        else if (a == "--region-blocks" && i + 1 < argc) region.block_cap = std::atoi(argv[++i]);
+        else if (a == "--region-ops" && i + 1 < argc) region.op_cap = std::atoi(argv[++i]);
+        else if (a == "--region-taken" && i + 1 < argc) region.taken_targets = std::atoi(argv[++i]) != 0;
+        else if (a == "--chain" && i + 1 < argc) region.chain = std::atoi(argv[++i]) != 0;
         else if (a == "--compiler" && i + 1 < argc) compiler = argv[++i];
         else if (a == "--emit-excerpt" && i + 1 < argc) excerpt_pc = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 16));
         else dirs.push_back(a);
@@ -137,9 +142,11 @@ int main(int argc, char** argv) {
         const std::vector<uint32_t> pcs = Vu1AotEmitter::ReachableBlocks(scratch, entries, 8192);
         Vu1AotEmitter::Options eo;
         eo.engine_build = "test";
+        eo.region = region;
         const Vu1AotEmitter::Output out = Vu1AotEmitter::Emit(scratch, pcs, eo);
         Check(out.blocks == pcs.size(), "one function per block");
-        Check(CountOf(out.source, "\nint Blk_") == out.blocks, "one `int Blk_<pc>(` per block in the text");
+        Check(CountOf(out.source, "\nint Blk_") == 2 * out.blocks, "one `int Blk_<pc>(` declaration + one definition per block in the text");
+        Check(CountOf(out.source, "\n// region of ") == out.blocks, "one region function per block");
         Check(CountOf(out.source, "static constexpr VuDecodedSlot ") == out.ops, "one constexpr slot per op");
         Check(out.source.find("extern \"C\" const Vu1AotImageExports* " + out.entry_symbol + "()") != std::string::npos,
               "the extern \"C\" exports entry");
@@ -150,7 +157,7 @@ int main(int argc, char** argv) {
             const VuBlock* b = VuBlockTier::BuildBlock(scratch, (excerpt_pc & VuBlockTier::kPcMask) >> 3);
             std::vector<uint32_t> emitted(pcs);
             std::sort(emitted.begin(), emitted.end());
-            std::printf("%s", Vu1AotEmitter::EmitBlock(scratch, *b, "Blk_excerpt", emitted).c_str());
+            std::printf("%s", Vu1AotEmitter::EmitBlock(scratch, *b, "Blk_excerpt", emitted, region).c_str());
         }
     }
 
@@ -165,6 +172,7 @@ int main(int argc, char** argv) {
     bs.root = root;
     bs.build_id = "test-build";
     bs.opt_level = opt;
+    bs.region = region;
     bs.compiler = compiler;
     bs.search_defaults = compiler.empty();
     ps2r::app::Vu1AotBuilder builder(tier, bs);

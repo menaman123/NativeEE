@@ -56,6 +56,7 @@
 
 #include "app/host/vu1_aot_pack.h"
 #include "engine/platform/host/platform.h"
+#include "engine/vu/vu1_aot/vu1_aot_block_gen.h"
 #include "engine/vu/vu1_aot/vu1_aot_exports.h"
 #include "engine/vu/vu1_aot/vu1_aot_tier.h"
 
@@ -74,6 +75,7 @@ public:
         std::string pack_dir;        // engine.vu1_aot_pack ("" = next to the executable)
         bool search_pack = true;     // false = never look for a shipped pack (tests)
         int opt_level = 2;           // -O2 | -O1
+        Vu1AotBlockGen::Policy region;  // the region / chaining policy of the generated functions (engine.vu1_aot_region_*, _chain)
         int workers = 1;             // worker threads (1..2)
         bool keep_source = true;     // leave <image>.cpp beside the library
     };

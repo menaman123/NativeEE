@@ -551,7 +551,7 @@ void VuBlockTier::Loop(VuUnit& unit, uint32_t pc, VuBlockProgram& prog, uint64_t
             st.native_budget = cycle_limit > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<uint32_t>(cycle_limit);
             st.native_exit_pc = pc;
             st.native_resume = false;
-            const int done = blk->native(unit, generic_, taken, target);
+            const int done = blk->native(unit, generic_, taken, target, 0);
             bundles_ += static_cast<uint64_t>(done);
             ++acc.blocks_native;
             acc.ops_native += static_cast<uint64_t>(done);

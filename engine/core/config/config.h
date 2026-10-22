@@ -181,6 +181,15 @@ struct EngineConfig {
     std::string    vu1_aot_compiler;
     std::string    vu1_aot_prelude;
     int            vu1_aot_opt = 2;
+    // The generator's REGION POLICY (Vu1AotBlockGen::Policy): blocks / ops a
+    // region function holds at most, whether it grows over static branch
+    // targets, and block CHAINING (a block end tail-calls its successor's
+    // function instead of returning to the dispatcher). Generation-time
+    // shape only: every library is verified the identity before it runs.
+    int            vu1_aot_region_blocks = 1;
+    int            vu1_aot_region_ops = 48;
+    bool           vu1_aot_region_taken = true;
+    bool           vu1_aot_chain = false;
     // The pre-built library pack (app/host/vu1_aot_pack.h) the loader tries
     // before the user cache and the compiler ("" = <executable dir>/vu1_aot_pack).
     std::string    vu1_aot_pack;
