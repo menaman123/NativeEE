@@ -127,6 +127,12 @@ uniform int u_blend_c;      // 0=As, 1=Ad, 2=FIX
 uniform int u_blend_d;      // 0=Cs, 1=Cd, 2=0
 uniform float u_fix_alpha;  // FIX value (0-1 range, PS2 128=1.0)
 uniform int u_blend_enabled; // ABE flag from PRIM
+// 1 = the unified fixed-function blend state is bound -- func(SRC1_COLOR,
+// ONE_MINUS_SRC1_ALPHA), the SAME two factor paths the per-tuple states use -- and
+// frag_factor carries THIS draw's factors: .rgb = the source factor, .a = x with the
+// destination factor 1 - x, both derived from the ALPHA tuple (render::BlendFfMap
+// unified arms). 0 = the per-tuple GL state reads frag_factor = As as before.
+uniform int u_ff_unified;
 uniform int u_sw_blend;      // 1=shader-side blend active (RT copy bound)
 uniform int u_flip_v;        // 1=flip V coordinate (for RT texture reads)
 
@@ -1028,7 +1034,22 @@ void main() {
     }
 
     frag_color = result;
-    frag_factor = vec4(as_factor);
+    if (u_ff_unified != 0) {
+        // (A - B) * C + D with A, B, D in {Cs, Cd, 0}: the Cs coefficient is
+        // C * ([A=Cs] - [B=Cs]) + [D=Cs], the Cd coefficient C * ([A=Cd] - [B=Cd]) + [D=Cd].
+        // Every unified arm has both in [0, 1] and each expression below is a sum of
+        // 0, +-1 and +-C, so the factors are bit-exactly as_factor / 1 / 0 -- the same
+        // values the per-tuple states take from SRC1 / ONE / ZERO -- and the hardware
+        // forms 1 - x for the destination on the very path (ONE_MINUS_SRC1_ALPHA) the
+        // 0101 state used; for 0101 the output is vec4(As), identical to the old one.
+        // (FIX arms are not unified: the blend constant is not quantised like an output.)
+        float C = as_factor;
+        float sf = C * (float(u_blend_a == 0) - float(u_blend_b == 0)) + float(u_blend_d == 0);
+        float x = (1.0 - float(u_blend_d == 1)) - C * (float(u_blend_a == 1) - float(u_blend_b == 1));
+        frag_factor = vec4(sf, sf, sf, x);
+    } else {
+        frag_factor = vec4(as_factor);
+    }
 }
 )GLSL";
 

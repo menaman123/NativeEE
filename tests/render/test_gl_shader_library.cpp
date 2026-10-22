@@ -60,9 +60,13 @@ static const uint64_t kVertHash = 0x36951d472cb1a88cull;
 // population of a pass, the test block only discards (KEEP's failing pixels and the
 // other population of a split pass) and no longer alters result.a -- AFAIL's
 // FB_ONLY / ZB_ONLY / RGB_ONLY are the executor's second-pass write masks (pinned by
-// test_gl_alpha_fail_split). Every other arm's text is unchanged; re-pin only
-// together with a reviewed shader change.
-static const uint64_t kFragHash = 0x2fed4c5eae774b7aull;
+// test_gl_alpha_fail_split); then (0x6ed601652a887ca9) the unified fixed-function
+// blend state: `u_ff_unified` (0 = the per-tuple GL state, frag_factor = vec4(As) as
+// before; 1 = func(SRC1_COLOR, ONE_MINUS_SRC1_ALPHA) is bound and frag_factor =
+// (sf, sf, sf, x) carries the draw's own factors from u_blend_a..d -- sums of 0, +-1
+// and +-As, bit-exactly the per-tuple values; render::BlendFfMap::Unified). Every
+// other arm's text is unchanged; re-pin only together with a reviewed shader change.
+static const uint64_t kFragHash = 0x6ed601652a887ca9ull;
 static const uint64_t kScanoutVertHash = 0x8823cded4f383d15ull;
 static const uint64_t kScanoutFragHash = 0x5d955137d32b0c78ull;
 // The stencil-composite sources (OLD s9_composite_native.inc:53-215 k_s9_* texts).

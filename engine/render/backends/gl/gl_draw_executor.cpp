@@ -701,8 +701,8 @@ void GlDrawExecutor::CdCopy(const DrawParams& p, Step& s) {
 
 // The blend-equation uniforms of a blended draw (both the shader and the
 // fixed-function arm write them); a class-native generic arm inherits them.
-void GlDrawExecutor::BlendAbcdUniforms(const gs::DrawIr& ir, const DrawParams& p) {
-    if (p.inherited_uniforms & kInheritBlendAbcd) return;
+void GlDrawExecutor::BlendAbcdUniforms(const gs::DrawIr& ir, const DrawParams& p, bool force) {
+    if (!force && (p.inherited_uniforms & kInheritBlendAbcd)) return;
     GlUniformCache& u = dev_.Uniforms();
     const GlUniformLocations& L = dev_.Shaders().Locations();
     const auto& a = ir.raster.alpha;
@@ -729,11 +729,24 @@ void GlDrawExecutor::BlendState(const gs::DrawIr& ir, const DrawParams& p, Step&
     const FfBlendMap ffm = BlendFfMap::Map(a.a, a.b, a.c, a.d);
     const bool fba_sw = ir.raster.fba && !ffm.matched;
     auto fixed_function = [&]() {
-        if (ffm.uses_fix) st.BlendColor(0.f, 0.f, 0.f, a.fix / 128.0f);
         st.Enable(GL_BLEND);
-        st.BlendEquationSeparate(ffm.eq_rgb, GL_FUNC_ADD);
-        st.BlendFuncSeparate(ffm.src_rgb, ffm.dst_rgb, GL_ONE, GL_ZERO);   // alpha: source replace
-        BlendAbcdUniforms(ir, p);
+        if (dev_.UnifiedBlend() && BlendFfMap::Unified(ffm)) {
+            // One state for every unified arm; the fragment program derives the
+            // draw's factors from the ALPHA uniforms, which therefore must be THIS
+            // draw's even on an arm that inherits them (kInheritBlendAbcd: the
+            // reference's native arms left them to the previous full-set draw because
+            // the per-tuple GL state, not the program, carried the blend).
+            st.BlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+            st.BlendFuncSeparate(GL_SRC1_COLOR, GL_ONE_MINUS_SRC1_ALPHA, GL_ONE, GL_ZERO);
+            u.Set1i(L.ff_unified, 1);
+            BlendAbcdUniforms(ir, p, /*force=*/true);
+        } else {
+            if (ffm.uses_fix) st.BlendColor(0.f, 0.f, 0.f, a.fix / 128.0f);
+            st.BlendEquationSeparate(ffm.eq_rgb, GL_FUNC_ADD);
+            st.BlendFuncSeparate(ffm.src_rgb, ffm.dst_rgb, GL_ONE, GL_ZERO);   // alpha: source replace
+            u.Set1i(L.ff_unified, 0);
+            BlendAbcdUniforms(ir, p);
+        }
     };
     if (ir.alpha_blend &&
         (s.using_rt || fba_sw || s.fbmsk16_exact || s.fbmsk32_exact || s.wrap_route || dev_.ForceShaderBlend()) &&

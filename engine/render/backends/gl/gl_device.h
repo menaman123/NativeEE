@@ -168,6 +168,20 @@ public:
     // reference arm another backend's identity judge compares against. OFF by default.
     void SetForceShaderBlend(bool on) { force_shader_blend_ = on; }
     bool ForceShaderBlend() const { return force_shader_blend_; }
+    // The unified fixed-function blend state (render::BlendFfMap unified arms): ONE
+    // GL blend state -- func(SRC1_COLOR, ONE_MINUS_SRC1_ALPHA) -- for the As / ONE /
+    // ZERO FUNC_ADD tuples, the per-tuple factors written by the fragment program's second output
+    // (u_ff_unified), so consecutive blended draws with different ALPHA tuples no
+    // longer switch blend state (~1900 glBlendFuncSeparate / glBlendColor a frame,
+    // each a pipeline-state switch in the GL-on-Metal driver). Needs dual-source
+    // blending; off = the per-tuple states. OFF by default: the identity oracle
+    // (gs_replay hash equality on the captures) admits only the 0101 / 0202 / 0200 /
+    // 2101 / A=B arms, not 0201 -- the second half of the lit mesh's 0101 <-> 0201
+    // alternation -- so the exact form removes ~2 % of the switches and adds a
+    // uniform toggle per edge (BlendFfMap::Unified). Kept as an A/B lever.
+    void SetUnifiedBlend(bool on) { unified_blend_ = on; }
+    bool UnifiedBlend() const { return unified_blend_ && dual_source_; }
+    bool DualSource() const { return dual_source_; }
     // glFlush: the host's swap callback for a window that is never shown (the
     // hidden GL window of a captured present) -- the command stream reaches the
     // GPU without the swap's drawable flush.
@@ -218,6 +232,8 @@ private:
     TextureBarrierFn texture_barrier_ = nullptr;
     bool cd_copy_by_barrier_ = false;
     bool force_shader_blend_ = false;
+    bool unified_blend_ = false;
+    bool dual_source_ = false;
     bool present_capture_deferred_ = false;
     DeferredCapture deferred_capture_;
     uint64_t present_capture_waits_ = 0;

@@ -111,7 +111,7 @@ private:
     void ClassifyRoutes(const gs::DrawIr& ir, const gs::TextureSource& tex, const DrawParams& p,
                         Step& s);
     void CdCopy(const DrawParams& p, Step& s);
-    void BlendAbcdUniforms(const gs::DrawIr& ir, const DrawParams& p);
+    void BlendAbcdUniforms(const gs::DrawIr& ir, const DrawParams& p, bool force = false);
     void BlendState(const gs::DrawIr& ir, const DrawParams& p, Step& s);
     void DepthState(const gs::DrawIr& ir, const DrawParams& p, const Step& s);
     void ScissorState(const gs::DrawIr& ir, const Step& s);

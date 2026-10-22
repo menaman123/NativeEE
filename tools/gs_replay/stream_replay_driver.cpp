@@ -70,6 +70,7 @@ bool StreamReplayDriver::CreateContext() {
         renderer_name_ = ctx_.Renderer() ? ctx_.Renderer() : "";
         if (opt_.cd_barrier) gl_.SetCdCopyByBarrier(true);
         if (opt_.force_shader_blend) gl_.SetForceShaderBlend(true);
+        if (opt_.unified_blend >= 0) gl_.SetUnifiedBlend(opt_.unified_blend != 0);
     }
     be_->SetWindowSize(kNativeWindowW, kNativeWindowH);
     be_->ArmPresentCapture(true);   // play: every Present's window image is read back for the session window

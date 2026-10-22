@@ -13,6 +13,8 @@
 #include <cstdint>
 #include <vector>
 
+#include "engine/render/backend.h"
+
 namespace ps2r {
 namespace render {
 
@@ -26,6 +28,8 @@ public:
     void Set3f(int loc, float a, float b, float c);
     void Set4f(int loc, float a, float b, float c, float d);
     uint64_t Skips() const { return skips_; }
+    // The census the issued glUniform* calls are counted into (null = none).
+    void SetCensus(CallCensus* census) { census_ = census; }
 
 private:
     struct Shadow {
@@ -36,6 +40,7 @@ private:
     Shadow& At(int loc);
     std::vector<Shadow> shadow_;
     uint64_t skips_ = 0;
+    CallCensus* census_ = nullptr;
 };
 
 }  // namespace render

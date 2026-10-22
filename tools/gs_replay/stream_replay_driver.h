@@ -83,6 +83,7 @@ public:
         uint32_t trace_draw = 0xFFFFFFFFu; // --trace-draw N@F: print draw N (0-based) of frame F (registers + vertices) on stderr
         uint32_t trace_draw_frame = 0;
         bool force_shader_blend = false;   // --force-shader-blend: GL's exact shader blend on every blended draw
+        int unified_blend = -1;            // --unified-blend 1 / --no-unified-blend 0: GlDevice::SetUnifiedBlend (-1 = the default)
         uint32_t draw_limit = 0;           // --draw-limit N[@F]: only the first N draws of frame F (default: every dumped frame) reach the consumer (0 = all; a bisection aid)
         uint32_t draw_limit_frame = kDrawLimitDumpRange;
     };

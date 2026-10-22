@@ -150,6 +150,7 @@ void GlStateCache::Viewport(int x, int y, int w, int h) {
     }
     viewport_known_ = true;
     viewport_[0] = x; viewport_[1] = y; viewport_[2] = w; viewport_[3] = h;
+    if (census_) census_->state_sets++;
     glViewport(x, y, w, h);
 }
 
@@ -164,6 +165,7 @@ void GlStateCache::SetCap(uint32_t cap, bool on) {
         if (*s == static_cast<int8_t>(on ? 1 : 0)) { skips_++; return; }
         *s = static_cast<int8_t>(on ? 1 : 0);
     }
+    if (census_) census_->state_sets++;
     if (on) glEnable(cap); else glDisable(cap);
 }
 
@@ -174,6 +176,7 @@ void GlStateCache::BlendEquationSeparate(uint32_t rgb, uint32_t a) {
     if (blend_eq_rgb_ == rgb && blend_eq_a_ == a) { skips_++; return; }
     blend_eq_rgb_ = rgb;
     blend_eq_a_ = a;
+    if (census_) census_->state_sets++;
     glBlendEquationSeparate(rgb, a);
 }
 
@@ -185,6 +188,7 @@ void GlStateCache::BlendFuncSeparate(uint32_t sr, uint32_t dr, uint32_t sa, uint
     }
     blend_src_rgb_ = sr; blend_dst_rgb_ = dr;
     blend_src_a_ = sa;   blend_dst_a_ = da;
+    if (census_) census_->state_sets++;
     glBlendFuncSeparate(sr, dr, sa, da);
 }
 
@@ -198,12 +202,14 @@ void GlStateCache::BlendColor(float r, float g, float b, float a) {
     }
     blend_color_known_ = true;
     blend_color_[0] = r; blend_color_[1] = g; blend_color_[2] = b; blend_color_[3] = a;
+    if (census_) census_->state_sets++;
     glBlendColor(r, g, b, a);
 }
 
 void GlStateCache::DepthFunc(uint32_t f) {
     if (depth_func_ == f) { skips_++; return; }
     depth_func_ = f;
+    if (census_) census_->state_sets++;
     glDepthFunc(f);
 }
 
@@ -211,6 +217,7 @@ void GlStateCache::DepthMask(bool m) {
     const int8_t v = m ? 1 : 0;
     if (depth_mask_ == v) { skips_++; return; }
     depth_mask_ = v;
+    if (census_) census_->state_sets++;
     glDepthMask(m ? GL_TRUE : GL_FALSE);
 }
 
@@ -222,6 +229,7 @@ void GlStateCache::ColorMask(bool r, bool g, bool b, bool a) {
         return;
     }
     color_mask_[0] = vr; color_mask_[1] = vg; color_mask_[2] = vb; color_mask_[3] = va;
+    if (census_) census_->state_sets++;
     glColorMask(r, g, b, a);
 }
 
@@ -233,6 +241,7 @@ void GlStateCache::Scissor(int x, int y, int w, int h) {
     }
     scissor_known_ = true;
     scissor_box_[0] = x; scissor_box_[1] = y; scissor_box_[2] = w; scissor_box_[3] = h;
+    if (census_) census_->state_sets++;
     glScissor(x, y, w, h);
 }
 

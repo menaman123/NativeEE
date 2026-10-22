@@ -71,6 +71,27 @@ int main() {
                           "fallback is the standard alpha blend");
                 }
     CHECK(matched == 14 + 27 && fallback == 81 - 14 - 27, "14 table arms + 27 A=B arms, 40 fallbacks");
+    // The unified state (one GL blend state for the As / ONE / ZERO FUNC_ADD arms):
+    // 0101, 0202, 0200, 2101 and every A = B arm; never a FIX arm, 0201, 1000, 1200,
+    // a SUBTRACT / REVERSE_SUBTRACT arm or the unmatched approximation.
+    {
+        int unified = 0;
+        for (int a = 0; a < 3; a++)
+            for (int b = 0; b < 3; b++)
+                for (int c = 0; c < 3; c++)
+                    for (int d = 0; d < 3; d++)
+                        if (BlendFfMap::Unified(BlendFfMap::Map(a, b, c, d))) unified++;
+        CHECK(unified == 27 + 4, "27 A=B arms + 0101 / 0202 / 0200 / 2101 are unified");
+        CHECK(BlendFfMap::Unified(BlendFfMap::Map(0, 1, 0, 1)), "0101 unified");
+        CHECK(BlendFfMap::Unified(BlendFfMap::Map(0, 2, 0, 2)) && BlendFfMap::Unified(BlendFfMap::Map(0, 2, 0, 0)), "0202 / 0200 unified");
+        CHECK(BlendFfMap::Unified(BlendFfMap::Map(2, 1, 0, 1)), "2101 unified");
+        CHECK(BlendFfMap::Unified(BlendFfMap::Map(1, 1, 2, 1)), "A=B unified whatever C");
+        CHECK(!BlendFfMap::Unified(BlendFfMap::Map(0, 2, 0, 1)), "0201 keeps its own state (identity oracle)");
+        CHECK(!BlendFfMap::Unified(BlendFfMap::Map(0, 1, 2, 1)) && !BlendFfMap::Unified(BlendFfMap::Map(0, 2, 2, 1)), "FIX arms keep their state");
+        CHECK(!BlendFfMap::Unified(BlendFfMap::Map(1, 0, 0, 0)) && !BlendFfMap::Unified(BlendFfMap::Map(1, 2, 0, 0)), "1000 / 1200 keep their state");
+        CHECK(!BlendFfMap::Unified(BlendFfMap::Map(2, 0, 0, 1)) && !BlendFfMap::Unified(BlendFfMap::Map(0, 1, 0, 0)), "subtractive arms keep their state");
+        CHECK(!BlendFfMap::Unified(BlendFfMap::Map(1, 0, 1, 2)), "the approximation keeps its state");
+    }
     // Invariant 34: the full-subtractive portal core (0-Cs)*As+Cd is REVERSE_SUBTRACT,
     // never the fallback that paints out = Cs.
     const FfBlendMap portal = BlendFfMap::Map(2, 0, 0, 1);
