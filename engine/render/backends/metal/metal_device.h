@@ -67,6 +67,10 @@ public:
     void Shutdown();
     bool IsInitialized() const { return initialized_; }
     const char* DeviceName() const { return device_name_.c_str(); }
+    // video.backend=auto's probe: the system default device exists and is MTLGPUFamilyApple7 or
+    // newer (Apple silicon: framebuffer fetch, the arm this backend is measured on). Creates no
+    // queue; `name` (optional) receives the device name.
+    static bool Recommended(std::string* name = nullptr);
 
     Caps QueryCaps() const override;
     SurfaceId CreateSurface(const SurfaceDesc& desc) override;
@@ -84,6 +88,7 @@ public:
     void WriteAlphaLane(SurfaceId dst, const Rect& dst_rect, SurfaceId lane, const Rect& exclude) override;
     void Readback(SurfaceId id, const Rect& rect, void* out, size_t stride) override;
     FenceId BeginReadback(SurfaceId id, const Rect& rect) override;
+    bool ReadbackReady(FenceId fence) override;
     bool PollReadback(FenceId fence, void* out, size_t stride) override;
     void Present(const ScanoutDesc& desc) override;
     void ArmPresentCapture(bool armed) override;
@@ -148,10 +153,13 @@ public:
     void ReadTexture(MetalSurface& s, const Rect& rect, void* out, size_t stride);
 
 private:
+    // One BeginReadback: the blit's destination buffer (shared storage, pooled) and the
+    // serial of the command buffer that carries the blit; ready once that serial completed.
     struct PendingReadback {
-        std::vector<uint8_t> bytes;
+        void* buf = nullptr;        // id<MTLBuffer> (retained; returned to free_readback_bufs_ on Poll)
         size_t stride = 0;
         int rows = 0;
+        uint64_t serial = 0;
     };
     struct CaptureSlot {
         void* tex = nullptr;        // id<MTLTexture>
@@ -222,6 +230,7 @@ private:
     std::unordered_map<uint32_t, MetalSurface> surfaces_;
     uint32_t next_surface_ = 1;
     std::unordered_map<uint64_t, PendingReadback> readbacks_;
+    std::vector<std::pair<void*, size_t>> free_readback_bufs_;   // (id<MTLBuffer>, capacity) returned by Poll
     uint64_t next_fence_ = 1;
     int max_texture_size_ = 0;
     int max_anisotropy_ = 16;

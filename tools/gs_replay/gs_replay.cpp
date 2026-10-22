@@ -2,7 +2,7 @@
 // the GL backend, title-neutral on this tree:
 //
 //   gs_replay stream <in.gsstream> [--scale N] [--warmup N] [--max-frames N] [--csv f]
-//                    [--json f] [--dump-ppm DIR] [--dump-frames a-b] [--quiet] [--sync-capture] [--swap] [--cd-barrier]
+//                    [--json f] [--dump-ppm DIR] [--dump-frames a-b[:step]] [--quiet] [--sync-capture] [--swap] [--cd-barrier]
 //                    [--backend gl|metal]                                         (exit 77 = no GL / Metal device)
 //       the renderer THROUGHPUT harness: the consumer alone over a captured consumer
 //       stream (engine/gs/hle/capture), per-frame ms / fps / frames-lane hashes.
@@ -29,18 +29,21 @@ namespace {
 int Usage() {
     std::fprintf(stderr,
                  "usage: gs_replay stream <in.gsstream> [--scale N] [--warmup N] [--max-frames N]\n"
-                 "                 [--csv f] [--json f] [--dump-ppm DIR] [--dump-frames a-b] [--no-grab] [--deferred-grab] [--phash]\n"
+                 "                 [--csv f] [--json f] [--dump-ppm DIR] [--dump-frames a-b[:step]] [--no-grab] [--deferred-grab] [--phash]\n"
                  "                 [--quiet] [--sync-capture] [--swap] [--cd-barrier] [--backend gl|metal] [--metal-hw-depth] [--metal-commit-draws N] [--trace-draw N@F]\n"
                  "                 [--force-shader-blend] [--draw-limit N[@F]] [--no-coalesce] [--unified-blend|--no-unified-blend]\n"
                  "                 (exit 77 = no GL / Metal device)\n");
     return 2;
 }
 
+// "a", "a-b" or "a-b:s" (every s-th frame from a).
 bool ParseRange(const char* s, FrameRange* fr) {
-    unsigned a = 0, b = UINT32_MAX;
-    if (std::sscanf(s, "%u-%u", &a, &b) < 1) return false;
+    unsigned a = 0, b = UINT32_MAX, st = 1;
+    const int n = std::sscanf(s, "%u-%u:%u", &a, &b, &st);
+    if (n < 1 || st == 0) return false;
     fr->lo = a;
     fr->hi = b;
+    fr->step = st;
     return true;
 }
 

@@ -13,7 +13,10 @@
 
 namespace ps2r {
 
-enum class VideoBackend : uint8_t { Gl = 0, Soft, Metal };   // Metal: Apple GPUs (macOS builds)
+// Metal: Apple GPUs (macOS builds). Auto (the default): the video stack picks Metal when the
+// host has a Metal device of MTLGPUFamilyApple7 or newer (the Apple-silicon arm), else GL;
+// explicit values are taken as given; the deterministic profile pins gl.
+enum class VideoBackend : uint8_t { Gl = 0, Soft, Metal, Auto };
 enum class FitMode : uint8_t { Stretch = 0, Fit, Fill, Integer, Custom };
 // video.aspect: the display shape the title renders FOR (the projection, culling
 // frustum, HUD fit and movie picture take the ratio -- TR renderer.cpp's
@@ -106,7 +109,7 @@ struct VideoConfig {
     FullscreenMode fullscreen = FullscreenMode::Windowed;
     RenderRate   render_rate = RenderRate::Tick60;
     FrameCap     frame_cap = FrameCap::Hz60;
-    VideoBackend backend = VideoBackend::Gl;
+    VideoBackend backend = VideoBackend::Auto;
     FitMode      fit_mode = FitMode::Fit;
     AspectSel    aspect = AspectSel::Auto;
     int          custom_scale_pct = 100;  // 25..400

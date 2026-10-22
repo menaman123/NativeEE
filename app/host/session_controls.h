@@ -81,6 +81,7 @@ public:
         int texture_filter = 0;
         int anisotropy = 1;
         std::string input_name;
+        std::string renderer;   // the video backend in force ("metal (auto): Apple M4"), from the title's leg
         std::string recording_path;
         std::string restore_path;
         std::string reproductions_path;   // the folder F5 writes into and the browser lists

@@ -33,6 +33,13 @@ if(APPLE)   # ps2r_render_metal (engine/render is configured after tests/: test 
     # The Metal arm's device smoke (the GL smoke's checks on MetalDevice; SKIP without a device).
     add_test(NAME Render_MetalDeviceSmoke COMMAND test_metal_device_smoke)
     set_tests_properties(Render_MetalDeviceSmoke PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+    # The Metal arm's BeginReadback / PollReadback: a blit into a pooled shared buffer behind the
+    # command buffer's serial hands back the synchronous read's bytes; release-only Poll (null out).
+    add_executable(test_metal_async_readback test_metal_async_readback.cpp)
+    target_link_libraries(test_metal_async_readback PRIVATE ps2r_render_metal ps2r_gs_ir ps2r_core)
+    target_compile_options(test_metal_async_readback PRIVATE -Wall -Wextra -Werror -O2)
+    add_test(NAME Render_MetalAsyncReadback COMMAND test_metal_async_readback)
+    set_tests_properties(Render_MetalAsyncReadback PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 endif()
 
 # The rendering pins over a title's frozen PCSX2 baselines (title-screen draws, whole-frame

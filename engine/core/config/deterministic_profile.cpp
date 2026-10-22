@@ -31,6 +31,7 @@
 namespace ps2r {
 
 void DeterministicProfile::Apply(Config& c) {
+    c.video.backend = VideoBackend::Gl;   // the lanes' arm: auto never picks per host here
     c.video.scale = 1;
     c.video.texture_filter = TextureFilterSel::Title;   // the title's own sampler choice: lanes identical
     c.video.anisotropy = 1;

@@ -186,7 +186,7 @@ ROWS = [
     ("ui.perf_overlay", "bool", "off", "=", "-"),
     ("video.anisotropy", "int", "1", "=", "-"),
     ("video.aspect", "enum(auto|4:3|16:9|16:10|21:9)", "auto", "=", "display.ini:aspect"),
-    ("video.backend", "enum(gl|soft|metal)", "gl", "=", "RENDERER_BACKEND"),
+    ("video.backend", "enum(gl|soft|metal|auto)", "auto", "gl", "RENDERER_BACKEND"),
     ("video.custom_offset_x", "int", "0", "=", "display.ini:custom_offset_x"),
     ("video.custom_offset_y", "int", "0", "=", "display.ini:custom_offset_y"),
     ("video.custom_scale_pct", "int", "100", "=", "display.ini:custom_scale"),

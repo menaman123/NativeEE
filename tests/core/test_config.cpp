@@ -69,7 +69,7 @@ static void TestPeakDefaults() {
     CHECK(c.video.fullscreen == FullscreenMode::Windowed);   // A2: the window's mode, persisted
     CHECK(c.video.render_rate == RenderRate::Tick60);        // A3: one presented frame per game tick
     CHECK(c.harness.display_hz == 0);                        // A3: the real display's refresh
-    CHECK(c.video.backend == VideoBackend::Gl);
+    CHECK(c.video.backend == VideoBackend::Auto);   // round 3: Metal on an Apple-silicon host, else GL (resolved at Create)
     CHECK(c.video.fit_mode == FitMode::Fit);
     CHECK(c.video.aspect == AspectSel::Auto);
     {

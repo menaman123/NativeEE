@@ -71,6 +71,7 @@ void SessionPanel::DrawSettings(SessionControls&, const SessionControls::Snapsho
     ImGui::TextDisabled("Presentation: vsync %s, %s, window %dx%d", r.vsync ? "on" : "off",
                         r.fps_cap > 0 ? (std::to_string(r.fps_cap) + " fps cap").c_str() : "uncapped",
                         r.window_width, r.window_height);
+    if (!r.renderer.empty()) ImGui::TextDisabled("Renderer: %s", r.renderer.c_str());
 }
 
 // ui.perf_overlay: the clock contract's rule-5 readout (game Hz / render fps)
