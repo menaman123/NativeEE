@@ -109,6 +109,13 @@ def read_registry(path):
     defines = {}
     for m in DEFINE_RE.finditer(text):
         defines.setdefault(m.group(1), m.group(2))
+    # Aliases (`#define GL_DRAW_FRAMEBUFFER_BINDING GL_FRAMEBUFFER_BINDING`): emit the value the
+    # alias stands for, since the aliased name itself need not be in the used set.
+    for name in list(defines):
+        value, hops = defines[name], 0
+        while value in defines and hops < 8:
+            value, hops = defines[value], hops + 1
+        defines[name] = value
     protos = {}
     for m in PFN_RE.finditer(text):
         ret, upper, args = m.group(1).strip(), m.group(2), m.group(3).strip()
