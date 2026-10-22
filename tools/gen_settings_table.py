@@ -52,7 +52,7 @@ FINGERPRINT_EXCLUDED_PREFIXES = ("harness.", "paths.", "meta.", "diag.")
 # FingerprintExcluded): host scheduling / toolchain choices that change nothing
 # the title executes or an image carries. A preset may pin them (det column)
 # without entering the fingerprint.
-FINGERPRINT_EXCLUDED_KEYS = ("engine.mtvu_kick_drop", "engine.mtvu_early_finish", "engine.mtvu_wait_probe", "engine.ee_yield_kernel_reload", "engine.vu1_aot_corpus",
+FINGERPRINT_EXCLUDED_KEYS = ("engine.mtvu_kick_drop", "engine.mtvu_early_finish", "engine.mtvu_wait_probe", "engine.ee_yield_spin_gate", "engine.vu1_aot_corpus",
                              "engine.vu1_aot_codegen", "engine.vu1_aot_compiler", "engine.vu1_aot_prelude",
                              "engine.vu1_aot_opt", "engine.vu1_aot_pack", "save.restore_mode")
 
@@ -73,7 +73,7 @@ ROWS = [
     ("diag.tick_census", "bool", "off", "=", "-"),
     ("diag.vu1_lockstep", "bool", "off", "=", "-"),
     ("engine.ee_runahead", "int", "2", "=", "PS2_EE_RUNAHEAD"),
-    ("engine.ee_yield_kernel_reload", "bool", "off", "off", "-"),
+    ("engine.ee_yield_spin_gate", "bool", "off", "off", "-"),
     ("engine.mtvu", "bool", "on", "off", "PS2_MTVU"),
     ("engine.mtvu_depth", "int", "2", "=", "PS2_MTVU_MAX_FRAMES"),
     ("engine.mtvu_early_finish", "bool", "on", "off", "-"),

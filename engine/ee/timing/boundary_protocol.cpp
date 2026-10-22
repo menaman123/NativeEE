@@ -49,6 +49,18 @@ void BoundaryProtocol::Wait(uint64_t) {
     queue.DrainIfPendingOnHolder();
 }
 
+void BoundaryProtocol::FireDueFields() {
+    if (!WallFieldDue()) return;
+    if (is_guest_ && !is_guest_()) return;
+    ++due_field_fires_;
+    ticks_.FirePending();
+    EeEventQueue::Instance().DrainIfPendingOnHolder();
+}
+
+std::function<void()> BoundaryProtocol::FireDueFieldsHook() {
+    return [this] { FireDueFields(); };
+}
+
 bool BoundaryProtocol::WallFieldDue() const {
     if (source_.policy() != TickSource::Policy::Play || source_.Bypass()) return false;
     return ticks_.Pending() != 0;

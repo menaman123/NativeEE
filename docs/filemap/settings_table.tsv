@@ -18,7 +18,7 @@ diag.perf	bool	off	=	PS2_PERF	SETTING
 diag.tick_census	bool	off	=	-	-
 diag.vu1_lockstep	bool	off	=	-	-
 engine.ee_runahead	int	2	=	PS2_EE_RUNAHEAD	SETTING
-engine.ee_yield_kernel_reload	bool	off	off	-	-
+engine.ee_yield_spin_gate	bool	off	off	-	-
 engine.mtvu	bool	on	off	PS2_MTVU	NORM
 engine.mtvu_depth	int	2	=	PS2_MTVU_MAX_FRAMES	SETTING
 engine.mtvu_early_finish	bool	on	off	-	-

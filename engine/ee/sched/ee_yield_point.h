@@ -65,17 +65,26 @@
 // per field and a loop body is a few to a few dozen instructions, so 2^18
 // back-edges per trip is about one field of a tight spin -- kDefaultBudget.
 //
-// The budget is reloaded by a trip. With `reload_on_kernel_call` (E432,
-// Config engine.ee_yield_kernel_reload) a kernel call reloads it too
-// (NoteKernelCall from SyscallTable::Dispatch): the count is then "back-edges
-// since the last scheduling point", and a trip means what the header says -- a
-// loop that reached NO kernel call for a field's worth of iterations. Without
-// it the counter runs across every kernel call the guest makes: ordinary code
-// that calls the kernel dozens of times a frame trips once per 2^18 back-edges
-// anyway (Paris: every ~9 frames), and the trip's field is a WALL field under
-// Play -- the thread parks to the next pacer tick (16.7 ms of `other` in the
-// frame work, one extra VBON/TIM2 per trip: 670 VBON per 600 boundaries, 54
-// pictures/s from a 60 Hz logic with 60 % slack).  Census `reloads`.
+// The budget is one global counter, reloaded by a trip only: it runs across
+// every scheduling point the guest passes, so ordinary code trips once per
+// 2^18 back-edges anyway (Paris: every ~9 frames) and the trip's field is a
+// WALL field under Play -- the thread parks to the next pacer tick (16.7 ms of
+// `other` in the frame work, one extra VBON/TIM2 per trip: 670 VBON per 600
+// boundaries, 54 pictures/s from a 60 Hz logic with 60 % slack). The SPIN GATE
+// (E432, Deps::spin_gate, Config engine.ee_yield_spin_gate) tells the two
+// apart: a trip whose thread passed NO scheduling point since the previous trip
+// -- no token acquire (EeRunToken::AcquireSlow: a block ended, a preemption, a
+// vblank wait) and no boundary (BoundarySequencer::RunBoundary) -- spun, and
+// passes its field as before (the console's time moving under a spinner: the
+// boot's IOP polls). Any other trip is the 2^18th back-edge of code that
+// schedules: it runs the same sequence but fires only the wall fields the pacer
+// has ALREADY noted (Deps::fire_due_fields: no park, the console's vblank
+// landing mid-frame; nothing under the deterministic / freerun policies), so no
+// field is invented and no thread parks. A kernel call is NOT a scheduling
+// point here: the boot spins on polling syscalls (iReferEventFlagStatus,
+// FlushCache) -- a kernel-call reload hung the cold boot (gs_draws 3, VBON 1).
+// Census trips / spin_trips / sched_trips / due_fields.
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -118,7 +127,10 @@ public:
         std::function<void(uint64_t tick, int tid)> on_idle_field;
         std::function<bool()> inhibit;         // true = refuse this trip (boundary in flight ...)
         uint32_t budget = kDefaultBudget;      // back-edges per trip (0 = kDefaultBudget)
-        bool reload_on_kernel_call = false;    // E432: NoteKernelCall reloads the budget (header)
+        bool spin_gate = false;                // E432 (header): a non-spin trip passes no field of its own
+        // E432: fire the wall fields the pacer has already noted, without a park
+        // (BoundaryProtocol::FireDueFields); nothing when none is due. Optional.
+        std::function<void()> fire_due_fields;
     };
 
     struct Census {
@@ -138,7 +150,9 @@ public:
         uint64_t nested = 0;       // refused: inside a trip
         uint64_t inhibited = 0;    // refused: inhibit() or an INTC dispatch in progress
         uint64_t non_holder = 0;   // refused: not the run-token holder / not a guest thread
-        uint64_t reloads = 0;      // NoteKernelCall reloads (E432; 0 when the reload is off)
+        uint64_t spin_trips = 0;   // E432: trips that passed a field (spun: no scheduling point since the previous trip)
+        uint64_t sched_trips = 0;  // E432: trips of scheduling code (no field of their own)
+        uint64_t due_fields = 0;   // E432: sched trips that found a wall field due and fired it
         std::string Format() const;
     };
 
@@ -152,11 +166,11 @@ public:
 
     // The seam body (seams.cpp: ps2r_ee_yield_point). Reloads g_ee_backedge_budget first.
     void Trip(CpuContext& ctx);
-    // A kernel call (SyscallTable::Dispatch): with Deps::reload_on_kernel_call the
-    // back-edge budget starts over -- the loop that reaches a kernel call is not a
-    // spin (E432). A no-op otherwise.
-    void NoteKernelCall();
-    bool ReloadOnKernelCall() const { return bound_ && deps_.reload_on_kernel_call; }
+    // A scheduling point passed (E432): a guest thread gained the run token
+    // (EeRunToken::AcquireSlow) or a boundary ran (BoundarySequencer::RunBoundary).
+    // One relaxed increment; the spin gate reads it at the trip.
+    void NoteSchedulingPoint() { sched_gen_.fetch_add(1, std::memory_order_relaxed); }
+    bool SpinGate() const { return bound_ && deps_.spin_gate; }
     // The wall vblank landing on a RUNNING thread (a scheduling point of the
     // holder: the title's syscall entry). When `wall_field_due` holds and a
     // thread sleeps in WaitVblank, that thread is readied (no field passes
@@ -180,10 +194,13 @@ public:
 private:
     EeYieldPoint() = default;
     // Steps 1-4b on the token holder `ctx` runs on (Trip's body before the preemption point).
-    void RunField(CpuContext& ctx);
+    // advance = false (E432, a scheduling trip): step 1 fires only the due wall fields.
+    void RunField(CpuContext& ctx, bool advance = true);
     Deps deps_;
     bool bound_ = false;
     bool in_trip_ = false;
     uint32_t budget_ = kDefaultBudget;
     Census census_;
+    std::atomic<uint64_t> sched_gen_{0};   // NoteSchedulingPoint count
+    uint64_t sched_gen_at_trip_ = 0;       // ... as read by the previous trip (holder only)
 };

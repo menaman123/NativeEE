@@ -215,18 +215,19 @@ struct EngineConfig {
     // runs the same either way); fingerprint-excluded like mtvu_early_finish.
     // Off until its gates hold (run.meta mtvu_waits= idle_nonblocking).
     bool    mtvu_wait_probe = false;
-    // E432: a kernel call reloads the back-edge yield budget (EeYieldPoint::
-    // NoteKernelCall), so a yield trip is a loop that reached NO kernel call for
-    // 2^18 iterations -- the spin the yield point exists for. Off = the budget
-    // runs across kernel calls and ordinary code trips once per 2^18 back-edges
-    // (Paris: every ~9 frames), each trip a wall field under Play (16.7 ms of
-    // the frame, one extra VBON/TIM2): 54 pictures/s from a 60 Hz logic with
-    // 60 % slack. Changes the fields the guest observes (fewer); the
-    // deterministic profile pins it off (the frozen oracles' schedule).
-    // Fingerprint-excluded: a slot restores under either setting (the yield
-    // budget is not in the image). Off until its gates hold (run.meta ee_yield=
-    // trips / reloads).
-    bool    ee_yield_kernel_reload = false;
+    // E432: the back-edge yield point's spin gate (EeYieldPoint header). A trip
+    // passes a field of its own only when its thread SPUN -- no run-token acquire
+    // and no boundary since the previous trip; the 2^18th back-edge of code that
+    // schedules fires only the wall fields the pacer has already noted (no park).
+    // Off = every trip is a field: ordinary code trips once per 2^18 back-edges
+    // (Paris: every ~9 frames), each trip a wall field under Play (16.7 ms of the
+    // frame, one extra VBON/TIM2): 54 pictures/s from a 60 Hz logic with 60 %
+    // slack. Changes the fields the guest observes (fewer); the deterministic
+    // profile pins it off (the frozen oracles' schedule). Fingerprint-excluded: a
+    // slot restores under either setting (the yield budget is not in the image).
+    // Off until its gates hold (run.meta ee_yield= spin_trips / sched_trips /
+    // due_fields).
+    bool    ee_yield_spin_gate = false;
     int     ee_runahead = 2;
     Pacing  pacing = Pacing::Realtime;
     int     time_regime_pin = -1;         // -1 = none (adaptive)
