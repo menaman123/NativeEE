@@ -32,6 +32,12 @@ bool GlContext::Create(Window& window) {
         return false;
     }
     if (!MakeCurrent(window)) return false;
+    std::string missing;
+    if (!LoadEntryPoints(&missing)) {
+        std::fprintf(stderr, "[gl] unresolved GL entry points: %s\n", missing.c_str());
+        Destroy();
+        return false;
+    }
     SetSwapInterval(0);
     const GLubyte* v = glGetString(GL_VERSION);
     const GLubyte* r = glGetString(GL_RENDERER);
@@ -57,6 +63,13 @@ bool GlContext::MakeCurrent(Window& window) {
 }
 
 void GlContext::SetSwapInterval(int interval) { SDL_GL_SetSwapInterval(interval); }
+
+bool GlContext::LoadEntryPoints(std::string* error) {
+    std::string missing;
+    if (::ps2r::host::GlLoadEntryPoints(&SDL_GL_GetProcAddress, &missing)) return true;
+    if (error) *error = "unresolved GL entry points: " + missing;
+    return false;
+}
 
 }  // namespace platform
 }  // namespace ps2r

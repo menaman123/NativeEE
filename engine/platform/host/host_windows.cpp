@@ -7,6 +7,7 @@
 // (.github/workflows/windows.yml). Keep every call here to the documented Win32/UCRT
 // surface so the first CI run is a compile check, not a redesign.
 #include "engine/platform/host/platform.h"
+#include "engine/platform/host/gl_windows.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -294,6 +295,50 @@ uint64_t FastNowNs() { return MonotonicNowNs(); }   // QueryPerformanceCounter i
 bool GmTimeUtc(int64_t unix_seconds, struct tm* out) {
     const __time64_t t = static_cast<__time64_t>(unix_seconds);
     return _gmtime64_s(out, &t) == 0;
+}
+
+namespace {
+std::mutex g_gl_load_mutex;
+bool g_gl_loaded = false;
+void* (*g_gl_resolve)(const char*) = nullptr;
+
+void* GlResolveOne(void* (*resolve)(const char*), HMODULE gl32, const char* name) {
+    void* p = resolve ? resolve(name) : nullptr;
+    // wglGetProcAddress's documented failure values besides null.
+    const intptr_t v = reinterpret_cast<intptr_t>(p);
+    if (v == 1 || v == 2 || v == 3 || v == -1) p = nullptr;
+    // wglGetProcAddress (what SDL_GL_GetProcAddress wraps) knows only the names beyond GL 1.1;
+    // the 1.1 set (glClear, glTexImage2D, glGetError, ...) is opengl32.dll's own export table.
+    if (!p && gl32) p = reinterpret_cast<void*>(GetProcAddress(gl32, name));
+    return p;
+}
+}  // namespace
+
+bool GlLoadEntryPoints(void* (*resolve)(const char*), std::string* missing) {
+    std::lock_guard<std::mutex> lock(g_gl_load_mutex);
+    if (missing) missing->clear();
+    if (resolve) g_gl_resolve = resolve;
+    if (g_gl_loaded) return true;
+    HMODULE gl32 = GetModuleHandleW(L"opengl32.dll");
+    if (!gl32) gl32 = LoadLibraryW(L"opengl32.dll");
+    bool ok = true;
+    for (int i = 0; i < gl_windows::kEntryPointCount; ++i) {
+        const gl_windows::EntryPoint& e = gl_windows::kEntryPoints[i];
+        void* p = GlResolveOne(resolve, gl32, e.name);
+        *e.slot = p;
+        if (!p) {
+            ok = false;
+            if (missing) { if (!missing->empty()) *missing += ' '; *missing += e.name; }
+        }
+    }
+    g_gl_loaded = ok;
+    return ok;
+}
+
+void* GlGetProcAddress(const char* name) {
+    if (!name) return nullptr;
+    std::lock_guard<std::mutex> lock(g_gl_load_mutex);
+    return GlResolveOne(g_gl_resolve, GetModuleHandleW(L"opengl32.dll"), name);
 }
 
 namespace {

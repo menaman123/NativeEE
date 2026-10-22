@@ -83,6 +83,7 @@ bool Launcher::OpenWindow(std::string& error) {
     gl_context_ = SDL_GL_CreateContext(window_);
     if (!gl_context_) { error = SDL_GetError(); return false; }
     SDL_GL_MakeCurrent(window_, gl_context_);
+    if (!platform::GlContext::LoadEntryPoints(&error)) return false;
     SDL_GL_SetSwapInterval(1);
     SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
     IMGUI_CHECKVERSION();

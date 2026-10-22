@@ -309,6 +309,17 @@ bool GmTimeUtc(int64_t unix_seconds, struct tm* out) {
     return ::gmtime_r(&t, out) != nullptr;
 }
 
+bool GlLoadEntryPoints(void* (*)(const char*), std::string* missing) {
+    // The GL entry points are linked directly on macOS (OpenGL.framework) and Linux
+    // (libOpenGL / libGL export the core set): nothing to load.
+    if (missing) missing->clear();
+    return true;
+}
+
+void* GlGetProcAddress(const char* name) {
+    return name ? ::dlsym(RTLD_DEFAULT, name) : nullptr;
+}
+
 int Backtrace(void** frames, int max_frames) {
 #if PS2R_HOST_HAVE_BACKTRACE
     return ::backtrace(frames, max_frames);

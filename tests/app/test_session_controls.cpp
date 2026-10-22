@@ -8,7 +8,6 @@
 
 #if PS2R_PRODUCT_CHECKPOINT_TESTS
 #include <filesystem>
-#include <unistd.h>
 #include "app/host/session_checkpoint.h"
 #include "engine/ee/hle/thread_manager.h"
 #include "engine/ee/savestate/thread_capture.h"
@@ -23,6 +22,7 @@
 #include PS2R_GL_HEADER
 #include "app/gui/session_gui.h"
 #include "app/host/platform_input.h"
+#include "engine/platform/sdl/gl_context.h"
 #include "app/host/session_runtime.h"
 #include "engine/ee/cpu/ps2_float.h"
 #endif
@@ -387,6 +387,8 @@ static void GuiOnRealSdlAndGlOwners(const char* screenshot) {
     void* gl_context = SDL_GL_CreateContext(window);
     CHECK(gl_context != nullptr);
     if (!gl_context) { SDL_DestroyWindow(window); SDL_Quit(); return; }
+    std::string gl_error;
+    CHECK(ps2r::platform::GlContext::LoadEntryPoints(&gl_error));
     {
         Controls controls;
         Controls::RuntimeState state;

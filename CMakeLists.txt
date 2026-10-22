@@ -29,6 +29,14 @@ if(WIN32)
     # defines neither the min/max macros nor the GDI/winsock surface.
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS _USE_MATH_DEFINES
                             NOMINMAX WIN32_LEAN_AND_MEAN)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        # SDL2's SDL_endian.h (2.30 and 2.32) defines `_m_prefetch` itself under `_MSC_VER &&
+        # __clang__` as a pseudo-header guarded by clang's own __PRFCHWINTRIN_H; clang >= 20
+        # makes _m_prefetch a builtin and rejects the definition ("definition of builtin
+        # function", not a warning). Pre-defining the guard skips SDL's copy; nothing in the
+        # tree calls the prfchw intrinsics.
+        add_compile_definitions(__PRFCHWINTRIN_H)
+    endif()
 endif()
 
 option(PS2R_SIMD "BlockDecode: vectorized (NEON) inner loop, proven byte-identical to the scalar path by tests/gs/format/test_block_decode" OFF)
