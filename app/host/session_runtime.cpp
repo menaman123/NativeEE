@@ -120,6 +120,11 @@ void SessionRuntime::SetPresentObserver(std::function<void(std::chrono::steady_c
     present_observer_ = std::move(observer);
 }
 
+void SessionRuntime::SetRenderer(std::string renderer) {
+    if (std::this_thread::get_id() != main_thread_) return;
+    renderer_ = std::move(renderer);
+}
+
 void SessionRuntime::ConfigureWindowDump(std::string dir) {
     if (std::this_thread::get_id() != main_thread_) return;
     window_dump_dir_ = std::move(dir);
@@ -181,6 +186,7 @@ void SessionRuntime::Publish() {
     }
     status_.keyboard_input = input_ && input_->KeyboardEnabled();
     keyboard_state_.store(status_.keyboard_input);
+    status_.renderer = renderer_;
     status_.input_name = !input_ ? "No live input" : input_->GamepadActive() ? "Controller" :
         status_.keyboard_input ? "Keyboard and mouse" : "No enabled input device";
     status_.status = closing_ ? "Closing session..." : (restore_started_ ? "Restoring reproduction..." : "");

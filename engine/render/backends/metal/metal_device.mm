@@ -67,6 +67,17 @@ const CallCensus* MetalDevice::Census() const {
     return &census_;
 }
 
+bool MetalDevice::Recommended(std::string* name) {
+    @autoreleasepool {
+        id<MTLDevice> dev = MTLCreateSystemDefaultDevice();
+        if (!dev) return false;
+        const bool ok = [dev supportsFamily:MTLGPUFamilyApple7];
+        if (ok && name) *name = [[dev name] UTF8String];
+        [dev release];
+        return ok;
+    }
+}
+
 bool MetalDevice::Init(std::function<void()> swap) {
     Shutdown();
     swap_ = std::move(swap);

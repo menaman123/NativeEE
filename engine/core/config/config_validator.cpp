@@ -33,7 +33,7 @@ std::vector<std::string> ConfigValidator::DegradeDependents(Config& c, bool reta
         notes.push_back(std::string(name) + " disabled: requires " + prerequisite);
     };
     // GL and Metal host the live video scene the Graphics producers need; Soft hosts none.
-    const bool gl = c.video.backend == VideoBackend::Gl || c.video.backend == VideoBackend::Metal;
+    const bool gl = c.video.backend != VideoBackend::Soft;   // gl / metal / auto (resolved to one of them at Create)
     if (!gl) {
         off(c.hle.graphics_shadows, "hle.graphics_shadows", "video.backend=gl");
         off(c.hle.graphics_distortion, "hle.graphics_distortion", "video.backend=gl");

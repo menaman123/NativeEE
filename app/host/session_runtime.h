@@ -153,6 +153,9 @@ public:
     // written as <dir>/w_final.ppm; "" = off. The Root pins on the PRESENTED
     // frame read it.
     void ConfigureWindowDump(std::string dir);
+    // Main thread before Run: the video backend in force, shown on the F1 panel's Session
+    // state ("metal (auto): Apple M4"); "" = not shown.
+    void SetRenderer(std::string renderer);
     // Runs bootstrap/relaunch/join on a large-stack host thread while main
     // pumps. Shutdown's deadline stays on main, never inside JoinAll.
     int Run(std::function<int()> game, unsigned shutdown_seconds);
@@ -276,6 +279,7 @@ private:
     std::atomic<uint64_t> display_swaps_{0}, display_swap_max_us_{0}, display_swap_total_us_{0};
     Persist persist_;
     std::string window_dump_dir_;
+    std::string renderer_;
     int fps_cap_ = 60;
     std::atomic<bool> closing_{false}, paused_{false};
     std::atomic<uint64_t> frame_{0};

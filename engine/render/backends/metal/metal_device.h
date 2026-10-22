@@ -67,6 +67,10 @@ public:
     void Shutdown();
     bool IsInitialized() const { return initialized_; }
     const char* DeviceName() const { return device_name_.c_str(); }
+    // video.backend=auto's probe: the system default device exists and is MTLGPUFamilyApple7 or
+    // newer (Apple silicon: framebuffer fetch, the arm this backend is measured on). Creates no
+    // queue; `name` (optional) receives the device name.
+    static bool Recommended(std::string* name = nullptr);
 
     Caps QueryCaps() const override;
     SurfaceId CreateSurface(const SurfaceDesc& desc) override;
