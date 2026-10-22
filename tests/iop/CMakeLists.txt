@@ -19,8 +19,12 @@ ps2r_iop_test(test_iop_clock IopClockFrame)
 # heartbeat) beats on the following boundaries instead of waiting ~F frames.
 ps2r_iop_test(test_iop_clock_rebase IopClockRebase)
 
-# 4A': the guest-stack guard page of the platform fiber layer (forked probes).
-ps2r_iop_test(test_fiber_guard FiberGuardPage)
+# 4A': the guest-stack guard page of the platform fiber layer (forked probes). POSIX only:
+# the probes fork() and read the child's wait status; the Win32 arm's fibers (CreateFiber)
+# have their own guard semantics and no fork.
+if(NOT WIN32)
+    ps2r_iop_test(test_fiber_guard FiberGuardPage)
+endif()
 # A coroutine parked on one host thread and resumed from another (the IOP is pumped from the EE
 # main thread at the boundary and from whichever EE guest thread trips the yield point): each host
 # thread's current-context record stays its own across the migration.

@@ -9,7 +9,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
-#include <unistd.h>
+#include "engine/platform/host/platform.h"
 
 using namespace ps2r::savestate;
 using ps2r::app::SessionClock;
@@ -18,8 +18,9 @@ static unsigned checks = 0, failures = 0;
     std::fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #value); } } while (false)
 
 int main() {
-    char directory[] = "/tmp/checkpoint_clock_XXXXXX";
-    CHECK(mkdtemp(directory) != nullptr);
+    const std::string directory_s = ps2r::host::MakeTempDirectory("checkpoint_clock_", nullptr);
+    CHECK(!directory_s.empty());
+    const char* directory = directory_s.c_str();
     MainMemory ram;
     Scratchpad scratch;
     MemorySections memory(ram, scratch, nullptr, 0);

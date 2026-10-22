@@ -14,11 +14,13 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
-#include <sys/stat.h>
 
 #include "engine/core/triage/triage_bundle.h"
 #include "engine/gs/hle/ir/counting_draw_ir_sink.h"
 #include "engine/gs/hle/ir/drawlist_ring.h"
+#include "engine/platform/host/platform.h"
+#include <filesystem>
+#include <system_error>
 
 using ps2r::gs::CountingDrawIrSink;
 using ps2r::gs::DrawIr;
@@ -43,8 +45,8 @@ std::string ReadFile(const std::string& path) {
 }
 
 bool NonEmptyFile(const std::string& path) {
-    struct stat st;
-    return stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0;
+    std::error_code ec;
+    return std::filesystem::is_regular_file(path, ec) && std::filesystem::file_size(path, ec) > 0;
 }
 
 size_t CountLines(const std::string& text, const char* prefix) {
@@ -91,7 +93,7 @@ void Fault() { throw std::runtime_error("Graphics Movie presentation release ref
 int main(int argc, char** argv) {
     const std::string scratch = argc > 1 ? argv[1] : ".";
     const std::string root = scratch + "/triage_bundle_test";
-    mkdir(root.c_str(), 0755);
+    ps2r::host::MakeDirectory(root.c_str());
 
     // --- the bounded drawlist ring: 450 frames x 3 draws; the dump keeps the newest 200 ---
     CountingDrawIrSink tail;

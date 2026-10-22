@@ -6,8 +6,6 @@
 // Link guard: this binary references BOTH RingLog (core) and the row-26 extern
 // "C" trio (ee seam), so ring_log.o and seams.o are always pulled together --
 // a second definition of the trio anywhere in the tree fails this link.
-#include <sys/stat.h>
-#include <unistd.h>
 
 #include <cstdint>
 #include <cstdio>
@@ -19,6 +17,9 @@
 #include "engine/ee/cpu/guest_park.h"
 #include "engine/ee/cpu/shadow_call_stack.h"
 #include "engine/ee/recomp_abi/recomp_abi.h"
+#include <filesystem>
+#include <system_error>
+#include "engine/platform/host/platform.h"
 
 extern "C" bool crashring_enabled;
 extern "C" void crashring_record_indirect(uint32_t target, uint32_t ra);
@@ -42,8 +43,9 @@ void check(bool ok, const char* what) {
 int main() {
     // Ring log configured FIRST (verbose EE on) with a scratch log dir: the fatal
     // report below writes ring_crash.rlog + crash_report.txt there.
-    char log_dir[] = "/tmp/ps2r_dispatch_table_XXXXXX";
-    check(::mkdtemp(log_dir) != nullptr, "scratch log dir");
+    const std::string log_dir_s = ps2r::host::MakeTempDirectory("ps2r_dispatch_table_", nullptr);
+    check(!log_dir_s.empty(), "scratch log dir");
+    const char* log_dir = log_dir_s.c_str();
     const uint32_t all = (1u << ps2r::ringlog::CH_COUNT) - 1;
     RingLog::Configure(all, 1u << CH_EE, 4096, log_dir);
     Ring* ring = RingLog::RegisterThread("main");
@@ -128,14 +130,16 @@ int main() {
           "park recorded reason + pc and unwound");
     GuestPark::SetSink(nullptr);
     // The report preceded the park: both crash artefacts exist in the log dir.
-    struct stat st{};
     const std::string rlog = std::string(log_dir) + "/ring_crash.rlog";
     const std::string report = std::string(log_dir) + "/crash_report.txt";
-    check(::stat(rlog.c_str(), &st) == 0 && st.st_size > 0, "ring_crash.rlog written before the park");
-    check(::stat(report.c_str(), &st) == 0 && st.st_size > 0, "crash_report.txt written before the park");
-    ::unlink(rlog.c_str());
-    ::unlink(report.c_str());
-    ::rmdir(log_dir);
+    std::error_code ec;
+    check(std::filesystem::is_regular_file(rlog, ec) && std::filesystem::file_size(rlog, ec) > 0,
+          "ring_crash.rlog written before the park");
+    check(std::filesystem::is_regular_file(report, ec) && std::filesystem::file_size(report, ec) > 0,
+          "crash_report.txt written before the park");
+    std::filesystem::remove(rlog, ec);
+    std::filesystem::remove(report, ec);
+    std::filesystem::remove(log_dir, ec);
 
     check(!RecompAbi::HasMemory(), "no memory bound in this test (no generated body runs)");
 

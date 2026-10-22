@@ -13,13 +13,13 @@
 #include <filesystem>
 #include <string>
 #include <thread>
-#include <unistd.h>
 
 #include "app/host/vu1_aot_cache.h"
 #include "engine/vu/tiers/vu_tier_dispatch.h"
 #include "engine/vu/vu1_aot/vu1_aot_verifier.h"
 #include "engine/vu/vu1_case.h"
 #include "engine/vu/vu_unit.h"
+#include "engine/platform/host/platform.h"
 
 using ps2r::app::Vu1AotCache;
 
@@ -103,7 +103,7 @@ int main() {
     }
 
     // ---- a temp root with a two-case corpus ----
-    const std::string root = (std::filesystem::temp_directory_path() / ("vu1_aot_cache_test_" + std::to_string(::getpid()))).string();
+    const std::string root = (std::filesystem::temp_directory_path() / ("vu1_aot_cache_test_" + std::to_string(ps2r::host::ProcessId()))).string();
     std::error_code ec;
     std::filesystem::remove_all(root, ec);
     std::filesystem::create_directories(Vu1AotCache::CorpusDir(root), ec);

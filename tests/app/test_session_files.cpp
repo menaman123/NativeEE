@@ -5,7 +5,7 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
-#include <unistd.h>
+#include "engine/platform/host/platform.h"
 
 namespace fs = std::filesystem;
 using ps2r::app::SessionFiles;
@@ -19,8 +19,9 @@ static std::string Read(const fs::path& path) {
 }
 
 int main() {
-    char name[] = "/tmp/session_files_XXXXXX";
-    CHECK(mkdtemp(name) != nullptr);
+    const std::string name_s = ps2r::host::MakeTempDirectory("session_files_", nullptr);
+    CHECK(!name_s.empty());
+    const char* name = name_s.c_str();
     const fs::path root(name), leg = root / "leg", dumps = root / "frames";
     fs::create_directory(leg);
     {

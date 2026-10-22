@@ -57,7 +57,7 @@ if(PS2R_PRODUCT_TESTS)
     target_include_directories(test_clock_census PRIVATE "${PS2R_PRODUCT_ROOT}")
     target_compile_features(test_clock_census PRIVATE cxx_std_17)
     target_compile_options(test_clock_census PRIVATE -Wall -Wextra -Werror)
-    target_link_libraries(test_clock_census PRIVATE Threads::Threads)
+    target_link_libraries(test_clock_census PRIVATE ps2r_host Threads::Threads)   # host::ThreadCpuTimeNs
     add_test(NAME ClockCensus COMMAND test_clock_census)
     set_tests_properties(ClockCensus PROPERTIES TIMEOUT 20)
     # The display-rate camera transform source (Charter 2 A3): inverse translation,

@@ -9,6 +9,9 @@
 #include "engine/platform/host/platform.h"
 #include "engine/platform/host/gl_windows.h"
 
+#include <random>
+#include <string>
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -127,6 +130,29 @@ int StrNCaseCmp(const char* a, const char* b, size_t n) { return _strnicmp(a, b,
 bool MakeDirectory(const char* path) {
     if (_mkdir(path) == 0) return true;
     return errno == EEXIST && IsDirectory(path);
+}
+std::string MakeTempDirectory(const char* prefix, std::string* err) {
+    wchar_t tmp[MAX_PATH + 1];
+    const DWORD n = GetTempPathW(MAX_PATH + 1, tmp);
+    if (n == 0 || n > MAX_PATH) { if (err) *err = "GetTempPathW failed"; return std::string(); }
+    std::wstring base(tmp, n);
+    std::string pre = prefix ? prefix : "ps2r_";
+    std::wstring wpre(pre.begin(), pre.end());   // the prefixes are ASCII identifiers
+    static const char kAlphabet[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    std::random_device rd;
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        std::wstring name = base + wpre;
+        for (int i = 0; i < 6; ++i) name += static_cast<wchar_t>(kAlphabet[rd() % (sizeof kAlphabet - 1)]);
+        if (CreateDirectoryW(name.c_str(), nullptr)) {
+            const int bytes = WideCharToMultiByte(CP_UTF8, 0, name.c_str(), -1, nullptr, 0, nullptr, nullptr);
+            std::string out(bytes > 0 ? bytes - 1 : 0, '\0');
+            if (bytes > 0) WideCharToMultiByte(CP_UTF8, 0, name.c_str(), -1, out.data(), bytes, nullptr, nullptr);
+            return out;
+        }
+        if (GetLastError() != ERROR_ALREADY_EXISTS) break;
+    }
+    if (err) *err = pre + "XXXXXX: CreateDirectoryW failed (" + std::to_string(GetLastError()) + ")";
+    return std::string();
 }
 bool IsDirectory(const char* path) {
     const DWORD a = GetFileAttributesA(path);
@@ -291,6 +317,14 @@ uint64_t MonotonicNowNs() {
 }
 
 uint64_t FastNowNs() { return MonotonicNowNs(); }   // QueryPerformanceCounter is the cheap clock already
+
+uint64_t ThreadCpuTimeNs() {
+    FILETIME create, exit, kernel, user;
+    if (!GetThreadTimes(GetCurrentThread(), &create, &exit, &kernel, &user)) return 0;
+    const uint64_t k = (static_cast<uint64_t>(kernel.dwHighDateTime) << 32) | kernel.dwLowDateTime;
+    const uint64_t u = (static_cast<uint64_t>(user.dwHighDateTime) << 32) | user.dwLowDateTime;
+    return (k + u) * 100ull;   // FILETIME units are 100 ns
+}
 
 bool GmTimeUtc(int64_t unix_seconds, struct tm* out) {
     const __time64_t t = static_cast<__time64_t>(unix_seconds);

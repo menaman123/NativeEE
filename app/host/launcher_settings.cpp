@@ -1,10 +1,9 @@
 #include "app/host/launcher_settings.h"
 
-#include <sys/stat.h>
-#include <dirent.h>
-
 #include <algorithm>
 #include <cstdio>
+#include <filesystem>
+#include <system_error>
 
 #include "app/gui/savestate_rows.h"
 #include "app/host/savestate_slots.h"
@@ -64,14 +63,12 @@ bool LauncherSettings::Persist(const char* key, const std::string& value) {
 
 std::vector<std::string> LauncherSettings::TexturePacks() const {
     std::vector<std::string> packs;
-    if (DIR* d = ::opendir(cfg_.paths.texture_packs.c_str())) {
-        while (dirent* e = ::readdir(d)) {
-            const std::string name = e->d_name;
-            if (name.empty() || name[0] == '.') continue;
-            struct stat st;
-            if (::stat((cfg_.paths.texture_packs + "/" + name).c_str(), &st) == 0 && S_ISDIR(st.st_mode)) packs.push_back(name);
-        }
-        ::closedir(d);
+    std::error_code ec;
+    for (const auto& e : std::filesystem::directory_iterator(cfg_.paths.texture_packs, ec)) {
+        const std::string name = e.path().filename().string();
+        if (name.empty() || name[0] == '.') continue;
+        std::error_code dir_ec;
+        if (e.is_directory(dir_ec)) packs.push_back(name);
     }
     std::sort(packs.begin(), packs.end());
     return packs;

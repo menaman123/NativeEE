@@ -10,6 +10,7 @@
 
 #include "engine/ee/hle/thread_manager.h"
 #include "engine/ee/sched/ee_run_token.h"
+#include "engine/platform/host/platform.h"
 
 // No generated body or live-stack capture in this file-reader/relaunch test.
 extern "C" uint32_t ee_get_call_stack_depth() { return 0; }
@@ -147,8 +148,9 @@ void RestorePins() {
     plan.required_sections = {kData, kService};
     plan.clock = Restart::Clock::Rebase;
     plan.recording = Restart::Recording::Disabled;
-    char directory[] = "/tmp/session_restart_XXXXXX";
-    CHECK(mkdtemp(directory) != nullptr);
+    const std::string directory_s = ps2r::host::MakeTempDirectory("session_restart_", nullptr);
+    CHECK(!directory_s.empty());
+    const char* directory = directory_s.c_str();
     const std::string progress = std::string(directory) + "/game-save";
     const std::string old_recording = std::string(directory) + "/input-old";
     const std::string new_recording = std::string(directory) + "/input-new";

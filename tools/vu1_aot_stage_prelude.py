@@ -45,15 +45,40 @@ PRELUDE = "engine/vu/vu1_aot/vu1_aot_prelude.h"
 
 
 def closure(compiler, root, defines):
-    cmd = [compiler, "-std=c++17", "-I" + root, "-MM", "-x", "c++", os.path.join(root, PRELUDE)]
-    for d in defines:
-        cmd.append("-D" + d)
+    base = os.path.basename(compiler).lower()
+    if base.startswith("clang-cl"):
+        # clang-cl is clang with the cl command line; --driver-mode=g++ as the FIRST argument
+        # gives it the GNU one for this call, so -MM works unchanged (the windows-* presets).
+        cmd = [compiler, "--driver-mode=g++", "-std=c++17", "-I" + root, "-MM", "-x", "c++", os.path.join(root, PRELUDE)]
+        for d in defines:
+            cmd.append("-D" + d)
+        parse = "mm"
+    elif base in ("cl", "cl.exe"):
+        # MSVC cl has no -MM: /showIncludes lists every header as "Note: including file: <path>";
+        # /Zs = syntax only, no object.
+        cmd = [compiler, "/nologo", "/Zs", "/TP", "/std:c++17", "/I" + root, "/showIncludes", os.path.join(root, PRELUDE)]
+        for d in defines:
+            cmd.append("/D" + d)
+        parse = "showincludes"
+    else:
+        cmd = [compiler, "-std=c++17", "-I" + root, "-MM", "-x", "c++", os.path.join(root, PRELUDE)]
+        for d in defines:
+            cmd.append("-D" + d)
+        parse = "mm"
     try:
-        out = subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
+        p = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        out = p.stdout
     except (OSError, subprocess.CalledProcessError) as e:
         sys.stderr.write("vu1_aot_stage_prelude: %s\n" % e)
         return None
-    deps = out.replace("\\\n", " ").split(":", 1)[1].split()
+    if parse == "mm":
+        deps = out.replace("\\\n", " ").split(":", 1)[1].split()
+    else:
+        deps = [os.path.join(root, PRELUDE)]
+        for line in out.splitlines():
+            line = line.strip()
+            if line.startswith("Note: including file:"):
+                deps.append(line.split(":", 2)[2].strip())
     rel = []
     root_abs = os.path.abspath(root)
     for d in deps:

@@ -223,6 +223,10 @@ int StrNCaseCmp(const char* a, const char* b, size_t n);    // strncasecmp / _st
 // --- paths ---
 bool MakeDirectory(const char* path);   // true if created or already a directory
 bool IsDirectory(const char* path);
+// A fresh, uniquely named directory under the host's temp root (mkdtemp / GetTempPathW +
+// CreateDirectoryW with a random suffix): "<tmp>/<prefix>XXXXXX". Empty + *err on failure.
+// The tests' scratch directories (nothing of the game writes here).
+std::string MakeTempDirectory(const char* prefix, std::string* err);
 int64_t FileSeek64(std::FILE* f, int64_t offset, int whence);   // fseeko / _fseeki64
 int64_t FileTell64(std::FILE* f);                                // ftello / _ftelli64
 
@@ -281,6 +285,11 @@ uint64_t MonotonicNowNs();   // the steady clock the TimeDomain samples
 // is ~17 ns); elsewhere MonotonicNowNs. Its epoch is its own: never mix its
 // values with MonotonicNowNs / NowNs, difference it against itself only.
 uint64_t FastNowNs();
+// CPU time the CALLING thread has consumed, in ns (user + kernel): clock_gettime
+// CLOCK_THREAD_CPUTIME_ID on POSIX, GetThreadTimes on Win32 (100 ns units; the kernel's
+// quantum-sampled accounting, so individual reads are coarse but sums over a second are
+// right). 0 when the host cannot say. The app's clock census books per-thread CPU with it.
+uint64_t ThreadCpuTimeNs();
 // Thread-safe UTC broken-down time (gmtime_r / gmtime_s); false when the conversion fails.
 bool GmTimeUtc(int64_t unix_seconds, struct tm* out);
 

@@ -6,7 +6,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
-#include <pthread.h>
 #include <utility>
 
 #include "app/host/platform_input.h"
@@ -613,11 +612,11 @@ int SessionRuntime::Run(std::function<int()> game, unsigned shutdown_seconds) {
         int result = 2;
         std::exception_ptr failure{};
     } worker{std::move(game), this};
-    pthread_attr_t attributes;
-    pthread_attr_init(&attributes);
-    pthread_attr_setstacksize(&attributes, size_t{1024} * 1024 * 1024);
-    pthread_t thread;
-    const int created = pthread_create(&thread, &attributes, [](void* argument) -> void* {
+    // The game thread carries a 1 GiB stack (the recompiled EE's frames): host::ThreadCreate
+    // is the one native-thread entry with an explicit stack size (pthread_attr_setstacksize /
+    // _beginthreadex with STACK_SIZE_PARAM_IS_A_RESERVATION -- reserved, committed lazily).
+    ps2r::host::NativeThread thread;
+    const bool created = ps2r::host::ThreadCreate(&thread, [](void* argument) {
         auto& job = *static_cast<Worker*>(argument);
         // The game thread (the EE) runs at the interactive class the pacer, the GS
         // consumer, the MTVU worker and main already hold (platform::host: the
@@ -641,10 +640,8 @@ int SessionRuntime::Run(std::function<int()> game, unsigned shutdown_seconds) {
         }
         job.done.store(true, std::memory_order_release);
         job.session->wake_main_.Notify();
-        return nullptr;
-    }, &worker);
-    pthread_attr_destroy(&attributes);
-    if (created != 0) {
+    }, &worker, size_t{1024} * 1024 * 1024);
+    if (!created) {
         RequestClose();
         if (input_) input_->StopService();
         if (hooks_.stop) hooks_.stop();
@@ -653,7 +650,7 @@ int SessionRuntime::Run(std::function<int()> game, unsigned shutdown_seconds) {
         PollRestore();
         Publish();
         controls_.CancelPending("The game thread could not be started.");
-        std::fprintf(stderr, "Session game thread creation failed (%d).\n", created);
+        std::fprintf(stderr, "Session game thread creation failed (1 GiB stack).\n");
         return 2;
     }
     uint64_t close_started = 0, next_present = 0;
@@ -726,7 +723,7 @@ int SessionRuntime::Run(std::function<int()> game, unsigned shutdown_seconds) {
         if (!pending_frame_.rgba.empty()) to_edge = std::min(to_edge, pacer_.ToNextEdge(until));
         wake_main_.WaitFor(std::min<uint64_t>(4000000, std::max<uint64_t>(to_edge, 200000)), generation);
     }
-    pthread_join(thread, nullptr);
+    ps2r::host::ThreadJoin(thread);
     shutdown_.End();
     std::fprintf(stderr, "nativeee: session shutdown %s\n", shutdown_.Render().c_str());
     // The presented frame's record (ConfigureWindowDump): one last draw of the

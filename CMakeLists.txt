@@ -29,6 +29,10 @@ if(WIN32)
     # defines neither the min/max macros nor the GDI/winsock surface.
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS _USE_MATH_DEFINES
                             NOMINMAX WIN32_LEAN_AND_MEAN)
+    # SDL_main.h renames every `main` to SDL_main on Windows and expects SDL2main.lib to supply
+    # the real entry; the tree's executables are console programs with their own main (nativeee,
+    # gs_replay, the tools, the tests) and call SDL_Init themselves, so the renaming is off.
+    add_compile_definitions(SDL_MAIN_HANDLED)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         # SDL2's SDL_endian.h (2.30 and 2.32) defines `_m_prefetch` itself under `_MSC_VER &&
         # __clang__` as a pseudo-header guarded by clang's own __PRFCHWINTRIN_H; clang >= 20
@@ -40,6 +44,12 @@ if(WIN32)
 endif()
 
 option(PS2R_SIMD "BlockDecode: vectorized (NEON) inner loop, proven byte-identical to the scalar path by tests/gs/format/test_block_decode" OFF)
+if(PS2R_SIMD AND NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64|ARM64)$")
+    # The PS2R_SIMD bodies are <arm_neon.h> (gs/format, gif, vif); on x86-64 (the Windows
+    # target) the scalar twins are the build. Forced rather than fatal so one preset serves both.
+    message(STATUS "nativeee: PS2R_SIMD requested on ${CMAKE_SYSTEM_PROCESSOR} (NEON only) -- using the scalar paths")
+    set(PS2R_SIMD OFF)
+endif()
 option(PS2R_DIAGNOSTICS "Compile the core/diag mechanism in (harness/dev builds); OFF = Release contains no probes" OFF)
 set(PS2R_OG_ROOT "$ENV{PS2R_OLD_ROOT}" CACHE PATH
     "Frozen ORIGINAL tree (read-only oracle; default: $PS2R_OLD_ROOT, else empty). Used ONLY by tests/oracle differential tests; may be absent.")

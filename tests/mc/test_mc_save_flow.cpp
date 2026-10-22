@@ -12,7 +12,6 @@
 //   phase 4  reopen / read-back: Open RDONLY, Read 17 byte-exact;
 //   plus the kick rules: a GetInfo kick never destroys an undelivered save-flow
 //   completion; a save-flow kick replaces a pending GetInfo.
-#include <unistd.h>
 
 #include <cstdio>
 #include <cstring>
@@ -33,6 +32,7 @@
 #include "engine/mc/hle/mc_command_model.h"
 #include "engine/mc/hle/mc_host_store.h"
 #include "engine/mc/hle/mcserv_module.h"
+#include "engine/platform/host/platform.h"
 
 static int g_fail = 0;
 #define CHECK(cond, name) \
@@ -86,7 +86,7 @@ int main() {
     static FastMem fm(ram, map, mmio);
     RecompAbi::BindMemory(&fm);
 
-    const std::string root = (std::filesystem::temp_directory_path() / ("ps2r_mc_" + std::to_string(::getpid()))).string();
+    const std::string root = (std::filesystem::temp_directory_path() / ("ps2r_mc_" + std::to_string(ps2r::host::ProcessId()))).string();
     std::filesystem::remove_all(root);
     McHostStore store(root);
     McCommandModel model(/*latency_polls*/ 2);

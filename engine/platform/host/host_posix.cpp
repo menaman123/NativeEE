@@ -94,6 +94,17 @@ bool MakeDirectory(const char* path) {
     if (::mkdir(path, 0755) == 0) return true;
     return errno == EEXIST && IsDirectory(path);
 }
+std::string MakeTempDirectory(const char* prefix, std::string* err) {
+    std::error_code ec;
+    std::filesystem::path root = std::filesystem::temp_directory_path(ec);
+    if (ec) root = "/tmp";
+    std::string templ = (root / (std::string(prefix ? prefix : "ps2r_") + "XXXXXX")).string();
+    if (::mkdtemp(templ.data()) == nullptr) {
+        if (err) *err = templ + ": " + std::strerror(errno);
+        return std::string();
+    }
+    return templ;
+}
 bool IsDirectory(const char* path) {
     struct stat st{};
     return ::stat(path, &st) == 0 && S_ISDIR(st.st_mode);
@@ -302,6 +313,12 @@ uint64_t FastNowNs() {
 #else
     return MonotonicNowNs();
 #endif
+}
+
+uint64_t ThreadCpuTimeNs() {
+    timespec ts{};
+    if (::clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) != 0) return 0;
+    return static_cast<uint64_t>(ts.tv_sec) * 1000000000ull + static_cast<uint64_t>(ts.tv_nsec);
 }
 
 bool GmTimeUtc(int64_t unix_seconds, struct tm* out) {
