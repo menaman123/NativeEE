@@ -28,6 +28,7 @@
 #include <psapi.h>
 #include <share.h>
 #include <sys/stat.h>
+#include <timeapi.h>   // timeBeginPeriod (winmm): the pre-1803 fallback of PreciseSleepUntilNs
 
 #include <cerrno>
 #include <chrono>
@@ -290,6 +291,56 @@ uint64_t MonotonicNowNs() {
 }
 
 uint64_t FastNowNs() { return MonotonicNowNs(); }   // QueryPerformanceCounter is the cheap clock already
+
+namespace {
+// The per-thread waitable timer behind PreciseSleepUntilNs. CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+// (Windows 10 1803+) wakes within ~0.5 ms of the due time without touching the global timer
+// resolution; where the kernel refuses the flag (an older build) the classic timer is used and
+// the multimedia timer period is set to 1 ms once for the process (the Win7..1709 way to get a
+// 1 ms quantum; undone at exit by the OS). The handle lives as long as the thread.
+struct PreciseTimer {
+    HANDLE handle = nullptr;
+    bool high_resolution = false;
+    PreciseTimer() {
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
+        handle = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+        high_resolution = handle != nullptr;
+        if (!handle) {
+            static std::once_flag period_once;
+            std::call_once(period_once, [] { timeBeginPeriod(1); });
+            handle = CreateWaitableTimerExW(nullptr, nullptr, 0, TIMER_ALL_ACCESS);
+        }
+    }
+    ~PreciseTimer() {
+        if (handle) CloseHandle(handle);
+    }
+};
+}  // namespace
+
+void PreciseSleepUntilNs(uint64_t deadline_ns) {
+    thread_local PreciseTimer timer;
+    for (;;) {
+        const uint64_t now = MonotonicNowNs();
+        if (now >= deadline_ns) return;
+        const uint64_t remaining = deadline_ns - now;
+        if (!timer.handle) {
+            // No timer at all (handle exhaustion): the coarse sleep, then the re-check above.
+            Sleep(static_cast<DWORD>(remaining / 1000000ull));
+            continue;
+        }
+        // A negative due time is relative, in 100 ns units; at least one unit so the timer arms.
+        LARGE_INTEGER due;
+        due.QuadPart = -static_cast<LONGLONG>((remaining + 99) / 100);
+        if (due.QuadPart == 0) due.QuadPart = -1;
+        if (!SetWaitableTimer(timer.handle, &due, 0, nullptr, nullptr, FALSE)) {
+            Sleep(static_cast<DWORD>(remaining / 1000000ull));
+            continue;
+        }
+        WaitForSingleObject(timer.handle, INFINITE);
+    }
+}
 
 bool GmTimeUtc(int64_t unix_seconds, struct tm* out) {
     const __time64_t t = static_cast<__time64_t>(unix_seconds);

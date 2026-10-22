@@ -309,7 +309,7 @@ def link_host_arm_test(a, tree):
     link = shlex.split(a.lld_link) + ["/nologo"] + objs + ["/out:" + exe, "/subsystem:console"]
     for d in ("crt/lib/x86_64", "sdk/lib/um/x86_64", "sdk/lib/ucrt/x86_64"):
         link.append("/libpath:" + os.path.join(a.xwin, d))
-    link += ["msvcrt.lib", "vcruntime.lib", "ucrt.lib", "kernel32.lib", "dbghelp.lib", "psapi.lib"]
+    link += ["msvcrt.lib", "vcruntime.lib", "ucrt.lib", "kernel32.lib", "dbghelp.lib", "psapi.lib", "winmm.lib"]
     label, rc, dt, ne, nw, log = run_one("link test_host_platform.exe", link, exe + ".log")
     if rc != 0 or not os.path.exists(exe):
         print(f"win_cross_smoke: link test FAILED ({log})")

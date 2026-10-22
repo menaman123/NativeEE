@@ -304,6 +304,39 @@ uint64_t FastNowNs() {
 #endif
 }
 
+void PreciseSleepUntilNs(uint64_t deadline_ns) {
+    // Loop on the steady clock: the kernel wait is the fine-grained part, the re-check the
+    // "never early" guarantee (an EINTR or a timebase rounding can return a hair short).
+    for (;;) {
+        const uint64_t now = MonotonicNowNs();
+        if (now >= deadline_ns) return;
+        const uint64_t remaining = deadline_ns - now;
+#if defined(__APPLE__)
+        // mach_wait_until takes an absolute mach time; the remaining nanoseconds are converted
+        // with the timebase (Apple silicon: 125/3 -> 41.67 ns ticks) and added to a fresh read.
+        static const mach_timebase_info_data_t tb = [] {
+            mach_timebase_info_data_t t{};
+            mach_timebase_info(&t);
+            if (t.denom == 0 || t.numer == 0) { t.numer = 1; t.denom = 1; }
+            return t;
+        }();
+        const uint64_t ticks = (remaining / tb.numer) * tb.denom + ((remaining % tb.numer) * tb.denom) / tb.numer;
+        mach_wait_until(mach_absolute_time() + ticks);
+#else
+        // An absolute deadline on CLOCK_MONOTONIC (steady_clock's clock on glibc/musl): a
+        // preemption between the clock read and the call cannot stretch the wait.
+        struct timespec now_ts{};
+        clock_gettime(CLOCK_MONOTONIC, &now_ts);
+        uint64_t ns = static_cast<uint64_t>(now_ts.tv_nsec) + remaining;
+        struct timespec until{};
+        until.tv_sec = now_ts.tv_sec + static_cast<time_t>(ns / 1000000000ull);
+        until.tv_nsec = static_cast<long>(ns % 1000000000ull);
+        while (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &until, nullptr) == EINTR) {
+        }
+#endif
+    }
+}
+
 bool GmTimeUtc(int64_t unix_seconds, struct tm* out) {
     const time_t t = static_cast<time_t>(unix_seconds);
     return ::gmtime_r(&t, out) != nullptr;

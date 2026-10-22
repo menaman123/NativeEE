@@ -144,7 +144,7 @@ bool MtvuStack::Quiesce(std::string* why) {
         }
         ++quiesce_laps_;
         sync_.TryEagerDrain();
-        std::this_thread::sleep_for(std::chrono::nanoseconds(kQuiesceLapNs));
+        ps2r::host::PreciseSleepUntilNs(ps2r::host::MonotonicNowNs() + kQuiesceLapNs);   // a 0.5 ms lap that is 0.5 ms
     }
 }
 

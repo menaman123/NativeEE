@@ -279,6 +279,18 @@ uint64_t MonotonicNowNs();   // the steady clock the TimeDomain samples
 // is ~17 ns); elsewhere MonotonicNowNs. Its epoch is its own: never mix its
 // values with MonotonicNowNs / NowNs, difference it against itself only.
 uint64_t FastNowNs();
+// Block the calling thread until MonotonicNowNs() >= deadline_ns, with the finest timer the
+// host has: the field-edge trains (the tick thread's 60 Hz edges, the presenter's pacer)
+// need a wake within a few tens of microseconds of the edge, which std::this_thread::
+// sleep_until does not promise (Darwin's nanosleep lands 0.1-1 ms late under load; the
+// Windows SleepEx default is the 15.6 ms scheduler quantum).
+//   Darwin   mach_wait_until on the absolute-time clock (the scheduler's own deadline timer)
+//   Linux    clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME), EINTR resumed
+//   Windows  a per-thread CREATE_WAITABLE_TIMER_HIGH_RESOLUTION waitable timer (Win10 1803+);
+//            where the kernel refuses it, the classic timer with timeBeginPeriod(1) in force.
+// Returns at or after the deadline (never early); a deadline already passed returns at once.
+// The deadline is in MonotonicNowNs's domain (std::chrono::steady_clock's on every arm).
+void PreciseSleepUntilNs(uint64_t deadline_ns);
 // Thread-safe UTC broken-down time (gmtime_r / gmtime_s); false when the conversion fails.
 bool GmTimeUtc(int64_t unix_seconds, struct tm* out);
 

@@ -55,7 +55,17 @@ void TickThread::Loop() {
     uint64_t k = 1;
     auto next = edge_at(anchor, period, k);
     while (!stop_.load(std::memory_order_acquire)) {
-        std::this_thread::sleep_until(next);
+        // The host's precise timer (mach_wait_until / clock_nanosleep ABSTIME / a high-
+        // resolution waitable timer): sleep_until landed 0.1-1 ms late under load and the
+        // edge's lateness went straight into every boundary's wall time (round 3, L4). The
+        // deadline is carried as "steady now + remaining" so the two clocks' epochs never
+        // have to agree.
+        {
+            const auto remaining = next - Clock::now();
+            if (remaining.count() > 0)
+                ps2r::host::PreciseSleepUntilNs(ps2r::host::MonotonicNowNs() +
+                                                static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(remaining).count()));
+        }
         if (stop_.load(std::memory_order_acquire)) break;
         // The edge this tick stands for, published before the tick is noted.
         const uint64_t tick = ticks_noted_.load(std::memory_order_relaxed) + 1;

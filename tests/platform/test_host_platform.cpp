@@ -141,6 +141,28 @@ void Clocks() {
     const uint64_t b = MonotonicNowNs();
     CHECK(b >= a);
     CHECK(b - a < 10ull * 1000 * 1000 * 1000);   // under ten seconds for a short spin
+    // PreciseSleepUntilNs: never early; a passed deadline returns at once; a 2 ms deadline
+    // lands within the host's timer slop (the pin is loose -- 3 ms -- so a loaded CI box
+    // passes; the precision claim is measured by the pacing judge, not here). Twenty
+    // 500 us sleeps in a row keep the deadline chain: >= 10 ms total, no sleep early.
+    {
+        const uint64_t t0 = MonotonicNowNs();
+        PreciseSleepUntilNs(t0 - 1);   // already passed
+        CHECK(MonotonicNowNs() - t0 < 1000ull * 1000);
+        const uint64_t deadline = MonotonicNowNs() + 2000ull * 1000;
+        PreciseSleepUntilNs(deadline);
+        const uint64_t woke = MonotonicNowNs();
+        CHECK(woke >= deadline);
+        CHECK(woke - deadline < 3000ull * 1000);
+        uint64_t chain = MonotonicNowNs();
+        const uint64_t chain0 = chain;
+        for (int i = 0; i < 20; ++i) {
+            chain += 500ull * 1000;
+            PreciseSleepUntilNs(chain);
+            CHECK(MonotonicNowNs() >= chain);
+        }
+        CHECK(MonotonicNowNs() - chain0 >= 10000ull * 1000);
+    }
 }
 
 void Process(const std::string& scratch) {
