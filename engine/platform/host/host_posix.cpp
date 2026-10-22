@@ -315,6 +315,8 @@ uint64_t FastNowNs() {
 #endif
 }
 
+void RequestFineTimerResolution() {}   // nothing to ask for on Darwin / Linux
+
 uint64_t ThreadCpuTimeNs() {
     timespec ts{};
     if (::clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) != 0) return 0;

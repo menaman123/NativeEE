@@ -290,6 +290,16 @@ uint64_t FastNowNs();
 // quantum-sampled accounting, so individual reads are coarse but sums over a second are
 // right). 0 when the host cannot say. The app's clock census books per-thread CPU with it.
 uint64_t ThreadCpuTimeNs();
+// Ask the OS for the finest scheduler / timer granularity the process may have, once, at
+// boot (the target folder's RegisterSelf calls it). POSIX: nothing to ask (nanosleep,
+// condition-variable deadlines and mach_wait_until are already sub-millisecond). Win32: the
+// default timer resolution is 15.625 ms and every Sleep / SleepConditionVariable /
+// WaitForSingleObject timeout rounds UP to it -- a 60 Hz tick or a 4 ms pump wait cannot hold
+// -- so: timeBeginPeriod(1) (per-process since Windows 10 2004) and the process power-throttling
+// flag that keeps the 1 ms when the window is unfocused / minimized (Windows 11 otherwise
+// reverts a background process to 15.6 ms). The pacing lever on top of this is the pacing
+// track's PreciseSleepUntilNs (CREATE_WAITABLE_TIMER_HIGH_RESOLUTION on Win32).
+void RequestFineTimerResolution();
 // Thread-safe UTC broken-down time (gmtime_r / gmtime_s); false when the conversion fails.
 bool GmTimeUtc(int64_t unix_seconds, struct tm* out);
 

@@ -41,6 +41,15 @@
 #include <mutex>
 #include <string>
 
+// Hybrid-graphics laptops (NVIDIA Optimus, AMD PowerXpress) start a GL process on the
+// integrated GPU unless the EXECUTABLE exports these two globals; the drivers read them at
+// opengl32 load. They live in this TU because its object is always linked into every
+// executable (the arm's other entry points are referenced), so the exports are kept.
+extern "C" {
+__declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
+__declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+}
+
 namespace ps2r::host {
 
 // ---- section 1: compiler shims (MSVC intrinsics; clang-cl provides the same names) -----
@@ -317,6 +326,32 @@ uint64_t MonotonicNowNs() {
 }
 
 uint64_t FastNowNs() { return MonotonicNowNs(); }   // QueryPerformanceCounter is the cheap clock already
+
+void RequestFineTimerResolution() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        // winmm's timeBeginPeriod(1): 1 ms scheduler granularity for this process (the
+        // period is released at process exit; the engine runs for the process lifetime).
+        using BeginPeriodFn = UINT(WINAPI*)(UINT);   // MMRESULT (= UINT; <mmsystem.h> is behind WIN32_LEAN_AND_MEAN)
+        HMODULE winmm = LoadLibraryW(L"winmm.dll");
+        if (winmm) {
+            auto begin = reinterpret_cast<BeginPeriodFn>(GetProcAddress(winmm, "timeBeginPeriod"));
+            if (begin) begin(1);
+        }
+        // Windows 11 lowers the resolution of an unfocused / minimized process back to the
+        // default unless told not to (PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION, SDK
+        // 10.0.22000+; harmless where unknown: the call fails and the default applies).
+        using SetProcInfoFn = BOOL(WINAPI*)(HANDLE, int, LPVOID, DWORD);
+        auto set_info = reinterpret_cast<SetProcInfoFn>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "SetProcessInformation"));
+        if (set_info) {
+            struct PowerThrottling { ULONG Version; ULONG ControlMask; ULONG StateMask; } pt{};
+            pt.Version = 1;                   // PROCESS_POWER_THROTTLING_CURRENT_VERSION
+            pt.ControlMask = 0x4;             // PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION
+            pt.StateMask = 0;                 // 0 = do NOT throttle the timer resolution
+            set_info(GetCurrentProcess(), 4 /*ProcessPowerThrottling*/, &pt, sizeof pt);
+        }
+    });
+}
 
 uint64_t ThreadCpuTimeNs() {
     FILETIME create, exit, kernel, user;

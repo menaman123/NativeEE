@@ -87,6 +87,15 @@ add_dependencies(nativeee generate_build_id vu1_aot_prelude_stage)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(nativeee PRIVATE -rdynamic)
 endif()
+# Windows: the main thread's stack is the PE header's reserve (1 MiB by default, 8 MiB on
+# macOS / Linux); the boot, the launcher and the savestate paths run on it -> 16 MiB. (The
+# game thread's 1 GiB is its own, host::ThreadCreate.) The image libraries' symbol resolution
+# against the executable is NOT available on Windows yet (a DLL cannot import from the .exe
+# without an export surface + import library): the VU1 AOT native tier stays off there,
+# engine.vu1_aot_compiler=none; see engine/platform/windows/README.md.
+if(WIN32)
+    target_link_options(nativeee PRIVATE /STACK:16777216)
+endif()
 target_include_directories(nativeee PRIVATE ${CMAKE_SOURCE_DIR})
 target_compile_options(nativeee PRIVATE -Wall -Wextra -Werror)
 target_compile_definitions(nativeee PRIVATE PS2R_TITLE_ID="${PS2R_TITLE}")

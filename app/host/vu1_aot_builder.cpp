@@ -117,8 +117,14 @@ bool Vu1AotBuilder::FindCompiler(const std::string& preferred, bool search_defau
 // under the rules the engine's own instantiations saw.
 std::vector<std::string> Vu1AotBuilder::CompileCommand(const std::string& compiler, const std::string& include_dir, int opt,
                                                        const std::string& src, const std::string& out) {
-    std::vector<std::string> cmd = {compiler, "-std=c++17", opt == 2 ? "-O2" : "-O1", "-fno-strict-aliasing", "-fwrapv",
-                                    "-fPIC", "-shared", "-w"};
+    std::vector<std::string> cmd = {compiler};
+    // clang-cl (what built the engine on the windows-* presets) is clang with the cl command
+    // line; --driver-mode=g++ as its first argument gives it this GNU one. (The image's link
+    // against the executable's symbols is still open on Windows: app/host/CMakeLists.txt.)
+    const std::string base = compiler.substr(compiler.find_last_of("/\\") + 1);
+    if (base.rfind("clang-cl", 0) == 0) cmd.push_back("--driver-mode=g++");
+    for (const char* f : {"-std=c++17", opt == 2 ? "-O2" : "-O1", "-fno-strict-aliasing", "-fwrapv", "-fPIC", "-shared", "-w"})
+        cmd.push_back(f);
 #if defined(NDEBUG)
     cmd.push_back("-DNDEBUG");
 #endif

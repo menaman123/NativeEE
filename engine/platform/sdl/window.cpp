@@ -12,9 +12,16 @@ namespace platform {
 
 Window::~Window() { Destroy(); }
 
+void Window::RequestVideoHints() {
+#ifdef SDL_HINT_WINDOWS_DPI_AWARENESS   // SDL >= 2.24
+    SDL_SetHintWithPriority(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2", SDL_HINT_DEFAULT);
+#endif
+}
+
 bool Window::Create(bool headless, int w, int h, const char* title) {
     Destroy();
     if (!SDL_WasInit(SDL_INIT_VIDEO)) {
+        RequestVideoHints();
         if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
             std::fprintf(stderr, "[sdl] SDL_InitSubSystem(VIDEO) failed: %s\n", SDL_GetError());
             return false;
