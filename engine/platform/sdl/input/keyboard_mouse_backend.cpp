@@ -80,7 +80,10 @@ void KeyboardMouseBackend::Poll(NormalizedInput& out) {
     }
     std::memset(inject_, 0, sizeof(inject_));
 
-    if (focused_ && effective && mapper_) {
+    // The injection overlay is the harness's own key (HoldKey): it maps whether or not
+    // the window holds the keyboard focus (a census run on a shared desktop), the real
+    // key state only while focused (SDL reports none without focus anyway).
+    if ((focused_ || any_inject) && effective && mapper_) {
         out.buttons |= mapper_->ButtonsFromKeys(effective, numkeys);
         mapper_->KeyStickFromKeys(effective, numkeys, out.lx, out.ly);
     }
