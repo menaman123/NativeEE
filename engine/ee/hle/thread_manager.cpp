@@ -15,6 +15,7 @@
 #include "engine/ee/cpu/ps2_float.h"
 #include "engine/ee/hle/event_flags.h"
 #include "engine/ee/hle/semaphores.h"
+#include "engine/ee/hle/syscall_table.h"
 #include "engine/ee/sched/ee_event_queue.h"
 #include "engine/ee/sched/ee_run_token.h"
 #include "engine/ee/sched/ee_yield_point.h"
@@ -217,6 +218,13 @@ void ThreadManager::RunGuestThread(WorkerArgs& wa) {
         ctx.cpuRegs.GPR.r[31].UL[0] = 0;
         ctx.cpuRegs.pc = info->entry;
     }
+    // The COP0 Count register of a context entering the machine is the live
+    // clock's (engine.cop0_count): a relaunched thread's image carries the value
+    // of the captured session (a frozen 0 in images cut before the clock
+    // existed), and a new thread's is unset -- either would be read as a stale
+    // Count until the thread's first syscall return reseats it. No clock
+    // installed = no-op.
+    SyscallTable::Instance().SeatCop0Count(ctx);
     int prio;
     {
         std::lock_guard<std::mutex> lk(info->m);
