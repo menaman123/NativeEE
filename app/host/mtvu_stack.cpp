@@ -48,6 +48,7 @@ MtvuStack::MtvuStack(MtvuVifFeed& vif, ChainWalker& walker, GifArbiter& arbiter,
     worker_vu1_.dispatch().settings().hle_enabled = false;
     backpressure_.SetFrameCounters(&declared_, &presented_);
     backpressure_.SetShutdownFlag(running);
+    if (settings.depth_hold > 0) guard_.SetHold(static_cast<uint64_t>(settings.depth_hold));
     sync_.InstallInto(inline_dispatch_);
     // The deferred boundary's delivery is the frame's "present" for the
     // runahead guard when the root installed no consumer of its own.
@@ -340,7 +341,9 @@ std::string MtvuStack::Census() const {
          ",batches=" + std::to_string(worker_.BatchSegmentsProcessed()) +
          ",stage_cap=" + std::to_string(worker_.StagedCapacity()) + ",pending_bytes=" + std::to_string(worker_.PendingBytes()) +
          ",bp=" + std::to_string(backpressure_.Engagements()) + "/" + std::to_string(backpressure_.FrameValveHits()) +
-         "/" + std::to_string(backpressure_.StallValveHits()) + "/" + std::to_string(backpressure_.IrqStallBreaks()) + ",quiesce_laps=" + std::to_string(quiesce_laps_) +
+         "/" + std::to_string(backpressure_.StallValveHits()) + "/" + std::to_string(backpressure_.IrqStallBreaks()) +
+         ",hold=" + std::to_string(guard_.HoldFrames()) + ":" + std::to_string(backpressure_.HoldParks()) + "/" + std::to_string(backpressure_.HoldLifts()) +
+         ",quiesce_laps=" + std::to_string(quiesce_laps_) +
          ",mirrors=" + std::to_string(mirrors_) +
          ",kick_drop=" + (backpressure_.DropMode() ? "on" : "off") +
          ",defer=" + (defer_boundaries_ ? "on" : "off") +

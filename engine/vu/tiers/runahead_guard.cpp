@@ -12,13 +12,27 @@ uint64_t RunaheadGuard::EffMaxFrames() const {
     return depth_frames_;
 }
 
+uint64_t RunaheadGuard::EffMaxFrames(uint64_t declared) const {
+    const uint64_t setting = EffMaxFrames();
+    if (hold_frames_ != 0 && hold_frames_ < setting && !HoldLifted(declared)) return hold_frames_;
+    return setting;
+}
+
+bool RunaheadGuard::NoteHoldPark(uint64_t declared, uint64_t engaged_at_ns) {
+    if (hold_frames_ == 0 || HoldLifted(declared)) return false;
+    if (clock_.NowNs() < engaged_at_ns + kHoldLiftNs) return false;
+    hold_lift_until_ = declared + kHoldLiftBoundaries;
+    ++hold_lifts_;
+    return true;
+}
+
 uint64_t RunaheadGuard::DepthFrames(uint64_t declared, uint64_t presented) {
     const int64_t d = static_cast<int64_t>(declared) - static_cast<int64_t>(presented);
     return d < 0 ? 0u : static_cast<uint64_t>(d);
 }
 
 bool RunaheadGuard::Over(uint64_t declared, uint64_t presented) const {
-    const uint64_t maxf = EffMaxFrames();
+    const uint64_t maxf = EffMaxFrames(declared);
     return maxf != 0 && DepthFrames(declared, presented) > maxf;
 }
 

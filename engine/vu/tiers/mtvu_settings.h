@@ -11,4 +11,7 @@
 struct MtvuSettings {
     bool enabled = true;
     int depth_frames = 2;
+    // engine.mtvu_depth_hold (round 5): the runahead cap while the worker keeps up
+    // (runahead_guard.h: the HOLD cap); 0 = depth_frames is the cap always.
+    int depth_hold = 0;
 };
