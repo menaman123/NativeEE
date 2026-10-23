@@ -178,6 +178,7 @@ const std::vector<Field>& Fields() {
         INT_FIELD("engine.ee_runahead", engine.ee_runahead),
         BOOL_FIELD("engine.mtvu", engine.mtvu),
         INT_FIELD("engine.mtvu_depth", engine.mtvu_depth),
+        INT_FIELD("engine.mtvu_depth_hold", engine.mtvu_depth_hold),
         BOOL_FIELD("engine.mtvu_kick_drop", engine.mtvu_kick_drop),
         BOOL_FIELD("engine.mtvu_early_finish", engine.mtvu_early_finish),
         BOOL_FIELD("engine.mtvu_wait_probe", engine.mtvu_wait_probe),
@@ -302,6 +303,8 @@ const std::vector<Field>& Fields() {
         INT_FIELD("video.custom_scale_pct", video.custom_scale_pct),
         ENUM_FIELD("video.fit_mode", video.fit_mode, kFit),
         INT_FIELD("video.fps_cap", video.fps_cap),
+        INT_FIELD("video.capture_wait_ms", video.capture_wait_ms),
+        BOOL_FIELD("video.present_relax", video.present_relax),
         ENUM_FIELD("video.frame_cap", video.frame_cap, kFrameCap),
         ENUM_FIELD("video.fullscreen", video.fullscreen, kFullscreen),
         BOOL_FIELD("video.interp", video.interp),
@@ -337,6 +340,12 @@ bool ExcludedFromFingerprint(const std::string& key) {
     // resume leg attributes its stall with diag.tick_census=on).
     // engine.mtvu_kick_drop is the host's scheduling of the worker (park vs
     // drop): nothing the title executes or an image carries changes with it.
+    // engine.mtvu_depth_hold is the runahead cap while the worker keeps up (round
+    // 5): where the EE parks on the worker, a wall matter; nothing in an image.
+    // video.capture_wait_ms is when the window's picture is read back (round 5):
+    // the same picture, posted earlier; nothing the title executes or an image carries.
+    // video.present_relax is WHEN the presenter shows a posted picture (round 5):
+    // the same pictures in the same order; nothing the title executes or an image carries.
     // engine.mtvu_early_finish is the host's scheduling of the GS FINISH raise
     // and the boundary under MTVU (E425/E426): images are captured quiesced
     // (nothing pre-raised in flight), so a slot restores under either setting.
@@ -356,7 +365,7 @@ bool ExcludedFromFingerprint(const std::string& key) {
     // executes changes with them.
     return key.compare(0, 8, "harness.") == 0 || key.compare(0, 6, "paths.") == 0 || key.compare(0, 5, "diag.") == 0 ||
            key == "meta.profile" || key == "meta.source_fingerprint" || key == "save.restore_mode" ||
-           key == "engine.mtvu_kick_drop" || key == "engine.mtvu_early_finish" || key == "engine.mtvu_wait_probe" || key == "engine.ee_yield_spin_gate" || key == "engine.ee_fast_dispatch" || key == "engine.vu1_aot_corpus" || key == "engine.vu1_aot_codegen" ||
+           key == "engine.mtvu_kick_drop" || key == "engine.mtvu_depth_hold" || key == "video.capture_wait_ms" || key == "video.present_relax" || key == "engine.mtvu_early_finish" || key == "engine.mtvu_wait_probe" || key == "engine.ee_yield_spin_gate" || key == "engine.ee_fast_dispatch" || key == "engine.vu1_aot_corpus" || key == "engine.vu1_aot_codegen" ||
            key == "engine.vu1_aot_compiler" || key == "engine.vu1_aot_prelude" || key == "engine.vu1_aot_opt" ||
            key == "engine.vu1_aot_pack" || key == "engine.vu1_aot_region_blocks" || key == "engine.vu1_aot_region_ops" ||
            key == "engine.vu1_aot_region_taken" || key == "engine.vu1_aot_chain" || key == "engine.vu1_aot_mac_acc";
