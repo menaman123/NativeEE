@@ -267,8 +267,9 @@ void Recompiler::write_header_file(std::ofstream& file) {
     file << "// generator-known manual-override / HLE-hook registrations. Every\n";
     file << "// POST-INIT install must set it back TRUE: update_function_impl does\n";
     file << "// so itself; in-place `recompiled_functions[addr] = ...` installers\n";
-    file << "// call recomp_mark_hooked(addr). PS2_EE_RAWDISP=0 keeps hooked[]\n";
-    file << "// all-true = classic dispatch verbatim (latched once at init).\n";
+    file << "// call recomp_mark_hooked(addr). The engine seam\n";
+    file << "// recomp_fast_dispatch_enabled false (engine.ee_fast_dispatch=off) keeps\n";
+    file << "// hooked[] all-true = classic dispatch verbatim (latched once at init).\n";
     file << "// recomp_raw_dispatch (common TU) folds the init wrapper's duties --\n";
     file << "// read ra, shadow-stack push/pop, the FTRACE gate -- then calls the\n";
     file << "// raw body: one direct call + one raw indirect replaces the two\n";
@@ -278,10 +279,12 @@ void Recompiler::write_header_file(std::ofstream& file) {
     file << "void recomp_raw_dispatch(uint32_t id, uint32_t target, CpuContext& ctx);\n";
     file << "extern \"C\" void recomp_mark_hooked(uint32_t addr);\n";
     file << "inline void recomp_call(uint32_t id, uint32_t target, CpuContext& ctx) {\n";
-    file << "    // [W16R1][FIX-E1] fast path: census OFF (census identity: census\n";
-    file << "    // legs take the classic path so per-id counts/attribution are\n";
-    file << "    // byte-identical) AND the id still holds its default wrapper.\n";
-    file << "    if (!g_call_census_enabled && !g_recomp_fn_hooked[id]) {\n";
+    file << "    // [W16R1][FIX-E1] fast path: the id still holds its default wrapper.\n";
+    file << "    // [EECODE-E1] ONE load + branch: the init tail leaves hooked[] all-true\n";
+    file << "    // when the call census is on (census legs take the classic path so\n";
+    file << "    // per-id counts/attribution are byte-identical) or the fast-dispatch\n";
+    file << "    // seam is off, so the census bool is not re-read per call.\n";
+    file << "    if (!g_recomp_fn_hooked[id]) {\n";
     file << "        recomp_raw_dispatch(id, target, ctx);\n";
     file << "        return;\n";
     file << "    }\n";
@@ -319,6 +322,17 @@ void Recompiler::write_header_file(std::ofstream& file) {
     file << "    (*f)(ctx, target);\n";
     file << "    call_census_exit();\n";
     file << "}\n";
+    file << "// [EECODE-E1] The JR/JALR sites cache the CONTAINING dense id beside their\n";
+    file << "// {target, impl*} pair (recomp_fn_id_for_containing at the same miss that\n";
+    file << "// resolved impl*; 0xFFFFFFFF = below the table). An un-hooked id runs the\n";
+    file << "// raw body at `target` exactly as the map body would (the generated body\n";
+    file << "// switches on its entry address); a hooked id -- every installed body,\n";
+    file << "// incl. interior-only delegates -- or the census takes the classic call.\n";
+    file << "inline void recomp_indirect_call(const std::function<void(CpuContext&, uint32_t)>* f,\n";
+    file << "                                 uint32_t id, uint32_t target, CpuContext& ctx) {\n";
+    file << "    if (id != 0xFFFFFFFFu && !g_recomp_fn_hooked[id]) { recomp_raw_dispatch(id, target, ctx); return; }\n";
+    file << "    recomp_indirect_call(f, target, ctx);\n";
+    file << "}\n";
     file << "\n";
     file << "// [ATLAS-CALLER-TRACE] EE call-stack accessors. Implemented in\n";
     file << "// the recompiled module; callable from host code to read the\n";
@@ -342,6 +356,7 @@ void Recompiler::write_header_file(std::ofstream& file) {
     file << "// declares for the common TU (host_app/ring_log.cpp defines them).\n";
     file << "extern \"C\" bool crashring_enabled;\n";
     file << "extern \"C\" void crashring_record_indirect(uint32_t target, uint32_t ra);\n";
+    file << "extern \"C\" bool recomp_fast_dispatch_enabled;   // [EECODE-E1] the raw fast path gate (engine seam)\n";
 }
 
 
@@ -768,6 +783,7 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
     // destruction and buried the report under a secondary SIGABRT).
     file << "extern \"C\" bool crashring_enabled;\n";
     file << "extern \"C\" void crashring_record_indirect(uint32_t target, uint32_t ra);\n";
+    file << "extern \"C\" bool recomp_fast_dispatch_enabled;   // [EECODE-E1] the raw fast path gate (engine seam)\n";
     file << "extern \"C\" [[noreturn]] void crashring_fatal_no_jump(uint32_t pc);\n\n";
     // [RECOMP-P3a] fcf all-tiers-miss runtime seam (v2 tree only; legacy
     // emission byte-identical). The v2 tree routes an unresolvable indirect
@@ -886,8 +902,9 @@ void Recompiler::write_cpp_tail(std::ofstream& file) {
     // emitted -- including the post-loop re-wrap blocks). If the post-pass
     // never runs, the placeholder body below leaves hooked[] ALL-TRUE =
     // classic dispatch verbatim (fails closed).
-    file << "// [W16R1][FIX-E1] generator-known hook addrs; PS2_EE_RAWDISP=0 forces\n";
-    file << "// hooked[] all-true (classic dispatch verbatim), latched once here.\n";
+    file << "// [W16R1][FIX-E1] generator-known hook addrs; the engine seam off\n";
+    file << "// (engine.ee_fast_dispatch) forces hooked[] all-true (classic dispatch\n";
+    file << "// verbatim), latched once here.\n";
     file << "static void recomp_apply_gen_hook_list() {\n";
     file << "// [W16R1-E1-HOOKLIST-INJECT]\n";
     file << "}\n\n";
@@ -22755,6 +22772,7 @@ void Recompiler::translate_control_flow(const rabbitizer::InstructionR5900& inst
                 file << "        // (the s_fm_tick precedent).\n";
                 file << "        static uint32_t s_t_" << std::hex << current_pc << " = 0;\n";
                 file << "        static const std::function<void(CpuContext&, uint32_t)>* s_f_" << std::hex << current_pc << " = nullptr;\n";
+                file << "        static uint32_t s_id_" << std::hex << current_pc << " = 0xFFFFFFFFu; // [EECODE-E1] containing dense id of s_t_\n";
                 file << "        const std::function<void(CpuContext&, uint32_t)>* func_ptr;\n";
                 file << "        if (target == s_t_" << std::hex << current_pc << " && s_f_" << std::hex << current_pc << ") {\n";
                 file << "            if (crashring_enabled) {\n";
@@ -22765,10 +22783,10 @@ void Recompiler::translate_control_flow(const rabbitizer::InstructionR5900& inst
                 file << "            func_ptr = s_f_" << std::hex << current_pc << ";\n";
                 file << "        } else {\n";
                 file << "            func_ptr = find_containing_function(target);\n";
-                file << "            if (func_ptr) { s_t_" << std::hex << current_pc << " = target; s_f_" << std::hex << current_pc << " = func_ptr; }\n";
+                file << "            if (func_ptr) { s_t_" << std::hex << current_pc << " = target; s_f_" << std::hex << current_pc << " = func_ptr; s_id_" << std::hex << current_pc << " = recomp_fn_id_for_containing(target); }\n";
                 file << "        }\n";
                 file << "        if (func_ptr != nullptr) {\n";
-                file << "            recomp_indirect_call(func_ptr, target, ctx);\n";
+                file << "            recomp_indirect_call(func_ptr, s_id_" << std::hex << current_pc << ", target, ctx);\n";
                 file << "            return; // tail-call: let callee return for us\n";
                 file << "        } else {\n";
                 file << "            g_logFile << \"Unimplemented indirect jump to 0x\" << std::hex << target << std::endl;\n";
@@ -22812,6 +22830,7 @@ void Recompiler::translate_control_flow(const rabbitizer::InstructionR5900& inst
                 file << "        // paths, reference-stable cached pointer, plain statics).\n";
                 file << "        static uint32_t s_t_" << std::hex << current_pc << " = 0;\n";
                 file << "        static const std::function<void(CpuContext&, uint32_t)>* s_f_" << std::hex << current_pc << " = nullptr;\n";
+                file << "        static uint32_t s_id_" << std::hex << current_pc << " = 0xFFFFFFFFu; // [EECODE-E1] containing dense id of s_t_\n";
                 file << "        const std::function<void(CpuContext&, uint32_t)>* func_ptr;\n";
                 file << "        if (target == s_t_" << std::hex << current_pc << " && s_f_" << std::hex << current_pc << ") {\n";
                 file << "            if (crashring_enabled) {\n";
@@ -22822,10 +22841,10 @@ void Recompiler::translate_control_flow(const rabbitizer::InstructionR5900& inst
                 file << "            func_ptr = s_f_" << std::hex << current_pc << ";\n";
                 file << "        } else {\n";
                 file << "            func_ptr = find_containing_function(target);\n";
-                file << "            if (func_ptr) { s_t_" << std::hex << current_pc << " = target; s_f_" << std::hex << current_pc << " = func_ptr; }\n";
+                file << "            if (func_ptr) { s_t_" << std::hex << current_pc << " = target; s_f_" << std::hex << current_pc << " = func_ptr; s_id_" << std::hex << current_pc << " = recomp_fn_id_for_containing(target); }\n";
                 file << "        }\n";
                 file << "        if (func_ptr != nullptr) {\n";
-                file << "            recomp_indirect_call(func_ptr, target, ctx);\n";
+                file << "            recomp_indirect_call(func_ptr, s_id_" << std::hex << current_pc << ", target, ctx);\n";
                 if (_is_vt20c) {
                     file << "            if (ctx.cpuRegs.GPR.r[23].UL[0] != _vt20c_s7) { g_logFile << \"[VT20C-CLOBBER] target=0x\" << std::hex << target << \" s7 0x\" << _vt20c_s7 << \" -> 0x\" << ctx.cpuRegs.GPR.r[23].UL[0] << std::dec << std::endl; g_logFile.flush(); }\n";
                 }
@@ -26068,14 +26087,11 @@ int Recompiler::inject_gen_hook_list(const std::string& common_tu_path) {
         if (col != 0) inj += "\n";
     }
     inj += "    };\n";
-    inj += "    {\n";
-    inj += "        const char* _rd = std::getenv(\"PS2_EE_RAWDISP\");\n";
-    inj += "        // [W16R1b] DEFAULT OFF: the raw fast path crashes live boot\n";
-    inj += "        // (FATAL-NOJUMP pc=0 at vf=96, callback walk at 0x1bb710 -\n";
-    inj += "        // bisected via this gate; the E1Dispatch armor passes, so a\n";
-    inj += "        // live-only case is missed). PS2_EE_RAWDISP=1 arms for debug.\n";
-    inj += "        if (!(_rd && _rd[0] == '1' && _rd[1] == '\\0')) return;\n";
-    inj += "    }\n";
+    inj += "    // [EECODE-E1] The gate is the engine's seam recomp_fast_dispatch_enabled\n";
+    inj += "    // (DispatchTable::SetFastDispatch <- engine.ee_fast_dispatch), latched\n";
+    inj += "    // once here; off, or the call census on, leaves hooked[] all-true =\n";
+    inj += "    // the classic chain for every call (the pre-round-4 path verbatim).\n";
+    inj += "    if (!recomp_fast_dispatch_enabled || g_call_census_enabled) return;\n";
     inj += "    const uint32_t* _hb = k_gen_hooks;\n";
     inj += "    const uint32_t* _he = k_gen_hooks + "
            "sizeof(k_gen_hooks) / sizeof(k_gen_hooks[0]);\n";

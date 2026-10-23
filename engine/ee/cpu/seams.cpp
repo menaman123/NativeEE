@@ -34,6 +34,16 @@
 // bool the 2,619 indirect-call guards test; DispatchTable::Initialize binds it to
 // RingLog, which keeps it equal to "EE channel in the verbose tier".
 extern "C" { bool crashring_enabled = false; }   // the brace form: a definition, not an initialised `extern` (GCC -Wall)
+
+// ---- the generated dispatch's raw fast path gate (eecode round 4) ----------
+// Read ONCE by the generated initialize_recompiled_functions tail
+// (recomp_apply_gen_hook_list): true = every id whose table entry holds its
+// init-time body is marked un-hooked, so recomp_call / the JR+JALR sites run
+// recomp_raw_dispatch (frame push, body, pop) instead of the ObservedBody /
+// std::function chain; false (the default) = hooked[] stays all-true = the
+// chain for every call. DispatchTable::SetFastDispatch writes it before
+// Initialize (engine.ee_fast_dispatch); a later write changes nothing.
+extern "C" { bool recomp_fast_dispatch_enabled = false; }
 extern "C" void crashring_record_indirect(uint32_t target, uint32_t ra) {
     ps2r::ringlog::RingLog::EmitV(ps2r::ringlog::CH_EE, ps2r::ringlog::TAG_INDIRECT_JUMP, target, ra);
 }
