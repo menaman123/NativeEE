@@ -98,7 +98,9 @@ static void TestPeakDefaults() {
     CHECK(c.engine.vu1_mode == Vu1Mode::Cached);
     CHECK(c.engine.mtvu == true);
     CHECK(c.engine.mtvu_depth == 2);
-    CHECK(c.engine.mtvu_depth_hold == 0);        // round 5: the hold cap off until its gates are green
+    CHECK(c.engine.mtvu_depth_hold == 0);        // round 5: the hold off (it costs pictures when the chain is consumer-bound)
+    CHECK(c.video.capture_wait_ms == 8);         // round 5: the prompt present capture on (the latency track's gates, 2026-10-23)
+    CHECK(c.video.present_relax == true);        // round 5: the presenter's relax on (same gates)
     CHECK(c.engine.mtvu_early_finish == true);   // E425/E426/E427 on by default (the finish track's gates)
     CHECK(c.engine.mtvu_wait_probe == true);     // E430 on by default (the waitsites track's gates, 2026-10-22)
     CHECK(c.engine.ee_yield_spin_gate == true);  // E432 on by default (the waitsites track's gates, 2026-10-22)
@@ -312,8 +314,8 @@ static void TestFingerprint() {
     c.diag.tick_census = true;           // an observer: excluded
     c.engine.mtvu_kick_drop = false;     // the worker's host scheduling: excluded
     c.engine.mtvu_depth_hold = 1;        // the hold cap (round 5): where the EE parks on the worker, excluded
-    c.video.capture_wait_ms = 8;         // when the window's picture is read back (round 5): excluded
-    c.video.present_relax = true;        // when the presenter shows a posted picture (round 5): excluded
+    c.video.capture_wait_ms = 0;         // when the window's picture is read back (round 5; default 8): excluded
+    c.video.present_relax = false;       // when the presenter shows a posted picture (round 5; default on): excluded
     c.engine.mtvu_early_finish = false;  // the FINISH raise / boundary scheduling (E425): excluded
     c.engine.mtvu_wait_probe = false;    // the observation point's probe (E430): excluded
     c.engine.ee_yield_spin_gate = false; // the yield point's spin gate (E432): excluded

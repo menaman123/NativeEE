@@ -113,16 +113,22 @@ struct VideoConfig {
     // present for the GPU to finish the frame's picture and posts it at once (the
     // PROMPT present capture; run.meta gs_backend= prompt=); past the bound the
     // picture is read back at the next present as before. 0 = never wait (the
-    // round-4 deferred capture: every picture one present late). Host presentation
-    // only: fingerprint-excluded; the deterministic profile pins 0.
-    int          capture_wait_ms = 0;     // 0..16
+    // round-4 deferred capture: every picture one present late). Default 8 since
+    // 2026-10-23 (the gates in the latency track's REPORT: lockstep census equal,
+    // <=294 oracle 0, 60 pictures/s on both backends; a frame of input latency
+    // recovered). The wait is skipped when a whole frame is queued behind the
+    // consumer (Backend::SetPresentCaptureGate). Host presentation only:
+    // fingerprint-excluded; the deterministic profile pins 0.
+    int          capture_wait_ms = 8;     // 0..16
     // Round 5 (latency): the presenter's RELAX policy (app/host/frame_pacer.h): the 60 Hz
     // admission train is pulled earlier, a few ms per half second, while every picture of
     // the window waited for its edge with margin to spare -- the edge converges to just
     // after the latest typical arrival instead of staying where the first (slow) picture
-    // anchored it. off = the round-3 train (moves later only). Host presentation only:
+    // anchored it. off = the round-3 train (moves later only). Default on since
+    // 2026-10-23 (the latency track's gates: 8-12 ms of present latency recovered in
+    // Paris, no doubled frame added at 60 pictures/s). Host presentation only:
     // fingerprint-excluded; the deterministic profile pins off.
-    bool         present_relax = false;
+    bool         present_relax = true;
     VideoBackend backend = VideoBackend::Auto;
     FitMode      fit_mode = FitMode::Fit;
     AspectSel    aspect = AspectSel::Auto;
