@@ -2,6 +2,7 @@
 #include "engine/ee/sched/ee_run_token.h"
 
 #include "engine/ee/sched/ee_yield_point.h"
+#include "engine/platform/host/platform.h"
 
 #include <atomic>
 
@@ -12,6 +13,7 @@ thread_local int t_prio = 0;
 thread_local bool t_holds = false;
 thread_local int t_park_depth = 0;
 thread_local bool t_guest_attached = false;
+thread_local uint64_t t_cpu_at_enter = 0;   // CpuCensus: the host thread's CPU clock at GuestEnter
 thread_local int t_isr_depth = 0;            // IsrBegin .. IsrEnd nesting on this host thread
 thread_local bool t_preempt_deferred = false;  // a PreemptPoint recorded inside the handler
 thread_local bool t_idle = false;              // this host thread holds the idle grant (TryIdleAcquire .. IdleRelease)
@@ -99,6 +101,7 @@ void EeRunToken::AcquireSlow(int tid) {
 void EeRunToken::GuestEnter(int tid, int prio) {
     t_tid = tid;
     t_prio = prio;
+    t_cpu_at_enter = ps2r::host::ThreadCpuTimeNs();
     {
         std::lock_guard<std::mutex> lk(mu_);
         if (!t_guest_attached) ++attached_guests_;
@@ -117,6 +120,11 @@ void EeRunToken::GuestEnter(int tid, int prio) {
 
 void EeRunToken::GuestExit(int tid) {
     if (t_tid != tid) return;  // only the entering host thread may exit a tid
+    if (tid >= 0 && tid < kMaxTid) {
+        const uint64_t now = ps2r::host::ThreadCpuTimeNs();
+        if (now > t_cpu_at_enter) cpu_ns_[tid].fetch_add(now - t_cpu_at_enter, std::memory_order_relaxed);
+        cpu_live_ns_[tid].store(0, std::memory_order_relaxed);
+    }
     {
         std::lock_guard<std::mutex> lk(mu_);
         if (t_guest_attached) --attached_guests_;
@@ -130,7 +138,15 @@ void EeRunToken::GuestExit(int tid) {
     t_tid = kNone;
 }
 
+void EeRunToken::SnapshotCpu() {
+    const int tid = t_tid;
+    if (tid < 0 || tid >= kMaxTid) return;
+    const uint64_t now = ps2r::host::ThreadCpuTimeNs();
+    cpu_live_ns_[tid].store(now > t_cpu_at_enter ? now - t_cpu_at_enter : 0, std::memory_order_relaxed);
+}
+
 void EeRunToken::BlockBegin(int tid) {
+    if (t_tid == tid) SnapshotCpu();
     {
         std::lock_guard<std::mutex> lk(mu_);
         if (Ready* r = FindReady(tid)) r->valid = false;
@@ -159,6 +175,7 @@ void EeRunToken::ParkEnd() {
 }
 
 void EeRunToken::WaitVblank() {
+    SnapshotCpu();
     if (!t_holds || t_tid == kNone) return;
     const int tid = t_tid;
     uint64_t field_seen = 0, wall_seen = 0;
@@ -543,4 +560,23 @@ EeRunToken::ParkScope::ParkScope() {
 
 EeRunToken::ParkScope::~ParkScope() {
     if (armed_) Instance().ParkEnd();
+}
+
+uint64_t EeRunToken::CpuNs(int tid) const {
+    if (tid < 0 || tid >= kMaxTid) return 0;
+    return cpu_ns_[tid].load(std::memory_order_relaxed) + cpu_live_ns_[tid].load(std::memory_order_relaxed);
+}
+
+std::string EeRunToken::CpuCensus() const {
+    std::string out;
+    uint64_t total = 0;
+    for (int tid = 0; tid < kMaxTid; ++tid) {
+        const uint64_t ns = CpuNs(tid);
+        if (ns < 1000000u) continue;   // below a millisecond: the one-shot threads
+        total += ns;
+        if (!out.empty()) out += ',';
+        out += std::to_string(tid) + ':' + std::to_string(ns / 1000000u);
+    }
+    out += ";total=" + std::to_string(total / 1000000u);
+    return out;
 }
