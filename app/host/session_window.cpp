@@ -27,7 +27,16 @@ void SessionWindow::SetTitle(const std::string& title) {
 }
 
 bool SessionWindow::Open(std::string& error) {
-    // The composition root has initialized SDL video and requested GL 4.1.
+    // The composition root has initialized SDL video. The 4.1 core profile must be
+    // requested HERE, before this window exists: the renderer's hidden GL window used
+    // to request it as a side effect, but a Metal-backed session (video.backend=auto on
+    // Apple silicon) creates no GL window at all, and SDL's default is a legacy 2.1
+    // context in which the overlay's / blit's `#version 410` shaders do not compile --
+    // the window stayed black while the console frames rendered.
+    // SDL_CreateWindow would initialise the video subsystem itself and RESET the GL
+    // attributes in doing so: initialise it first, then request.
+    if (!SDL_WasInit(SDL_INIT_VIDEO) && SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) { error = SDL_GetError(); return false; }
+    platform::GlContext::RequestAttributes();
     window_ = SDL_CreateWindow("the title", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         960, 672, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_SHOWN);
     if (!window_) { error = SDL_GetError(); return false; }
