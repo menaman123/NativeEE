@@ -359,7 +359,9 @@ bool ExcludedFromFingerprint(const std::string& key) {
     // (raw body call vs the observer chain): the same body runs either way.
     // engine.cop0_count is whether the COP0 Count register advances with the
     // emu tick: no image carries it (a restore reseats the register from the
-    // tick), so a slot restores under either setting.
+    // tick), so a slot restores under either setting. (Guest-observable --
+    // the deterministic profile pins it on and the oracle bases are frozen
+    // with it -- but not an image property.)
     // engine.vu1_aot_corpus is a path to oracle data (where the AOT tier's
     // verifier reads its cases): the tiers are the identity on what executes.
     // engine.vu1_aot_codegen / _compiler / _prelude / _opt / _pack choose the

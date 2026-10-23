@@ -289,10 +289,15 @@ struct EngineConfig {
     // to the voice stream (hle/leg_core.cpp, the cutscene track) never
     // advances: one glyph per line. Seated at every syscall return and yield
     // trip (field granularity: no wall term, BUG-014/031). Changes what the
-    // guest reads (the frozen oracles' RAM hashes): the deterministic profile
-    // pins it off; fingerprint-excluded (no image carries it: a restore
-    // reseats). Off by default until its gates are green (REPORT cutscene).
-    bool    cop0_count = false;
+    // guest reads (the frozen oracles' RAM hashes from the first frame whose
+    // dt the title derives from Count: the <=294 cold-boot oracle from frame
+    // 271): the deterministic profile pins it ON as well -- the console's
+    // Count advances, so the oracle lanes model the console, and the bases
+    // were re-frozen (gsc_h600_cop0, finalize5 2026-10-23). Fingerprint-
+    // excluded (no image carries it: a restore reseats). On by default since
+    // 2026-10-23 (the finalize5 gates: Paris 600 lockstep divergent=0, h600
+    // self-consistent, judge_cutscene / pacing / pictures green).
+    bool    cop0_count = true;
     int     ee_runahead = 2;
     Pacing  pacing = Pacing::Realtime;
     int     time_regime_pin = -1;         // -1 = none (adaptive)

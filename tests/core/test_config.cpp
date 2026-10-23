@@ -103,6 +103,7 @@ static void TestPeakDefaults() {
     CHECK(c.engine.mtvu_wait_probe == true);     // E430 on by default (the waitsites track's gates, 2026-10-22)
     CHECK(c.engine.ee_yield_spin_gate == true);  // E432 on by default (the waitsites track's gates, 2026-10-22)
     CHECK(c.engine.ee_fast_dispatch == true);    // eecode round 4: the raw dispatch fast path (gates green 2026-10-22)
+    CHECK(c.engine.cop0_count == true);          // round 5: the COP0 Count register advances (finalize5 gates green 2026-10-23)
     CHECK(c.engine.ee_runahead == 2);
     CHECK(c.engine.pacing == Pacing::Realtime);
     CHECK(c.engine.time_regime_pin == -1);
@@ -318,6 +319,7 @@ static void TestFingerprint() {
     c.engine.mtvu_wait_probe = false;    // the observation point's probe (E430): excluded
     c.engine.ee_yield_spin_gate = false; // the yield point's spin gate (E432): excluded
     c.engine.ee_fast_dispatch = false;   // the host dispatch mechanics of a guest call: excluded
+    c.engine.cop0_count = false;         // the COP0 Count clock (not an image property): excluded
     CHECK(c.Fingerprint() == "engine.mtvu=off;video.scale=2;profile=default");
     // Hash semantics: FNV over each entry followed by ";".
     const std::string fp = c.Fingerprint();
@@ -353,6 +355,7 @@ static void TestDeterministicProfile() {
     CHECK(d.engine.mtvu_early_finish == false);                  // the parser-raised FINISH (E425 pinned off)
     CHECK(d.engine.mtvu_wait_probe == false);                    // the unconditional idle loop (E430 pinned off)
     CHECK(d.engine.ee_yield_spin_gate == false);             // the free-running yield budget (E432 pinned off)
+    CHECK(d.engine.cop0_count == true);                      // Count advances as on the console; the oracle bases are frozen with it (gsc_h600_cop0)
     CHECK(d.engine.time_regime_pin == 1);                        // PS2_TIME_EMU_REGIME=1
     CHECK(d.cdvd.latency_model == CdvdLatencyModel::Instant);    // PS2_CDVD_INSTANT=1
     CHECK(d.cdvd.latency_scale == 0.0);                          // PS2_DVD_LATENCY_SCALE=0
