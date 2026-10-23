@@ -212,6 +212,11 @@ public:
     // ANY thread: records queued and not yet popped (the consumer's backlog; the
     // producer's staged records are not in it).
     size_t Depth() const;
+    // ANY thread: COMPLETE frames queued and not yet popped (frame records in the
+    // ring; the frame the consumer is delivering is not one). A consumer asked at
+    // its present with one or more of these is a whole frame behind; the next
+    // frame's partial records are the normal pipelining and count 0.
+    size_t PendingFrames() const;
     // Producer side: the drain pass is over -- hand the staged records to the ring
     // now (nothing more arrives until the next kick). No-op when nothing is staged.
     void EndOfPass();

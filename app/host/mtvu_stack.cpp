@@ -87,9 +87,11 @@ void MtvuStack::FrameSync(uint32_t seq, uint64_t now_ns) {
     // This frame's VIF1 feed is complete (the next openBoundary consumes the
     // note; a boundary without one counts an order violation).
     arbiter_.noteFeedForBoundary();
-    if (backpressure_.DropMode() && worker_.IsRunning()) {
+    if ((backpressure_.DropMode() || guard_.HoldFrames() != 0) && worker_.IsRunning()) {
         // The frame's mark behind its last span; the lag it reads decides the
-        // next frame (dropped when the worker is > kDropLagFrames behind).
+        // next frame in drop mode (dropped when the worker is > kDropLagFrames
+        // behind) and is the hold arm's depth (round 5: the EE parks while more
+        // than `hold` complete frames are queued ahead of the worker).
         worker_.SubmitFrameMark();
         backpressure_.NoteFrameSync(worker_.FrameLag());
     }
@@ -342,8 +344,8 @@ std::string MtvuStack::Census() const {
          ",stage_cap=" + std::to_string(worker_.StagedCapacity()) + ",pending_bytes=" + std::to_string(worker_.PendingBytes()) +
          ",bp=" + std::to_string(backpressure_.Engagements()) + "/" + std::to_string(backpressure_.FrameValveHits()) +
          "/" + std::to_string(backpressure_.StallValveHits()) + "/" + std::to_string(backpressure_.IrqStallBreaks()) +
-         ",hold=" + std::to_string(guard_.HoldFrames()) + ":" + std::to_string(backpressure_.HoldParks()) + "/" + std::to_string(backpressure_.HoldLifts()) +
-         "/" + std::to_string(guard_.HoldLiftsRefused()) +
+         ",hold=" + std::to_string(guard_.HoldFrames()) + ":" + std::to_string(backpressure_.HoldParks()) + "/" + std::to_string(backpressure_.HoldValveHits()) +
+         "/" + std::to_string(backpressure_.LagMaxFrames()) +
          ",quiesce_laps=" + std::to_string(quiesce_laps_) +
          ",mirrors=" + std::to_string(mirrors_) +
          ",kick_drop=" + (backpressure_.DropMode() ? "on" : "off") +

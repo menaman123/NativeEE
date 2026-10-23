@@ -85,7 +85,7 @@ public:
     void SubmitFrameMark();
     uint64_t FrameMarksPushed() const { return frame_marks_pushed_; }
     uint64_t FrameMarksPassed() const { return frame_marks_passed_.load(std::memory_order_relaxed); }
-    uint64_t FrameLag() const;
+    uint64_t FrameLag() const override;
     // Kicks the worker's unit dropped (VuUnit::DroppedKicks; relaxed census).
     uint64_t DroppedKicks() const;
     // The DMAC staged-feed seam (ChainWalker::SetVif1StagedFeed) in thunk form.
@@ -142,6 +142,7 @@ public:
     void EagerDrain() override;
     void WaitIdleOrSeal(uint64_t timeout_ns, uint64_t seen_seal) override;
     void WaitFrameProgress(uint64_t timeout_ns) override;
+    void WaitHoldProgress(uint64_t timeout_ns) override;
     void EnterSyncWait() override;
     void LeaveSyncWait() override;
 

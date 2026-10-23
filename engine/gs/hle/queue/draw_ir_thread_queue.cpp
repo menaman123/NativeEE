@@ -451,6 +451,14 @@ size_t DrawIrThreadQueue::Depth() const {
     return ring_.size();
 }
 
+size_t DrawIrThreadQueue::PendingFrames() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    size_t n = 0;
+    for (const Record& r : ring_)
+        if (r.kind == Kind::Frame || r.kind == Kind::FrameDropped) ++n;
+    return n;
+}
+
 uint64_t DrawIrThreadQueue::FrameSeq() const {
     std::lock_guard<std::mutex> lk(mu_);
     return frames_pushed_;

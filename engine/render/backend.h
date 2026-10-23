@@ -14,6 +14,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -201,6 +202,7 @@ struct CallCensus {
     uint64_t prompt_captures = 0;    // present captures completed in their OWN present (the bounded wait found the GPU done)
     uint64_t prompt_timeouts = 0;    // ... and the ones whose wait ran out (read back one present late as before)
     uint64_t prompt_wait_ns = 0;     // the bounded waits' total time
+    uint64_t prompt_skipped = 0;     // ... and the presents the gate kept from waiting (read one present late)
     uint64_t state_sets = 0;         // fixed-function state calls ISSUED (blend / depth / mask / scissor / viewport / enable)
     uint64_t uniform_sets = 0;       // uniform calls ISSUED (the shadow caches skip the rest)
 };
@@ -303,6 +305,12 @@ public:
     // picture posts the field it was rendered; ReadPresented's PresentedLag() = 0) --
     // past the bound it is read at the next present as before (lag 1). 0 = never wait.
     virtual void SetPresentCaptureWaitNs(uint64_t) {}
+    // The prompt capture's gate (round 5): asked at the end of every Present before the
+    // bounded wait; false = this present is read at the next one (lag 1, no wait). The
+    // consumer installs "nothing queued behind this frame": a consumer with the next
+    // frame's records already waiting is behind, and a wait there costs it the CPU/GPU
+    // overlap it needs to catch up (GL hub_ep3: 98 vs 27 consumer gaps of 20-30 ms).
+    virtual void SetPresentCaptureGate(std::function<bool()>) {}
     // The present lag of the image ReadPresented last handed over (0 = this present's, 1 =
     // the previous present's: the deferred read).
     virtual int PresentedLag() const { return 0; }

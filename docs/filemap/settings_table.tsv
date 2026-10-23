@@ -142,7 +142,7 @@ ui.perf_overlay	bool	off	=	-	-
 video.anisotropy	int	1	=	-	-
 video.aspect	enum(auto|4:3|16:9|16:10|21:9)	auto	=	display.ini:aspect	-
 video.backend	enum(gl|soft|metal|auto)	auto	gl	RENDERER_BACKEND	-
-video.capture_wait_ms	int	0	0	-	-
+video.capture_wait_ms	int	8	0	-	-
 video.custom_offset_x	int	0	=	display.ini:custom_offset_x	-
 video.custom_offset_y	int	0	=	display.ini:custom_offset_y	-
 video.custom_scale_pct	int	100	=	display.ini:custom_scale	-
@@ -151,7 +151,7 @@ video.fps_cap	int	60	0	PS2_FPS_CAP	SETTING
 video.frame_cap	enum(off|30|60)	60	=	-	-
 video.fullscreen	enum(windowed|fullscreen|borderless)	windowed	=	-	-
 video.interp	bool	on	off	PS2_GS_INTERP	SETTING
-video.present_relax	bool	off	off	-	-
+video.present_relax	bool	on	off	-	-
 video.render_rate	enum(60|display)	60	=	-	-
 video.scale	int	1	=	PS2_GS_SCALE	SETTING
 video.texture_filter	enum(title|point|bilinear|trilinear)	title	=	-	-

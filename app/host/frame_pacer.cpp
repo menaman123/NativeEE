@@ -71,6 +71,12 @@ bool FramePacer::Admit(uint64_t now_ns, uint64_t posted_ns) {
     return true;
 }
 
+void FramePacer::SetRelax(bool on) {
+    relax_ = on;
+    relax_count_ = 0;
+    relax_min_wait_ = UINT64_MAX;
+}
+
 void FramePacer::NoteWait(uint64_t wait_ns) {
     if (wait_ns < relax_min_wait_) relax_min_wait_ = wait_ns;
     if (++relax_count_ < kRelaxWindow) return;

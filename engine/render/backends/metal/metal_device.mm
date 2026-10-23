@@ -950,7 +950,9 @@ void MetalDevice::Present(const ScanoutDesc& desc) {
             // handed over now when it made it (lag 0); otherwise the next present completes it (lag 1).
             // A previous present's picture completed above (lag 1) and not yet handed over goes first
             // (its own post) so this present's prompt picture does not overwrite it unshown.
-            if (WaitCaptureBounded(slot)) {
+            const bool prompt_ok = present_capture_wait_ns_ == 0 || !present_capture_gate_ || present_capture_gate_();
+            if (!prompt_ok) census_.prompt_skipped++;
+            if (prompt_ok && WaitCaptureBounded(slot)) {
                 if (presented_fresh_ && swap_) swap_();
                 CompleteCapture(slot, /*wait=*/false, /*lag=*/0);
             }

@@ -46,6 +46,9 @@ struct TestMtvuBackpressure {
         int drains = 0;
         int idle_waits = 0;
         int frame_waits = 0;
+        uint64_t lag = 0;
+        int hold_waits = 0;
+        std::function<void()> on_hold_wait;
         int waiters = 0;
         int max_waiters = 0;
         std::function<void()> on_idle_wait;
@@ -68,6 +71,12 @@ struct TestMtvuBackpressure {
             ++frame_waits;
             clock.now += timeout_ns;
             if (on_frame_wait) on_frame_wait();
+        }
+        uint64_t FrameLag() const override { return lag; }
+        void WaitHoldProgress(uint64_t timeout_ns) override {
+            ++hold_waits;
+            clock.now += timeout_ns;
+            if (on_hold_wait) on_hold_wait();
         }
         void EnterSyncWait() override {
             ++waiters;
@@ -243,6 +252,60 @@ int main() {
               "a stall landing mid-park ends it (20 x 500 us, not the 100 ms valve)");
         // Not stalled: the valve path is unchanged (the frozen-depth case above).
         CHECK(s.bp.ParkNs() == 20 * MtvuBackpressure::kPollNs, "park ns booked up to the break");
+    }
+
+    // The HOLD arm (round 5): hold 1 parks while the worker's lag > 1 (a complete frame queued ahead
+    // of it), waits on the hold wait (not the frame timer), releases when the worker passes a mark;
+    // lag <= hold never engages; the presenter's depth plays no part; an i-bit stall ends it; the
+    // 100 ms valve releases a lag that never moves.
+    {
+        TestMtvuBackpressure r;
+        r.guard.SetHold(1);
+        r.declared = 2;
+        r.presented = 0;   // depth 2 = in-bound for the cap
+        r.pipe.lag = 1;
+        r.bp.Engage();
+        CHECK(r.bp.Engagements() == 0 && r.bp.HoldParks() == 0, "lag 1 (the console's double buffer): no park");
+        r.pipe.lag = 2;
+        int waits_until_mark = 7;
+        r.pipe.on_hold_wait = [&r, &waits_until_mark] {
+            if (--waits_until_mark == 0) r.pipe.lag = 1;   // the worker passed a mark
+        };
+        const uint64_t t0 = r.clock.now;
+        r.bp.Engage();
+        CHECK(r.bp.Engagements() == 1 && r.bp.HoldParks() == 1, "lag 2: one hold engagement");
+        CHECK(r.pipe.hold_waits == 7 && r.pipe.frame_waits == 0 && r.pipe.idle_waits == 0, "the hold waits on the worker's mark, not the frame timer");
+        CHECK(r.clock.now == t0 + 7 * MtvuBackpressure::kPollNs && r.bp.ParkNs() == 7 * MtvuBackpressure::kPollNs, "parked 3.5 ms of fake time");
+        CHECK(r.bp.HoldValveHits() == 0 && r.bp.FrameValveHits() == 0, "released by progress, no valve");
+        CHECK(r.pipe.drains == 8 && r.pipe.waiters == 0, "eager drain per iteration; waiter accounting balanced");
+        // Depth far over the cap but lag 1: the CAP parks (frame wait), the hold does not count it.
+        r.pipe.on_hold_wait = nullptr;
+        r.declared = 10;
+        r.presented = 0;
+        r.pipe.lag = 1;
+        r.pipe.on_frame_wait = [&r] { r.presented = 9; };
+        r.bp.Engage();
+        CHECK(r.bp.Engagements() == 2 && r.bp.HoldParks() == 1 && r.pipe.frame_waits == 1, "the cap's park is not a hold park");
+        // A stalled worker: the hold park ends at once (E431).
+        r.declared = 2;
+        r.presented = 0;
+        r.pipe.lag = 3;
+        r.pipe.stalled = true;
+        r.bp.Engage();
+        CHECK(r.bp.Engagements() == 3 && r.bp.HoldParks() == 2 && r.bp.IrqStallBreaks() == 1 && r.pipe.hold_waits == 7,
+              "stalled worker: the hold park ends without a wait");
+        r.pipe.stalled = false;
+        // A lag that never moves: the valve releases at +100 ms.
+        const uint64_t t1 = r.clock.now;
+        r.bp.Engage();
+        CHECK(r.bp.Engagements() == 4 && r.bp.HoldValveHits() == 1 && r.pipe.hold_waits == 207 && r.clock.now == t1 + RunaheadGuard::kFrameValveNs,
+              "a frozen lag rides the 100 ms valve");
+        // Hold off: lag is never over.
+        TestMtvuBackpressure n;
+        n.declared = 2;
+        n.pipe.lag = 5;
+        n.bp.Engage();
+        CHECK(n.bp.Engagements() == 0 && n.bp.HoldParks() == 0, "no hold: the lag never parks");
     }
 
     // Depth setting 0: the frame arm is never armed (case C).

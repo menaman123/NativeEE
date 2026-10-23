@@ -853,7 +853,9 @@ void GlDevice::Present(const ScanoutDesc& desc) {
         state_.BindFb(GL_FRAMEBUFFER, 0);
         // The prompt capture (round 5): a bounded wait on this present's fence, the picture handed
         // over now when it signalled (lag 0); otherwise the next present completes it (lag 1).
-        if (WaitDeferredCaptureBounded()) {
+        const bool prompt_ok = present_capture_wait_ns_ == 0 || !present_capture_gate_ || present_capture_gate_();
+        if (!prompt_ok) census_.prompt_skipped++;
+        if (prompt_ok && WaitDeferredCaptureBounded()) {
             // A previous present's picture completed above (lag 1) and not yet handed over goes
             // first (its own post) so this present's prompt picture does not overwrite it unshown.
             if (presented_fresh_ && swap_) swap_();

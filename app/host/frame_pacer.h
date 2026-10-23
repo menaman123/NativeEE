@@ -34,7 +34,7 @@
 // anchored it ~15-24 ms after the steady arrivals and every picture then waited that
 // long for its edge: a field of input latency bought nothing. With relax on, the
 // pacer tracks the SMALLEST wait (edge - posted) of the last kRelaxWindow on-time
-// admissions; when even that is above kRelaxMarginNs the train is pulled EARLIER by
+// admissions; when even that is above kRelaxMarginNs (3 ms) the train is pulled EARLIER by
 // the excess (at most kRelaxStepNs per window: one shorter gap, never a longer one),
 // so the edge converges to just after the latest typical arrival; a late picture
 // still slips (the train moves later again) and the window restarts. Census
@@ -67,10 +67,10 @@ public:
     void SetCap(Cap cap);
     Cap cap() const { return cap_; }
     // The relax policy (above); off = the round-3 train.
-    void SetRelax(bool on) { relax_ = on; relax_count_ = 0; relax_min_wait_ = UINT64_MAX; }
+    void SetRelax(bool on);
     bool Relax() const { return relax_; }
     static constexpr uint32_t kRelaxWindow = 32;          // on-time admissions per decision (~0.5 s at 60)
-    static constexpr uint64_t kRelaxMarginNs = 2000000;   // the wait kept above the latest arrival (2 ms)
+    static constexpr uint64_t kRelaxMarginNs = 3000000;   // the wait kept above the latest arrival (3 ms: at 2 the GL Paris train slipped ~1 % of pictures)
     static constexpr uint64_t kRelaxStepNs = 4000000;     // the largest pull per window (4 ms)
     uint64_t PeriodNs() const;   // 0 under Off
 

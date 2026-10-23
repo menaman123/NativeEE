@@ -341,8 +341,8 @@ bool ExcludedFromFingerprint(const std::string& key) {
     // resume leg attributes its stall with diag.tick_census=on).
     // engine.mtvu_kick_drop is the host's scheduling of the worker (park vs
     // drop): nothing the title executes or an image carries changes with it.
-    // engine.mtvu_depth_hold is the runahead cap while the worker keeps up (round
-    // 5): where the EE parks on the worker, a wall matter; nothing in an image.
+    // engine.mtvu_depth_hold is the hold on the worker's lag (round 5): where the
+    // EE parks on the worker, a wall matter; nothing in an image.
     // video.capture_wait_ms is when the window's picture is read back (round 5):
     // the same picture, posted earlier; nothing the title executes or an image carries.
     // video.present_relax is WHEN the presenter shows a posted picture (round 5):
