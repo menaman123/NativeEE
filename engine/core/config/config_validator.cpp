@@ -129,6 +129,10 @@ bool ConfigValidator::Validate(const Config& c, bool harness_window_requested, s
                            "interleave a VU1 worker)");
     if (c.engine.mtvu_depth < 1)
         return Refuse(err, "engine.mtvu_depth must be >= 1");
+    if (c.video.capture_wait_ms < 0 || c.video.capture_wait_ms > 16)
+        return Refuse(err, "video.capture_wait_ms must be in 0..16 (0 = the picture is read back one present late)");
+    if (c.engine.mtvu_depth_hold < 0 || c.engine.mtvu_depth_hold > c.engine.mtvu_depth)
+        return Refuse(err, "engine.mtvu_depth_hold must be 0 (off) or 1..engine.mtvu_depth");
     if (!InRange(c.video.scale, 0, 4))
         return Refuse(err, "video.scale must be in 0..4 (0 = native window)");
     if (c.video.anisotropy != 1 && c.video.anisotropy != 2 && c.video.anisotropy != 4 &&

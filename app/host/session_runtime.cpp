@@ -86,6 +86,7 @@ void SessionRuntime::ConfigureDisplayRows(const DisplaySettings& seed) {
     render_rate_.store(seed.render_rate != 0 ? 1 : 0);
     FramePacer::Cap cap = FramePacer::Cap::Hz60;
     if (FramePacer::CapOf(seed.frame_cap, cap)) { pacer_.SetCap(cap); frame_cap_.store(seed.frame_cap); }
+    pacer_.SetRelax(seed.present_relax);
     display_hz_ = std::clamp(seed.display_hz, 0, 1000);
     display_mode_.store(std::clamp(seed.display_mode, 0, 2));
     if (display_mode_.load() != window_.DisplayMode()) {

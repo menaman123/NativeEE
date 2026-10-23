@@ -100,6 +100,8 @@ public:
     void SetPresentCaptureDeferred(bool deferred) override;
     bool PresentCaptureDeferred() const { return present_capture_deferred_; }
     uint64_t PresentCaptureWaits() const { return present_capture_waits_; }
+    void SetPresentCaptureWaitNs(uint64_t ns) override { present_capture_wait_ns_ = ns; }
+    int PresentedLag() const override { return presented_lag_; }
     void FlushCommands() override;
     void SetTextureFilter(std::shared_ptr<const TextureFilterSelection> selection) override {
         texture_filter_ = std::move(selection);
@@ -177,7 +179,8 @@ private:
     void WaitSerial(uint64_t serial);
     void* ScratchDepth(uint32_t w, uint32_t h);
     bool EnsureCapture(CaptureSlot& slot, int w, int h);
-    void CompleteCapture(CaptureSlot& slot, bool wait);
+    void CompleteCapture(CaptureSlot& slot, bool wait, int lag = 1);
+    bool WaitCaptureBounded(const CaptureSlot& slot);
     void StagingUpload(MetalSurface& s, int level, const Rect& rect, const void* bytes, size_t src_stride, size_t bpp);
     // A shared buffer of at least `bytes` for the colour readbacks (the blit encoder linearises
     // the texture on the GPU; the CPU copies rows out after completion).
@@ -227,6 +230,9 @@ private:
     int capture_cur_ = 0;
     std::vector<uint8_t> presented_;
     int presented_w_ = 0, presented_h_ = 0;
+    uint64_t present_capture_wait_ns_ = 0;   // the bounded wait for THIS present's capture (0 = deferred only)
+    int presented_lag_ = 0;                  // the lag of presented_ (0 = this present, 1 = the previous)
+    bool presented_fresh_ = false;           // presented_ not yet handed over by ReadPresented
     std::unordered_map<uint32_t, MetalSurface> surfaces_;
     uint32_t next_surface_ = 1;
     std::unordered_map<uint64_t, PendingReadback> readbacks_;

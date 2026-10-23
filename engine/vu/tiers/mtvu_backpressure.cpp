@@ -75,6 +75,12 @@ bool MtvuBackpressure::Engage() {
     bool bytes_need = bytes_over;
     bool frame_valve_hit = false;
     ++engagements_;
+    // A park under the HOLD cap (the EE one frame ahead, the worker not done with the
+    // previous frame): counted; past kHoldLiftNs the guard lifts the cap for the
+    // catch-up window and the park ends at the lifted bound (NoteHoldPark).
+    const bool hold_park = frames_over && guard_.HoldFrames() != 0 && !guard_.HoldLifted(Declared()) &&
+                           guard_.EffMaxFrames(Declared()) < guard_.EffMaxFrames();
+    if (hold_park) ++hold_parks_;
     pipeline_->EnterSyncWait();
     for (;;) {
         if (running_ != nullptr && !running_->load(std::memory_order_acquire)) break;
@@ -107,6 +113,7 @@ bool MtvuBackpressure::Engage() {
                 stalled = 0;
             }
         }
+        if (hold_park) guard_.NoteHoldPark(Declared(), t0);
         const RunaheadFramePark fp = guard_.FramePark(Declared(), Presented(), t0);
         if (fp.valve_hit) frame_valve_hit = true;
         if (!bytes_need && !fp.park) break;
@@ -121,6 +128,8 @@ bool MtvuBackpressure::Engage() {
     if (frame_valve_hit) ++frame_valve_hits_;
     return false;
 }
+
+uint64_t MtvuBackpressure::HoldLifts() const { return guard_.HoldLifts(); }
 
 uint64_t MtvuBackpressure::ClampSpinBudgetNs(uint64_t ns) {
     if (ns < kSpinBudgetMinNs) return kSpinBudgetMinNs;

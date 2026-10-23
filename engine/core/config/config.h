@@ -109,6 +109,20 @@ struct VideoConfig {
     FullscreenMode fullscreen = FullscreenMode::Windowed;
     RenderRate   render_rate = RenderRate::Tick60;
     FrameCap     frame_cap = FrameCap::Hz60;
+    // Round 5 (latency): the GS consumer waits up to this many ms at the end of a
+    // present for the GPU to finish the frame's picture and posts it at once (the
+    // PROMPT present capture; run.meta gs_backend= prompt=); past the bound the
+    // picture is read back at the next present as before. 0 = never wait (the
+    // round-4 deferred capture: every picture one present late). Host presentation
+    // only: fingerprint-excluded; the deterministic profile pins 0.
+    int          capture_wait_ms = 0;     // 0..16
+    // Round 5 (latency): the presenter's RELAX policy (app/host/frame_pacer.h): the 60 Hz
+    // admission train is pulled earlier, a few ms per half second, while every picture of
+    // the window waited for its edge with margin to spare -- the edge converges to just
+    // after the latest typical arrival instead of staying where the first (slow) picture
+    // anchored it. off = the round-3 train (moves later only). Host presentation only:
+    // fingerprint-excluded; the deterministic profile pins off.
+    bool         present_relax = false;
     VideoBackend backend = VideoBackend::Auto;
     FitMode      fit_mode = FitMode::Fit;
     AspectSel    aspect = AspectSel::Auto;
@@ -202,6 +216,14 @@ struct EngineConfig {
     std::string    vu1_aot_pack;
     bool    mtvu = true;
     int     mtvu_depth = 2;
+    // Round 5 (latency): the runahead cap IN FORCE while the VU1 worker keeps up --
+    // the EE may lead the worker by this many frames (1 = the double-buffered
+    // console's own depth) so a button's picture is not two frames behind the EE
+    // that drew it; a park on it longer than 4 ms lifts the cap to mtvu_depth for
+    // 120 frames (the catch-up allowance). 0 = off (mtvu_depth is the cap always,
+    // the round-4 behaviour). Host scheduling of the worker: fingerprint-excluded;
+    // the deterministic profile pins 0 (it runs no worker).
+    int     mtvu_depth_hold = 0;
     // The clock contract's KICK DROP (play mode): the game thread never parks
     // on the MTVU worker; a frame the worker is > 2 frames behind runs its VIF
     // stream without its VU1 programs (run.meta mtvu= kick_drop/drop/kicks_

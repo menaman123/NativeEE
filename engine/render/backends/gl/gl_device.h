@@ -101,6 +101,8 @@ public:
     void SetPresentCaptureDeferred(bool deferred) override;
     bool PresentCaptureDeferred() const { return present_capture_deferred_; }
     uint64_t PresentCaptureWaits() const { return present_capture_waits_; }   // fences found unsignalled at completion
+    void SetPresentCaptureWaitNs(uint64_t ns) override { present_capture_wait_ns_ = ns; }
+    int PresentedLag() const override { return presented_lag_; }
     void ClearStencil(SurfaceId stencil, uint8_t value) override;
     void DrawConstQuad(SurfaceId color, SurfaceId stencil, const Rect& scissor, uint32_t rgba,
                        bool write_alpha, const StencilState& st) override;
@@ -228,6 +230,7 @@ private:
         void* sync = nullptr;   // GLsync
         int w = 0, h = 0;
         bool pending = false;
+        int serial_lag = 0;     // 0 = completed in its own present (the prompt capture), 1 = at the next
     };
     TextureBarrierFn texture_barrier_ = nullptr;
     bool cd_copy_by_barrier_ = false;
@@ -237,7 +240,11 @@ private:
     bool present_capture_deferred_ = false;
     DeferredCapture deferred_capture_;
     uint64_t present_capture_waits_ = 0;
+    uint64_t present_capture_wait_ns_ = 0;   // the bounded wait for THIS present's capture (round 5; 0 = deferred only)
+    int presented_lag_ = 0;                  // the lag of presented_ (0 = this present, 1 = the previous)
+    bool presented_fresh_ = false;           // presented_ not yet handed over by ReadPresented
     void CompleteDeferredCapture(bool wait);
+    bool WaitDeferredCaptureBounded();
     void ReleaseDeferredCapture();
     std::unordered_map<uint32_t, GlSurface> surfaces_;
     uint32_t next_surface_ = 1;

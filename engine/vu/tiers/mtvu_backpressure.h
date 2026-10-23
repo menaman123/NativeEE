@@ -88,6 +88,9 @@ public:
     uint64_t StallValveHits() const { return stall_valve_hits_; }
     // Parks ended because the worker was parked on an i-bit stall (E431).
     uint64_t IrqStallBreaks() const { return irq_stall_breaks_; }
+    // Frame parks taken under the guard's HOLD cap (round 5) and the lifts they caused.
+    uint64_t HoldParks() const { return hold_parks_; }
+    uint64_t HoldLifts() const;
     // Drop census: frames whose kicks were dropped, segments tagged, drop
     // episodes (a run of consecutive dropped frames), frames the bytes valve
     // cut mid-frame, the largest lag seen at a frame sync.
@@ -119,6 +122,7 @@ private:
     uint64_t frame_valve_hits_ = 0;
     uint64_t stall_valve_hits_ = 0;
     uint64_t irq_stall_breaks_ = 0;
+    uint64_t hold_parks_ = 0;
     bool drop_mode_ = false;
     bool dropping_frame_ = false;
     uint64_t drop_frames_ = 0;

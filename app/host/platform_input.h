@@ -114,12 +114,24 @@ public:
     uint64_t EventDrains() const { return drains_.load(); }
     bool GamepadActive() const { return gamepad_active_.load(); }
 
+    // The input -> boundary latency census (round 5). Every input EDGE the owner's pump
+    // drains (a key down / up that is not a repeat, a controller / joystick / mouse button,
+    // a harness HoldKey) is stamped with its arrival instant on the host (steady_clock ns:
+    // the SDL event's own timestamp -- the push / the pump that received it -- carried
+    // over to the steady clock; HoldKey: the call); the EARLIEST unconsumed edge is the
+    // one the next main-side Sample carries. The game owner, after Sample() served a FRESH
+    // sample, takes its stamps once: the sample's instant (the owner's system_.Frame) and
+    // the edge it carried (0 = none). A held / stale sample has no fresh stamps (false).
+    bool TakeSampleStamps(uint64_t* sampled_ns, uint64_t* edge_ns);
+    uint64_t Edges() const { return edges_.load(); }   // input edges stamped (census)
+
 private:
     enum class Operation { Sample, Reset, Capture, Keyboard, VirtualPad };
     struct Work {
         Operation operation = Operation::Sample;
         unsigned first = 0, second = 0;
         PadProtocol::Input sample;
+        uint64_t sampled_ns = 0, edge_ns = 0;   // the census stamps (steady_clock ns)
         bool connected = false, ok = false;
         std::atomic<bool> done{false};
         ps2r::Park wake;
@@ -144,6 +156,12 @@ private:
     PadProtocol::Input last_sample_{};
     bool last_connected_ = false;
     std::atomic<uint64_t> sample_late_{0}, sample_stale_{0}, sample_wait_max_us_{0};
+    // The census stamps: the earliest unconsumed edge (any thread sets, the owner's Sample
+    // takes), the accepted sample's stamps (the game owner's alone) and whether they are fresh.
+    std::atomic<uint64_t> edge_ns_{0}, edges_{0};
+    uint64_t last_sampled_ns_ = 0, last_edge_ns_ = 0;
+    bool stamps_fresh_ = false;
+    void NoteEdge(uint64_t arrival_ns);
     std::vector<int> held_keys_;   // under mutex_; applied on the owner before each Sample
     std::string sources_;          // under mutex_; refreshed on the owner after each Sample
     std::atomic<int> virtual_index_{-1};

@@ -52,7 +52,7 @@ FINGERPRINT_EXCLUDED_PREFIXES = ("harness.", "paths.", "meta.", "diag.")
 # FingerprintExcluded): host scheduling / toolchain choices that change nothing
 # the title executes or an image carries. A preset may pin them (det column)
 # without entering the fingerprint.
-FINGERPRINT_EXCLUDED_KEYS = ("engine.mtvu_kick_drop", "engine.mtvu_early_finish", "engine.mtvu_wait_probe", "engine.ee_yield_spin_gate", "engine.ee_fast_dispatch", "engine.cop0_count", "engine.vu1_aot_corpus",
+FINGERPRINT_EXCLUDED_KEYS = ("engine.mtvu_kick_drop", "engine.mtvu_early_finish", "engine.mtvu_wait_probe", "engine.ee_yield_spin_gate", "engine.ee_fast_dispatch", "engine.cop0_count", "engine.vu1_aot_corpus", "engine.mtvu_depth_hold", "video.capture_wait_ms", "video.present_relax")
                              "engine.vu1_aot_codegen", "engine.vu1_aot_compiler", "engine.vu1_aot_prelude",
                              "engine.vu1_aot_opt", "engine.vu1_aot_pack", "engine.vu1_aot_region_blocks",
                              "engine.vu1_aot_region_ops", "engine.vu1_aot_region_taken", "engine.vu1_aot_chain", "engine.vu1_aot_mac_acc",
@@ -80,6 +80,7 @@ ROWS = [
     ("engine.ee_yield_spin_gate", "bool", "on", "off", "-"),
     ("engine.mtvu", "bool", "on", "off", "PS2_MTVU"),
     ("engine.mtvu_depth", "int", "2", "=", "PS2_MTVU_MAX_FRAMES"),
+    ("engine.mtvu_depth_hold", "int", "0", "0", "-"),
     ("engine.mtvu_early_finish", "bool", "on", "off", "-"),
     ("engine.mtvu_kick_drop", "bool", "on", "=", "-"),
     ("engine.mtvu_wait_probe", "bool", "on", "off", "-"),
@@ -198,6 +199,7 @@ ROWS = [
     ("video.anisotropy", "int", "1", "=", "-"),
     ("video.aspect", "enum(auto|4:3|16:9|16:10|21:9)", "auto", "=", "display.ini:aspect"),
     ("video.backend", "enum(gl|soft|metal|auto)", "auto", "gl", "RENDERER_BACKEND"),
+    ("video.capture_wait_ms", "int", "0", "0", "-"),
     ("video.custom_offset_x", "int", "0", "=", "display.ini:custom_offset_x"),
     ("video.custom_offset_y", "int", "0", "=", "display.ini:custom_offset_y"),
     ("video.custom_scale_pct", "int", "100", "=", "display.ini:custom_scale"),
@@ -206,6 +208,7 @@ ROWS = [
     ("video.frame_cap", "enum(off|30|60)", "60", "=", "-"),
     ("video.fullscreen", "enum(windowed|fullscreen|borderless)", "windowed", "=", "-"),
     ("video.interp", "bool", "on", "off", "PS2_GS_INTERP"),
+    ("video.present_relax", "bool", "off", "off", "-"),
     ("video.render_rate", "enum(60|display)", "60", "=", "-"),
     ("video.scale", "int", "1", "=", "PS2_GS_SCALE"),
     ("video.texture_filter", "enum(title|point|bilinear|trilinear)", "title", "=", "-"),

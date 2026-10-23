@@ -115,6 +115,7 @@ public:
         int display_mode = 0;
         int display_hz = 0;
         int frame_cap = 2;   // video.frame_cap's index: 0 off, 1 30, 2 60 (FramePacer::Cap)
+        bool present_relax = false;   // video.present_relax: the pacer's relax policy (frame_pacer.h)
     };
     void ConfigureDisplayRows(const DisplaySettings& seed);
     int ScaleSetting() const { return scale_setting_.load(); }          // 0 = native window, 1..4

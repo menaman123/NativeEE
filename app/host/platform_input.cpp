@@ -89,8 +89,41 @@ std::shared_ptr<PlatformInput::Work> PlatformInput::Request(Operation operation,
     return work;
 }
 
+namespace {
+uint64_t SteadyNowNs() {
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+}  // namespace
+
+void PlatformInput::NoteEdge(uint64_t arrival_ns) {
+    if (arrival_ns == 0) arrival_ns = 1;
+    uint64_t expected = 0;
+    // The earliest unconsumed edge is the one the next sample carries; a later edge before
+    // that sample rides the same sample (the per-boundary sampling makes them one).
+    edge_ns_.compare_exchange_strong(expected, arrival_ns, std::memory_order_acq_rel);
+    edges_.fetch_add(1, std::memory_order_relaxed);
+}
+
 bool PlatformInput::HandleEvent(const SDL_Event& event) {
     if (std::this_thread::get_id() != owner_) return false;
+    // The latency census: an input EDGE arrives. Its instant is the SDL timestamp (ms, the
+    // push / the pump that received it) carried onto the steady clock through "now minus the
+    // ticks since" -- a key repeat is not an edge, a motion event neither.
+    bool edge = false;
+    switch (event.type) {
+        case SDL_KEYDOWN: edge = event.key.repeat == 0; break;
+        case SDL_KEYUP: case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEBUTTONUP:
+        case SDL_CONTROLLERBUTTONDOWN: case SDL_CONTROLLERBUTTONUP:
+        case SDL_JOYBUTTONDOWN: case SDL_JOYBUTTONUP: edge = true; break;
+        default: break;
+    }
+    if (edge) {
+        const uint32_t since_ms_raw = static_cast<uint32_t>(SDL_GetTicks()) - event.common.timestamp;   // wrap-safe
+        const uint64_t since_ms = since_ms_raw > 10000u ? 0u : since_ms_raw;   // an implausible stamp: the pump's instant
+        const uint64_t now_ns = SteadyNowNs();
+        NoteEdge(now_ns > since_ms * 1000000ull ? now_ns - since_ms * 1000000ull : now_ns);
+    }
     system_.HandleEvent(event);
     gamepad_active_.store(system_.Gamepad() && system_.Gamepad()->IsActive());
     ++drains_;
@@ -149,6 +182,8 @@ void PlatformInput::Execute(Work& work) {
             const float dt = std::clamp(std::chrono::duration<float>(now - last_).count(), 0.0f, kMaxDtSeconds);
             last_ = now;
             const auto sample = system_.Frame(dt);
+            work.sampled_ns = SteadyNowNs();
+            work.edge_ns = edge_ns_.exchange(0, std::memory_order_acq_rel);
             work.sample.buttons = sample.buttons;
             work.sample.lx = sample.lx; work.sample.ly = sample.ly;
             work.sample.rx = sample.rx; work.sample.ry = sample.ry;
@@ -229,6 +264,9 @@ void PlatformInput::Accept(const Work& work) {
     if (!work.ok) return;
     last_sample_ = work.sample;
     last_connected_ = work.connected;
+    last_sampled_ns_ = work.sampled_ns;
+    last_edge_ns_ = work.edge_ns;
+    stamps_fresh_ = work.sampled_ns != 0;
     ++samples_;
     std::lock_guard<std::mutex> lock(mutex_);
     accepted_connected_ = work.connected;
@@ -330,6 +368,16 @@ void PlatformInput::HoldKey(int scancode, bool held) {
     auto it = std::find(held_keys_.begin(), held_keys_.end(), scancode);
     if (held && it == held_keys_.end()) held_keys_.push_back(scancode);
     else if (!held && it != held_keys_.end()) held_keys_.erase(it);
+    else return;
+    NoteEdge(SteadyNowNs());   // the harness's edge: the call is its arrival
+}
+
+bool PlatformInput::TakeSampleStamps(uint64_t* sampled_ns, uint64_t* edge_ns) {
+    if (!stamps_fresh_) return false;
+    stamps_fresh_ = false;
+    if (sampled_ns) *sampled_ns = last_sampled_ns_;
+    if (edge_ns) *edge_ns = last_edge_ns_;
+    return true;
 }
 
 void PlatformInput::VirtualPadAction(VirtualPad action) { Request(Operation::VirtualPad, static_cast<unsigned>(action)); }
