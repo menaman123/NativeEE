@@ -1,6 +1,8 @@
 // app/host/frame_pacer.cpp -- FramePacer (frame_pacer.h).
 #include "app/host/frame_pacer.h"
 
+#include <algorithm>
+
 namespace ps2r::app {
 
 const char* FramePacer::CapName(Cap cap) {
@@ -51,16 +53,37 @@ bool FramePacer::Admit(uint64_t now_ns, uint64_t posted_ns) {
         ++n_.slipped;
         n_.slip_ns += behind % period;
         next_edge_ = now_ns + period;
+        relax_count_ = 0;                 // the train moved later: the relax window restarts
+        relax_min_wait_ = UINT64_MAX;
     } else if (behind >= period) {
         // The picture waited since before the edge and the PUMP fell a whole period
         // behind (a display swap, a stalled main): re-anchor from now, no catch-up burst.
         next_edge_ = now_ns + period;
         ++n_.late;
+        relax_count_ = 0;
+        relax_min_wait_ = UINT64_MAX;
     } else {
+        const uint64_t edge = next_edge_;
         next_edge_ += period;   // on time: the train stays
+        if (relax_) NoteWait(edge - posted_ns);
     }
     NoteShown(now_ns);
     return true;
+}
+
+void FramePacer::NoteWait(uint64_t wait_ns) {
+    if (wait_ns < relax_min_wait_) relax_min_wait_ = wait_ns;
+    if (++relax_count_ < kRelaxWindow) return;
+    // Every picture of the window waited at least relax_min_wait_: pull the train earlier
+    // by the excess over the margin, at most a step (one shorter gap, never a longer one).
+    if (relax_min_wait_ != UINT64_MAX && relax_min_wait_ > kRelaxMarginNs) {
+        const uint64_t pull = std::min(relax_min_wait_ - kRelaxMarginNs, kRelaxStepNs);
+        next_edge_ -= std::min(pull, next_edge_);
+        ++n_.relaxed;
+        n_.relax_ns += pull;
+    }
+    relax_count_ = 0;
+    relax_min_wait_ = UINT64_MAX;
 }
 
 void FramePacer::NoteShown(uint64_t now_ns) {
@@ -82,7 +105,7 @@ std::string FramePacer::CensusRow() const {
     return std::string("cap=") + CapName(cap_) + ":admitted=" + std::to_string(n_.admitted) + ":held=" + std::to_string(n_.held) +
            ":superseded=" + std::to_string(n_.superseded) + ":late=" + std::to_string(n_.late) +
            ":slipped=" + std::to_string(n_.slipped) + ":slip_ms=" + std::to_string(n_.slip_ns / 1000000) +
-           ":doubled=" + std::to_string(n_.doubled);
+           ":doubled=" + std::to_string(n_.doubled) + ":relaxed=" + std::to_string(n_.relaxed) + ":relax_ms=" + std::to_string(n_.relax_ns / 1000000);
 }
 
 }  // namespace ps2r::app

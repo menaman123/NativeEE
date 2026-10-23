@@ -8,6 +8,7 @@
 // (no 2/4-field mixture). A pump a whole period late with a picture waiting re-anchors once
 // (no catch-up burst). Off admits at the pump; ToNextEdge bounds the wait; the census row
 // renders; the cap names / indices round-trip with the Config order.
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <deque>
@@ -250,7 +251,53 @@ int main() {
         q.Admit(kMs, kMs);                                 // anchor + admit; next edge 2 fields + 1 ms
         q.Admit(4 * kField + 2 * kMs, 4 * kField + kMs);   // 2 fields + 1 ms behind: one empty period held, slipped 1 ms
         q.Supersede();
-        CHECK(q.CensusRow() == "cap=30:admitted=2:held=1:superseded=1:late=0:slipped=1:slip_ms=1:doubled=1", "row: %s", q.CensusRow().c_str());
+        CHECK(q.CensusRow() == "cap=30:admitted=2:held=1:superseded=1:late=0:slipped=1:slip_ms=1:doubled=1:relaxed=0:relax_ms=0", "row: %s", q.CensusRow().c_str());
+    }
+    // RELAX (round 5): a first picture 15 ms late in phase anchors the train; the steady 60 Hz
+    // producer (jitter 0..1 ms) then arrives ~15 ms before every edge. Off: every picture waits
+    // ~15 ms for the whole run. On: the train is pulled earlier 4 ms per 32 admissions until the
+    // smallest wait of a window is within the 2 ms margin -- the steady-state wait is < 3.5 ms
+    // (margin + jitter), no gap ever exceeds a field + 1 ms (pulls shorten gaps, never lengthen
+    // them), nothing slipped or superseded; the census counts the pulls.
+    {
+        std::vector<uint64_t> posts;
+        posts.push_back(15 * kMs);   // the slow first frame: 15 ms late in phase
+        uint32_t lcg = 7;
+        for (int i = 1; i < 600; ++i) {
+            lcg = lcg * 1664525u + 1013904223u;
+            posts.push_back(i * kField + (lcg >> 24) % (kMs + 1));
+        }
+        auto wait_stats = [&](FramePacer& p, uint64_t* tail_max_wait, uint64_t* max_gap, size_t* n) {
+            const auto shown = Simulate(p, posts, 250000, 600 * kField);
+            *n = shown.size();
+            *max_gap = MaxOf(Gaps(shown));
+            *tail_max_wait = 0;
+            for (size_t i = 500; i < shown.size() && i < posts.size(); ++i)
+                *tail_max_wait = std::max(*tail_max_wait, shown[i] - posts[i]);
+        };
+        FramePacer off;
+        uint64_t off_wait = 0, off_gap = 0; size_t off_n = 0;
+        wait_stats(off, &off_wait, &off_gap, &off_n);
+        CHECK(off_n >= 598 && off_wait >= 13 * kMs, "relax off: the train stays where the first picture put it (tail wait %llu us)",
+              (unsigned long long)(off_wait / 1000));
+        FramePacer on;
+        on.SetRelax(true);
+        uint64_t on_wait = 0, on_gap = 0; size_t on_n = 0;
+        wait_stats(on, &on_wait, &on_gap, &on_n);
+        CHECK(on_n >= 598, "relax on: every picture shown (%zu)", on_n);
+        CHECK(on_wait <= FramePacer::kRelaxMarginNs + 2 * kMs, "relax on: the tail wait is within margin + jitter (%llu us)",
+              (unsigned long long)(on_wait / 1000));
+        CHECK(on_gap <= kField + kMs, "relax on: no gap above a field + 1 ms (%llu us)", (unsigned long long)(on_gap / 1000));
+        CHECK(on.Count().relaxed >= 3 && on.Count().relaxed <= 12 && on.Count().relax_ns >= 11 * kMs && on.Count().relax_ns <= 16 * kMs,
+              "relax census: %s", on.CensusRow().c_str());
+        CHECK(on.Count().slipped == 0 && on.Count().superseded == 0 && on.Count().doubled == 0, "relax on: nothing slipped / lost: %s", on.CensusRow().c_str());
+        // A late picture after convergence: a slip (the round-3 rule) and the window restarts.
+        FramePacer late;
+        late.SetRelax(true);
+        std::vector<uint64_t> p2 = posts;
+        p2[550] += 6 * kMs;
+        const auto shown2 = Simulate(late, p2, 250000, 600 * kField);
+        CHECK(shown2.size() >= 598 && late.Count().slipped == 1, "a late picture slips once after convergence: %s", late.CensusRow().c_str());
     }
     std::printf("test_frame_pacer: %d checks, %d failures\n", g_checks, g_fails);
     return g_fails ? 1 : 0;

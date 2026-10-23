@@ -28,6 +28,18 @@
 // picture arriving with two already waiting supersedes the oldest (over-production;
 // cannot happen at <= 60 pictures/s once the train follows the producer).
 //
+// RELAX (round 5, video.present_relax): the train above only ever moves LATER (a slip
+// re-anchors to a late picture; an early picture waits), so its phase settles at the
+// LATEST arrival it has seen -- in Paris the first, slow frames of a restored state
+// anchored it ~15-24 ms after the steady arrivals and every picture then waited that
+// long for its edge: a field of input latency bought nothing. With relax on, the
+// pacer tracks the SMALLEST wait (edge - posted) of the last kRelaxWindow on-time
+// admissions; when even that is above kRelaxMarginNs the train is pulled EARLIER by
+// the excess (at most kRelaxStepNs per window: one shorter gap, never a longer one),
+// so the edge converges to just after the latest typical arrival; a late picture
+// still slips (the train moves later again) and the window restarts. Census
+// relaxed= (pulls) / relax_ms (the summed pull).
+//
 // Census: admitted / held (whole periods that passed with no picture available: the
 // production's own misses) / superseded / late (the PUMP fell a period behind with a
 // picture already waiting: a display swap, a stalled main) / slipped (re-anchors to
@@ -54,6 +66,12 @@ public:
     // at the next pump.
     void SetCap(Cap cap);
     Cap cap() const { return cap_; }
+    // The relax policy (above); off = the round-3 train.
+    void SetRelax(bool on) { relax_ = on; relax_count_ = 0; relax_min_wait_ = UINT64_MAX; }
+    bool Relax() const { return relax_; }
+    static constexpr uint32_t kRelaxWindow = 32;          // on-time admissions per decision (~0.5 s at 60)
+    static constexpr uint64_t kRelaxMarginNs = 2000000;   // the wait kept above the latest arrival (2 ms)
+    static constexpr uint64_t kRelaxStepNs = 4000000;     // the largest pull per window (4 ms)
     uint64_t PeriodNs() const;   // 0 under Off
 
     // One pump at wall `now_ns`; `posted_ns` = the wall instant the OLDEST waiting
@@ -77,14 +95,20 @@ public:
         uint64_t slipped = 0;      // train re-anchored to a picture posted after its edge
         uint64_t slip_ns = 0;      // the summed lateness of the slips
         uint64_t doubled = 0;      // shown pictures > 1.2 periods after the previous (a doubled frame; Off: fields)
+        uint64_t relaxed = 0;      // train pulls earlier (the relax policy)
+        uint64_t relax_ns = 0;     // ... their summed pull
     };
     const Census& Count() const { return n_; }
-    // "cap=60:admitted=n:held=n:superseded=n:late=n:slipped=n:slip_ms=n:doubled=n"
+    // "cap=60:admitted=n:held=n:superseded=n:late=n:slipped=n:slip_ms=n:doubled=n:relaxed=n:relax_ms=n"
     std::string CensusRow() const;
 
 private:
     void NoteShown(uint64_t now_ns);
+    void NoteWait(uint64_t wait_ns);   // an on-time admission's wait (the relax policy)
     Cap cap_ = Cap::Hz60;
+    bool relax_ = false;
+    uint32_t relax_count_ = 0;
+    uint64_t relax_min_wait_ = UINT64_MAX;
     uint64_t next_edge_ = 0;       // 0 = unanchored
     uint64_t last_shown_ns_ = 0;   // the previous admission (the doubled-frame census)
     Census n_;
