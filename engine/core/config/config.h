@@ -248,6 +248,16 @@ struct EngineConfig {
     // the deterministic profile pins it off. Census ee_yield= spin_trips /
     // sched_trips / due_fields.
     bool    ee_yield_spin_gate = true;
+    // The generated dispatch's raw fast path (eecode round 4): a guest call to
+    // a function whose table entry still holds its init-time body skips the
+    // double ObservedBody / std::function chain and runs shadow-frame push ->
+    // body -> pop (recomp_raw_dispatch); hooked ids (every DispatchTable::
+    // Install) keep the full chain. Off = every call takes the chain (the
+    // pre-round-4 path). Host dispatch mechanics only: nothing the title
+    // executes or an image carries changes with it (fingerprint-excluded;
+    // the <=294 cold-boot oracle and the Paris-600 lockstep census are
+    // byte-equal either way). On by default since 2026-10-22 (the eecode round's gates: Paris 600 lockstep census + frames.fhash + mem.mhash equal knob on vs off, h600 <=294 oracle 0, cold boot / hub warps / F5-F8 park=none).
+    bool    ee_fast_dispatch = true;
     int     ee_runahead = 2;
     Pacing  pacing = Pacing::Realtime;
     int     time_regime_pin = -1;         // -1 = none (adaptive)

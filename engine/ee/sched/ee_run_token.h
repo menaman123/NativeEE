@@ -60,6 +60,20 @@ public:
     // the host thread that entered `tid`.
     void GuestEnter(int tid, int prio);
     void GuestExit(int tid);
+    // Census: CPU time (host thread clock, user + kernel) the guest tids' host
+    // threads consumed between their GuestEnter and GuestExit, summed over
+    // incarnations -- "tid:ms,tid:ms,...;total=ms" (tids with any time, in order).
+    // Completed incarnations are booked at GuestExit; the running one is a
+    // snapshot refreshed at every BlockBegin (one ~100 ns thread-clock read as
+    // the thread leaves the CPU anyway), so a long-lived thread still running
+    // when the census is written is in it up to its last block. The EE's own
+    // CPU per run independent of what the host's other processes did to the
+    // wall (eecode round 4).
+    std::string CpuCensus() const;
+    uint64_t CpuNs(int tid) const;
+    // Refreshes the calling guest thread's live CPU snapshot (BlockBegin -- the parks go
+    // through it -- and WaitVblank call it: every way a guest thread leaves the CPU).
+    void SnapshotCpu();
 
     // Kernel blocking wait: BlockBegin leaves the ready set and releases
     // (WAITING is not READY); BlockEnd rejoins (fresh seq unless a mutator
@@ -229,6 +243,8 @@ private:
     std::condition_variable cv_;
     Ready ready_[kMaxReady];
     bool retired_[kMaxTid] = {};  // GuestExit ran for the tid; cleared by GuestEnter
+    std::atomic<uint64_t> cpu_ns_[kMaxTid] = {};       // CpuCensus: completed incarnations (GuestExit)
+    std::atomic<uint64_t> cpu_live_ns_[kMaxTid] = {};  // CpuCensus: the running incarnation at its last BlockBegin
     uint64_t retired_ready_noops_ = 0;
     int owner_ = kNone;           // elected tid (may not have arrived yet)
     int last_owner_ = kNone;      // ReleaseLocked's last guest tid (under mu_)

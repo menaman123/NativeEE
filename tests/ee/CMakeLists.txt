@@ -19,6 +19,9 @@ ps2r_ee_test(test_ps2_float Ps2FloatSemantics)
 # The guest thread rounding mode (FE_TOWARDZERO per thread; div/sqrt/rsqrt nearest).
 ps2r_ee_test(test_float_rounding Ps2FloatRounding)
 set_tests_properties(Ps2FloatRounding PROPERTIES TIMEOUT 60)
+# E3: the arithmetic to-nearest div/sqrt/rsqrt forms bit-equal to the mode-switching bodies (all four modes).
+ps2r_ee_test(test_ps2_float_rn Ps2FloatNearestForms)
+set_tests_properties(Ps2FloatNearestForms PROPERTIES TIMEOUT 120)
 ps2r_ee_test(test_fastmem FastMemDiff)
 ps2r_ee_test(test_address_map AddressMapAndMmioSinkIdleValues)
 # The fatal_no_jump park record: jump-source candidates + shadow chain + GPRs

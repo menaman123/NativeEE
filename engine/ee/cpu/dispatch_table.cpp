@@ -18,9 +18,12 @@ bool update_function_impl(uint32_t address, const std::function<void(CpuContext&
 uint32_t recomp_fn_id_for(uint32_t addr);
 // The indirect-call guards' diagnostics gate (seams.cpp defines it; row 26).
 extern "C" bool crashring_enabled;
+// The raw fast path gate (seams.cpp defines it; the generated init tail reads it).
+extern "C" bool recomp_fast_dispatch_enabled;
 
 namespace {
 std::atomic<bool> g_initialized{false};
+std::atomic<uint64_t> g_installs{0};
 
 struct Invocation {
     CpuContext* context;
@@ -69,6 +72,12 @@ void DispatchTable::Initialize() {
 
 bool DispatchTable::IsInitialized() { return g_initialized.load(); }
 
+void DispatchTable::SetFastDispatch(bool on) {
+    if (!g_initialized.load()) recomp_fast_dispatch_enabled = on;
+}
+bool DispatchTable::FastDispatch() { return recomp_fast_dispatch_enabled; }
+uint64_t DispatchTable::InstallCount() { return g_installs.load(std::memory_order_relaxed); }
+
 uint32_t DispatchTable::FunctionCount() { return g_recomp_fn_count; }
 
 uint32_t DispatchTable::AddressOfId(uint32_t id) {
@@ -78,7 +87,9 @@ uint32_t DispatchTable::AddressOfId(uint32_t id) {
 uint32_t DispatchTable::IdOf(uint32_t addr) { return recomp_fn_id_for(addr); }
 
 bool DispatchTable::Install(uint32_t addr, Body body) {
-    return update_function_impl(addr, body);
+    const bool ok = update_function_impl(addr, body);
+    if (ok) g_installs.fetch_add(1, std::memory_order_relaxed);
+    return ok;
 }
 
 DispatchTable::Body DispatchTable::Capture(uint32_t addr) {

@@ -101,6 +101,7 @@ static void TestPeakDefaults() {
     CHECK(c.engine.mtvu_early_finish == true);   // E425/E426/E427 on by default (the finish track's gates)
     CHECK(c.engine.mtvu_wait_probe == true);     // E430 on by default (the waitsites track's gates, 2026-10-22)
     CHECK(c.engine.ee_yield_spin_gate == true);  // E432 on by default (the waitsites track's gates, 2026-10-22)
+    CHECK(c.engine.ee_fast_dispatch == true);    // eecode round 4: the raw dispatch fast path (gates green 2026-10-22)
     CHECK(c.engine.ee_runahead == 2);
     CHECK(c.engine.pacing == Pacing::Realtime);
     CHECK(c.engine.time_regime_pin == -1);
@@ -312,6 +313,7 @@ static void TestFingerprint() {
     c.engine.mtvu_early_finish = false;  // the FINISH raise / boundary scheduling (E425): excluded
     c.engine.mtvu_wait_probe = false;    // the observation point's probe (E430): excluded
     c.engine.ee_yield_spin_gate = false; // the yield point's spin gate (E432): excluded
+    c.engine.ee_fast_dispatch = false;   // the host dispatch mechanics of a guest call: excluded
     CHECK(c.Fingerprint() == "engine.mtvu=off;video.scale=2;profile=default");
     // Hash semantics: FNV over each entry followed by ";".
     const std::string fp = c.Fingerprint();
