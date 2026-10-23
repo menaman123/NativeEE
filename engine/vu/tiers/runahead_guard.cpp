@@ -21,7 +21,17 @@ uint64_t RunaheadGuard::EffMaxFrames(uint64_t declared) const {
 bool RunaheadGuard::NoteHoldPark(uint64_t declared, uint64_t engaged_at_ns) {
     if (hold_frames_ == 0 || HoldLifted(declared)) return false;
     if (clock_.NowNs() < engaged_at_ns + kHoldLiftNs) return false;
+    if (hold_park_noted_at_ == engaged_at_ns) return false;   // this park was judged already
+    hold_park_noted_at_ = engaged_at_ns;
+    if (declared < hold_rearm_at_) {
+        // Inside the re-arm period: the previous allowance did not make the worker catch up
+        // (a long hold park again) -- no lift; the clean period restarts.
+        ++hold_lifts_refused_;
+        hold_rearm_at_ = declared + kHoldLiftBoundaries;
+        return false;
+    }
     hold_lift_until_ = declared + kHoldLiftBoundaries;
+    hold_rearm_at_ = hold_lift_until_ + kHoldLiftBoundaries;
     ++hold_lifts_;
     return true;
 }

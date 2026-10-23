@@ -16,7 +16,12 @@
 // longer than kHoldLiftNs says the worker is NOT keeping up and lifts the cap
 // to the setting (2, 3 under low band) for kHoldLiftBoundaries declared frames
 // -- the catch-up allowance the round-4 chain had -- after which the hold
-// returns. 0 = no hold (the setting is the cap, the round-4 behaviour).
+// returns. A lift RE-ARMS only after kHoldLiftBoundaries frames free of such a
+// park: when the worker is the bound for good (every frame late), the EE's two
+// extra frames of lead buy no picture (the throughput is the worker's) and cost
+// two fields of latency, so after one allowance the hold stays; a transient
+// hiccup every few seconds still gets its allowance each time. 0 = no hold
+// (the setting is the cap, the round-4 behaviour).
 //
 // Tripwire: a pure detector fed once per genuine present by the graphics
 // thread; `over` means depth > cap + 1 (the +1 absorbs the legal transients:
@@ -78,6 +83,7 @@ public:
     // the setting for kHoldLiftBoundaries frames from `declared`.
     bool NoteHoldPark(uint64_t declared, uint64_t engaged_at_ns);
     uint64_t HoldLifts() const { return hold_lifts_; }
+    uint64_t HoldLiftsRefused() const { return hold_lifts_refused_; }   // long hold parks inside the re-arm period (no lift)
     // declared - presented, clamped at 0 (a declare/present interleave can
     // transiently order presented > declared).
     static uint64_t DepthFrames(uint64_t declared, uint64_t presented);
@@ -94,5 +100,8 @@ private:
     const MtvuClock& clock_;
     uint64_t hold_frames_ = 0;
     uint64_t hold_lift_until_ = 0;   // declared frame the lift ends at (producer thread)
+    uint64_t hold_rearm_at_ = 0;     // declared frame from which a long hold park may lift again
     uint64_t hold_lifts_ = 0;
+    uint64_t hold_lifts_refused_ = 0;
+    uint64_t hold_park_noted_at_ = 0;   // the engagement whose long park was already judged
 };

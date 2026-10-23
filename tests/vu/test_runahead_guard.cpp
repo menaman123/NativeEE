@@ -200,6 +200,22 @@ int main() {
         CHECK(g.HoldLifted(102 + RunaheadGuard::kHoldLiftBoundaries - 1), "the lift holds for the allowance");
         CHECK(!g.HoldLifted(102 + RunaheadGuard::kHoldLiftBoundaries), "... and ends at its boundary");
         CHECK(g.EffMaxFrames(102 + RunaheadGuard::kHoldLiftBoundaries) == 1, "the hold returns");
+        // The re-arm: a long hold park right after the allowance (the worker is the bound for good) does
+        // NOT lift again -- the hold stays and the clean period restarts; after kHoldLiftBoundaries frames
+        // free of long parks the next one lifts.
+        const uint64_t after = 102 + RunaheadGuard::kHoldLiftBoundaries + 5;
+        clk.now += RunaheadGuard::kHoldLiftNs;
+        CHECK(!g.NoteHoldPark(after, clk.now - RunaheadGuard::kHoldLiftNs) && g.HoldLifts() == 1 && g.HoldLiftsRefused() == 1,
+              "a long hold park inside the re-arm period is refused (the worker is the bound)");
+        CHECK(g.EffMaxFrames(after) == 1, "the hold stays");
+        clk.now += RunaheadGuard::kHoldLiftNs;
+        CHECK(!g.NoteHoldPark(after + 50, clk.now - RunaheadGuard::kHoldLiftNs) && g.HoldLiftsRefused() == 2, "... and again 50 frames later (restarted)");
+        clk.now += RunaheadGuard::kHoldLiftNs;
+        CHECK(g.NoteHoldPark(after + 50 + RunaheadGuard::kHoldLiftBoundaries, clk.now - RunaheadGuard::kHoldLiftNs) && g.HoldLifts() == 2,
+              "after a clean allowance-length period the next long park lifts again");
+        clk.now += 1;
+        CHECK(!g.NoteHoldPark(after + 50 + RunaheadGuard::kHoldLiftBoundaries, clk.now - RunaheadGuard::kHoldLiftNs - 1) && g.HoldLifts() == 2,
+              "the same park is judged once");
         // A hold at the setting or above is inert.
         RunaheadGuard h(2, {}, clk);
         h.SetHold(2);

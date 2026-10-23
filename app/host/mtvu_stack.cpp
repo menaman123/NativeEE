@@ -343,6 +343,7 @@ std::string MtvuStack::Census() const {
          ",bp=" + std::to_string(backpressure_.Engagements()) + "/" + std::to_string(backpressure_.FrameValveHits()) +
          "/" + std::to_string(backpressure_.StallValveHits()) + "/" + std::to_string(backpressure_.IrqStallBreaks()) +
          ",hold=" + std::to_string(guard_.HoldFrames()) + ":" + std::to_string(backpressure_.HoldParks()) + "/" + std::to_string(backpressure_.HoldLifts()) +
+         "/" + std::to_string(guard_.HoldLiftsRefused()) +
          ",quiesce_laps=" + std::to_string(quiesce_laps_) +
          ",mirrors=" + std::to_string(mirrors_) +
          ",kick_drop=" + (backpressure_.DropMode() ? "on" : "off") +
