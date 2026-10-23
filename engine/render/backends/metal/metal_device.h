@@ -101,6 +101,7 @@ public:
     bool PresentCaptureDeferred() const { return present_capture_deferred_; }
     uint64_t PresentCaptureWaits() const { return present_capture_waits_; }
     void SetPresentCaptureWaitNs(uint64_t ns) override { present_capture_wait_ns_ = ns; }
+    void SetPresentCaptureGate(std::function<bool()> gate) override { present_capture_gate_ = std::move(gate); }
     int PresentedLag() const override { return presented_lag_; }
     void FlushCommands() override;
     void SetTextureFilter(std::shared_ptr<const TextureFilterSelection> selection) override {
@@ -231,6 +232,7 @@ private:
     std::vector<uint8_t> presented_;
     int presented_w_ = 0, presented_h_ = 0;
     uint64_t present_capture_wait_ns_ = 0;   // the bounded wait for THIS present's capture (0 = deferred only)
+    std::function<bool()> present_capture_gate_;   // false = no bounded wait at this present (backend.h)
     int presented_lag_ = 0;                  // the lag of presented_ (0 = this present, 1 = the previous)
     bool presented_fresh_ = false;           // presented_ not yet handed over by ReadPresented
     std::unordered_map<uint32_t, MetalSurface> surfaces_;
