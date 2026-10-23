@@ -52,11 +52,29 @@ FINGERPRINT_EXCLUDED_PREFIXES = ("harness.", "paths.", "meta.", "diag.")
 # FingerprintExcluded): host scheduling / toolchain choices that change nothing
 # the title executes or an image carries. A preset may pin them (det column)
 # without entering the fingerprint.
-FINGERPRINT_EXCLUDED_KEYS = ("engine.mtvu_kick_drop", "engine.mtvu_early_finish", "engine.mtvu_wait_probe", "engine.ee_yield_spin_gate", "engine.ee_fast_dispatch", "engine.cop0_count", "engine.vu1_aot_corpus", "engine.mtvu_depth_hold", "video.capture_wait_ms", "video.present_relax")
-                             "engine.vu1_aot_codegen", "engine.vu1_aot_compiler", "engine.vu1_aot_prelude",
-                             "engine.vu1_aot_opt", "engine.vu1_aot_pack", "engine.vu1_aot_region_blocks",
-                             "engine.vu1_aot_region_ops", "engine.vu1_aot_region_taken", "engine.vu1_aot_chain", "engine.vu1_aot_mac_acc",
-                             "save.restore_mode")
+FINGERPRINT_EXCLUDED_KEYS = (
+    "engine.mtvu_kick_drop",
+    "engine.mtvu_early_finish",
+    "engine.mtvu_wait_probe",
+    "engine.ee_yield_spin_gate",
+    "engine.ee_fast_dispatch",
+    "engine.cop0_count",
+    "engine.vu1_aot_corpus",
+    "engine.mtvu_depth_hold",
+    "video.capture_wait_ms",
+    "video.present_relax",
+    "engine.vu1_aot_codegen",
+    "engine.vu1_aot_compiler",
+    "engine.vu1_aot_prelude",
+    "engine.vu1_aot_opt",
+    "engine.vu1_aot_pack",
+    "engine.vu1_aot_region_blocks",
+    "engine.vu1_aot_region_ops",
+    "engine.vu1_aot_region_taken",
+    "engine.vu1_aot_chain",
+    "engine.vu1_aot_mac_acc",
+    "save.restore_mode",
+)
 
 # key, type, peak, det ("=" = unchanged by the preset), source_var
 ROWS = [
