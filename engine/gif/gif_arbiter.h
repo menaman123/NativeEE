@@ -198,6 +198,12 @@ public:
     // runs on the drain owner thread. Tools record delivery order with it.
     using DrainObserver = void (*)(void* user, const GifArbiterPacket& pkt);
     void SetDrainObserver(DrainObserver fn, void* user);
+    // Runs on the drain owner thread at the END of every pass that delivered
+    // packets (after FinishPath3 and the ledger settle; not after a fault): the
+    // DrawIR chain's producer hands its staged records on (nothing more arrives
+    // until the next kick). Null = absent.
+    using PassEndHook = void (*)(void* user);
+    void SetPassEndHook(PassEndHook fn, void* user);
 
 private:
     friend class GifDrainThread;
@@ -226,6 +232,8 @@ private:
     void* observer_user_ = nullptr;
     DrainObserver drain_observer_ = nullptr;
     void* drain_observer_user_ = nullptr;
+    PassEndHook pass_end_ = nullptr;
+    void* pass_end_user_ = nullptr;
     GifMarkerOwner* owner_ = nullptr;
     GifDrainThread* drain_thread_ = nullptr;
     FinishRaiser finish_raiser_ = nullptr;

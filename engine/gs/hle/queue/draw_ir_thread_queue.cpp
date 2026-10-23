@@ -24,19 +24,27 @@ void DrawIrThreadQueue::Start(std::function<void()> on_thread_start) {
     on_thread_start_ = std::move(on_thread_start);
     stop_ = false;
     running_ = true;
+    running_flag_.store(true, std::memory_order_release);
     thread_ = std::thread([this] { ThreadMain(); });
 }
+
+void DrawIrThreadQueue::SetStageDepth(uint32_t records) { stage_depth_ = records == 0 ? 1 : records; }
 
 void DrawIrThreadQueue::Stop() {
     {
         std::lock_guard<std::mutex> lk(mu_);
         if (!running_) return;
+    }
+    FlushStaged();   // the producer's staged records reach the ring before the drain
+    {
+        std::lock_guard<std::mutex> lk(mu_);
         stop_ = true;
     }
     cv_work_.notify_all();
     thread_.join();
     std::lock_guard<std::mutex> lk(mu_);
     running_ = false;
+    running_flag_.store(false, std::memory_order_release);
     PS2R_LOG(PERF, Info,
              "gs queue: policy=%s frame_skip=%d/%u enqueued=%llu consumed=%llu frames=%llu dropped=%llu max_depth=%llu "
              "lockstep_waits=%llu/%llu us room_waits=%llu/%llu us syncs=%llu/%llu us ordered_waits=%llu/%llu us frame_waits=%llu",
@@ -60,26 +68,34 @@ void DrawIrThreadQueue::Stop() {
 
 // ---- producer side ----------------------------------------------------------------
 
-// The EE image's calls since the last record travel as one record, delivered
-// before the next record: the in-thread consumer saw them at exactly that point.
+// The EE image's calls since the last record travel with the NEXT record, replayed
+// right before it: the in-thread consumer saw them at exactly that point. Only a
+// producer wait with nothing to ride on (Sync / WaitFrame / Quiesce) sends them as
+// their own record.
+void DrawIrThreadQueue::CarryVramOps(Record& r) {
+    if (ops_.Empty()) return;
+    r.ops = std::move(ops_);
+    r.has_ops = true;
+    ops_ = VramOpLog{};
+    n_.vram_ops++;
+    n_.vram_op_bytes += r.ops.Bytes();
+}
+
 void DrawIrThreadQueue::FlushVramOps() {
     if (ops_.Empty()) return;
     Record r;
     r.kind = Kind::VramOps;
-    r.ops = std::move(ops_);
-    ops_ = VramOpLog{};
-    n_.vram_ops++;
-    n_.vram_op_bytes += r.ops.Bytes();
+    CarryVramOps(r);
     Push(std::move(r));
 }
 
 // The UploadVRAMTexture record waits for its payload: attached (copied) now, at
 // the producer's next event -- the point the in-thread consumer applies it. The
-// EE's VRAM calls since the previous record are flushed first (they precede the
-// next record either way; the held upload's delivery only parks it in the
-// consumer, which applies it at ITS next event).
+// EE's VRAM calls since the previous record ride on it (they precede the next
+// record either way; the held upload's delivery only parks it in the consumer,
+// which applies it at ITS next event); with no upload held they ride on the
+// next record pushed.
 void DrawIrThreadQueue::AttachPendingPayload() {
-    FlushVramOps();
     if (!pending_valid_) return;
     pending_valid_ = false;
     const std::vector<uint8_t>* px = hooks_.upload_pixels ? hooks_.upload_pixels() : nullptr;
@@ -88,6 +104,7 @@ void DrawIrThreadQueue::AttachPendingPayload() {
         pending_.has_payload = true;
         n_.payload_bytes += px->size();
     }
+    CarryVramOps(pending_);
     Push(std::move(pending_));
     pending_ = Record{};
     pending_.kind = Kind::Job;
@@ -101,12 +118,14 @@ bool DrawIrThreadQueue::Faulted() const {
 // The consumer's exception surfaces on the producer thread once; the queue stays
 // faulted (the later pushes are dropped by the consumer, the waits return).
 void DrawIrThreadQueue::RethrowPendingFault() {
+    if (!fault_pending_.load(std::memory_order_acquire)) return;
     std::exception_ptr e;
     {
         std::lock_guard<std::mutex> lk(mu_);
         if (!fault_) return;
         e = fault_;
         fault_ = nullptr;
+        fault_pending_.store(false, std::memory_order_release);
     }
     std::rethrow_exception(e);
 }
@@ -132,9 +151,10 @@ uint32_t DrawIrThreadQueue::FrameSkipDepth() const {
 // consumer has not popped any of their records (it is busy with an older frame) --
 // are the pending pictures. When `arriving` would make more than frame_skip_depth_
 // of them, the OLDEST whole one is dropped: its draws go; its jobs, VRAM op-logs
-// and ordered work stay in stream order; its frame record becomes a drop marker
-// (delivered, counted, never presented). Depth 1 is the original rule (the
-// previous frame is dropped as soon as the consumer is still on the one before).
+// (a draw's carried log stays as a record of its own) and ordered work stay in
+// stream order; its frame record becomes a drop marker (delivered, counted, never
+// presented). Depth 1 is the original rule (the previous frame is dropped as soon
+// as the consumer is still on the one before).
 void DrawIrThreadQueue::DropOlderPendingFrameLocked(uint64_t arriving) {
     if (arriving < 2) return;
     // The whole frames pending, oldest first (at most frame_skip_depth_ by this rule's
@@ -151,7 +171,11 @@ void DrawIrThreadQueue::DropOlderPendingFrameLocked(uint64_t arriving) {
     uint64_t erased = 0;
     for (Record& r : ring_) {
         if (r.frame == oldest) {
-            if (r.kind == Kind::Draw) { ++erased; continue; }
+            if (r.kind == Kind::Draw) {
+                if (!r.has_ops) { ++erased; continue; }
+                r.kind = Kind::VramOps;   // the draw goes; the EE image's calls it carried stay
+                r.draw = DrawIr{};
+            }
             if (r.kind == Kind::Frame) r.kind = Kind::FrameDropped;
         }
         kept.push_back(std::move(r));
@@ -162,33 +186,59 @@ void DrawIrThreadQueue::DropOlderPendingFrameLocked(uint64_t arriving) {
     n_.frames_dropped++;
 }
 
+// Producer side. The record's frame ordinal is stamped here (frames_staged_ is the
+// producer's own count of the frame records it pushed: no lock). Pipelined records
+// are staged and enter the ring in FlushStaged; a frame record, ordered work or a
+// full stage flushes at once. Lockstep: every record enters the ring now and the
+// push returns once the consumer delivered it.
 void DrawIrThreadQueue::Push(Record&& r) {
     RethrowPendingFault();
-    uint64_t my_seq;
+    if (!running_flag_.load(std::memory_order_acquire)) {
+        // No consumer thread: deliver inline (the queue is transparent).
+        FlushStaged();
+        Deliver(r);
+        return;
+    }
+    if (r.kind == Kind::Frame) r.frame = frames_staged_;
+    else r.frame = frames_staged_ + 1;
+    const bool now = policy_ == Policy::Lockstep || r.kind == Kind::Frame || r.kind == Kind::Work;
+    staged_.push_back(std::move(r));
+    if (now || staged_.size() >= stage_depth_) FlushStaged();
+}
+
+void DrawIrThreadQueue::EndOfPass() {
+    if (!staged_.empty()) FlushStaged();
+}
+
+void DrawIrThreadQueue::FlushStaged() {
+    if (staged_.empty()) return;
+    uint64_t my_seq = 0;
     bool wake = false;
     {
         std::unique_lock<std::mutex> lk(mu_);
         if (!running_) {
-            // No consumer thread: deliver inline (the queue is transparent).
             lk.unlock();
-            Deliver(r);
+            std::vector<Record> inline_batch = std::move(staged_);
+            staged_.clear();
+            for (Record& r : inline_batch) Deliver(r);
             return;
         }
-        if (r.kind == Kind::Frame) {
-            r.frame = frames_pushed_;
-            if (frame_skip_) DropOlderPendingFrameLocked(frames_pushed_);
-        } else {
-            r.frame = frames_pushed_ + 1;
-        }
-        if (!frame_skip_ && ring_.size() >= capacity_) {
+        if (frame_skip_) {
+            // A frame record always ends the stage: the drop rule runs as it arrives.
+            const Record& last = staged_.back();
+            if (last.kind == Kind::Frame) DropOlderPendingFrameLocked(last.frame);
+        } else if (ring_.size() + staged_.size() > capacity_) {
             const auto t0 = std::chrono::steady_clock::now();
-            WaitDoneLocked(lk, [this] { return ring_.size() < capacity_; });
+            const size_t need = staged_.size();
+            WaitDoneLocked(lk, [this, need] { return ring_.size() + need <= capacity_ || ring_.empty(); });
             n_.room_waits++;
             n_.room_wait_us += static_cast<uint64_t>(
                 std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count());
         }
-        ring_.push_back(std::move(r));
-        my_seq = ++enqueued_;
+        for (Record& r : staged_) ring_.push_back(std::move(r));
+        enqueued_ += staged_.size();
+        staged_.clear();
+        my_seq = enqueued_;
         n_.enqueued = enqueued_;
         if (ring_.size() > n_.max_depth) n_.max_depth = ring_.size();
         wake = consumer_sleeping_;
@@ -211,6 +261,7 @@ void DrawIrThreadQueue::OnDraw(const DrawIr& draw) {
     Record r;
     r.kind = Kind::Draw;
     r.draw = draw;
+    CarryVramOps(r);
     Push(std::move(r));
 }
 
@@ -219,6 +270,7 @@ void DrawIrThreadQueue::OnDrawOwned(DrawIr&& draw) {
     Record r;
     r.kind = Kind::Draw;
     r.draw = std::move(draw);
+    CarryVramOps(r);
     Push(std::move(r));
 }
 
@@ -228,10 +280,14 @@ void DrawIrThreadQueue::OnJob(const JobRec& job) {
     r.kind = Kind::Job;
     r.job = job;
     if (static_cast<JobKind>(job.type) == JobKind::UploadVRAMTexture && job.payload_bytes > 0) {
+        // Held: the op log keeps accumulating and rides on it when it is pushed (the
+        // calls before AND after this job precede the record, as the separate op
+        // records did).
         pending_ = std::move(r);
         pending_valid_ = true;
         return;
     }
+    CarryVramOps(r);
     Push(std::move(r));
 }
 
@@ -241,6 +297,8 @@ void DrawIrThreadQueue::OnFrame(const JobRec& vsync) {
     r.kind = Kind::Frame;
     r.job = vsync;
     if (hooks_.crtc) r.crtc = hooks_.crtc();
+    CarryVramOps(r);
+    ++frames_staged_;
     {
         std::lock_guard<std::mutex> lk(mu_);
         ++frames_pushed_;
@@ -261,6 +319,7 @@ void DrawIrThreadQueue::WaitDrainedLocked(std::unique_lock<std::mutex>& lk) {
 
 void DrawIrThreadQueue::Sync() {
     FlushVramOps();
+    FlushStaged();
     RethrowPendingFault();
     std::unique_lock<std::mutex> lk(mu_);
     if (!running_ || consumed_ >= enqueued_) return;
@@ -269,10 +328,13 @@ void DrawIrThreadQueue::Sync() {
     WaitDrainedLocked(lk);
     n_.sync_wait_us += static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count());
+    lk.unlock();
+    RethrowPendingFault();   // a fault the wait ran into (the staged records were just delivered)
 }
 
 void DrawIrThreadQueue::Quiesce() {
     FlushVramOps();
+    FlushStaged();
     RethrowPendingFault();
     std::unique_lock<std::mutex> lk(mu_);
     if (!running_ || consumed_ >= enqueued_) return;
@@ -329,10 +391,11 @@ bool DrawIrThreadQueue::RunOrdered(std::function<bool()> work) {
     record.kind = Kind::Work;
     record.work = std::move(work);
     record.done = result;
+    CarryVramOps(record);
     bool outstanding = false;
     {
         std::lock_guard<std::mutex> lk(mu_);
-        outstanding = running_ && !ring_.empty();
+        outstanding = running_ && (!ring_.empty() || !staged_.empty());
     }
     const auto t0 = std::chrono::steady_clock::now();
     Push(std::move(record));
@@ -357,6 +420,7 @@ void DrawIrThreadQueue::RunOrderedAsync(std::function<bool()> work) {
     Record record;
     record.kind = Kind::Work;
     record.work = std::move(work);
+    CarryVramOps(record);
     Push(std::move(record));
 }
 
@@ -394,11 +458,14 @@ uint64_t DrawIrThreadQueue::FrameSeq() const {
 
 void DrawIrThreadQueue::WaitFrame(uint64_t seq) {
     FlushVramOps();
+    FlushStaged();
     RethrowPendingFault();
     std::unique_lock<std::mutex> lk(mu_);
     if (!running_ || frames_consumed_ >= seq) return;
     n_.frame_waits++;
     WaitDoneLocked(lk, [this, seq] { return frames_consumed_ >= seq; });
+    lk.unlock();
+    RethrowPendingFault();
 }
 
 DrawIrThreadQueue::Counters DrawIrThreadQueue::Count() const {
@@ -409,6 +476,9 @@ DrawIrThreadQueue::Counters DrawIrThreadQueue::Count() const {
 // ---- consumer side ----------------------------------------------------------------
 
 void DrawIrThreadQueue::Deliver(Record& r) {
+    // The EE image's calls the record carries land first: the point in stream
+    // order the in-thread consumer observed them (nothing ran between two records).
+    if (r.has_ops && mirror_target_) r.ops.Replay(*mirror_target_);
     switch (r.kind) {
         case Kind::Draw:
             next_.OnDrawOwned(std::move(r.draw));   // the record is done with: no vertex copy for a held draw
@@ -435,8 +505,7 @@ void DrawIrThreadQueue::Deliver(Record& r) {
             break;
         }
         case Kind::VramOps:
-            if (mirror_target_) r.ops.Replay(*mirror_target_);
-            break;
+            break;   // the carried log alone (replayed above)
         case Kind::FrameDropped:
             // Rule 2: the frame's draws were skipped; nothing is presented for it.
             // Its jobs and VRAM ops did land, so the image is still a completed point.
@@ -526,6 +595,7 @@ void DrawIrThreadQueue::ThreadMain() {
                     std::lock_guard<std::mutex> lk(mu_);
                     faulted_ = true;
                     fault_ = std::current_exception();
+                    fault_pending_.store(true, std::memory_order_release);
                     faulted = true;
                 }
             }

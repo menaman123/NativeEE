@@ -114,7 +114,7 @@ int SessionRuntime::PresentHz() const {
     return display > 0 ? display : 60;
 }
 
-void SessionRuntime::SetPresentObserver(std::function<void(std::chrono::steady_clock::time_point, bool)> observer) {
+void SessionRuntime::SetPresentObserver(std::function<void(std::chrono::steady_clock::time_point, bool, uint64_t, uint64_t)> observer) {
     if (std::this_thread::get_id() != main_thread_) return;
     present_observer_ = std::move(observer);
 }
@@ -223,12 +223,12 @@ bool SessionRuntime::PostMain(std::function<void()> operation) {
     return true;
 }
 
-void SessionRuntime::PostFrame(std::vector<uint8_t> rgba, int width, int height) {
+void SessionRuntime::PostFrame(std::vector<uint8_t> rgba, int width, int height, uint64_t tag) {
     if (width <= 0 || height <= 0 || width > 8192 || height > 8192 ||
         rgba.size() != static_cast<size_t>(width) * height * 4 || rgba.size() > (64u << 20)) return;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        incoming_frame_ = {std::move(rgba), width, height, ps2r::Park::NowNs()};
+        incoming_frame_ = {std::move(rgba), width, height, ps2r::Park::NowNs(), tag};
     }
     wake_main_.Notify();
 }
@@ -686,6 +686,8 @@ int SessionRuntime::Run(std::function<int()> game, unsigned shutdown_seconds) {
         // picture (the menu, the overlays) between edges.
         if (pacer_.Admit(now, pending_frame_.posted_ns)) {
             window_.Upload(pending_frame_.rgba, pending_frame_.width, pending_frame_.height);
+            shown_tag_ = pending_frame_.tag;
+            shown_posted_ns_ = pending_frame_.posted_ns;
             doubled_frames_.store(pacer_.Count().doubled, std::memory_order_relaxed);
             pending_frame_ = std::move(queued_frame_);
             queued_frame_ = {};
@@ -698,7 +700,7 @@ int SessionRuntime::Run(std::function<int()> game, unsigned shutdown_seconds) {
             // the boundaries' reads late (fix2: late=633 of 1800).
             window_.Draw();
             presents_.fetch_add(1, std::memory_order_relaxed);
-            if (present_observer_) present_observer_(std::chrono::steady_clock::now(), picture_fresh_);
+            if (present_observer_) present_observer_(std::chrono::steady_clock::now(), picture_fresh_, shown_tag_, shown_posted_ns_);
             picture_fresh_ = false;
             // video.fps_cap paces the presenter (0 presents on every pump); under
             // video.render_rate=display the period is the display's (A3), the

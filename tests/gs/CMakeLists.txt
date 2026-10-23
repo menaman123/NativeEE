@@ -388,6 +388,8 @@ add_test(NAME DrawIrThreadQueueConsumerFault COMMAND test_draw_ir_thread_queue f
 add_test(NAME DrawIrThreadQueueSplitImage COMMAND test_draw_ir_thread_queue splitimage)
 # The clock contract, rule 2: one pending frame, the older dropped; pushes never wait.
 add_test(NAME DrawIrThreadQueueFrameSkip COMMAND test_draw_ir_thread_queue frameskip)
+# pipeline2: the producer stages its pipelined records; a pass end / frame / wait flushes them.
+add_test(NAME DrawIrThreadQueueStaged COMMAND test_draw_ir_thread_queue staged)
 # Rule 2, review loop 1: the play-mode local->local source served from the EE image /
 # the completed-frame snapshot, never a wait.
 add_test(NAME DrawIrThreadQueueLocalToLocalSource COMMAND test_draw_ir_thread_queue l2lsource)
@@ -395,7 +397,7 @@ add_test(NAME DrawIrThreadQueueLocalToLocalSource COMMAND test_draw_ir_thread_qu
 add_test(NAME DrawIrThreadQueueBatched COMMAND test_draw_ir_thread_queue batched)
 set_tests_properties(DrawIrThreadQueueLockstep DrawIrThreadQueuePipelined DrawIrThreadQueueNoPayload
     DrawIrThreadQueueConsumerFault DrawIrThreadQueueSplitImage DrawIrThreadQueueFrameSkip
-    DrawIrThreadQueueLocalToLocalSource DrawIrThreadQueueBatched PROPERTIES TIMEOUT 60)
+    DrawIrThreadQueueLocalToLocalSource DrawIrThreadQueueBatched DrawIrThreadQueueStaged PROPERTIES TIMEOUT 60)
 
 # P8.13-A: GsSections -- the VRAM + GSPR + GSST savestate sections over GsState
 # (round trip byte-equal, restore emits the presenter jobs, wrong lengths /

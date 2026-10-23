@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <chrono>
 #include <cstring>
 #include <stdexcept>
 #include <thread>
@@ -222,7 +223,12 @@ void MetalDevice::Commit(bool wait) {
     [cb commit];
     census_.submits++;
     draws_at_commit_ = census_.draw_calls;
-    if (wait) [cb waitUntilCompleted];
+    if (wait) {
+        const auto t0 = std::chrono::steady_clock::now();
+        [cb waitUntilCompleted];
+        census_.gpu_waits++;
+        census_.gpu_wait_ns += static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count());
+    }
     [cb release];
     cb_ = nullptr;
     serial_++;
@@ -242,10 +248,14 @@ void MetalDevice::SplitPassIfDue() {
 
 void MetalDevice::WaitSerial(uint64_t serial) {
     if (serial >= serial_) Commit(/*wait=*/true);
+    if (GpuIdle(serial)) return;
+    const auto t0 = std::chrono::steady_clock::now();
     while (!GpuIdle(serial)) {
         // The completion handler advances the watermark; spin briefly (the queue is in order).
         std::this_thread::yield();
     }
+    census_.gpu_waits++;
+    census_.gpu_wait_ns += static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count());
 }
 
 void MetalDevice::Touch(MetalSurface& s) {
@@ -797,6 +807,7 @@ void MetalDevice::CompleteCapture(CaptureSlot& slot, bool wait) {
     if (!GpuIdle(slot.serial)) {
         if (!wait) return;
         present_capture_waits_++;
+        census_.capture_waits++;
         WaitSerial(slot.serial);
     }
     slot.pending = false;

@@ -5,6 +5,7 @@
 #include PS2R_GL_HEADER
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <limits>
@@ -718,7 +719,10 @@ bool GlDevice::PollReadback(FenceId fence, void* out, size_t stride) {
             readback_waits_++;
             census_.readback_waits++;
             // The commands may still sit in the client queue: flush them with the wait.
+            const auto t0 = std::chrono::steady_clock::now();
             glClientWaitSync(sync, GL_SYNC_FLUSH_COMMANDS_BIT, 5000000000ull);
+            census_.gpu_waits++;
+            census_.gpu_wait_ns += static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count());
         }
         glDeleteSync(sync);
     }
@@ -883,7 +887,11 @@ void GlDevice::CompleteDeferredCapture(bool wait) {
         if (r != GL_ALREADY_SIGNALED && r != GL_CONDITION_SATISFIED) {
             if (!wait) return;
             present_capture_waits_++;
+            census_.capture_waits++;
+            const auto t0 = std::chrono::steady_clock::now();
             r = glClientWaitSync(static_cast<GLsync>(dc.sync), GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull);
+            census_.gpu_waits++;
+            census_.gpu_wait_ns += static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count());
         }
         glDeleteSync(static_cast<GLsync>(dc.sync));
         dc.sync = nullptr;

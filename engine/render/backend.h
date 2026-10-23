@@ -195,6 +195,9 @@ struct CallCensus {
     uint64_t submits = 0;            // command buffers committed (backends that batch work)
     uint64_t gpu_ns = 0;             // GPU busy time of the completed command buffers (backends that report it)
     uint64_t readback_waits = 0;     // PollReadback calls that found the GPU not yet done (a wait)
+    uint64_t gpu_waits = 0;          // CPU waits for the GPU that actually waited (a serial / command buffer not yet complete)
+    uint64_t gpu_wait_ns = 0;        // ... and their total time
+    uint64_t capture_waits = 0;      // present-capture completions that waited for the GPU
     uint64_t state_sets = 0;         // fixed-function state calls ISSUED (blend / depth / mask / scissor / viewport / enable)
     uint64_t uniform_sets = 0;       // uniform calls ISSUED (the shadow caches skip the rest)
 };
