@@ -67,7 +67,7 @@ public:
     void SetCap(Cap cap);
     Cap cap() const { return cap_; }
     // The relax policy (above); off = the round-3 train.
-    void SetRelax(bool on) { relax_ = on; relax_count_ = 0; relax_min_wait_ = UINT64_MAX; }
+    void SetRelax(bool on);
     bool Relax() const { return relax_; }
     static constexpr uint32_t kRelaxWindow = 32;          // on-time admissions per decision (~0.5 s at 60)
     static constexpr uint64_t kRelaxMarginNs = 2000000;   // the wait kept above the latest arrival (2 ms)
