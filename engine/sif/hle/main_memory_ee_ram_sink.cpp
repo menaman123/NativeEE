@@ -10,5 +10,6 @@ bool MainMemoryEeRamSink::WriteEeRam(uint32_t ee_addr, const uint8_t* src, size_
     if (!dst) return false;
     std::memcpy(dst, src, size);
     bytes_ += size;
+    if (tracer_) tracer_(ee_addr, src, size);
     return true;
 }

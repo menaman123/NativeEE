@@ -7,6 +7,15 @@
 #include "engine/iop/iop_memory.h"
 #include "engine/iop/sif_rpc_bridge.h"
 
+namespace {
+IopRpcServer::Tracer& TracerSlot() {
+    static IopRpcServer::Tracer t;
+    return t;
+}
+}  // namespace
+
+void IopRpcServer::SetTracer(Tracer t) { TracerSlot() = std::move(t); }
+
 IopRpcServer::IopRpcServer(const ps2r::iop::hle::SifcmdModule::ServerRecord& record, ps2r::iop::IopMemory& iop_mem,
                            MainMemory& ee_ram, ps2r::iop::SifRpcBridge& bridge, ps2r::iop::hle::SifcmdModule& sifcmd,
                            FunctionResolver resolve)
@@ -19,12 +28,17 @@ void IopRpcServer::Call(const RpcRouter::CallRequest& req) {
         [this, req] {
             using ps2r::iop::IopContext;
             // 1. The request DMA: send bytes into the record's receive buffer.
+            TraceEvent ev;
+            ev.sid = record_.sid;
+            ev.fno = req.func;
             if (record_.buff && req.send && req.send_size) {
                 const uint8_t* src = ee_ram_.Pointer(MainMemory::Phys(req.send), req.send_size);
                 uint8_t* dst = iop_mem_.Pointer(record_.buff, req.send_size);
                 if (src && dst) {
                     std::memcpy(dst, src, req.send_size);
                     send_bytes_ += req.send_size;
+                    ev.send = dst;
+                    ev.send_size = req.send_size;
                 }
             }
             // 2. The dispatch: func(fno, buff, size) on the RPC thread's own register file.
@@ -57,8 +71,12 @@ void IopRpcServer::Call(const RpcRouter::CallRequest& req) {
                 if (src && dst) {
                     std::memcpy(dst, src, req.recv_size);
                     recv_bytes_ += req.recv_size;
+                    ev.recv = dst;
+                    ev.recv_size = req.recv_size;
                 }
             }
+            ev.reply = reply;
+            if (const Tracer& t = TracerSlot()) t(ev);
         },
         tid);
 }

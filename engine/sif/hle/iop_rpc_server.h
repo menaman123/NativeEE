@@ -29,6 +29,18 @@ public:
     using GuestFunction = std::function<void(ps2r::iop::IopContext&)>;
     using FunctionResolver = std::function<const GuestFunction*(uint32_t addr)>;
 
+    // Diagnostic tap (census-class, no behaviour): one call per completed EE -> IOP
+    // round trip with the request bytes as the module received them and the reply
+    // bytes as the client received them (nullptr / 0 when a copy did not happen).
+    struct TraceEvent {
+        uint32_t sid = 0, fno = 0;
+        const uint8_t* send = nullptr; uint32_t send_size = 0;
+        const uint8_t* recv = nullptr; uint32_t recv_size = 0;
+        uint32_t reply = 0;
+    };
+    using Tracer = std::function<void(const TraceEvent&)>;
+    static void SetTracer(Tracer t);   // process-wide; empty = off
+
     static constexpr uint32_t kReturnSentinel = 0x80001000;   // ra of the server function
     static constexpr uint32_t kScratchFrame = 0x40;           // below the loop's $sp when no record is parked
 
