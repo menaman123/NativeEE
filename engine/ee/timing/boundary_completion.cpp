@@ -1,5 +1,6 @@
 #include "engine/ee/timing/boundary_sequencer.h"
 
+#include "engine/ee/sched/ee_yield_point.h"
 #include "engine/ee/timing/tick_profile.h"
 
 #include <utility>
@@ -40,6 +41,7 @@ void BoundarySequencer::SetStep(Step s, StepFn fn) {
 }
 
 bool BoundarySequencer::RunBoundary(CpuContext& ctx) {
+    EeYieldPoint::Instance().NoteSchedulingPoint();   // E432: the boundary is the title's scheduling point
     ResetServiceCompletion();
     in_flight_.fetch_add(1, std::memory_order_acq_rel);
     bool completed = true;

@@ -16,6 +16,12 @@ public:
     virtual uint64_t PipelineBytes() const = 0;
     // No segment in flight (acquire: the worker's writes are visible).
     virtual bool WorkerIdle() const = 0;
+    // The worker is parked on a VIFcode i-bit stall: QUIESCENT, not idle --
+    // nothing leaves the pipeline until the EE (the producer thread itself, at
+    // its next dispatch point) serves the interrupt and writes FBRST.STC. A park
+    // that waits for bytes or frames while this reads true waits for its own
+    // thread (E431); the park loop ends on it.
+    virtual bool IrqStalled() const { return false; }
     // Bumped after every marker seal -- the wake hint the wait re-checks.
     virtual uint64_t SealCount() const = 0;
     // Run one guarded arbiter drain on this thread (a no-op when another

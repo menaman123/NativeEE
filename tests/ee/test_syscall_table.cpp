@@ -1,7 +1,8 @@
 // Stage 3C2 suites (one binary, section selected by argv[1]):
 //   coverage  -- SyscallTableCoverage: 119 live labels each dispatch to a named
 //                handler (unknown count stays 0); unknown numbers are counted;
-//                the $v1 normalisation rule; a sample of idle results.
+//                the $v1 normalisation rule; a sample of idle results; the E430
+//                WouldBlockNow probe (WaitSema / WaitEventFlag / SleepThread / Suspend).
 //   bootenv   -- BootEnvRetailArgv: the argv block bytes at 0x30a980 equal OLD's
 //                S8-ARGV image (argc=1, ptr, NULL, "cdrom0:\SLUS_123.45;1\0").
 //   libc      -- LibcHleDiff: memcpy/memmove/memset/strlen memory effect equals
@@ -15,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <set>
 #include <string>
 #include <vector>
@@ -157,6 +159,41 @@ static void Coverage() {
     c.cpuRegs.GPR.r[4].SL[0] = eid + 1000;
     st.Dispatch(89, c);
     CHECK(c.cpuRegs.GPR.r[2].SL[0] == -409, "ReferEventFlagStatus on an unknown id: KE_UNKNOWN_EVFID");
+    // E430 WouldBlockNow: the observation point's probe -- would this blocking wait's body PARK now?
+    // The sema's count is 1 after the poll: a WaitSema returns at once (not a park); a second poll
+    // empties it and the same WaitSema would park; an unknown id is an error return, not a park.
+    c.cpuRegs.GPR.r[4].SL[0] = sid;
+    CHECK(SyscallTable::IsBlockingWait(68) && !SyscallTable::WouldBlockNow(68, c), "WouldBlockNow: WaitSema on count 1 -> no park");
+    st.Dispatch(69, c);
+    CHECK(c.cpuRegs.GPR.r[2].SL[0] == 0 && SyscallTable::WouldBlockNow(68, c), "WouldBlockNow: WaitSema on count 0 -> park");
+    c.cpuRegs.GPR.r[4].SL[0] = sid + 1000;
+    CHECK(!SyscallTable::WouldBlockNow(68, c), "WouldBlockNow: WaitSema on an unknown id -> no park (KE_UNKNOWN_SEMID)");
+    // The flag's pattern is 5: OR-waiting bit 4 is satisfied, bit 8 is not; AND-waiting 5 is, 7 is not;
+    // an invalid mode / empty bit set is an error return.
+    c.cpuRegs.GPR.r[4].SL[0] = eid; c.cpuRegs.GPR.r[5].UL[0] = 0x4; c.cpuRegs.GPR.r[6].UL[0] = WEF_OR;
+    CHECK(!SyscallTable::WouldBlockNow(86, c), "WouldBlockNow: WaitEventFlag OR 0x4 on pattern 5 -> satisfied, no park");
+    c.cpuRegs.GPR.r[5].UL[0] = 0x8;
+    CHECK(SyscallTable::WouldBlockNow(86, c), "WouldBlockNow: WaitEventFlag OR 0x8 on pattern 5 -> park");
+    c.cpuRegs.GPR.r[5].UL[0] = 0x5; c.cpuRegs.GPR.r[6].UL[0] = WEF_AND;
+    CHECK(!SyscallTable::WouldBlockNow(86, c), "WouldBlockNow: WaitEventFlag AND 0x5 on pattern 5 -> satisfied, no park");
+    c.cpuRegs.GPR.r[5].UL[0] = 0x7;
+    CHECK(SyscallTable::WouldBlockNow(86, c), "WouldBlockNow: WaitEventFlag AND 0x7 on pattern 5 -> park");
+    c.cpuRegs.GPR.r[5].UL[0] = 0x7; c.cpuRegs.GPR.r[6].UL[0] = 0x100;
+    CHECK(!SyscallTable::WouldBlockNow(86, c), "WouldBlockNow: WaitEventFlag with an invalid mode -> error return, no park");
+    c.cpuRegs.GPR.r[5].UL[0] = 0; c.cpuRegs.GPR.r[6].UL[0] = WEF_OR;
+    CHECK(!SyscallTable::WouldBlockNow(86, c), "WouldBlockNow: WaitEventFlag with no bits -> error return, no park");
+    CHECK(SyscallTable::WouldBlockNow(55, c) && SyscallTable::WouldBlockNow(59, c), "WouldBlockNow: SuspendThread / JoinThread always park");
+    CHECK(!SyscallTable::WouldBlockNow(122, c) && !SyscallTable::WouldBlockNow(69, c), "WouldBlockNow: non-waits (sceSifGetReg, PollSema) never park");
+    // SleepThread parks unless a WakeupThread is banked on the caller (R4: consumed at once).
+    if (auto cur = ThreadManager::Instance().Current()) {
+        { std::lock_guard<std::mutex> lk(cur->m); cur->wakeup_count = 0; }
+        CHECK(SyscallTable::WouldBlockNow(50, c), "WouldBlockNow: SleepThread with no banked wakeup -> park");
+        { std::lock_guard<std::mutex> lk(cur->m); cur->wakeup_count = 1; }
+        CHECK(!SyscallTable::WouldBlockNow(50, c), "WouldBlockNow: SleepThread with a banked wakeup -> no park");
+        { std::lock_guard<std::mutex> lk(cur->m); cur->wakeup_count = 0; }
+    } else {
+        CHECK(!SyscallTable::WouldBlockNow(50, c), "WouldBlockNow: SleepThread with no current guest thread -> no park");
+    }
     // INTC handler registry + masks.
     c.cpuRegs.GPR.r[4].SL[0] = 2; c.cpuRegs.GPR.r[5].UL[0] = 0x00123456; c.cpuRegs.GPR.r[6].SL[0] = -1;
     st.Dispatch(16, c);

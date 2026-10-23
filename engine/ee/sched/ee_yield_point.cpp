@@ -27,7 +27,8 @@ std::string EeYieldPoint::Census::Format() const {
            ":idle_isrs=" + std::to_string(idle_isrs) + ":idle_pipeline_waits=" + std::to_string(idle_pipeline_waits) +
            ":idle_wakes=" + std::to_string(idle_wakes) + ":wall_wakes=" + std::to_string(wall_wakes) +
            ":deferred_collects=" + std::to_string(deferred_collects) + ":idle_first=" + std::to_string(idle_first_tick) +
-           "@tid" + std::to_string(idle_first_tid);
+           "@tid" + std::to_string(idle_first_tid) + ":spin_trips=" + std::to_string(spin_trips) +
+           ":sched_trips=" + std::to_string(sched_trips) + ":due_fields=" + std::to_string(due_fields);
 }
 
 void EeYieldPoint::Bind(Deps deps) {
@@ -64,7 +65,17 @@ void EeYieldPoint::Trip(CpuContext& ctx) {
     }
     in_trip_ = true;
     ++census_.yields;
-    RunField(ctx);
+    // E432: did this trip's thread pass a scheduling point since the previous trip?
+    const uint64_t sched_gen = sched_gen_.load(std::memory_order_relaxed);
+    const bool spun = !deps_.spin_gate || sched_gen == sched_gen_at_trip_;
+    sched_gen_at_trip_ = sched_gen;
+    if (spun) {
+        if (deps_.spin_gate) ++census_.spin_trips;
+        RunField(ctx);
+    } else {
+        ++census_.sched_trips;
+        RunField(ctx, /*advance=*/false);
+    }
     if (token.AnyReadyBesides(tid)) ++census_.contended;
     // Cleared BEFORE the preemption point: the thread that runs next may trip on
     // its own loops while this one is parked inside PreemptPoint.
@@ -72,11 +83,18 @@ void EeYieldPoint::Trip(CpuContext& ctx) {
     token.PreemptPoint();
 }
 
-void EeYieldPoint::RunField(CpuContext& ctx) {
+void EeYieldPoint::RunField(CpuContext& ctx, bool advance) {
     EeRunToken& token = EeRunToken::Instance();
-    if (deps_.advance_field) {
-        deps_.advance_field();
-        token.NoteFieldElapsed();  // a thread sleeping on the vblank (WaitVblank) wakes
+    if (advance) {
+        if (deps_.advance_field) {
+            deps_.advance_field();
+            token.NoteFieldElapsed();  // a thread sleeping on the vblank (WaitVblank) wakes
+        }
+    } else if (deps_.fire_due_fields && deps_.wall_field_due && deps_.wall_field_due()) {
+        // E432: the fields the pacer noted while this code ran land now, without a park.
+        deps_.fire_due_fields();
+        token.NoteFieldElapsed();
+        ++census_.due_fields;
     }
     if (deps_.alarms && deps_.domain) deps_.alarms->FireDue(deps_.domain->DomainTick());
     if (deps_.timers) deps_.timers->PumpAtBoundary(ctx);

@@ -15,12 +15,49 @@ size_t Idx(SyncSite site) {
     if (i >= static_cast<size_t>(SyncSite::Count)) i = static_cast<size_t>(SyncSite::Other);
     return i;
 }
+size_t WIdx(WaitCause cause) {
+    size_t i = static_cast<size_t>(cause);
+    if (i >= static_cast<size_t>(WaitCause::Count)) i = static_cast<size_t>(WaitCause::IdleWaitOther);
+    return i;
+}
+// A Sync(site) books under the WaitCause of the same index (the first twelve mirror SyncSite).
+WaitCause CauseOf(SyncSite site) { return static_cast<WaitCause>(Idx(site)); }
+const char* const kWaitCauseNames[static_cast<size_t>(WaitCause::Count)] = {
+    "vif1_reg_read", "vif1_reg_write", "vu1_mem", "gs_syncv", "gs_syncpath", "gs_resetpath", "dma_sync",
+    "gif_syncdma", "wait_vblank", "vu1_ee_kick", "quiesce_other", "priv_push", "vif1_stat_poll",
+    "idle_blocking", "idle_nonblocking", "idle_vblank_waiter", "idle_field", "idle_other", "backpressure",
+    "gif_fence", "vsync_fence"};
 }  // namespace
 
 MtvuSync::MtvuSync(MtvuWorker& worker, GifArbiter& arbiter) : worker_(worker), arbiter_(arbiter) {
     for (auto& c : sync_count_) c.store(0, std::memory_order_relaxed);
     for (auto& c : skipped_count_) c.store(0, std::memory_order_relaxed);
+    for (auto& c : wait_count_) c.store(0, std::memory_order_relaxed);
+    for (auto& c : wait_ns_) c.store(0, std::memory_order_relaxed);
 }
+
+void MtvuSync::NoteWait(WaitCause cause, uint64_t ns) {
+    wait_count_[WIdx(cause)].fetch_add(1, std::memory_order_relaxed);
+    wait_ns_[WIdx(cause)].fetch_add(ns, std::memory_order_relaxed);
+}
+
+uint64_t MtvuSync::WaitCount(WaitCause cause) const { return wait_count_[WIdx(cause)].load(std::memory_order_relaxed); }
+uint64_t MtvuSync::WaitNs(WaitCause cause) const { return wait_ns_[WIdx(cause)].load(std::memory_order_relaxed); }
+const char* MtvuSync::WaitCauseName(WaitCause cause) { return kWaitCauseNames[WIdx(cause)]; }
+
+std::string MtvuSync::WaitCensus() const {
+    std::string s;
+    for (size_t i = 0; i < static_cast<size_t>(WaitCause::Count); ++i) {
+        const uint64_t n = wait_count_[i].load(std::memory_order_relaxed);
+        if (n == 0) continue;
+        if (!s.empty()) s += ",";
+        s += std::string(kWaitCauseNames[i]) + ":" + std::to_string(n) + "/" + std::to_string(wait_ns_[i].load(std::memory_order_relaxed));
+    }
+    return s.empty() ? std::string("none") : s;
+}
+
+MtvuSync::WaitScope::WaitScope(MtvuSync& sync, WaitCause cause) : sync_(sync), cause_(cause), t0_(ps2r::Park::NowNs()) {}
+MtvuSync::WaitScope::~WaitScope() { sync_.NoteWait(cause_, ps2r::Park::NowNs() - t0_); }
 
 bool MtvuSync::ServiceIrqStall() {
     if (!worker_.IrqStalled() || !irq_service_) return false;
@@ -51,8 +88,10 @@ void MtvuSync::Sync(SyncSite site) {
         if (after_sync_ && !worker_.InEagerDrain()) after_sync_(after_sync_user_);
         return;
     }
-    // The wait is the game thread parked on the worker: booked as `vu1wait`.
+    // The wait is the game thread parked on the worker: booked as `vu1wait` and
+    // in the wait ledger under the site's cause.
     ps2r::ee::TickProfile::Scope scope(ps2r::ee::TickProfile::Vu1Wait);
+    WaitScope wait_scope(*this, CauseOf(site));
     if (!worker_.InEagerDrain()) {
         // Eager loop: drain the sealed prefix between waits so the parked EE
         // keeps delivering boundaries while the worker finishes.
@@ -104,6 +143,7 @@ void MtvuSync::ParkVif1StatPoll(bool park) {
     if (worker_.WorkerIdle()) return;
     vif1_stat_parks_.fetch_add(1, std::memory_order_relaxed);
     ps2r::ee::TickProfile::Scope scope(ps2r::ee::TickProfile::Vu1Wait);
+    WaitScope wait_scope(*this, WaitCause::Vif1StatPoll);
     const uint64_t seen = worker_.SealCount();
     worker_.EnterSyncWait();
     worker_.WaitIdleOrSeal(kPollNs, seen);
@@ -127,7 +167,7 @@ void MtvuSync::TryParkDrain() {
     TryEagerDrain();
 }
 
-bool MtvuSync::WaitProgress() {
+bool MtvuSync::WaitProgress(WaitCause cause) {
     if (!worker_.IsRunning() || worker_.OnWorkerThread()) return true;
     if (worker_.InEagerDrain()) return worker_.WorkerIdle();
     // Whatever is sealed goes first; an idle worker after that owes nothing.
@@ -148,6 +188,7 @@ bool MtvuSync::WaitProgress() {
     progress_waits_.fetch_add(1, std::memory_order_relaxed);
     {
         ps2r::ee::TickProfile::Scope scope(ps2r::ee::TickProfile::Vu1Wait);
+        WaitScope wait_scope(*this, cause);
         if (!worker_.Quiescent()) {
             worker_.EnterSyncWait();
             worker_.WaitIdleOrSeal(kPollNs, seen);
