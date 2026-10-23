@@ -240,8 +240,8 @@ struct EngineConfig {
     // pre-round-4 path). Host dispatch mechanics only: nothing the title
     // executes or an image carries changes with it (fingerprint-excluded;
     // the <=294 cold-boot oracle and the Paris-600 lockstep census are
-    // byte-equal either way). Off until the eecode round's gates are green.
-    bool    ee_fast_dispatch = false;
+    // byte-equal either way). On by default since 2026-10-22 (the eecode round's gates: Paris 600 lockstep census + frames.fhash + mem.mhash equal knob on vs off, h600 <=294 oracle 0, cold boot / hub warps / F5-F8 park=none).
+    bool    ee_fast_dispatch = true;
     int     ee_runahead = 2;
     Pacing  pacing = Pacing::Realtime;
     int     time_regime_pin = -1;         // -1 = none (adaptive)

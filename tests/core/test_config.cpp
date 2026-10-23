@@ -101,7 +101,7 @@ static void TestPeakDefaults() {
     CHECK(c.engine.mtvu_early_finish == true);   // E425/E426/E427 on by default (the finish track's gates)
     CHECK(c.engine.mtvu_wait_probe == true);     // E430 on by default (the waitsites track's gates, 2026-10-22)
     CHECK(c.engine.ee_yield_spin_gate == true);  // E432 on by default (the waitsites track's gates, 2026-10-22)
-    CHECK(c.engine.ee_fast_dispatch == false);   // eecode round 4: the raw dispatch fast path (off until its gates are green)
+    CHECK(c.engine.ee_fast_dispatch == true);    // eecode round 4: the raw dispatch fast path (gates green 2026-10-22)
     CHECK(c.engine.ee_runahead == 2);
     CHECK(c.engine.pacing == Pacing::Realtime);
     CHECK(c.engine.time_regime_pin == -1);

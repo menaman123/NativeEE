@@ -72,7 +72,7 @@ ROWS = [
     ("diag.perf", "bool", "off", "=", "PS2_PERF"),
     ("diag.tick_census", "bool", "off", "=", "-"),
     ("diag.vu1_lockstep", "bool", "off", "=", "-"),
-    ("engine.ee_fast_dispatch", "bool", "off", "=", "-"),
+    ("engine.ee_fast_dispatch", "bool", "on", "=", "-"),
     ("engine.ee_runahead", "int", "2", "=", "PS2_EE_RUNAHEAD"),
     ("engine.ee_yield_spin_gate", "bool", "on", "off", "-"),
     ("engine.mtvu", "bool", "on", "off", "PS2_MTVU"),
