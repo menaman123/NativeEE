@@ -49,6 +49,18 @@ void BoundaryProtocol::Wait(uint64_t) {
     queue.DrainIfPendingOnHolder();
 }
 
+void BoundaryProtocol::FireDueFields() {
+    if (!WallFieldDue()) return;
+    if (is_guest_ && !is_guest_()) return;
+    ++due_field_fires_;
+    ticks_.FirePending();
+    EeEventQueue::Instance().DrainIfPendingOnHolder();
+}
+
+std::function<void()> BoundaryProtocol::FireDueFieldsHook() {
+    return [this] { FireDueFields(); };
+}
+
 bool BoundaryProtocol::WallFieldDue() const {
     if (source_.policy() != TickSource::Policy::Play || source_.Bypass()) return false;
     return ticks_.Pending() != 0;
@@ -119,7 +131,7 @@ std::string BoundaryProtocol::LoadWindows() const {
     return out.empty() ? "none" : out;
 }
 
-bool BoundaryProtocol::ParkForPacerTick() {
+bool BoundaryProtocol::ParkForPacerTick(const std::function<void()>& on_wake) {
     const auto t0 = std::chrono::steady_clock::now();
     const uint32_t period_us = source_.PeriodUs() ? source_.PeriodUs() : TickSource::kBasePeriodUs;
     // The frame's own work: from the previous boundary's release to here.
@@ -147,11 +159,26 @@ bool BoundaryProtocol::ParkForPacerTick() {
         return false;
     }
     ++pace_parks_;
-    std::unique_lock<std::mutex> lk(mu_);
-    const uint64_t seen = tick_generation_;
-    const bool ticked = cv_.wait_for(lk, std::chrono::microseconds(period_us) * kBoundaryParkPeriods,
-                                     [&] { return tick_generation_ != seen || ticks_.Pending() != 0; });
-    lk.unlock();
+    EeEventQueue& queue = EeEventQueue::Instance();
+    const auto deadline = t0 + std::chrono::microseconds(period_us) * kBoundaryParkPeriods;
+    bool ticked = false;
+    {
+        EeEventQueue::ParkReg reg(&mu_, &cv_);
+        std::unique_lock<std::mutex> lk(mu_);
+        const uint64_t seen = tick_generation_;
+        for (;;) {
+            const bool woke = cv_.wait_until(lk, deadline, [&] {
+                return tick_generation_ != seen || ticks_.Pending() != 0 || (on_wake && queue.ParkWakeDue());
+            });
+            ticked = tick_generation_ != seen || ticks_.Pending() != 0;
+            if (ticked || !woke) break;
+            // E433: a foreign wake, no tick -- serve it on this thread and park on.
+            ++pace_wakes_;
+            lk.unlock();
+            on_wake();
+            lk.lock();
+        }
+    }
     const auto t1 = std::chrono::steady_clock::now();
     pace_slept_us_ += static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
     if (!ticked) ++pace_timeouts_;

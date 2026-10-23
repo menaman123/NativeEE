@@ -48,7 +48,16 @@ void BoundarySequencer::InstallPhase3Steps(const Phase3Deps& deps) {
             // did (rule 3: its per-frame delta grows, the simulation keeps wall
             // speed). Nothing is absorbed and nothing is ever burst-repaid as an
             // extra boundary: the next boundary parks for the next edge again.
-            pacer_->ParkForPacerTick();
+            // E433: a foreign wake during the park (the worker's i-bit stall latch, a
+            // drain-thread FINISH, an IOP completion) is served here, before the tick:
+            // the queue applied, the latched causes collected, the handlers run on
+            // this thread -- the MTVU worker's stall ends on the handler's STC instead
+            // of waiting for the wall edge.
+            pacer_->ParkForPacerTick([this, &ctx] {
+                EeEventQueue::Instance().DrainIfPendingOnHolder();
+                deps_.intc->CollectDeferred();
+                deps_.intc->DispatchPending(ctx, Intc::kSiteBoundary);
+            });
             // The tick's host work from here on belongs to the NEXT tick's sample
             // (the park's return is the frame work's origin): the fields, the
             // settle, the ISRs are the boundary's site.

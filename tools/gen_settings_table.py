@@ -52,7 +52,7 @@ FINGERPRINT_EXCLUDED_PREFIXES = ("harness.", "paths.", "meta.", "diag.")
 # FingerprintExcluded): host scheduling / toolchain choices that change nothing
 # the title executes or an image carries. A preset may pin them (det column)
 # without entering the fingerprint.
-FINGERPRINT_EXCLUDED_KEYS = ("engine.mtvu_kick_drop", "engine.mtvu_early_finish", "engine.vu1_aot_corpus",
+FINGERPRINT_EXCLUDED_KEYS = ("engine.mtvu_kick_drop", "engine.mtvu_early_finish", "engine.mtvu_wait_probe", "engine.ee_yield_spin_gate", "engine.vu1_aot_corpus",
                              "engine.vu1_aot_codegen", "engine.vu1_aot_compiler", "engine.vu1_aot_prelude",
                              "engine.vu1_aot_opt", "engine.vu1_aot_pack", "engine.vu1_aot_region_blocks",
                              "engine.vu1_aot_region_ops", "engine.vu1_aot_region_taken", "engine.vu1_aot_chain",
@@ -75,10 +75,12 @@ ROWS = [
     ("diag.tick_census", "bool", "off", "=", "-"),
     ("diag.vu1_lockstep", "bool", "off", "=", "-"),
     ("engine.ee_runahead", "int", "2", "=", "PS2_EE_RUNAHEAD"),
+    ("engine.ee_yield_spin_gate", "bool", "on", "off", "-"),
     ("engine.mtvu", "bool", "on", "off", "PS2_MTVU"),
     ("engine.mtvu_depth", "int", "2", "=", "PS2_MTVU_MAX_FRAMES"),
     ("engine.mtvu_early_finish", "bool", "on", "off", "-"),
     ("engine.mtvu_kick_drop", "bool", "on", "=", "-"),
+    ("engine.mtvu_wait_probe", "bool", "on", "off", "-"),
     ("engine.pacing", "enum(realtime|freerun)", "realtime", "freerun", "PS2_VBLANK_FREERUN"),
     ("engine.shutdown_wait_s", "int", "10", "=", "PS2_SHUTDOWN_WAIT"),
     ("engine.time_regime_pin", "int", "-1", "1", "PS2_TIME_EMU_REGIME"),

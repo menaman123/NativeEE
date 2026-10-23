@@ -1,6 +1,8 @@
 // EeRunToken implementation; the model and the thbase rule are in the header.
 #include "engine/ee/sched/ee_run_token.h"
 
+#include "engine/ee/sched/ee_yield_point.h"
+
 #include <atomic>
 
 namespace {
@@ -90,6 +92,8 @@ void EeRunToken::AcquireSlow(int tid) {
     cv_.wait(lk, [&] { return owner_ == tid || shutdown_; });
     owner_running_ = true;
     t_holds = true;
+    lk.unlock();
+    EeYieldPoint::Instance().NoteSchedulingPoint();   // E432: the thread was scheduled, it is not spinning
 }
 
 void EeRunToken::GuestEnter(int tid, int prio) {

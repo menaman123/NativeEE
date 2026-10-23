@@ -179,6 +179,8 @@ const std::vector<Field>& Fields() {
         INT_FIELD("engine.mtvu_depth", engine.mtvu_depth),
         BOOL_FIELD("engine.mtvu_kick_drop", engine.mtvu_kick_drop),
         BOOL_FIELD("engine.mtvu_early_finish", engine.mtvu_early_finish),
+        BOOL_FIELD("engine.mtvu_wait_probe", engine.mtvu_wait_probe),
+        BOOL_FIELD("engine.ee_yield_spin_gate", engine.ee_yield_spin_gate),
         ENUM_FIELD("engine.pacing", engine.pacing, kPacing),
         INT_FIELD("engine.shutdown_wait_s", engine.shutdown_wait_s),
         INT_FIELD("engine.time_regime_pin", engine.time_regime_pin),
@@ -336,6 +338,11 @@ bool ExcludedFromFingerprint(const std::string& key) {
     // engine.mtvu_early_finish is the host's scheduling of the GS FINISH raise
     // and the boundary under MTVU (E425/E426): images are captured quiesced
     // (nothing pre-raised in flight), so a slot restores under either setting.
+    // engine.mtvu_wait_probe is the host's scheduling of the kernel-wait
+    // observation point under MTVU (E430): whether the EE idles on the worker
+    // before a wait that would not park; the wait's body runs the same.
+    // engine.ee_yield_spin_gate (E432) is whether a yield trip of scheduling code
+    // passes a field of its own: the yield budget is host state, not in any image.
     // engine.vu1_aot_corpus is a path to oracle data (where the AOT tier's
     // verifier reads its cases): the tiers are the identity on what executes.
     // engine.vu1_aot_codegen / _compiler / _prelude / _opt / _pack choose the
@@ -345,7 +352,7 @@ bool ExcludedFromFingerprint(const std::string& key) {
     // executes changes with them.
     return key.compare(0, 8, "harness.") == 0 || key.compare(0, 6, "paths.") == 0 || key.compare(0, 5, "diag.") == 0 ||
            key == "meta.profile" || key == "meta.source_fingerprint" || key == "save.restore_mode" ||
-           key == "engine.mtvu_kick_drop" || key == "engine.mtvu_early_finish" || key == "engine.vu1_aot_corpus" || key == "engine.vu1_aot_codegen" ||
+           key == "engine.mtvu_kick_drop" || key == "engine.mtvu_early_finish" || key == "engine.mtvu_wait_probe" || key == "engine.ee_yield_spin_gate" || key == "engine.vu1_aot_corpus" || key == "engine.vu1_aot_codegen" ||
            key == "engine.vu1_aot_compiler" || key == "engine.vu1_aot_prelude" || key == "engine.vu1_aot_opt" ||
            key == "engine.vu1_aot_pack" || key == "engine.vu1_aot_region_blocks" || key == "engine.vu1_aot_region_ops" ||
            key == "engine.vu1_aot_region_taken" || key == "engine.vu1_aot_chain";
