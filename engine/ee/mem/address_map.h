@@ -51,6 +51,7 @@ public:
     const std::vector<Region>& ExtraRegions() const { return extra_regions_; }
     uint8_t* IoImage() { return io_image_.data(); }
     uint8_t* Bios() { return bios_.data(); }
+    Scratchpad& Spad() { return spad_; }
 
 private:
     static uint8_t* InRegion(const Region& r, uint32_t addr, size_t size);

@@ -13,16 +13,11 @@
 #include "engine/ee/recomp_abi/host_app/cdvd_stream.h"
 #include "engine/ee/recomp_abi/host_app/vu.h"
 
-namespace {
+namespace ps2r_recomp_abi {
 FastMem* g_bound_memory = nullptr;
 }
 
-void RecompAbi::BindMemory(FastMem* mem) { g_bound_memory = mem; }
-FastMem& RecompAbi::Memory() {
-    assert(g_bound_memory && "RecompAbi::BindMemory must run before generated code");
-    return *g_bound_memory;
-}
-bool RecompAbi::HasMemory() { return g_bound_memory != nullptr; }
+void RecompAbi::BindMemory(FastMem* mem) { ps2r_recomp_abi::g_bound_memory = mem; }
 
 // Row 12: an UNOPENED ofstream. Its failbit is set, so every `g_logFile << x`
 // site in the generated code (42k of them) short-circuits in the sentry and
