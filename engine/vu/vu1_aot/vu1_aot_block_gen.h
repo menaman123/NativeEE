@@ -78,6 +78,15 @@ struct Vu1AotRegionPolicy {
     // TU still return to the loop. Nothing is duplicated: every block has
     // one function, the chain is a jump between them.
     bool chain = false;
+    // MAC flag ACCUMULATION in registers: a result the block retires for sure
+    // at every point that could observe it is folded into a block-local
+    // FlagPipeline::LazyAcc as it is produced (its lanes die at its op) and
+    // the accumulator is delivered once per observation point
+    // (FoldLazyBatch), instead of every result staying live to the block's
+    // edge for its own FoldLazyRetired (a load / OR / store round trip per
+    // result and the spills of keeping them). The lazy ring only; the eager
+    // one keeps the per-result form. Same sticky bits, same last-retired word.
+    bool mac_acc = false;
 };
 
 class Vu1AotBlockGen {
@@ -158,6 +167,10 @@ private:
     // ops earlier) is folded, the others fold or push on the clock at run time.
     void NoteMac(int i, int mask);
     void Deliver(int ref);
+    // Policy::mac_acc on the lazy ring: the per-op fold is emitted when the
+    // result is folded (never pushed) at EVERY delivery point that can take it
+    // -- pass 1's Deliver calls mark the pushed ones (mac_pushed_[block][op]).
+    bool MacAccumulates() const;
     void FlushAll();
     void ReloadAll();
     void Line(const std::string& s);
@@ -187,4 +200,5 @@ private:
     std::vector<uint8_t> folded_;
     int cur_op_ = 0;
     std::vector<std::pair<int, int>> pending_;  // (op, mask) MAC results not yet delivered
+    std::vector<std::vector<uint8_t>> mac_pushed_;  // [block][op]: pushed (not folded) at some delivery point
 };

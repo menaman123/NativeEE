@@ -90,6 +90,7 @@ int main(int argc, char** argv) {
         else if (a == "--region-ops" && i + 1 < argc) region.op_cap = std::atoi(argv[++i]);
         else if (a == "--region-taken" && i + 1 < argc) region.taken_targets = std::atoi(argv[++i]) != 0;
         else if (a == "--chain" && i + 1 < argc) region.chain = std::atoi(argv[++i]) != 0;
+        else if (a == "--mac-acc" && i + 1 < argc) region.mac_acc = std::atoi(argv[++i]) != 0;
         else if (a == "--compiler" && i + 1 < argc) compiler = argv[++i];
         else if (a == "--emit-excerpt" && i + 1 < argc) excerpt_pc = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 16));
         else dirs.push_back(a);

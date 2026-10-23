@@ -102,7 +102,7 @@ std::string Vu1AotEmitter::EmitBlock(VuBlockProgram& prog, const VuBlock& blk, c
 }
 
 std::string Vu1AotEmitter::PolicyName(const Vu1AotBlockGen::Policy& p) {
-    return "blocks=" + Dec(p.block_cap) + ":ops=" + Dec(p.op_cap) + ":taken=" + (p.taken_targets ? "1" : "0") + ":chain=" + (p.chain ? "1" : "0");
+    return "blocks=" + Dec(p.block_cap) + ":ops=" + Dec(p.op_cap) + ":taken=" + (p.taken_targets ? "1" : "0") + ":chain=" + (p.chain ? "1" : "0") + ":mac_acc=" + (p.mac_acc ? "1" : "0");
 }
 
 std::string Vu1AotEmitter::EmitBlockSlots(const VuBlock& blk) {

@@ -19,6 +19,7 @@
 #include <cstdint>
 
 #include "engine/ee/cpu/cpu_state.h"
+#include "engine/vu/vu_float.h"  // PS2R_VU_NEON (LazyAcc's lanes) and the lane kernels of the .inl
 
 class FlagPipeline {
 public:
@@ -90,6 +91,25 @@ public:
     void PushMacRawAt(const uint32_t bits[4], uint8_t mask, uint64_t issue_cycle);
     void PushMacAt(VUregs& regs, uint16_t mac, uint64_t issue_cycle);
     void FoldLazyRetired(const uint32_t bits[4], uint8_t mask);
+    // A caller-owned lazy fold (Vu1AotBlockGen::Policy::mac_acc): a generated
+    // block folds the results it will retire for sure into one of these AS
+    // THEY ARE PRODUCED (`Fold<mask>`: the sticky lane sets OR in, in
+    // registers, no store) and hands the whole to FoldLazyBatch at the point
+    // that observes the ring, with the last of them as the MAC word. Equal to
+    // FoldLazyRetired on each in issue order: the sticky fold is an OR (any
+    // order), the last-retired word is the newest. Batch resets the
+    // accumulator.
+    struct LazyAcc {
+#if defined(PS2R_VU_NEON) && PS2R_VU_NEON
+        uint32x4_t z, s, u, o;
+#else
+        uint16_t or_mac;
+#endif
+        void Reset();
+        template <int M>
+        void Fold(const uint32_t bits[4]);
+    };
+    void FoldLazyBatch(LazyAcc& acc, const uint32_t last_bits[4], uint8_t last_mask);
     void CommitEagerRetired(VUregs& regs, uint16_t mac) { ApplyMacToStatus(regs, mac); }
     // Retire every due entry (commit or fold).
     void RetireDue(VUregs& regs);

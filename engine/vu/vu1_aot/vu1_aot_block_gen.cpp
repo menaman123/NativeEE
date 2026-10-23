@@ -253,6 +253,7 @@ std::string Vu1AotBlockGen::EmitFunction(VuBlockProgram& prog, const VuBlock& he
 Vu1AotBlockGen::Vu1AotBlockGen(VuBlockProgram& prog, std::vector<const VuBlock*> blocks, const std::string& fn_name,
                                const std::vector<uint32_t>& emitted, const Policy& policy)
     : prog_(prog), blocks_(std::move(blocks)), fn_(fn_name), emitted_(emitted), policy_(policy) {
+    mac_pushed_.resize(blocks_.size());
     ResetPassState();
 }
 
@@ -285,27 +286,67 @@ int Vu1AotBlockGen::BlockIndex(uint32_t pc) const {
 // pushed with its issue cycle. Every result is folded exactly once in both
 // schemes and in the same order, so the sticky bits and the last-retired MAC
 // word a reader sees are the same.
-void Vu1AotBlockGen::NoteMac(int i, int mask) { pending_.push_back({i, mask}); }
+//
+// Policy::mac_acc (the lazy ring): a result that is FOLDED at every delivery
+// point that can take it (pass 1 marks the ones some point pushes: the block
+// end folds what an XTOP yield 3 ops after the result had to push) is folded
+// into the block-local accumulator `macc` at its op instead (LazyAcc::Fold:
+// the same lane sets, OR-ed in registers), and a delivery hands the
+// accumulator over once (FoldLazyBatch) with the newest accumulated result
+// as the MAC word. The sticky fold is an OR, so the order between the
+// accumulated and the explicitly folded results does not matter; the last
+// one folded overall must still be the newest, so the batch goes before the
+// explicit folds unless the newest folded result is accumulated.
+bool Vu1AotBlockGen::MacAccumulates() const { return policy_.mac_acc && FlagPipeline::kDefaultLazy; }
+
+void Vu1AotBlockGen::NoteMac(int i, int mask) {
+    pending_.push_back({i, mask});
+    if (MacAccumulates() && !analysing_ && !mac_pushed_[static_cast<size_t>(cur_)][static_cast<size_t>(i)]) {
+        Line("macc.Fold<" + Dec(mask) + ">(m" + Dec(i) + ".I);  // retired for sure at every delivery");
+    }
+}
 
 void Vu1AotBlockGen::Deliver(int ref) {
     if (pending_.empty()) return;
     Line("pipes.RetireDue(regs);");
-    for (const auto& pm : pending_) {
+    const bool accumulate = MacAccumulates();
+    std::vector<uint8_t>& pushed = mac_pushed_[static_cast<size_t>(cur_)];
+    auto fold_of = [&](const std::pair<int, int>& pm) {
+        const std::string m = "m" + Dec(pm.first) + ".I", mk = Dec(pm.second);
+        if (FlagPipeline::kDefaultLazy) return "pipes.FoldLazyRetired(" + m + ", " + mk + ");";
+        return "pipes.CommitEagerRetired(regs, VuFloat::PackMacBits(" + m + ", " + mk + "));";
+    };
+    auto push_of = [&](const std::pair<int, int>& pm) {
         const std::string m = "m" + Dec(pm.first) + ".I", mk = Dec(pm.second), c = "c" + Dec(pm.first);
-        std::string fold, push;
-        if (FlagPipeline::kDefaultLazy) {
-            fold = "pipes.FoldLazyRetired(" + m + ", " + mk + ");";
-            push = "pipes.PushMacRawAt(" + m + ", " + mk + ", " + c + ");";
-        } else {
-            fold = "pipes.CommitEagerRetired(regs, VuFloat::PackMacBits(" + m + ", " + mk + "));";
-            push = "pipes.PushMacAt(regs, VuFloat::PackMacBits(" + m + ", " + mk + "), " + c + ");";
-        }
-        if (pm.first <= ref - FlagPipeline::kMacDelay) {
-            Line(fold + "  // retired: issued " + Dec(ref - pm.first) + " ops back");
-        } else {
-            Line(push);  // may or may not have retired: the ring's (no data-dependent branch here)
+        if (FlagPipeline::kDefaultLazy) return "pipes.PushMacRawAt(" + m + ", " + mk + ", " + c + ");";
+        return "pipes.PushMacAt(regs, VuFloat::PackMacBits(" + m + ", " + mk + "), " + c + ");";
+    };
+    // The folded prefix: the newest accumulated one (the batch's MAC word) and
+    // whether the newest folded overall is accumulated.
+    int newest_acc = -1, newest_acc_mask = 0, newest_folded = -1;
+    for (const auto& pm : pending_) {
+        if (pm.first > ref - FlagPipeline::kMacDelay) continue;
+        newest_folded = pm.first;
+        if (accumulate && !pushed[static_cast<size_t>(pm.first)]) {
+            newest_acc = pm.first;
+            newest_acc_mask = pm.second;
         }
     }
+    auto batch = [&]() {
+        if (newest_acc < 0) return;
+        Line("pipes.FoldLazyBatch(macc, m" + Dec(newest_acc) + ".I, " + Dec(newest_acc_mask) + ");  // the accumulated folds, newest = the MAC word");
+    };
+    if (newest_acc >= 0 && newest_acc != newest_folded) batch();
+    for (const auto& pm : pending_) {
+        if (pm.first <= ref - FlagPipeline::kMacDelay) {
+            if (accumulate && !pushed[static_cast<size_t>(pm.first)]) continue;  // in the batch
+            Line(fold_of(pm) + "  // retired: issued " + Dec(ref - pm.first) + " ops back");
+        } else {
+            pushed[static_cast<size_t>(pm.first)] = 1;  // pass 1: this result cannot accumulate
+            Line(push_of(pm));  // may or may not have retired: the ring's (no data-dependent branch here)
+        }
+    }
+    if (newest_acc >= 0 && newest_acc == newest_folded) batch();
     pending_.clear();
 }
 
@@ -431,6 +472,7 @@ std::string Vu1AotBlockGen::Prologue() const {
          "    constexpr uint64_t kNever = ~0ull;\n"
          "    uint64_t pace_due = (xgk != nullptr && xgk->armed()) ? xgk->next_due() : kNever;\n"
          "    (void)g; (void)stalls; (void)t; (void)tg; (void)target; (void)data; (void)mask; (void)budget;\n";
+    if (MacAccumulates()) o += "    FlagPipeline::LazyAcc macc;\n    macc.Reset();\n";
     // The resident registers: loaded at entry (a dead load is the compiler's to drop).
     for (int n = 1; n < 32; ++n) {
         if (!vf_touched_[n]) continue;
@@ -477,6 +519,7 @@ void Vu1AotBlockGen::EmitBlock(int bi) {
     acc_clean_ = false;
     folded_.assign(blk.ops.size(), 0);
     pending_.clear();
+    if (analysing_) mac_pushed_[static_cast<size_t>(bi)].assign(blk.ops.size(), 0);  // pass 2 reads pass 1's marks
     const int n = static_cast<int>(blk.ops.size());
     body_ += "L_" + Pc4(blk.pc) + ": {\n";
     indent_ = 2;

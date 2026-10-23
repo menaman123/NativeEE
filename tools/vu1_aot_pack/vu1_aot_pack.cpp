@@ -3,7 +3,7 @@
 //
 //   vu1_aot_pack build --corpus <dir> [--corpus <dir>]... --out <pack dir>
 //                      [--compiler <c++>] [--opt 1|2] [--prelude <dir>] [--keep-work]
-//                      [--region-blocks N] [--region-ops N] [--region-taken 0|1] [--chain 0|1]
+//                      [--region-blocks N] [--region-ops N] [--region-taken 0|1] [--chain 0|1] [--mac-acc 0|1]
 //   vu1_aot_pack check --corpus <dir> [--corpus <dir>]... --pack <pack dir>
 //   vu1_aot_pack key   [--prelude <dir>]
 //
@@ -74,7 +74,7 @@ void LoadDir(const std::string& dir, Images& images) {
 int Usage() {
     std::fprintf(stderr,
                  "usage: vu1_aot_pack build --corpus <dir>... --out <pack dir> [--compiler <c++>] [--opt 1|2] [--prelude <dir>] [--keep-work]\n"
-                 "                          [--region-blocks N] [--region-ops N] [--region-taken 0|1] [--chain 0|1]   (the generator's region policy)\n"
+                 "                          [--region-blocks N] [--region-ops N] [--region-taken 0|1] [--chain 0|1] [--mac-acc 0|1]   (the generator's region policy)\n"
                  "       vu1_aot_pack check --corpus <dir>... --pack <pack dir>\n"
                  "       vu1_aot_pack key [--prelude <dir>]\n");
     return 2;
@@ -105,6 +105,7 @@ bool Parse(int argc, char** argv, Args* a) {
         else if (s == "--region-ops") { std::string v; if (!next(&v)) return false; a->region.op_cap = std::atoi(v.c_str()); }
         else if (s == "--region-taken") { std::string v; if (!next(&v)) return false; a->region.taken_targets = std::atoi(v.c_str()) != 0; }
         else if (s == "--chain") { std::string v; if (!next(&v)) return false; a->region.chain = std::atoi(v.c_str()) != 0; }
+        else if (s == "--mac-acc") { std::string v; if (!next(&v)) return false; a->region.mac_acc = std::atoi(v.c_str()) != 0; }
         else if (s == "--keep-work") a->keep_work = true;
         else return false;
     }

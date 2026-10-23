@@ -92,6 +92,59 @@ PS2R_FORCE_INLINE void FlagPipeline::FoldLazyRetired(const uint32_t bits_in[4], 
     lazy_have_last_ = true;
 }
 
+// The caller-owned fold (FoldLazyRetired's sticky step on a register-resident
+// accumulator; the lane mask is a compile-time constant, so a full mask costs
+// nothing and a partial one is a vector constant, not a table load).
+PS2R_FORCE_INLINE void FlagPipeline::LazyAcc::Reset() {
+#if PS2R_VU_NEON
+    z = s = u = o = vdupq_n_u32(0);
+#else
+    or_mac = 0;
+#endif
+}
+
+template <int M>
+PS2R_FORCE_INLINE void FlagPipeline::LazyAcc::Fold(const uint32_t bits_in[4]) {
+    static_assert(M >= 0 && M <= 15, "a dest mask");
+#if PS2R_VU_NEON
+    const uint32x4_t bits = vld1q_u32(bits_in);
+    const uint32x4_t expm = vdupq_n_u32(VuFloat::kExpMask);
+    const uint32x4_t exp = vandq_u32(bits, expm);
+    uint32x4_t z_m = vceqq_u32(exp, vdupq_n_u32(0));
+    uint32x4_t o_m = vceqq_u32(exp, expm);
+    uint32x4_t u_m = vandq_u32(z_m, vtstq_u32(bits, vdupq_n_u32(VuFloat::kMantMask)));
+    uint32x4_t s_m = vreinterpretq_u32_s32(vshrq_n_s32(vreinterpretq_s32_u32(bits), 31));
+    if constexpr (M != 15) {
+        const uint32x4_t lm = {(M & 8) ? ~0u : 0u, (M & 4) ? ~0u : 0u, (M & 2) ? ~0u : 0u, (M & 1) ? ~0u : 0u};
+        z_m = vandq_u32(z_m, lm);
+        o_m = vandq_u32(o_m, lm);
+        u_m = vandq_u32(u_m, lm);
+        s_m = vandq_u32(s_m, lm);
+    }
+    z = vorrq_u32(z, z_m);
+    s = vorrq_u32(s, s_m);
+    u = vorrq_u32(u, u_m);
+    o = vorrq_u32(o, o_m);
+#else
+    or_mac = static_cast<uint16_t>(or_mac | VuFloat::PackMacBits(bits_in, static_cast<uint8_t>(M)));
+#endif
+}
+
+PS2R_FORCE_INLINE void FlagPipeline::FoldLazyBatch(LazyAcc& acc, const uint32_t last_bits[4], uint8_t last_mask) {
+#if PS2R_VU_NEON
+    vst1q_u32(lazy_acc_[0], vorrq_u32(vld1q_u32(lazy_acc_[0]), acc.z));
+    vst1q_u32(lazy_acc_[1], vorrq_u32(vld1q_u32(lazy_acc_[1]), acc.s));
+    vst1q_u32(lazy_acc_[2], vorrq_u32(vld1q_u32(lazy_acc_[2]), acc.u));
+    vst1q_u32(lazy_acc_[3], vorrq_u32(vld1q_u32(lazy_acc_[3]), acc.o));
+#else
+    lazy_or_mac_ = static_cast<uint16_t>(lazy_or_mac_ | acc.or_mac);
+#endif
+    std::memcpy(lazy_last_bits_, last_bits, sizeof(lazy_last_bits_));
+    lazy_last_mask_ = last_mask;
+    lazy_have_last_ = true;
+    acc.Reset();
+}
+
 // The ring is in retire order (pushes carry the monotonic clock + the delay):
 // the due entries are the prefix from the head, folded oldest first; the head
 // advances past them and nothing is copied. Inline: the generated blocks call

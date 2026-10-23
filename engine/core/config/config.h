@@ -190,6 +190,13 @@ struct EngineConfig {
     int            vu1_aot_region_ops = 48;
     bool           vu1_aot_region_taken = true;
     bool           vu1_aot_chain = true;
+    // MAC flag accumulation in registers (Vu1AotRegionPolicy::mac_acc): a
+    // block folds the results it retires for sure into a register-resident
+    // accumulator as they are produced and delivers it once per observation
+    // point, instead of keeping every result live to its edge. Generation-time
+    // shape only (verified the identity before it runs). Off until the
+    // vuworker gates are green.
+    bool           vu1_aot_mac_acc = false;
     // The pre-built library pack (app/host/vu1_aot_pack.h) the loader tries
     // before the user cache and the compiler ("" = <executable dir>/vu1_aot_pack).
     std::string    vu1_aot_pack;

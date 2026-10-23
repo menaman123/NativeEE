@@ -192,6 +192,7 @@ const std::vector<Field>& Fields() {
         INT_FIELD("engine.vu1_aot_opt", engine.vu1_aot_opt),
         STR_FIELD("engine.vu1_aot_pack", engine.vu1_aot_pack),
         BOOL_FIELD("engine.vu1_aot_chain", engine.vu1_aot_chain),
+        BOOL_FIELD("engine.vu1_aot_mac_acc", engine.vu1_aot_mac_acc),
         INT_FIELD("engine.vu1_aot_region_blocks", engine.vu1_aot_region_blocks),
         INT_FIELD("engine.vu1_aot_region_ops", engine.vu1_aot_region_ops),
         BOOL_FIELD("engine.vu1_aot_region_taken", engine.vu1_aot_region_taken),
@@ -347,7 +348,7 @@ bool ExcludedFromFingerprint(const std::string& key) {
     // verifier reads its cases): the tiers are the identity on what executes.
     // engine.vu1_aot_codegen / _compiler / _prelude / _opt / _pack choose the
     // host toolchain (or the shipped pack) of the generated code, and
-    // _region_blocks / _region_ops / _region_taken / _chain its region shape;
+    // _region_blocks / _region_ops / _region_taken / _chain / _mac_acc its region shape;
     // the code is verified the identity before it runs: nothing the title
     // executes changes with them.
     return key.compare(0, 8, "harness.") == 0 || key.compare(0, 6, "paths.") == 0 || key.compare(0, 5, "diag.") == 0 ||
@@ -355,7 +356,7 @@ bool ExcludedFromFingerprint(const std::string& key) {
            key == "engine.mtvu_kick_drop" || key == "engine.mtvu_early_finish" || key == "engine.mtvu_wait_probe" || key == "engine.ee_yield_spin_gate" || key == "engine.vu1_aot_corpus" || key == "engine.vu1_aot_codegen" ||
            key == "engine.vu1_aot_compiler" || key == "engine.vu1_aot_prelude" || key == "engine.vu1_aot_opt" ||
            key == "engine.vu1_aot_pack" || key == "engine.vu1_aot_region_blocks" || key == "engine.vu1_aot_region_ops" ||
-           key == "engine.vu1_aot_region_taken" || key == "engine.vu1_aot_chain";
+           key == "engine.vu1_aot_region_taken" || key == "engine.vu1_aot_chain" || key == "engine.vu1_aot_mac_acc";
 }
 
 }  // namespace
