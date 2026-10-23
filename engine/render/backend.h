@@ -198,6 +198,9 @@ struct CallCensus {
     uint64_t gpu_waits = 0;          // CPU waits for the GPU that actually waited (a serial / command buffer not yet complete)
     uint64_t gpu_wait_ns = 0;        // ... and their total time
     uint64_t capture_waits = 0;      // present-capture completions that waited for the GPU
+    uint64_t prompt_captures = 0;    // present captures completed in their OWN present (the bounded wait found the GPU done)
+    uint64_t prompt_timeouts = 0;    // ... and the ones whose wait ran out (read back one present late as before)
+    uint64_t prompt_wait_ns = 0;     // the bounded waits' total time
     uint64_t state_sets = 0;         // fixed-function state calls ISSUED (blend / depth / mask / scissor / viewport / enable)
     uint64_t uniform_sets = 0;       // uniform calls ISSUED (the shadow caches skip the rest)
 };
@@ -295,6 +298,14 @@ public:
     // over the owned textures (null = the title's choice everywhere).
     virtual void SetWindowSize(int, int) {}
     virtual void SetPresentCaptureDeferred(bool) {}
+    // Round 5 (latency): with the deferred capture, wait up to this long at the end of
+    // Present for the GPU to finish THIS present's capture and hand it over now (the
+    // picture posts the field it was rendered; ReadPresented's PresentedLag() = 0) --
+    // past the bound it is read at the next present as before (lag 1). 0 = never wait.
+    virtual void SetPresentCaptureWaitNs(uint64_t) {}
+    // The present lag of the image ReadPresented last handed over (0 = this present's, 1 =
+    // the previous present's: the deferred read).
+    virtual int PresentedLag() const { return 0; }
     virtual void FlushCommands() {}
     virtual void SetTextureFilter(std::shared_ptr<const TextureFilterSelection>) {}
 };

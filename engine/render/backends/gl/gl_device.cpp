@@ -846,12 +846,25 @@ void GlDevice::Present(const ScanoutDesc& desc) {
         dc.w = capture_w;
         dc.h = capture_h;
         dc.pending = true;
+        dc.serial_lag = 0;
         state_.BindFb(GL_READ_FRAMEBUFFER, capture_fbo_);
         state_.BindFb(GL_DRAW_FRAMEBUFFER, 0);
         glBlitFramebuffer(0, 0, capture_w, capture_h, 0, 0, capture_w, capture_h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
         state_.BindFb(GL_FRAMEBUFFER, 0);
+        // The prompt capture (round 5): a bounded wait on this present's fence, the picture handed
+        // over now when it signalled (lag 0); otherwise the next present completes it (lag 1).
+        if (WaitDeferredCaptureBounded()) {
+            // A previous present's picture completed above (lag 1) and not yet handed over goes
+            // first (its own post) so this present's prompt picture does not overwrite it unshown.
+            if (presented_fresh_ && swap_) swap_();
+            CompleteDeferredCapture(/*wait=*/false);
+        } else {
+            dc.serial_lag = 1;
+        }
     } else if (capture) {
         presented_w_ = presented_h_ = 0;
+        presented_lag_ = 0;
+        presented_fresh_ = true;
         // The frame dump's presented image: the whole window as drawn above
         // (the display quad at its offset, black around it), bottom-up.
         presented_.assign(static_cast<size_t>(capture_w) * capture_h * 4, 0);
@@ -867,8 +880,23 @@ void GlDevice::Present(const ScanoutDesc& desc) {
         state_.BindFb(GL_FRAMEBUFFER, 0);
     } else {
         presented_w_ = presented_h_ = 0;
+        presented_fresh_ = false;
     }
     if (swap_) swap_();
+}
+
+// The bounded wait of the prompt capture (SetPresentCaptureWaitNs) on the pending read's fence.
+// True = signalled within the budget (CompleteDeferredCapture(false) then maps without a wait).
+bool GlDevice::WaitDeferredCaptureBounded() {
+    DeferredCapture& dc = deferred_capture_;
+    if (present_capture_wait_ns_ == 0 || !dc.pending || !dc.sync) return false;
+    const auto t0 = std::chrono::steady_clock::now();
+    const GLenum r = glClientWaitSync(static_cast<GLsync>(dc.sync), GL_SYNC_FLUSH_COMMANDS_BIT, present_capture_wait_ns_);
+    census_.prompt_wait_ns += static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count());
+    const bool done = r == GL_ALREADY_SIGNALED || r == GL_CONDITION_SATISFIED;
+    if (done) census_.prompt_captures++;
+    else census_.prompt_timeouts++;
+    return done;
 }
 
 void GlDevice::SetPresentCaptureDeferred(bool deferred) {
@@ -905,6 +933,8 @@ void GlDevice::CompleteDeferredCapture(bool wait) {
         glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
         presented_w_ = dc.w;
         presented_h_ = dc.h;
+        presented_lag_ = dc.serial_lag;
+        presented_fresh_ = true;
     } else {
         presented_w_ = presented_h_ = 0;
     }
@@ -949,6 +979,10 @@ void GlDevice::ArmPresentCapture(bool armed) {
 
 bool GlDevice::ReadPresented(std::vector<uint8_t>* rgba, int* w, int* h) {
     if (!present_capture_ || presented_w_ <= 0 || presented_h_ <= 0 || !rgba || !w || !h) return false;
+    // Under the deferred capture an image is handed over ONCE (no duplicate post when this present's
+    // own capture is still pending and the previous one was already read).
+    if (present_capture_deferred_ && !presented_fresh_) return false;
+    presented_fresh_ = false;
     *rgba = presented_;
     *w = presented_w_;
     *h = presented_h_;

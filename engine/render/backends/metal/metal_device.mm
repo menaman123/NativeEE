@@ -802,7 +802,7 @@ bool MetalDevice::EnsureCapture(CaptureSlot& slot, int w, int h) {
     return slot.tex != nullptr;
 }
 
-void MetalDevice::CompleteCapture(CaptureSlot& slot, bool wait) {
+void MetalDevice::CompleteCapture(CaptureSlot& slot, bool wait, int lag) {
     if (!slot.pending || !slot.tex) return;
     if (!GpuIdle(slot.serial)) {
         if (!wait) return;
@@ -816,8 +816,27 @@ void MetalDevice::CompleteCapture(CaptureSlot& slot, bool wait) {
     std::memcpy(presented_.data(), [(id<MTLBuffer>)slot.buf contents], presented_.size());
     presented_w_ = slot.w;
     presented_h_ = slot.h;
+    presented_lag_ = lag;
+    presented_fresh_ = true;
     census_.readbacks++;
     census_.readback_bytes += presented_.size();
+}
+
+// The bounded wait of the prompt capture (SetPresentCaptureWaitNs): poll the slot's serial until the
+// GPU is done or the budget ran out. True = done (the slot can be completed without a wait).
+bool MetalDevice::WaitCaptureBounded(const CaptureSlot& slot) {
+    if (present_capture_wait_ns_ == 0 || !slot.pending) return false;
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto deadline = t0 + std::chrono::nanoseconds(present_capture_wait_ns_);
+    bool done = GpuIdle(slot.serial);
+    while (!done && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
+        done = GpuIdle(slot.serial);
+    }
+    census_.prompt_wait_ns += static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count());
+    if (done) census_.prompt_captures++;
+    else census_.prompt_timeouts++;
+    return done;
 }
 
 void MetalDevice::Present(const ScanoutDesc& desc) {
@@ -925,12 +944,21 @@ void MetalDevice::Present(const ScanoutDesc& desc) {
         }
         Commit(/*wait=*/false);
         if (!present_capture_deferred_) {
-            CompleteCapture(slot, /*wait=*/true);
+            CompleteCapture(slot, /*wait=*/true, /*lag=*/0);
         } else {
+            // The prompt capture (round 5): a bounded wait for THIS present's GPU work, the picture
+            // handed over now when it made it (lag 0); otherwise the next present completes it (lag 1).
+            // A previous present's picture completed above (lag 1) and not yet handed over goes first
+            // (its own post) so this present's prompt picture does not overwrite it unshown.
+            if (WaitCaptureBounded(slot)) {
+                if (presented_fresh_ && swap_) swap_();
+                CompleteCapture(slot, /*wait=*/false, /*lag=*/0);
+            }
             capture_cur_ ^= 1;
         }
     } else {
         presented_w_ = presented_h_ = 0;
+        presented_fresh_ = false;
         Commit(/*wait=*/false);
     }
     if (swap_) swap_();
@@ -948,11 +976,16 @@ void MetalDevice::ArmPresentCapture(bool armed) {
     if (!armed) {
         presented_.clear();
         presented_w_ = presented_h_ = 0;
+        presented_fresh_ = false;
     }
 }
 
 bool MetalDevice::ReadPresented(std::vector<uint8_t>* rgba, int* w, int* h) {
     if (!present_capture_ || presented_w_ <= 0 || presented_h_ <= 0 || !rgba || !w || !h) return false;
+    // Under the deferred capture an image is handed over ONCE: a present whose own capture is still
+    // pending and whose predecessor was already handed over has nothing new (no duplicate post).
+    if (present_capture_deferred_ && !presented_fresh_) return false;
+    presented_fresh_ = false;
     *rgba = presented_;
     *w = presented_w_;
     *h = presented_h_;
