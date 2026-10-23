@@ -135,6 +135,11 @@ bool SyscallTable::WouldBlockNow(int num, const CpuContext& ctx) {
 
 void SyscallTable::SetGuestCall(GuestCall fn) { guest_call_ = std::move(fn); }
 void SyscallTable::SetTickClock(std::function<uint64_t()> now) { tick_now_ = std::move(now); }
+void SyscallTable::SetCop0CountClock(std::function<uint64_t()> now) { cop0_count_now_ = std::move(now); }
+void SyscallTable::SeatCop0Count(CpuContext& ctx) const {
+    if (!cop0_count_now_) return;
+    ctx.cpuRegs.CP0.r[9] = static_cast<uint32_t>(cop0_count_now_()) + cop0_count_reseat_;
+}
 uint32_t SyscallTable::CustomSyscallAddress(int num) const {
     return (num >= 0 && num < 256) ? custom_syscall_[num] : 0;
 }
@@ -221,10 +226,14 @@ void SyscallTable::Dispatch(uint32_t v1, CpuContext& ctx) {
                                           static_cast<uint64_t>(num) | 0x5C00000000ull, ctx.cpuRegs.pc);
             break;
     }
+    // The syscall's return instant: the free-running Count the guest reads next
+    // (a thread woken from a park returns through here with the fresh value).
+    SeatCop0Count(ctx);
 }
 
 // ---- COP0 writes (row 6). Count (rd 9) is the free-running counter: a guest
-// write reseats it, reads come from the register (the timing layer advances it).
+// write reseats it (engine.cop0_count: the offset against the emu-domain clock),
+// reads come from the register (SeatCop0Count advances it).
 void SyscallTable::HandleMtc0(CpuContext& ctx, uint8_t rd, uint32_t value) {
     auto& cp0 = ctx.cpuRegs.CP0;
     switch (rd) {
@@ -237,6 +246,10 @@ void SyscallTable::HandleMtc0(CpuContext& ctx, uint8_t rd, uint32_t value) {
         case 11:  // Compare: clears the timer interrupt (IP7)
             cp0.r[11] = value;
             cp0.n.Cause &= ~0x8000u;
+            break;
+        case 9:  // Count: the guest reseats the free-running counter
+            if (cop0_count_now_) cop0_count_reseat_ = value - static_cast<uint32_t>(cop0_count_now_());
+            cp0.r[9] = value;
             break;
         default:
             cp0.r[rd] = value;

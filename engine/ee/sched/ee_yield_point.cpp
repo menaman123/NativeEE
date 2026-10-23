@@ -1,5 +1,7 @@
 #include "engine/ee/sched/ee_yield_point.h"
 
+#include "engine/ee/hle/syscall_table.h"
+
 #include "engine/ee/hle/alarms.h"
 #include "engine/ee/intc/ee_timers.h"
 #include "engine/ee/intc/intc.h"
@@ -80,6 +82,7 @@ void EeYieldPoint::Trip(CpuContext& ctx) {
     // Cleared BEFORE the preemption point: the thread that runs next may trip on
     // its own loops while this one is parked inside PreemptPoint.
     in_trip_ = false;
+    SyscallTable::Instance().SeatCop0Count(ctx);   // a spin reading COP0 Count sees the trip's field (engine.cop0_count)
     token.PreemptPoint();
 }
 

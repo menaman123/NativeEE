@@ -46,6 +46,7 @@ void DeterministicProfile::Apply(Config& c) {
     c.engine.mtvu_early_finish = false;   // the parser-raised FINISH: the oracle lanes' schedule (inert without a worker anyway)
     c.engine.mtvu_wait_probe = false;     // the observation point idles on the worker unconditionally (inert without a worker)
     c.engine.ee_yield_spin_gate = false;   // every trip a field: the frozen oracles' field schedule (E432 pinned off)
+    c.engine.cop0_count = false;           // the COP0 Count register frozen: the frozen oracles' RAM (round-5 cutscene knob pinned off)
     c.engine.pacing = Pacing::Freerun;
     c.engine.time_regime_pin = 1;
     c.time.tick_sync = true;

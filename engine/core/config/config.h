@@ -258,6 +258,19 @@ struct EngineConfig {
     // the <=294 cold-boot oracle and the Paris-600 lockstep census are
     // byte-equal either way). On by default since 2026-10-22 (the eecode round's gates: Paris 600 lockstep census + frames.fhash + mem.mhash equal knob on vs off, h600 <=294 oracle 0, cold boot / hub warps / F5-F8 park=none).
     bool    ee_fast_dispatch = true;
+    // The EE's COP0 Count register (mfc0 $9) advancing with the emu tick
+    // (DerivedClocks::Cop0Count: 4915200 counts per field, the 294.912 MHz core
+    // clock; a guest mtc0 reseats it). Off = the register never moves (the
+    // pre-round-5 state): a title's cycle clock reads a constant, every delta
+    // is 0 -- Sly 2's frame dt clamps to its 1/60 floor and runs, but the
+    // lgAud dialog timeline that paces the binocucom typewriter and lip-sync
+    // to the voice stream (hle/leg_core.cpp, the cutscene track) never
+    // advances: one glyph per line. Seated at every syscall return and yield
+    // trip (field granularity: no wall term, BUG-014/031). Changes what the
+    // guest reads (the frozen oracles' RAM hashes): the deterministic profile
+    // pins it off; fingerprint-excluded (no image carries it: a restore
+    // reseats). Off by default until its gates are green (REPORT cutscene).
+    bool    cop0_count = false;
     int     ee_runahead = 2;
     Pacing  pacing = Pacing::Realtime;
     int     time_regime_pin = -1;         // -1 = none (adaptive)

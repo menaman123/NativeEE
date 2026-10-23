@@ -175,6 +175,7 @@ const std::vector<Field>& Fields() {
         BOOL_FIELD("diag.tick_census", diag.tick_census),
         BOOL_FIELD("diag.vu1_lockstep", diag.vu1_lockstep),
         BOOL_FIELD("engine.ee_fast_dispatch", engine.ee_fast_dispatch),
+        BOOL_FIELD("engine.cop0_count", engine.cop0_count),
         INT_FIELD("engine.ee_runahead", engine.ee_runahead),
         BOOL_FIELD("engine.mtvu", engine.mtvu),
         INT_FIELD("engine.mtvu_depth", engine.mtvu_depth),
@@ -347,6 +348,9 @@ bool ExcludedFromFingerprint(const std::string& key) {
     // passes a field of its own: the yield budget is host state, not in any image.
     // engine.ee_fast_dispatch is the host's dispatch mechanics of a guest call
     // (raw body call vs the observer chain): the same body runs either way.
+    // engine.cop0_count is whether the COP0 Count register advances with the
+    // emu tick: no image carries it (a restore reseats the register from the
+    // tick), so a slot restores under either setting.
     // engine.vu1_aot_corpus is a path to oracle data (where the AOT tier's
     // verifier reads its cases): the tiers are the identity on what executes.
     // engine.vu1_aot_codegen / _compiler / _prelude / _opt / _pack choose the
@@ -356,7 +360,7 @@ bool ExcludedFromFingerprint(const std::string& key) {
     // executes changes with them.
     return key.compare(0, 8, "harness.") == 0 || key.compare(0, 6, "paths.") == 0 || key.compare(0, 5, "diag.") == 0 ||
            key == "meta.profile" || key == "meta.source_fingerprint" || key == "save.restore_mode" ||
-           key == "engine.mtvu_kick_drop" || key == "engine.mtvu_early_finish" || key == "engine.mtvu_wait_probe" || key == "engine.ee_yield_spin_gate" || key == "engine.ee_fast_dispatch" || key == "engine.vu1_aot_corpus" || key == "engine.vu1_aot_codegen" ||
+           key == "engine.mtvu_kick_drop" || key == "engine.mtvu_early_finish" || key == "engine.mtvu_wait_probe" || key == "engine.ee_yield_spin_gate" || key == "engine.ee_fast_dispatch" || key == "engine.cop0_count" || key == "engine.vu1_aot_corpus" || key == "engine.vu1_aot_codegen" ||
            key == "engine.vu1_aot_compiler" || key == "engine.vu1_aot_prelude" || key == "engine.vu1_aot_opt" ||
            key == "engine.vu1_aot_pack" || key == "engine.vu1_aot_region_blocks" || key == "engine.vu1_aot_region_ops" ||
            key == "engine.vu1_aot_region_taken" || key == "engine.vu1_aot_chain" || key == "engine.vu1_aot_mac_acc";

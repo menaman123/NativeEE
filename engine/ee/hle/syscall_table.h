@@ -66,6 +66,14 @@ public:
     void SetGuestCall(GuestCall fn);
     // Tick-domain clock for alarms (3D1 installs DerivedClocks).
     void SetTickClock(std::function<uint64_t()> now);
+    // The COP0 Count clock (engine.cop0_count): the free-running counter's value
+    // in the emu domain (DerivedClocks::Cop0Count). Empty = the register never
+    // moves. SeatCop0Count writes the register of the given context (clock +
+    // the guest's mtc0 reseat offset); called at every syscall return and
+    // yield trip -- field granularity, no wall term.
+    void SetCop0CountClock(std::function<uint64_t()> now);
+    void SeatCop0Count(CpuContext& ctx) const;
+    bool HasCop0CountClock() const { return static_cast<bool>(cop0_count_now_); }
     // Observer of every dispatched syscall (number after Normalize, label or
     // null); the composition root records the boot leg's first calls.
     using Trace = std::function<void(int num, const char* name)>;
@@ -140,6 +148,8 @@ private:
 
     GuestCall guest_call_;
     std::function<uint64_t()> tick_now_;
+    std::function<uint64_t()> cop0_count_now_;
+    uint32_t cop0_count_reseat_ = 0;   // mtc0 Count: value - clock at the write
     Trace trace_;
     PreDispatch pre_dispatch_;
     std::vector<KernelHandler> intc_handlers_;
