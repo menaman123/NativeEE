@@ -178,55 +178,39 @@ int main() {
         CHECK(!g0.FramePark(100, 0, t0).park && !g0.FramePark(100, 0, t0).valve_hit, "cap 0: never parks");
     }
 
-    // 12. The HOLD cap (round 5): cap 2 with hold 1 parks at depth 2 (the EE two frames ahead) until the
-    // park lasts kHoldLiftNs, then the cap lifts to the setting for kHoldLiftBoundaries declared frames
-    // (depth 2 is in-bound again, depth 3 is not), after which the hold returns. No hold = the setting.
+    // 12. The HOLD (round 5): an arm on the WORKER's lag (marks pushed - passed), independent of the
+    // declared/presented cap. Hold 1: lag 1 (the worker inside the frame the EE just finished) is
+    // in-bound, lag 2 (a complete frame queued ahead of it) parks; the park releases when the lag
+    // drops, or by the 100 ms valve when it never moves. No hold = never over. The cap is untouched.
     {
         FakeClock clk;
         RunaheadGuard g(2, {}, clk);
-        CHECK(g.EffMaxFrames(100) == 2 && !g.Over(102, 100) && g.Over(103, 100), "no hold: the setting is the cap");
+        CHECK(!g.HoldOver(0) && !g.HoldOver(5) && !g.HoldPark(5, clk.now).park, "no hold: the lag is never over");
+        CHECK(g.EffMaxFrames() == 2 && !g.Over(102, 100) && g.Over(103, 100), "the cap reads the setting");
         g.SetHold(1);
-        CHECK(g.HoldFrames() == 1 && g.EffMaxFrames(100) == 1, "hold 1 in force");
-        CHECK(!g.Over(101, 100) && g.Over(102, 100), "hold 1: the EE one frame ahead is in-bound, two is a park");
+        CHECK(g.HoldFrames() == 1, "hold 1 armed");
+        CHECK(!g.HoldOver(0) && !g.HoldOver(1) && g.HoldOver(2) && g.HoldOver(7), "hold 1: lag 1 in-bound, lag 2 a park");
+        CHECK(g.EffMaxFrames() == 2 && !g.Over(102, 100) && g.Over(103, 100), "the hold does not move the cap");
         const uint64_t t0 = clk.now;
-        CHECK(!g.NoteHoldPark(102, t0), "a hold park shorter than the lift threshold does not lift");
-        clk.now = t0 + RunaheadGuard::kHoldLiftNs - 1;
-        CHECK(!g.NoteHoldPark(102, t0) && g.Over(102, 100), "... still parked just under the threshold");
-        clk.now = t0 + RunaheadGuard::kHoldLiftNs;
-        CHECK(g.NoteHoldPark(102, t0) && g.HoldLifts() == 1, "at the threshold the park lifts the cap (once)");
-        CHECK(g.HoldLifted(102) && g.EffMaxFrames(102) == 2, "lifted: the setting is the cap");
-        CHECK(!g.Over(102, 100) && g.Over(103, 100), "lifted: depth 2 in-bound, depth 3 a park (the setting's rule)");
-        CHECK(!g.NoteHoldPark(103, t0) && g.HoldLifts() == 1, "a park while lifted is the setting's, not a second lift");
-        CHECK(g.HoldLifted(102 + RunaheadGuard::kHoldLiftBoundaries - 1), "the lift holds for the allowance");
-        CHECK(!g.HoldLifted(102 + RunaheadGuard::kHoldLiftBoundaries), "... and ends at its boundary");
-        CHECK(g.EffMaxFrames(102 + RunaheadGuard::kHoldLiftBoundaries) == 1, "the hold returns");
-        // The re-arm: a long hold park right after the allowance (the worker is the bound for good) does
-        // NOT lift again -- the hold stays and the clean period restarts; after kHoldLiftBoundaries frames
-        // free of long parks the next one lifts.
-        const uint64_t after = 102 + RunaheadGuard::kHoldLiftBoundaries + 5;
-        clk.now += RunaheadGuard::kHoldLiftNs;
-        CHECK(!g.NoteHoldPark(after, clk.now - RunaheadGuard::kHoldLiftNs) && g.HoldLifts() == 1 && g.HoldLiftsRefused() == 1,
-              "a long hold park inside the re-arm period is refused (the worker is the bound)");
-        CHECK(g.EffMaxFrames(after) == 1, "the hold stays");
-        clk.now += RunaheadGuard::kHoldLiftNs;
-        CHECK(!g.NoteHoldPark(after + 50, clk.now - RunaheadGuard::kHoldLiftNs) && g.HoldLiftsRefused() == 2, "... and again 50 frames later (restarted)");
-        clk.now += RunaheadGuard::kHoldLiftNs;
-        CHECK(g.NoteHoldPark(after + 50 + RunaheadGuard::kHoldLiftBoundaries, clk.now - RunaheadGuard::kHoldLiftNs) && g.HoldLifts() == 2,
-              "after a clean allowance-length period the next long park lifts again");
-        clk.now += 1;
-        CHECK(!g.NoteHoldPark(after + 50 + RunaheadGuard::kHoldLiftBoundaries, clk.now - RunaheadGuard::kHoldLiftNs - 1) && g.HoldLifts() == 2,
-              "the same park is judged once");
-        // A hold at the setting or above is inert.
+        RunaheadFramePark r = g.HoldPark(2, t0);
+        CHECK(r.park && !r.valve_hit, "lag 2 parks");
+        clk.now = t0 + RunaheadGuard::kFrameValveNs - 1;
+        r = g.HoldPark(2, t0);
+        CHECK(r.park && !r.valve_hit, "... still parked just under the valve");
+        clk.now = t0 + RunaheadGuard::kFrameValveNs;
+        r = g.HoldPark(2, t0);
+        CHECK(!r.park && r.valve_hit, "at +100 ms the valve releases a lag that never moved");
+        r = g.HoldPark(1, t0);
+        CHECK(!r.park && !r.valve_hit, "the worker passed a mark: released by progress, no valve");
+        // Hold 2 (== the cap): lag 3 parks, lag 2 does not.
         RunaheadGuard h(2, {}, clk);
         h.SetHold(2);
-        CHECK(h.EffMaxFrames(5) == 2 && !h.Over(7, 5) && h.Over(8, 5), "hold == setting: the setting's rule");
-        // The hold under the low band (2 lifts to 3): the hold still caps at 1 until lifted, lifted = 3.
+        CHECK(!h.HoldOver(2) && h.HoldOver(3), "hold 2: lag 3 parks");
+        // The low band lifts the cap, not the hold.
         bool low = true;
         RunaheadGuard lb(2, [&low] { return low; }, clk);
         lb.SetHold(1);
-        CHECK(lb.EffMaxFrames(10) == 1, "hold under low band: 1");
-        clk.now += RunaheadGuard::kHoldLiftNs;
-        CHECK(lb.NoteHoldPark(12, clk.now - RunaheadGuard::kHoldLiftNs) && lb.EffMaxFrames(12) == 3, "lifted under low band: 3");
+        CHECK(lb.EffMaxFrames() == 3 && lb.HoldOver(2), "low band: cap 3, the hold still parks at lag 2");
     }
 
     if (g_failures == 0) {

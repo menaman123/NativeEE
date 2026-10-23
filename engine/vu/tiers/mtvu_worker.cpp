@@ -282,6 +282,12 @@ void MtvuWorker::ProcessSegment(Segment& seg) {
         case Segment::Op::FrameMark:
             frame_marks_passed_.fetch_add(1, std::memory_order_relaxed);
             inflight_.fetch_sub(1, std::memory_order_release);
+            if (sync_waiters_.load(std::memory_order_seq_cst) > 0) {
+                // A producer parked on the hold arm (WaitHoldProgress) waits for
+                // exactly this: the lag dropped by one frame.
+                { std::lock_guard<std::mutex> lk(mtx_); }
+                cv_idle_.notify_all();
+            }
             return;
         case Segment::Op::Batch: {
             active_marker_ = seg.marker;
@@ -453,6 +459,20 @@ void MtvuWorker::ReleaseIrqStall() {
 
 void MtvuWorker::WaitFrameProgress(uint64_t timeout_ns) {
     frame_park_.WaitFor(timeout_ns, frame_park_.Generation());
+}
+
+void MtvuWorker::WaitHoldProgress(uint64_t timeout_ns) {
+    // The hold arm's wait: a passed frame mark (the lag dropped), an i-bit stall
+    // (the EE must serve it), an idle worker (nothing queued: the lag is stale),
+    // or the timeout. Marks passed are read before the wait so a mark that lands
+    // between the caller's lag read and this predicate wakes it at once.
+    const uint64_t seen = frame_marks_passed_.load(std::memory_order_relaxed);
+    std::unique_lock<std::mutex> lk(mtx_);
+    cv_idle_.wait_for(lk, std::chrono::nanoseconds(timeout_ns), [&] {
+        return frame_marks_passed_.load(std::memory_order_relaxed) != seen ||
+               (queue_.empty() && !processing_ && inflight_.load(std::memory_order_acquire) == 0) ||
+               irq_stalled_.load(std::memory_order_acquire);
+    });
 }
 
 void MtvuWorker::NotifyFrameProgress() { frame_park_.Notify(); }

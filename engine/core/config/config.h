@@ -216,13 +216,15 @@ struct EngineConfig {
     std::string    vu1_aot_pack;
     bool    mtvu = true;
     int     mtvu_depth = 2;
-    // Round 5 (latency): the runahead cap IN FORCE while the VU1 worker keeps up --
-    // the EE may lead the worker by this many frames (1 = the double-buffered
-    // console's own depth) so a button's picture is not two frames behind the EE
-    // that drew it; a park on it longer than 4 ms lifts the cap to mtvu_depth for
-    // 120 frames (the catch-up allowance). 0 = off (mtvu_depth is the cap always,
-    // the round-4 behaviour). Host scheduling of the worker: fingerprint-excluded;
-    // the deterministic profile pins 0 (it runs no worker).
+    // engine.mtvu_depth_hold (round 5): the HOLD -- a second runahead arm on the
+    // WORKER's lag in frames (frame marks pushed at the frame syncs minus marks
+    // the worker passed): the EE parks while more than this many COMPLETE frames
+    // are queued ahead of the worker (1 = the double-buffered console's own
+    // depth: a button's picture waits at most one frame in the queue). It never
+    // starves the worker (a whole frame of work is queued while it parks) and
+    // leaves mtvu_depth's declared/presented cap as it is. 0 = off. Host
+    // scheduling of the worker: fingerprint-excluded; the deterministic profile
+    // pins 0 (it runs no worker).
     int     mtvu_depth_hold = 0;
     // The clock contract's KICK DROP (play mode): the game thread never parks
     // on the MTVU worker; a frame the worker is > 2 frames behind runs its VIF

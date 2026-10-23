@@ -64,7 +64,11 @@ bool MtvuBackpressure::Engage() {
     uint64_t total = pipeline_->PipelineBytes();
     const bool bytes_over = total > kPipelineHighBytes;
     const bool frames_over = guard_.Over(Declared(), Presented());
-    if (!bytes_over && !frames_over) return false;
+    // The HOLD arm (round 5): the worker's lag in frames above the hold -- more
+    // than `hold` complete frames queued ahead of the worker. Independent of the
+    // presenter's depth; the park ends when the worker passes a mark.
+    const bool hold_over = guard_.HoldOver(pipeline_->FrameLag());
+    if (!bytes_over && !frames_over && !hold_over) return false;
 
     // The park is the game thread waiting on the worker: booked to the tick
     // census as `vu1wait` (the boss stall of 2026-10-13 read as 560 ms of
@@ -74,13 +78,9 @@ bool MtvuBackpressure::Engage() {
     int stalled = 0;
     bool bytes_need = bytes_over;
     bool frame_valve_hit = false;
+    bool hold_valve_hit = false;
     ++engagements_;
-    // A park under the HOLD cap (the EE one frame ahead, the worker not done with the
-    // previous frame): counted; past kHoldLiftNs the guard lifts the cap for the
-    // catch-up window and the park ends at the lifted bound (NoteHoldPark).
-    const bool hold_park = frames_over && guard_.HoldFrames() != 0 && !guard_.HoldLifted(Declared()) &&
-                           guard_.EffMaxFrames(Declared()) < guard_.EffMaxFrames();
-    if (hold_park) ++hold_parks_;
+    if (hold_over) ++hold_parks_;
     pipeline_->EnterSyncWait();
     for (;;) {
         if (running_ != nullptr && !running_->load(std::memory_order_acquire)) break;
@@ -94,7 +94,8 @@ bool MtvuBackpressure::Engage() {
         // (every span of the walk then rode the 100 ms frame valve: 25 s of
         // Engage per watchdog on the title->attract load with the kernel-wait
         // probe on). The park ends; the bound is exceeded by the rest of this
-        // walk, no more.
+        // walk, no more. The hold arm ends on it too (a stalled worker passes no
+        // mark until this thread serves it).
         if (pipeline_->IrqStalled()) {
             ++irq_stall_breaks_;
             break;
@@ -113,12 +114,15 @@ bool MtvuBackpressure::Engage() {
                 stalled = 0;
             }
         }
-        if (hold_park) guard_.NoteHoldPark(Declared(), t0);
         const RunaheadFramePark fp = guard_.FramePark(Declared(), Presented(), t0);
         if (fp.valve_hit) frame_valve_hit = true;
-        if (!bytes_need && !fp.park) break;
+        const RunaheadFramePark hp = guard_.HoldPark(pipeline_->FrameLag(), t0);
+        if (hp.valve_hit) hold_valve_hit = true;
+        if (!bytes_need && !fp.park && !hp.park) break;
         if (bytes_need) {
             pipeline_->WaitIdleOrSeal(kPollNs, seen);
+        } else if (hp.park) {
+            pipeline_->WaitHoldProgress(kPollNs);
         } else {
             pipeline_->WaitFrameProgress(kPollNs);
         }
@@ -126,10 +130,9 @@ bool MtvuBackpressure::Engage() {
     pipeline_->LeaveSyncWait();
     park_ns_ += clock_.NowNs() - t0;
     if (frame_valve_hit) ++frame_valve_hits_;
+    if (hold_valve_hit) ++hold_valve_hits_;
     return false;
 }
-
-uint64_t MtvuBackpressure::HoldLifts() const { return guard_.HoldLifts(); }
 
 uint64_t MtvuBackpressure::ClampSpinBudgetNs(uint64_t ns) {
     if (ns < kSpinBudgetMinNs) return kSpinBudgetMinNs;

@@ -24,6 +24,10 @@ public:
     virtual bool IrqStalled() const { return false; }
     // Bumped after every marker seal -- the wake hint the wait re-checks.
     virtual uint64_t SealCount() const = 0;
+    // The worker's lag in FRAMES: frame marks the producer pushed minus marks
+    // the worker passed (0 when the pipeline keeps no marks). The hold arm's
+    // depth (RunaheadGuard::HoldOver).
+    virtual uint64_t FrameLag() const { return 0; }
     // Run one guarded arbiter drain on this thread (a no-op when another
     // drain is in progress). Under deferred boundaries the parked producer is
     // the only boundary deliverer, so the park loop drains every iteration.
@@ -34,6 +38,9 @@ public:
     // Park for `timeout_ns`; frame progress comes from the present thread,
     // which this pipeline is not woken by.
     virtual void WaitFrameProgress(uint64_t timeout_ns) = 0;
+    // Park until the worker passes a frame mark, parks on an i-bit stall, goes
+    // idle, or `timeout_ns` passes (the hold arm's wait; default: the frame wait).
+    virtual void WaitHoldProgress(uint64_t timeout_ns) { WaitFrameProgress(timeout_ns); }
     // The producer is parked (the worker takes the locked wake path only then).
     virtual void EnterSyncWait() = 0;
     virtual void LeaveSyncWait() = 0;
