@@ -71,6 +71,8 @@ bool TitleManifest::loadJson(const QJsonObject& root, QString* error) {
     releaseRepo_ = release.value("repo").toString();
     assetPattern_ = release.value("asset_pattern").toString("${product}-${tag}-${platform}.zip");
     bundleFolderPattern_ = release.value("bundle_folder").toString("${product}-${platform}");
+    releaseIndexUrl_ = release.value("index_url").toString();
+    prepareEstimate_ = release.value("estimate").toString();
 
     targets_.clear();
     const QJsonObject targets = root.value("targets").toObject();
@@ -100,6 +102,7 @@ bool TitleManifest::loadJson(const QJsonObject& root, QString* error) {
     const QJsonObject folder = root.value("game_folder").toObject();
     configFileName_ = folder.value("config").toString("nativeee.ini");
     portableNote_ = folder.value("portable_note").toString();
+    defaultGameFolder_ = folder.value("default").toString();
     subfolders_.clear();
     const QJsonObject subs = folder.value("subfolders").toObject();
     for (const QString& id : {QStringLiteral("memcards"), QStringLiteral("saves"), QStringLiteral("cache")}) {
@@ -156,11 +159,8 @@ bool TitleManifest::loadJson(const QJsonObject& root, QString* error) {
         settingsGroups_ << group;
     }
 
-    const QJsonObject scan = root.value("scan").toObject();
-    scanFolders_ = stringList(scan.value("folders"));
-    if (scanFolders_.isEmpty()) scanFolders_ << "~/Downloads" << "~/Desktop" << "~/Documents";
-    scanRemovable_ = scan.value("removable").toBool(true);
-    scanMaxDepth_ = scan.value("max_depth").toInt(2);
+    // (a `scan` section of an older manifest is ignored: the launcher never looks for discs by itself -- the player
+    // chooses the file; decision D-L10)
     licences_.clear();
     for (const QJsonValue& v : root.value("licences").toArray()) {
         const QJsonObject o = v.toObject();
@@ -181,6 +181,12 @@ const DiscFingerprint* TitleManifest::fingerprintFor(const QString& file) const 
     if (fingerprint_.file.compare(file, Qt::CaseInsensitive) == 0) return &fingerprint_;
     for (const DiscFingerprint& f : alternates_) if (f.file.compare(file, Qt::CaseInsensitive) == 0) return &f;
     return nullptr;
+}
+
+QString TitleManifest::releaseIndexUrl() const {
+    if (!releaseIndexUrl_.isEmpty()) return releaseIndexUrl_;
+    if (releaseRepo_.isEmpty()) return QString();
+    return QStringLiteral("https://api.github.com/repos/%1/releases").arg(releaseRepo_);
 }
 
 QString TitleManifest::releaseAsset(const QString& tag, const QString& platform) const {

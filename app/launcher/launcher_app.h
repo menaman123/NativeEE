@@ -1,13 +1,13 @@
-// app/launcher/launcher_app.h -- the launcher's model: the manifest, the app-data folder, the discs, the game folder,
-// the prepare runner and the running game, wired together; the window shows it and the test driver drives it through
-// the same methods the buttons call.
+// app/launcher/launcher_app.h -- the launcher's model: the manifest, the app-data folder, the discs the player chose,
+// the game folder, the prepare runner and the running game, wired together; the window shows it and the test driver
+// drives it through the same methods the buttons call. The launcher never looks for disc images by itself (decision
+// D-L10): a disc enters through addDisc() -- the file dialog, a drop, or the command line -- and is identified by content.
 #pragma once
 #include <QObject>
 #include <QStringList>
 #include "disc_identity.h"
 namespace ps2r::launcher {
 class AppData;
-class DiscScanner;
 class GameFolder;
 class GameLibrary;
 class GameProcess;
@@ -32,20 +32,21 @@ public:
     GameFolder* gameFolder() const { return folder_; }
     PrepareRunner* preparer() const { return preparer_; }
     GameProcess* game() const { return game_; }
-    DiscScanner* scanner() const { return scanner_; }
 
-    // the game folder and its sub-folders
-    void chooseGameFolder(const QString& pickedOrFolder);
+    // the game folder and its sub-folders; `exact` takes the path as the game folder itself (a scripted run), else the
+    // picker's choice is made into one (GameFolder::folderFor)
+    void chooseGameFolder(const QString& pickedOrFolder, bool exact = false);
     void setSubfolder(const QString& id, const QString& path);
     QString settingsFilePath() const;
     IniSettings* settings() const { return settings_; }
     QString settingValue(const QString& key) const;   // the file's value or the manifest's default
     bool setSettingValue(const QString& key, const QString& value, QString* error = nullptr);
 
-    // discs
-    void scan();
-    // Identifies a dropped / chosen file by its content; a recognised disc (supported or not) joins the library.
+    // discs: identifies a dropped / chosen file by its content; a recognised disc (supported or not) joins the library.
     DiscIdentity addDisc(const QString& path);
+    // The Build rule: true when `isoPath` is a known, present, supported disc and nothing is being prepared; else *why
+    // says what is missing in plain words.
+    bool canPrepare(const QString& isoPath, QString* why = nullptr) const;
     // The supported disc to prepare / play: the one chosen for the first run, else the first supported one found.
     QString currentDisc() const;
     void setCurrentDisc(const QString& isoPath);
@@ -80,7 +81,6 @@ private:
     GameFolder* folder_ = nullptr;
     PrepareRunner* preparer_ = nullptr;
     GameProcess* game_ = nullptr;
-    DiscScanner* scanner_ = nullptr;
     IniSettings* settings_ = nullptr;
     QString playingIso_, preparingIso_, preparingTarget_, preparingSha_;
 };

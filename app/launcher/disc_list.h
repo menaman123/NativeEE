@@ -1,6 +1,6 @@
-// app/launcher/disc_list.h -- the discs the launcher knows, one card each (supported or badged "Not supported yet"),
-// with the empty state, the error state for a file that is not the game, the drop zone, Add a disc image… and Search
-// again. Shared by the first run's "Where is your game?" (selectable cards) and the Games page (cards with actions).
+// app/launcher/disc_list.h -- the discs the player has chosen, one card each (supported or badged "Not supported yet"),
+// with the empty state, the error state for a file that is not the game, the drop zone and "Add a game…" (which opens
+// the setup window). The launcher never searches for discs (decision D-L10). The Games page shows it with actions.
 #pragma once
 #include <QVector>
 #include <QWidget>
@@ -22,17 +22,15 @@ public:
     const QVector<GameCard*>& cards() const { return cards_; }
     EmptyState* emptyState() const { return empty_; }
     FlatButton* addButton() const { return add_; }
-    FlatButton* rescanButton() const { return rescan_; }
-    QLabel* scanNote() const { return scanNote_; }
     QString selectedDisc() const { return selected_; }
     void setSelectedDisc(const QString& isoPath);
-    void chooseDisc();                          // the file picker
-    void addDiscFromPath(const QString& path);  // identifies, adds or shows the error state
+    void addDiscFromPath(const QString& path);  // identifies, adds or shows the error state (a drop)
     void showDiscError(const QString& reason);
 
 signals:
     void actionRequested(const QString& isoPath);
     void selectionChanged(const QString& isoPath);
+    void addRequested();   // "Add a game…" / the empty state's button: the window opens the setup window
 
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
@@ -48,8 +46,6 @@ private:
     EmptyState* empty_;
     QVector<GameCard*> cards_;
     FlatButton* add_;
-    FlatButton* rescan_;
-    QLabel* scanNote_;
     QString selected_;
     bool dragOver_ = false;
 };

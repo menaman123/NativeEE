@@ -85,6 +85,10 @@ public:
     const DiscFingerprint* fingerprintFor(const QString& file) const;
 
     QString releaseRepo() const { return releaseRepo_; }
+    // Where the release index lives: release.index_url, else the GitHub Releases API of release.repo; empty = none.
+    QString releaseIndexUrl() const;
+    // The plain estimate shown before the first progress ("about 1 to 2 minutes"); release.estimate.
+    QString prepareEstimate() const { return prepareEstimate_; }
     // The release asset for a platform: release.asset_pattern with ${product}, ${tag}, ${platform} substituted.
     QString releaseAsset(const QString& tag, const QString& platform) const;
     QString bundleFolder(const QString& platform) const;
@@ -94,6 +98,8 @@ public:
     const QVector<UnsupportedItem>& unsupported() const { return unsupported_; }
 
     QString configFileName() const { return configFileName_; }
+    // game_folder.default: where the game is suggested to live ("~/Documents/<name>"); empty = ~/Documents/<safe name>.
+    QString defaultGameFolder() const { return defaultGameFolder_; }
     const QVector<SubfolderSpec>& subfolders() const { return subfolders_; }
     QString portableNote() const { return portableNote_; }
 
@@ -109,9 +115,6 @@ public:
     const QVector<SettingsGroupSpec>& settingsGroups() const { return settingsGroups_; }
     QVector<SettingsRowSpec> allSettingsRows() const;
 
-    QStringList scanFolders() const { return scanFolders_; }
-    bool scanRemovable() const { return scanRemovable_; }
-    int scanMaxDepth() const { return scanMaxDepth_; }
     const QVector<LicenceLink>& licences() const { return licences_; }
 
 private:
@@ -121,18 +124,15 @@ private:
     QVector<DiscFingerprint> alternates_;
     QStringList discExtensions_, requiredFiles_;
     QString modifiedReason_;
-    QString releaseRepo_, assetPattern_, bundleFolderPattern_;
+    QString releaseRepo_, assetPattern_, bundleFolderPattern_, releaseIndexUrl_, prepareEstimate_;
     QVector<TargetSpec> targets_;
     QVector<UnsupportedItem> unsupported_;
-    QString configFileName_, portableNote_;
+    QString configFileName_, portableNote_, defaultGameFolder_;
     QVector<SubfolderSpec> subfolders_;
     QStringList runArgs_, resumeArgs_;
     QString saveStatesFolder_, saveStateExtension_, saveStateMetaExtension_, saveStateThumbnailExtension_;
     QString settingsNote_;
     QVector<SettingsGroupSpec> settingsGroups_;
-    QStringList scanFolders_;
-    bool scanRemovable_ = true;
-    int scanMaxDepth_ = 2;
     QVector<LicenceLink> licences_;
 };
 

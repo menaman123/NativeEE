@@ -10,7 +10,8 @@ The launcher is title-neutral and speaks to a player, so over app/launcher it fa
   3. PLACEHOLDER text in a string literal: lorem, TODO, TBD, placeholder, TextLabel;
   4. an EMOJI in a string literal (anything outside the BMP, or the misc-symbols / dingbats block).
 With --strings FILE (the visible strings the screens test dumped, one per line) rules 2-4 run over those too.
-Lines ending in a `// lint: allow` comment are exempt from rules 2-4 (a key or a path that merely looks like a word).
+Lines ending in a `// lint: allow` comment (`# lint: allow` in build files) are exempt from rules 2-4 (a key or a path
+that merely looks like a word).
 Exit 0 = clean, 1 = findings, 2 = usage error. --selftest runs the built-in cases.
 """
 import argparse
@@ -60,7 +61,7 @@ def lint_source(path, rel, findings):
         where = "%s:%d" % (rel, i)
         for m in CODENAMES.finditer(line):
             findings.append("%s: codename %r" % (where, m.group(0)))
-        if line.rstrip().endswith("// lint: allow"):
+        if line.rstrip().endswith("// lint: allow") or line.rstrip().endswith("# lint: allow"):
             continue
         for m in STRING_LITERAL.finditer(line):
             text = m.group(1)

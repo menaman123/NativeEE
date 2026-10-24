@@ -11,7 +11,6 @@
 #include "about_page.h"
 #include "app_data.h"
 #include "details_sheet.h"
-#include "first_run_flow.h"
 #include "folder_row.h"
 #include "game_folder.h"
 #include "game_process.h"
@@ -21,6 +20,7 @@
 #include "launcher_theme.h"
 #include "save_states_page.h"
 #include "settings_page.h"
+#include "setup_page.h"
 #include "sidebar.h"
 #include "title_manifest.h"
 namespace ps2r::launcher {
@@ -61,8 +61,8 @@ MainWindow::MainWindow(LauncherApp* app, QWidget* parent) : QMainWindow(parent),
     row->addWidget(sidebar_);
     row->addWidget(content_, 1);
 
-    firstRun_ = new FirstRunFlow(app, details_, root_);
-    root_->addWidget(firstRun_);
+    setup_ = new SetupPage(app, details_, root_);
+    root_->addWidget(setup_);
     root_->addWidget(pagesArea_);
     setCentralWidget(central);
 
@@ -73,15 +73,13 @@ MainWindow::MainWindow(LauncherApp* app, QWidget* parent) : QMainWindow(parent),
     connect(app_, &LauncherApp::foldersChanged, this, [this] {
         sidebar_->setFooter(app_->gameFolder()->chosen() ? app_->gameFolder()->path() : app_->appData()->root());
     });
-    connect(firstRun_, &FirstRunFlow::completed, this, &MainWindow::showPages);
-    connect(games_, &GamesPage::prepareRequested, this, [this](const QString&) { showFirstRun(FirstRunFlow::WhichComputer); });
-    connect(games_, &GamesPage::folderRequested, this, [this] { showFirstRun(FirstRunFlow::WhereItLives); });
-    connect(games_, &GamesPage::otherComputerRequested, this, [this] { showFirstRun(FirstRunFlow::WhichComputer); });
-    connect(settings_, &SettingsPage::folderRequested, this, [this] { showFirstRun(FirstRunFlow::WhereItLives); });
+    connect(setup_, &SetupPage::completed, this, &MainWindow::showPages);
+    connect(games_, &GamesPage::setupRequested, this, [this](const QString& iso) { showSetup(iso); });
+    connect(settings_, &SettingsPage::folderRequested, this, [this] { showSetup(app_->currentDisc()); });
     for (int i = 0; i < 4; ++i) {
         auto* a = new QAction(this);
         a->setShortcut(QKeySequence(QStringLiteral("Ctrl+%1").arg(i + 1)));
-        connect(a, &QAction::triggered, this, [this, i] { if (!firstRunShowing()) showPage(i); });
+        connect(a, &QAction::triggered, this, [this, i] { if (!setupShowing()) showPage(i); });
         addAction(a);
     }
     auto* shot = new QAction(QStringLiteral("Save a screenshot"), this);
@@ -92,7 +90,7 @@ MainWindow::MainWindow(LauncherApp* app, QWidget* parent) : QMainWindow(parent),
     const QJsonObject win = app->appData()->value("window").toObject();
     const int w = qMax(1024, win.value("width").toInt(1120)), h = qMax(640, win.value("height").toInt(720));
     resize(w, h);
-    showPage(qBound(0, win.value("page").toInt(0), 3));
+    showPage(qBound(0, win.value("page").toInt(0), 3));   // a returning player lands where they left, Games by default
     root_->setCurrentWidget(pagesArea_);
 }
 
@@ -106,11 +104,11 @@ void MainWindow::showPage(int index) {
 }
 
 int MainWindow::currentPage() const { return stack_->currentIndex(); }
-bool MainWindow::firstRunShowing() const { return root_->currentWidget() == firstRun_; }
+bool MainWindow::setupShowing() const { return root_->currentWidget() == setup_; }
 
-void MainWindow::showFirstRun(int page) {
-    firstRun_->open(FirstRunFlow::Page(page));
-    root_->setCurrentWidget(firstRun_);
+void MainWindow::showSetup(const QString& isoPath) {
+    setup_->open(isoPath);
+    root_->setCurrentWidget(setup_);
 }
 
 void MainWindow::showPages() {
@@ -118,9 +116,9 @@ void MainWindow::showPages() {
     showPage(currentPage());
 }
 
-bool MainWindow::startFirstRunIfNeeded() {
+bool MainWindow::startSetupIfNeeded() {
     if (app_->setupComplete()) return false;
-    showFirstRun(FirstRunFlow::WhereIsTheGame);
+    showSetup(app_->currentDisc());
     return true;
 }
 

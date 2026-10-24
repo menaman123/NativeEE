@@ -126,17 +126,17 @@ void GameCard::refresh() {
         statusColor = t.css(LauncherTheme::Warn);
         break;
     case LauncherApp::NoFolder:
-        status = selectable_ ? QStringLiteral("Your disc. It is prepared in the next steps.") : QStringLiteral("Choose where the game should live, then prepare it.");
-        action_->setText(QStringLiteral("Choose a folder…"));
+        status = selectable_ ? QStringLiteral("Your disc, recognised by what is on it. Press Build the game below.") : QStringLiteral("Choose where the game should live, then build it.");
+        action_->setText(QStringLiteral("Set up…"));
         action_->setKind(FlatButton::Primary);
         break;
     case LauncherApp::Prepare: {
         const PreparedRecord r = app_->gameFolder()->prepared();
-        if (selectable_) status = QStringLiteral("Your disc. It is prepared in the next steps.");
+        if (selectable_) status = QStringLiteral("Your disc, recognised by what is on it. Press Build the game below.");
         else if (app_->preparing()) status = QStringLiteral("Preparing your game…");
-        else if (r.ok) { status = QStringLiteral("Prepared by an older version of the launcher. Prepare it again to play with this one."); statusColor = t.css(LauncherTheme::Warn); }
-        else status = QStringLiteral("Not prepared yet. Preparing reads your disc and makes the game for this computer; it takes a few minutes once.");
-        action_->setText(QStringLiteral("Prepare"));
+        else if (r.ok) { status = QStringLiteral("Made by an older version of the launcher. Build it again to play with this one."); statusColor = t.css(LauncherTheme::Warn); }
+        else status = QStringLiteral("Not built yet. Building reads your disc and makes the game for this computer; it takes a minute or two, once.");
+        action_->setText(QStringLiteral("Build the game"));
         action_->setKind(FlatButton::Primary);
         action_->setEnabled(!app_->preparing());
         break;

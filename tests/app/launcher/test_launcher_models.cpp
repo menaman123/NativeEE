@@ -1,7 +1,8 @@
 // tests/app/launcher/test_launcher_models.cpp -- the launcher's models without a window: the manifest (schema 2), the
 // ISO 9660 fingerprint and the executable's checksum on a synthetic image, the identity of a supported / other-region
 // / modified / wrong disc, the game folder's layout and run arguments, the options-file round trip, the step line, the
-// card's relative times.
+// card's relative times, the Build rule (LauncherApp::canPrepare: a chosen, present, supported disc and nothing being
+// prepared) and the pipeline's platform id of a manifest target.
 #include <QtTest/QtTest>
 #include <QTemporaryDir>
 #include "app_data.h"
@@ -12,6 +13,11 @@
 #include "host_platform.h"
 #include "ini_settings.h"
 #include "iso_fingerprint.h"
+#include "launcher_app.h"
+#include "prepare_runner.h"
+#ifdef PS2R_LAUNCHER_HAS_PREPARE
+#include "bundled_prepare_runner.h"
+#endif
 #include "process_runner.h"
 #include "save_state_list.h"
 #include "title_manifest.h"
@@ -74,20 +80,19 @@ const char* kManifest = R"JSON({
                              "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" },
             "alternates": [ { "file": "EXMP_000.02", "region": "PAL", "region_label": "Europe", "id": "EXMP-00002", "supported": false, "reason": "The European release is planned." } ],
             "required_files": ["SYSTEM.CNF"], "extensions": [".iso"] },
-  "release": { "asset_pattern": "${product}-${tag}-${platform}.zip" },
+  "release": { "repo": "example/examplegame", "asset_pattern": "${product}-${tag}-${platform}.zip", "estimate": "about 1 to 2 minutes" },
   "targets": { "macos-arm64": { "label": "macOS (Apple silicon)", "os": "macos", "arch": "arm64", "binary": "examplegame.app" },
                "windows-x64": { "label": "Windows", "os": "windows", "arch": "x86_64", "binary": "examplegame.exe" },
                "linux-x86_64": { "label": "Linux", "os": "linux", "arch": "x86_64", "binary": "examplegame" },
                "macos-x86_64": { "label": "macOS (Intel)", "os": "macos", "arch": "x86_64", "binary": "examplegame.app" } },
   "unsupported": [ { "label": "A handheld", "reason": "Too heavy for it." } ],
-  "game_folder": { "config": "nativeee.ini", "subfolders": { "memcards": { "label": "Memory cards", "default": "memcards" }, "saves": { "label": "Save states", "default": "saves" }, "cache": { "label": "Cache", "default": "cache" } } },
+  "game_folder": { "config": "nativeee.ini", "default": "~/Documents/Example Game", "subfolders": { "memcards": { "label": "Memory cards", "default": "memcards" }, "saves": { "label": "Save states", "default": "saves" }, "cache": { "label": "Cache", "default": "cache" } } },
   "run": { "args": ["--iso", "${iso}", "--config", "${config}", "--set", "paths.save_dir=${saves}"], "resume_args": ["--load-state", "${state}"],
            "save_states": { "folder": "${saves}/savestates", "extension": ".ps2st" } },
   "settings": { "groups": [ { "title": "Picture", "rows": [
     { "key": "video.frame_cap", "label": "Frame rate", "kind": "choice", "default": "60", "choices": [ {"value": "30"}, {"value": "60"}, {"value": "off", "label": "Off"} ] },
     { "key": "video.vsync", "label": "Vertical sync", "kind": "switch", "default": "off", "locked_by": { "key": "video.frame_cap", "value": "off", "help": "Off while the frame rate is not capped." } },
-    { "key": "video.backend", "label": "Graphics", "kind": "choice", "default": "auto", "choices": [ {"value": "auto"}, {"value": "metal", "platforms": ["macos"]}, {"value": "gl", "label": "OpenGL"} ] } ] } ] },
-  "scan": { "folders": ["~/Downloads"], "removable": false }
+    { "key": "video.backend", "label": "Graphics", "kind": "choice", "default": "auto", "choices": [ {"value": "auto"}, {"value": "metal", "platforms": ["macos"]}, {"value": "gl", "label": "OpenGL"} ] } ] } ] }
 })JSON";
 }  // namespace
 
@@ -119,13 +124,24 @@ private slots:
         QCOMPARE(manifest_.targets()[0].os, QStringLiteral("macos"));   // the stable order: macOS, Windows, Linux
         QCOMPARE(manifest_.targets()[2].id, QStringLiteral("windows-x64"));
         QCOMPARE(manifest_.releaseAsset("v1.2", "macos-arm64"), QStringLiteral("examplegame-v1.2-macos-arm64.zip"));
+        QString err;
+        QCOMPARE(manifest_.releaseIndexUrl(), QStringLiteral("https://api.github.com/repos/example/examplegame/releases"));
+        QCOMPARE(manifest_.prepareEstimate(), QStringLiteral("about 1 to 2 minutes"));
+        QCOMPARE(manifest_.defaultGameFolder(), QStringLiteral("~/Documents/Example Game"));
+        TitleManifest explicitIndex;
+        QVERIFY(explicitIndex.loadJson(QJsonObject{{"id", "X"}, {"name", "X"}, {"disc", QJsonObject{{"fingerprint", QJsonObject{{"file", "X_000.01"}}}}},
+                                                   {"release", QJsonObject{{"index_url", "http://127.0.0.1:1/releases.json"}}}}, &err));   // lint: allow
+        QCOMPARE(explicitIndex.releaseIndexUrl(), QStringLiteral("http://127.0.0.1:1/releases.json"));   // lint: allow
+        TitleManifest noRelease;
+        QVERIFY(noRelease.loadJson(QJsonObject{{"id", "X"}, {"name", "X"}, {"disc", QJsonObject{{"fingerprint", QJsonObject{{"file", "X_000.01"}}}}}}, &err));
+        QVERIFY(noRelease.releaseIndexUrl().isEmpty());
+        QVERIFY(noRelease.defaultGameFolder().isEmpty());
         QCOMPARE(manifest_.subfolders().size(), 3);
         QCOMPARE(manifest_.unsupported().size(), 1);
         QCOMPARE(manifest_.allSettingsRows().size(), 3);
         QCOMPARE(manifest_.allSettingsRows()[1].lockedBy.key, QStringLiteral("video.frame_cap"));
         QCOMPARE(manifest_.allSettingsRows()[2].choices[1].platforms, QStringList{"macos"});
         TitleManifest bad;
-        QString err;
         QVERIFY(!bad.loadJson(QJsonObject{{"id", "X"}}, &err));
         QVERIFY(!err.isEmpty());
     }
@@ -177,6 +193,9 @@ private slots:
         QVERIFY(!f.chosen());
         QCOMPARE(GameFolder::safeFolderName("Sly: Game/2"), QStringLiteral("Sly Game 2"));
         QCOMPARE(f.folderFor(home_.path()), home_.path() + "/Example Game");
+        // the suggested folder: the manifest's default under the HOME the launcher uses, never the real user's
+        QCOMPARE(f.suggestedPath(), home_.path() + "/Documents/Example Game");
+        QCOMPARE(f.defaultParent(), QDir(home_.path() + "/Documents").exists() ? home_.path() + "/Documents" : home_.path());
         f.choose(home_.path() + "/Example Game");
         QVERIFY(f.chosen());
         QCOMPARE(f.configPath(), home_.path() + "/Example Game/nativeee.ini");
@@ -274,6 +293,92 @@ private slots:
         QCOMPARE(GameLibrary::playtimeText(3660), QStringLiteral("1 h 1 min"));
         QCOMPARE(GeneratedArtwork::initialsOf("Example Game"), QStringLiteral("EG"));
     }
+
+    void buildRule() {
+        // the Build button's rule: a chosen, present, supported disc and nothing being prepared
+        qputenv("PS2R_LAUNCHER_FAKE_PREPARE", "hang");
+        LauncherApp app;
+        QString err;
+        QVERIFY2(app.loadManifest(home_.path() + "/title.json", &err), qPrintable(err));
+        QString why;
+        QVERIFY(!app.canPrepare(QString(), &why));
+        QVERIFY(why.contains("Choose your disc"));
+        QVERIFY(!app.canPrepare(home_.path() + "/never-added.iso", &why));
+        const QString good = writeIso(home_, "rule_good.iso", {{"SYSTEM.CNF", "x"}, {"EXMP_000.01", "hello"}});
+        const QString pal = writeIso(home_, "rule_pal.iso", {{"SYSTEM.CNF", "x"}, {"EXMP_000.02", "hello"}});
+        const QString junk = home_.path() + "/rule_junk.iso";
+        QFile j(junk);
+        QVERIFY(j.open(QIODevice::WriteOnly));
+        j.write(QByteArray(40 * 1024 * 1024, 'x'));
+        j.close();
+        // identification of a chosen path, by content: supported / another region / not a disc
+        QCOMPARE(app.addDisc(good).status, DiscIdentity::Supported);
+        QCOMPARE(app.addDisc(pal).status, DiscIdentity::OtherRegion);
+        const DiscIdentity notDisc = app.addDisc(junk);
+        QVERIFY(!notDisc.recognised());
+        QVERIFY(!app.library()->game(junk));   // an unrecognised file never joins the library
+        QVERIFY(app.canPrepare(good, &why));
+        QVERIFY(!app.canPrepare(pal, &why));
+        QVERIFY(why.contains("European"));
+        QVERIFY(!app.canPrepare(junk, &why));
+        // no folder yet: the rule is about the disc; the folder is chosen when Build is pressed
+        QVERIFY(!app.gameFolder()->chosen());
+        app.chooseGameFolder(home_.path() + "/rule_folder", true);
+        QCOMPARE(app.gameFolder()->path(), home_.path() + "/rule_folder");   // exact: not made into a "<name>" folder
+        QVERIFY(app.prepare(good, QString(), &err));
+        QVERIFY(app.preparing());
+        QVERIFY(!app.canPrepare(good, &why));   // while preparing
+        QVERIFY(why.contains("already"));
+        app.preparer()->cancel();
+        QVERIFY(!app.preparing());
+        QVERIFY(QFile::remove(good));
+        app.library()->refreshMissing();
+        QVERIFY(!app.canPrepare(good, &why));
+        QVERIFY(why.contains("no longer"));
+        qunsetenv("PS2R_LAUNCHER_FAKE_PREPARE");
+    }
+
+#ifdef PS2R_LAUNCHER_HAS_PREPARE
+    void bundledRunner() {
+        // the runner over the shipped pipeline: the platform id of a target, this computer only, the index from the
+        // manifest or the override, and an honest failure (the pipeline's own sentence) when the index is not there
+        BundledPrepareRunner r(&manifest_);
+        QCOMPARE(BundledPrepareRunner::platformFor(manifest_, "windows-x64"), QStringLiteral("windows-x86_64"));
+        QCOMPARE(BundledPrepareRunner::platformFor(manifest_, "macos-arm64"), QStringLiteral("macos-arm64"));
+        QCOMPARE(BundledPrepareRunner::platformFor(manifest_, "no-such"), BundledPrepareRunner::hostPlatform());
+        const QString host = HostPlatform::targetId(manifest_);
+        QString why;
+        QVERIFY(r.available(host, &why));
+        QVERIFY(!r.available(host == "windows-x64" ? "linux-x86_64" : "windows-x64", &why));
+        QVERIFY(why.contains("only be made on the computer"));
+        QCOMPARE(r.indexUrl(), QStringLiteral("https://api.github.com/repos/example/examplegame/releases"));
+        r.setIndexUrl(home_.path() + "/no-such-index/releases.json");   // lint: allow
+        QCOMPARE(r.estimateText(host), QStringLiteral("about 1 to 2 minutes"));
+        PrepareRequest req;
+        req.isoPath = writeIso(home_, "bundled.iso", {{"SYSTEM.CNF", "x"}, {"EXMP_000.01", "hello"}});
+        req.discSha256 = kHelloSha;
+        req.gameFolder = home_.path() + "/bundled_folder";
+        req.cacheFolder = req.gameFolder + "/cache";
+        req.targetId = host;
+        req.binaryName = "examplegame";
+        req.logPath = home_.path() + "/bundled.log";
+        QSignalSpy failed(&r, &PrepareRunner::failed);
+        QSignalSpy finished(&r, &PrepareRunner::finished);
+        QString err;
+        QVERIFY2(r.start(req, &err), qPrintable(err));
+        QVERIFY(r.running());
+        QTRY_VERIFY_WITH_TIMEOUT(failed.count() == 1, 30000);
+        QCOMPARE(finished.count(), 0);
+        QVERIFY(!r.running());
+        const QString text = failed.first().at(0).toString();
+        QVERIFY2(!text.isEmpty() && !text.contains("recompil", Qt::CaseInsensitive), qPrintable(text));
+        r.waitFinished();
+        QVERIFY(!r.lastOk());
+        QVERIFY(r.reportJson().contains("\"ok\": false"));
+        QVERIFY(r.reportJson().contains("\"driver\": \"launcher\""));
+        QVERIFY(QFileInfo::exists(req.logPath));
+    }
+#endif
 
     void appDataPaths() {
         AppData data("ExampleGame");

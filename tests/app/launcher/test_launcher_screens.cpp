@@ -1,19 +1,20 @@
 // tests/app/launcher/test_launcher_screens.cpp -- the window offscreen at the minimum 1024x640 with a neutral manifest,
-// an empty HOME and the fake prepare runner: every first-run page (empty, error and card states, the folder, the
-// computer, Preparing with progress, Preparing failed with Try again and Details, Ready) and every page after setup
-// (Games, Save States empty and with a state, Settings with its lock rule and without a folder, About, the Forget
-// sheet, dark), a PNG of each written to PS2R_LAUNCHER_SCREENS_DIR, and no codename / developer vocabulary /
-// placeholder / emoji in any visible string (the strings are also dumped to strings.txt for tools/launcher_lint.py).
+// an empty HOME and the fake prepare runner: the setup window in every state (empty, not a disc, not the game, an
+// unsupported disc, the supported disc chosen, Advanced, building with the one progress bar, done with Play, failed
+// with Try again and Details, dark) and every page after setup (Games, Save States empty and with a state, Settings
+// with its lock rule and without a folder, About, the Forget sheet, dark), a PNG of each written to
+// PS2R_LAUNCHER_SCREENS_DIR, and no codename / developer vocabulary / placeholder / emoji in any visible string (the
+// strings are also dumped to strings.txt for tools/launcher_lint.py).
 #include <QtTest/QtTest>
 #include <QAbstractButton>
 #include <QLabel>
+#include <QLineEdit>
 #include <QRegularExpression>
 #include <QTemporaryDir>
 #include "about_page.h"
 #include "details_sheet.h"
 #include "disc_list.h"
 #include "empty_state.h"
-#include "first_run_flow.h"
 #include "flat_button.h"
 #include "folder_row.h"
 #include "game_card.h"
@@ -32,6 +33,7 @@
 #include "segmented_control.h"
 #include "settings_page.h"
 #include "settings_row.h"
+#include "setup_page.h"
 #include "sidebar.h"
 #include "switch_control.h"
 using namespace ps2r::launcher;
@@ -98,7 +100,7 @@ const char* kManifest = R"JSON({
                "linux-x86_64": { "label": "Linux (64-bit)", "os": "linux", "arch": "x86_64", "binary": "examplegame" } },
   "unsupported": [ { "label": "A handheld console", "reason": "The graphics work of the game is far heavier than it can carry at full speed." },
                    { "label": "Other regions of the disc", "reason": "Only the North American disc is prepared by this version." } ],
-  "game_folder": { "config": "nativeee.ini", "subfolders": { "memcards": { "label": "Memory cards", "default": "memcards" }, "saves": { "label": "Save states", "default": "saves" }, "cache": { "label": "Cache", "default": "cache" } },
+  "game_folder": { "config": "nativeee.ini", "default": "~/Documents/Example Game", "subfolders": { "memcards": { "label": "Memory cards", "default": "memcards" }, "saves": { "label": "Save states", "default": "saves" }, "cache": { "label": "Cache", "default": "cache" } },
                    "portable_note": "Everything the game needs is in this one folder. Move or copy the folder and the game moves with it." },
   "run": { "args": ["--iso", "${iso}", "--config", "${config}"], "resume_args": ["--load-state", "${state}"], "save_states": { "folder": "${saves}/savestates", "extension": ".ps2st" } },
   "settings": { "note": "Written to nativeee.ini in the game folder, the file the game reads.", "groups": [
@@ -109,7 +111,6 @@ const char* kManifest = R"JSON({
       { "key": "video.vsync", "label": "Vertical sync", "kind": "switch", "default": "off", "locked_by": { "key": "video.frame_cap", "value": "off", "help": "Off while the frame rate is not capped." } } ] },
     { "title": "Sound", "rows": [
       { "key": "audio.interpolation", "label": "Sound quality", "kind": "choice", "default": "linear", "choices": [ {"value": "linear", "label": "Standard"}, {"value": "gaussian", "label": "Smooth"} ] } ] } ] },
-  "scan": { "folders": ["~/Downloads"], "removable": false },
   "licences": [ { "label": "Licence", "file": "LICENSE" } ]
 })JSON";
 
@@ -199,96 +200,152 @@ private slots:
         lintStrings();
     }
 
-    void firstRunWhereIsTheGame() {
-        QVERIFY(window_->startFirstRunIfNeeded());
-        QVERIFY(window_->firstRunShowing());
-        FirstRunFlow* flow = window_->firstRun();
-        QCOMPARE(flow->currentPage(), FirstRunFlow::WhereIsTheGame);
-        QVERIFY(flow->discList()->emptyState()->isVisible());
-        QVERIFY(!flow->nextButton()->isEnabled());
-        shot("01_first_run_where_is_the_game_empty");
-        // a file that is not a disc: the error state in words, nothing refused silently
+    void setupEmpty() {
+        // the first run: ONE setup window (decision D-L10); nothing is looked for, the player chooses the disc
+        QVERIFY(window_->startSetupIfNeeded());
+        QVERIFY(window_->setupShowing());
+        SetupPage* setup = window_->setup();
+        QCOMPARE(setup->state(), SetupPage::Idle);
+        QVERIFY(setup->discPath().isEmpty());
+        QVERIFY(setup->discStatus()->isVisible());
+        QVERIFY(setup->discStatus()->text().contains("No disc image chosen"));
+        QVERIFY(!setup->discCard());
+        QVERIFY(setup->buildButton()->isVisible());
+        QVERIFY(!setup->buildButton()->isEnabled());
+        QCOMPARE(setup->buildButton()->text(), QStringLiteral("Build the game"));
+        QVERIFY(setup->buildHint()->text().contains("Choose your disc"));
+        QVERIFY(setup->folderRow()->path().endsWith("/Documents/Example Game"));   // suggested, not yet chosen
+        QVERIFY(!app_->gameFolder()->chosen());
+        QVERIFY(setup->settingsRow("video.frame_cap"));
+        QVERIFY(setup->settingsRow("video.vsync"));
+        QVERIFY(!setup->advancedOpen());
+        QVERIFY(!setup->targetSelector()->isVisible());
+        QVERIFY(!setup->progress()->isVisible());
+        QVERIFY(!setup->stopButton()->isVisible());
+        QVERIFY(setup->leaveButton()->isVisible());
+        shot("01_setup_empty");
+        // a file that is not a disc: the reason in words, the Build button stays off
         QFile junk(home_.path() + "/junk.iso");
         QVERIFY(junk.open(QIODevice::WriteOnly));
         junk.write(QByteArray(40 * 1024 * 1024, 'x'));
         junk.close();
-        flow->discList()->addDiscFromPath(home_.path() + "/junk.iso");
-        QVERIFY(flow->discList()->emptyState()->isVisible());
-        QVERIFY(flow->discList()->cards().isEmpty());
-        shot("02_first_run_not_a_disc_error");
+        setup->chooseDisc(home_.path() + "/junk.iso");
+        QVERIFY(setup->discStatus()->isVisible());
+        QVERIFY(!setup->discCard());
+        QVERIFY(!setup->buildButton()->isEnabled());
+        QVERIFY(setup->discField()->text().endsWith("junk.iso"));
+        shot("02_setup_not_a_disc");
         // the wrong game: the error names the game and what is missing
         const QString other = writeIso(home_.path(), "other.iso", {{"SYSTEM.CNF", "x"}, {"OTHR_000.01", "hello"}});
-        flow->discList()->addDiscFromPath(other);
-        QVERIFY(flow->discList()->cards().isEmpty());
-        shot("03_first_run_not_the_game_error");
-        // one card per image: the other-region disc badged, the modified one badged, the supported one selectable
+        setup->chooseDisc(other);
+        QVERIFY(!setup->discCard());
+        QVERIFY(setup->discStatus()->text().contains("Example Game"));
+        QVERIFY(!setup->buildButton()->isEnabled());
+        shot("03_setup_not_the_game");
+    }
+
+    void setupDiscChosen() {
+        SetupPage* setup = window_->setup();
+        // another region: the card with the badge and the plain reason; Build stays off and says why
         palIso_ = writeIso(home_.path(), "europe.iso", {{"SYSTEM.CNF", "x"}, {"EXMP_000.02", "hello"}});
+        setup->chooseDisc(palIso_);
+        QVERIFY(setup->discCard());
+        QCOMPARE(setup->discCard()->badgeText(), QStringLiteral("Not supported yet"));
+        QVERIFY(setup->discCard()->statusText().contains("European"));
+        QVERIFY(!setup->discCard()->selected());
+        QVERIFY(!setup->buildButton()->isEnabled());
+        QVERIFY(setup->buildHint()->text().contains("European"));
+        shot("04_setup_unsupported_disc");
+        // a modified image: recognised, badged
         const QString modified = writeIso(home_.path(), "changed.iso", {{"SYSTEM.CNF", "x"}, {"EXMP_000.01", "hellp"}});
+        setup->chooseDisc(modified);
+        QCOMPARE(setup->discCard()->badgeText(), QStringLiteral("Not supported yet"));
+        QVERIFY(setup->discCard()->statusText().contains("differs"));
+        QVERIFY(!setup->buildButton()->isEnabled());
+        // the supported disc: the card, selected, no badge; Build on
         goodIso_ = writeIso(home_.path(), "mine.iso", {{"SYSTEM.CNF", "x"}, {"EXMP_000.01", "hello"}});
-        flow->discList()->addDiscFromPath(palIso_);
-        flow->discList()->addDiscFromPath(modified);
-        flow->discList()->addDiscFromPath(goodIso_);
-        QCOMPARE(flow->discList()->cards().size(), 3);
-        QVERIFY(!flow->discList()->emptyState()->isVisible());
-        GameCard* good = flow->discList()->card(goodIso_);
-        GameCard* pal = flow->discList()->card(palIso_);
-        GameCard* mod = flow->discList()->card(modified);
-        QVERIFY(good && pal && mod);
-        QVERIFY(good->selected());
-        QVERIFY(good->badgeText().isEmpty());
-        QCOMPARE(pal->badgeText(), QStringLiteral("Not supported yet"));
-        QVERIFY(pal->statusText().contains("European"));
-        QCOMPARE(mod->badgeText(), QStringLiteral("Not supported yet"));
-        QVERIFY(mod->statusText().contains("differs"));
-        QCOMPARE(flow->discList()->cards().first(), good);   // supported first
-        QVERIFY(flow->nextButton()->isEnabled());
-        shot("04_first_run_discs_found");
+        setup->chooseDisc(goodIso_);
+        QVERIFY(setup->discCard());
+        QVERIFY(setup->discCard()->badgeText().isEmpty());
+        QVERIFY(setup->discCard()->selected());
+        QVERIFY(setup->discCard()->statusText().contains("Build the game"));
+        QVERIFY(setup->buildButton()->isEnabled());
+        QVERIFY(!setup->buildHint()->isVisible());
+        QCOMPARE(app_->currentDisc(), goodIso_);
+        QCOMPARE(app_->library()->games().size(), 3);
+        // the settings rows: a change is kept until the game is built (no folder yet); the lock rule holds here too
+        SettingsRow* cap = setup->settingsRow("video.frame_cap");
+        cap->segmented()->setCurrentIndex(cap->segmented()->values().indexOf("30"), true);
+        QCOMPARE(setup->pendingSettings().value("video.frame_cap"), QStringLiteral("30"));
+        QVERIFY(!app_->gameFolder()->chosen());
+        cap->segmented()->setCurrentIndex(cap->segmented()->values().indexOf("off"), true);
+        QVERIFY(!setup->settingsRow("video.vsync")->toggle()->isEnabled());
+        cap->segmented()->setCurrentIndex(cap->segmented()->values().indexOf("30"), true);
+        QVERIFY(setup->settingsRow("video.vsync")->toggle()->isEnabled());
+        const QStringList graphics = setup->settingsRow("video.backend")->segmented()->values();
+        QCOMPARE(graphics.contains("metal"), QString::fromLatin1(
+#ifdef Q_OS_MACOS
+                                                 "yes"
+#else
+                                                 "no"
+#endif
+                                                 ) == "yes");
+        shot("05_setup_disc_chosen");
     }
 
-    void firstRunWhereItLives() {
-        FirstRunFlow* flow = window_->firstRun();
-        flow->next();
-        QCOMPARE(flow->currentPage(), FirstRunFlow::WhereItLives);
-        QVERIFY(flow->folderRow()->path().endsWith("/Example Game"));
-        QVERIFY(!app_->gameFolder()->chosen());   // suggested, not yet chosen
-        shot("05_first_run_where_it_lives");
-        flow->next();
-        QVERIFY(app_->gameFolder()->chosen());
-        QVERIFY(app_->gameFolder()->path().endsWith("/Example Game"));
-        QCOMPARE(flow->currentPage(), FirstRunFlow::WhichComputer);
+    void setupAdvanced() {
+        SetupPage* setup = window_->setup();
+        setup->setAdvancedOpen(true);
+        QVERIFY(setup->targetSelector()->isVisible());
+        QCOMPARE(setup->targetSelector()->values().size(), 4);
+        QCOMPARE(setup->selectedTarget(), app_->hostTarget());
+        QVERIFY(setup->targetNote()->text().contains("This computer"));
+        shot("06_setup_advanced");
+        const QString other = app_->hostTarget() == "windows-x64" ? "linux-x86_64" : "windows-x64";
+        setup->targetSelector()->setCurrentIndex(setup->targetSelector()->values().indexOf(other), true);   // a click
+        QCOMPARE(setup->selectedTarget(), other);
+        QVERIFY(setup->targetNote()->text().contains("Another computer"));
+        shot("06b_setup_another_computer");
+        setup->targetSelector()->setCurrentIndex(setup->targetSelector()->values().indexOf(app_->hostTarget()), true);
+        QCOMPARE(setup->selectedTarget(), app_->hostTarget());
+        setup->setAdvancedOpen(false);
+        QVERIFY(!setup->targetSelector()->isVisible());
     }
 
-    void firstRunWhichComputer() {
-        FirstRunFlow* flow = window_->firstRun();
-        QCOMPARE(flow->targetSelector()->values().size(), 4);
-        QCOMPARE(flow->selectedTarget(), app_->hostTarget());
-        QCOMPARE(flow->nextButton()->text(), QStringLiteral("Prepare"));
-        shot("06_first_run_which_computer");
-        flow->targetSelector()->setCurrentValue(app_->hostTarget() == "windows-x64" ? "linux-x86_64" : "windows-x64");
-        shot("07_first_run_another_computer");
-        flow->targetSelector()->setCurrentValue(app_->hostTarget());
-    }
-
-    void firstRunPreparing() {
-        FirstRunFlow* flow = window_->firstRun();
-        flow->next();
-        QCOMPARE(flow->currentPage(), FirstRunFlow::Preparing);
+    void setupBuilding() {
+        SetupPage* setup = window_->setup();
+        setup->build();
+        QCOMPARE(setup->state(), SetupPage::Building);
         QVERIFY(app_->preparing());
-        QVERIFY(flow->cancelButton()->isVisible());
-        QVERIFY(!flow->nextButton()->isVisible());
+        // the folder was chosen when Build was pressed and the kept settings written into it
+        QVERIFY(app_->gameFolder()->chosen());
+        QVERIFY(app_->gameFolder()->path().endsWith("/Documents/Example Game"));
+        QCOMPARE(IniSettings(app_->settingsFilePath()).get("video.frame_cap"), QStringLiteral("30"));
+        QVERIFY(setup->pendingSettings().isEmpty());
+        QVERIFY(setup->stopButton()->isVisible());
+        QVERIFY(setup->detailsButton()->isVisible());
+        QVERIFY(!setup->buildButton()->isVisible());
+        QVERIFY(!setup->discField()->isEnabled());
         QTest::qWait(500);
-        QVERIFY(flow->progress()->isVisible());
-        QVERIFY(!flow->progress()->text().isEmpty());
-        QVERIFY(flow->progress()->caption().contains("%"));
-        shot("08_first_run_preparing");
-        QTRY_COMPARE_WITH_TIMEOUT(flow->currentPage(), FirstRunFlow::Ready, 5000);
+        QVERIFY(setup->progress()->isVisible());
+        QVERIFY(!setup->progress()->text().isEmpty());
+        QVERIFY(setup->progress()->caption().contains("%"));
+        shot("07_setup_building");
+        QTRY_COMPARE_WITH_TIMEOUT(setup->state(), SetupPage::Done, 5000);
         QVERIFY(app_->gameFolder()->prepared().ok);
         QVERIFY(app_->setupComplete());
-        QVERIFY(flow->playButton()->isVisible());
-        shot("09_first_run_ready");
-        QCOMPARE(flow->nextButton()->text(), QStringLiteral("Done"));
-        flow->next();
-        QVERIFY(!window_->firstRunShowing());
+        QVERIFY(setup->playButton()->isVisible());
+        QVERIFY(!setup->stopButton()->isVisible());
+        QCOMPARE(setup->progress()->text(), QStringLiteral("Your game is ready"));
+        QCOMPARE(setup->leaveButton()->text(), QStringLiteral("Go to the launcher"));
+        QCOMPARE(setup->discCard()->statusText(), QStringLiteral("Ready to play."));
+        QCOMPARE(IniSettings(app_->settingsFilePath()).get("video.frame_cap"), QStringLiteral("30"));   // written again after the build
+        shot("08_setup_done");
+        setup->leave();
+        QVERIFY(!window_->setupShowing());
+        // a returning player lands on the pages, never on the setup window
+        QVERIFY(!window_->startSetupIfNeeded());
+        QVERIFY(!window_->setupShowing());
     }
 
     void gamesPage() {
@@ -302,7 +359,17 @@ private slots:
         QVERIFY(good->factsText().contains("Prepared"));
         QVERIFY(!g->discs()->card(palIso_)->actionButton()->isVisible());
         QCOMPARE(window_->sidebar()->pageName(1), QStringLiteral("Save States"));
-        shot("10_games");
+        QCOMPARE(g->discs()->addButton()->text(), QStringLiteral("Add a game…"));
+        shot("09_games");
+        // "Add a game…" opens the setup window again, empty; the pages come back
+        g->discs()->addButton()->click();
+        QVERIFY(window_->setupShowing());
+        QCOMPARE(window_->setup()->state(), SetupPage::Idle);
+        QVERIFY(window_->setup()->discPath().isEmpty());
+        QVERIFY(window_->setup()->folderRow()->path().endsWith("/Documents/Example Game"));
+        window_->setup()->leave();
+        QVERIFY(!window_->setupShowing());
+        QCOMPARE(window_->currentPage(), int(MainWindow::GamesIndex));
         // the disc gone: the card says so and offers Remove
         QVERIFY(QFile::remove(palIso_));
         app_->library()->refreshMissing();
@@ -317,7 +384,7 @@ private slots:
         SaveStatesPage* s = window_->saveStatesPage();
         QVERIFY(s->emptyState()->isVisible());
         QVERIFY(s->cards().isEmpty());
-        shot("11_save_states_empty");
+        shot("10_save_states_empty");
         const QString dir = app_->gameFolder()->saveStatesFolder();
         QDir().mkpath(dir);
         for (const char* name : {"slot0", "slot1"}) {
@@ -337,7 +404,7 @@ private slots:
         QCOMPARE(s->cards().size(), 2);
         QVERIFY(!s->emptyState()->isVisible());
         QVERIFY(s->cards()[0]->factsText().contains("frame 1501") || s->cards()[1]->factsText().contains("frame 1501"));
-        shot("12_save_states");
+        shot("11_save_states");
     }
 
     void settingsRoundTrip() {
@@ -358,18 +425,27 @@ private slots:
                                                  "no"
 #endif
                                                  ) == "yes");
-        QCOMPARE(s->row("video.frame_cap")->value(), QStringLiteral("60"));
-        s->row("video.frame_cap")->segmented()->setCurrentIndex(s->row("video.frame_cap")->segmented()->values().indexOf("30"), true);
+        QCOMPARE(s->row("video.frame_cap")->value(), QStringLiteral("30"));   // the setup window's choice, from the file
+        s->row("video.frame_cap")->segmented()->setCurrentIndex(s->row("video.frame_cap")->segmented()->values().indexOf("60"), true);
         IniSettings ini(app_->settingsFilePath());
-        QCOMPARE(ini.get("video.frame_cap"), QStringLiteral("30"));
+        QCOMPARE(ini.get("video.frame_cap"), QStringLiteral("60"));
+        s->row("video.frame_cap")->segmented()->setCurrentIndex(s->row("video.frame_cap")->segmented()->values().indexOf("30"), true);
+        QCOMPARE(IniSettings(app_->settingsFilePath()).get("video.frame_cap"), QStringLiteral("30"));
         QVERIFY(ini.path().endsWith("/Example Game/nativeee.ini"));
-        shot("13_settings");
+        shot("12_settings");
         // the lock rule from the manifest: frame rate Off locks vertical sync and says why
         s->row("video.frame_cap")->segmented()->setCurrentIndex(s->row("video.frame_cap")->segmented()->values().indexOf("off"), true);
         QVERIFY(!s->row("video.vsync")->toggle()->isEnabled());
-        shot("14_settings_locked_row");
+        shot("13_settings_locked_row");
         s->row("video.frame_cap")->segmented()->setCurrentIndex(s->row("video.frame_cap")->segmented()->values().indexOf("60"), true);
         QVERIFY(s->row("video.vsync")->toggle()->isEnabled());
+        // the game folder's Change… on Settings opens the setup window on the current disc
+        s->folderRow("game")->changeButton()->click();
+        QVERIFY(window_->setupShowing());
+        QCOMPARE(window_->setup()->discPath(), goodIso_);
+        QVERIFY(window_->setup()->buildButton()->isEnabled());
+        window_->setup()->leave();
+        QVERIFY(!window_->setupShowing());
     }
 
     void aboutAndSheets() {
@@ -377,15 +453,15 @@ private slots:
         AboutPage* a = window_->aboutPage();
         QVERIFY(a->unsupportedText().contains("handheld"));
         QVERIFY(a->unsupportedText().contains("Other regions"));
-        shot("15_about");
+        shot("14_about");
         a->removeButton()->click();
         QTest::qWait(50);
-        shot("16_about_forget_sheet");
+        shot("15_about_forget_sheet");
         QTest::keyClick(window_, Qt::Key_Escape);
         QTest::qWait(50);
         window_->detailsSheet()->showLog(QStringLiteral("Details"), QStringLiteral("line one\nline two\n"));
         QVERIFY(window_->detailsSheet()->isOpen());
-        shot("17_details_sheet");
+        shot("16_details_sheet");
         window_->detailsSheet()->closeSheet();
         QVERIFY(!window_->detailsSheet()->isOpen());
     }
@@ -394,9 +470,13 @@ private slots:
         LauncherTheme::instance().setDark(true);
         QTest::qWait(50);
         window_->showPage(MainWindow::GamesIndex);
-        shot("18_games_dark");
+        shot("17_games_dark");
         window_->showPage(MainWindow::SettingsIndex);
-        shot("19_settings_dark");
+        shot("18_settings_dark");
+        window_->showSetup(goodIso_);
+        QTest::qWait(50);
+        shot("24_setup_dark");
+        window_->setup()->leave();
         LauncherTheme::instance().setDark(false);
         QTest::qWait(50);
     }
@@ -415,43 +495,57 @@ private slots:
         window_->showPages();
         window_->showPage(MainWindow::SettingsIndex);
         QVERIFY(window_->settingsPage()->emptyState()->isVisible());
-        shot("20_settings_no_folder");
+        shot("19_settings_no_folder");
         window_->showPage(MainWindow::SaveStatesIndex);
         QVERIFY(window_->saveStatesPage()->emptyState()->isVisible());
-        shot("21_save_states_no_folder");
+        shot("20_save_states_no_folder");
         window_->showPage(MainWindow::GamesIndex);
         QVERIFY(window_->gamesPage()->discs()->emptyState()->isVisible());
-        shot("22_games_empty");
-        FirstRunFlow* flow = window_->firstRun();
-        QVERIFY(window_->startFirstRunIfNeeded());
-        flow->discList()->addDiscFromPath(goodIso_);
-        flow->next();
-        flow->next();
-        QCOMPARE(flow->currentPage(), FirstRunFlow::WhichComputer);
-        flow->next();
-        QTRY_VERIFY_WITH_TIMEOUT(!flow->errorText().isEmpty(), 5000);
-        QCOMPARE(flow->currentPage(), FirstRunFlow::Preparing);
-        QVERIFY(flow->retryButton()->isVisible());
-        QVERIFY(flow->detailsButton()->isVisible());
-        QVERIFY(!flow->progress()->isVisible());
-        QVERIFY(flow->errorText().contains("could not be prepared"));
-        shot("23_first_run_preparing_failed");
-        flow->detailsButton()->click();
+        shot("21_games_empty");
+        SetupPage* setup = window_->setup();
+        QVERIFY(window_->startSetupIfNeeded());
+        setup->chooseDisc(goodIso_);
+        QVERIFY(setup->buildButton()->isEnabled());
+        setup->build();
+        QCOMPARE(setup->state(), SetupPage::Building);
+        QTRY_VERIFY_WITH_TIMEOUT(!setup->errorText().isEmpty(), 5000);
+        QCOMPARE(setup->state(), SetupPage::Failed);
+        QVERIFY(setup->retryButton()->isVisible());
+        QVERIFY(setup->detailsButton()->isVisible());
+        QVERIFY(!setup->progress()->isVisible());
+        QVERIFY(!setup->buildButton()->isVisible());
+        QVERIFY(setup->discField()->isEnabled());   // the inputs are back
+        QVERIFY(setup->errorText().contains("could not be prepared"));
+        shot("22_setup_failed");
+        setup->detailsButton()->click();
         QTest::qWait(50);
         QVERIFY(window_->detailsSheet()->isOpen());
         QVERIFY(window_->detailsSheet()->text().contains("simulated"));
-        shot("24_first_run_failure_details");
+        shot("23_setup_failure_details");
         window_->detailsSheet()->closeSheet();
         QVERIFY(!app2->setupComplete());
-        // the card after a failure: Prepare again, the first run not complete
+        // the card after a failure: build again, the setup not complete
         QCOMPARE(app2->nextAction(goodIso_), LauncherApp::Prepare);
-        // without any runner bundled: the honest state, no fake success
+        // Try again is the same Build
+        setup->build();
+        QCOMPARE(setup->state(), SetupPage::Building);
+        setup->stop();
+        QTRY_COMPARE_WITH_TIMEOUT(setup->state(), SetupPage::Failed, 5000);
+        QVERIFY(setup->errorText().contains("stopped"));
+        // without the fake: the shipped pipeline when the launcher was built with it, else the honest "cannot
+        // prepare" state -- never a fake success
         qunsetenv("PS2R_LAUNCHER_FAKE_PREPARE");
         LauncherApp* app3 = makeApp(home_.path() + "/three");
         QVERIFY(app3);
         QString why;
+#ifdef PS2R_LAUNCHER_HAS_PREPARE
+        QVERIFY(app3->preparer()->available(app3->hostTarget(), &why));
+        QVERIFY(!app3->preparer()->available(app3->hostTarget() == "windows-x64" ? "linux-x86_64" : "windows-x64", &why));
+        QVERIFY(why.contains("only be made on the computer"));
+#else
         QVERIFY(!app3->preparer()->available(app3->hostTarget(), &why));
         QVERIFY(why.contains("cannot prepare"));
+#endif
     }
 };
 

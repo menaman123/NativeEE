@@ -2,7 +2,6 @@
 #include "disc_list.h"
 #include <QDragEnterEvent>
 #include <QDropEvent>
-#include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -10,7 +9,6 @@
 #include <QPainter>
 #include <QVBoxLayout>
 #include "app_data.h"
-#include "disc_scanner.h"
 #include "empty_state.h"
 #include "flat_button.h"
 #include "game_card.h"
@@ -31,40 +29,24 @@ DiscList::DiscList(LauncherApp* app, bool selectable, QWidget* parent) : QWidget
     cardsLayout_->setContentsMargins(0, 0, 0, 0);
     cardsLayout_->setSpacing(LauncherTheme::S3);
     col->addWidget(cardsHost_);
-    QStringList places;
-    for (const QString& f : app->manifest()->scanFolders()) {
-        const QString name = QFileInfo(app->appData()->expand(f)).fileName();
-        if (!name.isEmpty()) places << name;
-    }
-    empty_ = new EmptyState(QStringLiteral("No disc image found — drop yours here"),
-                            QStringLiteral("%1 and removable drives were searched for a disc of %2. A disc image is a copy of your own disc, usually a .iso file.")
-                                .arg(places.join(QStringLiteral(", ")), app->manifest()->name()),
-                            QStringLiteral("Choose a disc image…"), QStringLiteral("Search again"), this);
+    Q_UNUSED(t);
+    empty_ = new EmptyState(QStringLiteral("No game yet"),
+                            QStringLiteral("Add your own disc image of %1 and the launcher builds the game from it. A disc image is a copy of your disc, usually a .iso file; you can also drop it here.")
+                                .arg(app->manifest()->name()),
+                            QStringLiteral("Add a game…"), QString(), this);
     empty_->setObjectName(QStringLiteral("empty_state"));
     col->addWidget(empty_);
     auto* bottom = new QHBoxLayout();
     bottom->setSpacing(LauncherTheme::S2);
-    scanNote_ = new QLabel(this);
-    scanNote_->setFont(t.font(LauncherTheme::Caption));
-    scanNote_->setStyleSheet(QStringLiteral("color: %1;").arg(t.css(LauncherTheme::TextMuted)));
-    bottom->addWidget(scanNote_, 1);
-    add_ = new FlatButton(QStringLiteral("Add a disc image…"), FlatButton::Secondary, this);
-    rescan_ = new FlatButton(QStringLiteral("Search again"), FlatButton::Quiet, this);
+    bottom->addStretch(1);
+    add_ = new FlatButton(QStringLiteral("Add a game…"), FlatButton::Secondary, this);
     bottom->addWidget(add_);
-    bottom->addWidget(rescan_);
     col->addLayout(bottom);
 
-    connect(empty_, &EmptyState::primaryClicked, this, &DiscList::chooseDisc);
-    connect(empty_, &EmptyState::quietClicked, this, [this] { app_->scan(); });
-    connect(add_, &QAbstractButton::clicked, this, &DiscList::chooseDisc);
-    connect(rescan_, &QAbstractButton::clicked, this, [this] { app_->scan(); });
+    connect(empty_, &EmptyState::primaryClicked, this, &DiscList::addRequested);
+    connect(add_, &QAbstractButton::clicked, this, &DiscList::addRequested);
     connect(app_->library(), &GameLibrary::changed, this, &DiscList::rebuildCards);
     connect(app_, &LauncherApp::stateChanged, this, &DiscList::refreshCards);
-    connect(app_->scanner(), &DiscScanner::finished, this, [this](int n, int) {
-        scanNote_->setText(n == 0 ? QStringLiteral("No disc image of %1 was found in the usual places.").arg(app_->manifest()->name())
-                                  : QStringLiteral("%1 disc image%2 found.").arg(n).arg(n == 1 ? "" : "s"));
-        rebuildCards();
-    });
     rebuildCards();
 }
 
@@ -111,14 +93,6 @@ void DiscList::setSelectedDisc(const QString& isoPath) {
     selected_ = isoPath;
     for (GameCard* c : cards_) c->setSelected(c->isoPath() == selected_);
     emit selectionChanged(selected_);
-}
-
-void DiscList::chooseDisc() {
-    QStringList filters;
-    for (const QString& e : app_->manifest()->discExtensions()) filters << "*" + e;
-    const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("Choose a disc image of %1").arg(app_->manifest()->name()),
-                                                      AppData::homePath(), QStringLiteral("Disc images (%1)").arg(filters.join(' ')));
-    if (!path.isEmpty()) addDiscFromPath(path);
 }
 
 void DiscList::addDiscFromPath(const QString& path) {

@@ -21,11 +21,17 @@ void GameFolder::choose(const QString& folder) {
     appData_->save();
 }
 
+QString GameFolder::suggestedPath() const {
+    // decision D-L10/D-L12: the game lives in Documents by default (the manifest may say otherwise); under the home
+    // AppData uses (the HOME variable), so a test or a portable run with another HOME never writes into the real one
+    const QString fromManifest = manifest_->defaultGameFolder();
+    if (!fromManifest.isEmpty()) return QDir::cleanPath(appData_->expand(fromManifest));
+    return AppData::homePath() + "/Documents/" + safeFolderName(manifest_->name());
+}
+
 QString GameFolder::defaultParent() const {
-    // the Desktop under the home AppData uses (the HOME variable), so a test or a portable run with another HOME
-    // never writes into the real user's Desktop
-    const QString desktop = AppData::homePath() + "/Desktop";
-    return QDir(desktop).exists() ? desktop : AppData::homePath();
+    const QString parent = QFileInfo(suggestedPath()).absolutePath();
+    return QDir(parent).exists() ? parent : AppData::homePath();
 }
 
 QString GameFolder::safeFolderName(const QString& name) {

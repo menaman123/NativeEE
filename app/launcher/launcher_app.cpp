@@ -7,7 +7,6 @@
 #include <QProcessEnvironment>
 #include "app_data.h"
 #include "disc_identifier.h"
-#include "disc_scanner.h"
 #include "game_folder.h"
 #include "game_library.h"
 #include "game_process.h"
@@ -62,12 +61,10 @@ bool LauncherApp::loadManifest(const QString& explicitPath, QString* error) {
     folder_ = new GameFolder(appData_, manifest_);
     preparer_ = PrepareRunner::createDefault(manifest_, this);
     game_ = new GameProcess(manifest_, this);
-    scanner_ = new DiscScanner(this);
     // tests and scripted runs name the game folder up front instead of answering the question
     const QString preset = qEnvironmentVariable("PS2R_LAUNCHER_GAME_FOLDER");
     if (!preset.isEmpty() && !folder_->chosen()) folder_->choose(preset);
     openSettings();
-    connect(scanner_, &DiscScanner::found, this, [this](const DiscIdentity& d) { library_->add(d); });
     connect(preparer_, &PrepareRunner::finished, this, [this](const QString& binary) {
         PreparedRecord r;
         r.ok = true;
@@ -96,8 +93,8 @@ void LauncherApp::openSettings() {
     settings_ = folder_->chosen() ? new IniSettings(settingsFilePath()) : nullptr;
 }
 
-void LauncherApp::chooseGameFolder(const QString& pickedOrFolder) {
-    folder_->choose(folder_->folderFor(pickedOrFolder));
+void LauncherApp::chooseGameFolder(const QString& pickedOrFolder, bool exact) {
+    folder_->choose(exact ? pickedOrFolder : folder_->folderFor(pickedOrFolder));
     openSettings();
     emit foldersChanged();
     emit stateChanged();
@@ -124,17 +121,20 @@ bool LauncherApp::setSettingValue(const QString& key, const QString& value, QStr
     return true;
 }
 
-void LauncherApp::scan() {
-    QStringList folders;
-    for (const QString& f : manifest_->scanFolders()) folders << appData_->expand(f);
-    folders.removeDuplicates();
-    scanner_->start(manifest_, folders, manifest_->scanRemovable(), manifest_->scanMaxDepth());
-}
-
 DiscIdentity LauncherApp::addDisc(const QString& path) {
     const DiscIdentity d = DiscIdentifier::identify(*manifest_, path);
     if (d.recognised()) library_->add(d);
     return d;
+}
+
+bool LauncherApp::canPrepare(const QString& isoPath, QString* why) const {
+    if (isoPath.isEmpty()) { if (why) *why = QStringLiteral("Choose your disc image first."); return false; }
+    const GameEntry* g = library_->game(isoPath);
+    if (!g) { if (why) *why = QStringLiteral("Choose your disc image first."); return false; }
+    if (g->missing) { if (why) *why = QStringLiteral("The disc image is no longer where it was."); return false; }
+    if (!g->identity.playable()) { if (why) *why = g->identity.reason; return false; }
+    if (preparer_->running()) { if (why) *why = QStringLiteral("The game is already being prepared."); return false; }
+    return true;
 }
 
 QString LauncherApp::currentDisc() const {

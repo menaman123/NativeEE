@@ -28,7 +28,10 @@ public:
     bool chosen() const;
     QString path() const;                    // empty until chosen
     void choose(const QString& folder);      // remembered in launcher.json; the sub-folders are made on prepare
-    QString defaultParent() const;           // where the picker opens: the Desktop
+    QString defaultParent() const;           // where the picker opens: the parent of the suggested folder
+    // The folder suggested on the setup window: game_folder.default from the manifest (~ expanded), else
+    // ~/Documents/<the title's name made safe>. Under the HOME AppData uses, so a test never writes into the real one.
+    QString suggestedPath() const;
     // The folder the picker returns, made into the game folder: a "<name>" folder inside unless the pick is one already.
     QString folderFor(const QString& picked) const;
 

@@ -28,21 +28,52 @@ endif()
 # The launcher's classes as a library (the application and the tests link it).
 add_library(ps2r_launcher_lib STATIC
     launcher_theme.cpp launcher_style.cpp title_manifest.cpp app_data.cpp iso_fingerprint.cpp disc_identity.cpp disc_identifier.cpp
-    disc_scanner.cpp game_library.cpp ini_settings.cpp process_runner.cpp game_process.cpp game_folder.cpp
+    game_library.cpp ini_settings.cpp process_runner.cpp game_process.cpp game_folder.cpp
     host_platform.cpp prepare_runner.cpp fake_prepare_runner.cpp unavailable_prepare_runner.cpp save_state_list.cpp
     launcher_app.cpp main_window.cpp sidebar.cpp page_header.cpp flat_button.cpp segmented_control.cpp
     switch_control.cpp folder_row.cpp generated_artwork.cpp game_card.cpp disc_list.cpp games_page.cpp empty_state.cpp
     settings_row.cpp settings_page.cpp save_state_card.cpp save_states_page.cpp about_page.cpp
-    progress_panel.cpp details_sheet.cpp sheet_overlay.cpp first_run_flow.cpp
-    launcher_theme.h launcher_style.h title_manifest.h app_data.h iso_fingerprint.h disc_identity.h disc_identifier.h disc_scanner.h
+    progress_panel.cpp details_sheet.cpp sheet_overlay.cpp setup_page.cpp
+    launcher_theme.h launcher_style.h title_manifest.h app_data.h iso_fingerprint.h disc_identity.h disc_identifier.h
     game_library.h ini_settings.h process_runner.h game_process.h game_folder.h host_platform.h prepare_runner.h
     fake_prepare_runner.h unavailable_prepare_runner.h save_state_list.h
     launcher_app.h main_window.h sidebar.h page_header.h flat_button.h segmented_control.h switch_control.h
     folder_row.h generated_artwork.h game_card.h disc_list.h games_page.h empty_state.h settings_row.h settings_page.h
-    save_state_card.h save_states_page.h about_page.h progress_panel.h details_sheet.h sheet_overlay.h first_run_flow.h)
+    save_state_card.h save_states_page.h about_page.h progress_panel.h details_sheet.h sheet_overlay.h setup_page.h)
 target_include_directories(ps2r_launcher_lib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(ps2r_launcher_lib PUBLIC Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Concurrent)
 target_compile_options(ps2r_launcher_lib PRIVATE ${PS2R_LAUNCHER_WARNINGS})
+
+# The real "Preparing your game" behind the Build button: tools/prepare's ps2r_prepare (decision D-A). In the engine
+# build the target exists; built alone (the release script's way) the same four translation units are compiled here, so
+# the shipped launcher always carries the pipeline. PS2R_LAUNCHER_PREPARE=OFF leaves the honest "cannot prepare" runner.
+option(PS2R_LAUNCHER_PREPARE "Link the prepare pipeline (tools/prepare) into the launcher" ON)
+if(PS2R_LAUNCHER_PREPARE)
+    if(NOT TARGET ps2r_prepare)
+        add_library(ps2r_prepare STATIC
+            "${PS2R_LAUNCHER_ROOT}/tools/prepare/prepare.cpp"
+            "${PS2R_LAUNCHER_ROOT}/engine/core/hash/sha256.cpp"   # lint: allow
+            "${PS2R_LAUNCHER_ROOT}/engine/platform/platform.cpp")
+        if(WIN32)
+            # the Windows arm carries the GL entry-point table (engine/platform/CMakeLists.txt keeps them together)
+            target_sources(ps2r_prepare PRIVATE "${PS2R_LAUNCHER_ROOT}/engine/platform/host/host_windows.cpp"
+                                                "${PS2R_LAUNCHER_ROOT}/engine/platform/windows/gl_loader.cpp")
+            find_package(OpenGL REQUIRED)
+            target_link_libraries(ps2r_prepare PUBLIC dbghelp psapi winmm OpenGL::GL)
+        else()
+            target_sources(ps2r_prepare PRIVATE "${PS2R_LAUNCHER_ROOT}/engine/platform/host/host_posix.cpp"
+                                                "${PS2R_LAUNCHER_ROOT}/engine/platform/posix/fiber_posix.cpp")
+        endif()
+        target_include_directories(ps2r_prepare PUBLIC "${PS2R_LAUNCHER_ROOT}")
+        target_compile_features(ps2r_prepare PUBLIC cxx_std_17)
+        find_package(Threads REQUIRED)
+        target_link_libraries(ps2r_prepare PUBLIC Threads::Threads)
+    endif()
+    target_sources(ps2r_launcher_lib PRIVATE bundled_prepare_runner.cpp bundled_prepare_runner.h)
+    target_include_directories(ps2r_launcher_lib PRIVATE "${PS2R_LAUNCHER_ROOT}")
+    target_link_libraries(ps2r_launcher_lib PUBLIC ps2r_prepare)
+    target_compile_definitions(ps2r_launcher_lib PUBLIC PS2R_LAUNCHER_HAS_PREPARE=1)
+endif()
 if(DEFINED PS2R_LAUNCHER_VERSION)
     target_compile_definitions(ps2r_launcher_lib PUBLIC PS2R_LAUNCHER_VERSION="${PS2R_LAUNCHER_VERSION}")
 endif()
