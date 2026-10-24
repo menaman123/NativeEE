@@ -14,7 +14,7 @@ INJECTS it (`--set launcher.elf_sha256=<hex>`), then runs
   * <tmp>/game_files/example_title.rep/SLUS_123.45 byte-equal to the fake ELF;
   * <tmp>/game_files/example_title.rep/the title.iso is a PLAIN 2048 image (PVD at byte
     32768 reads `\\x01CD001`) -- the raw .bin was converted on the way;
-  * <tmp>/memcards/{mc0,mc1,mc0_slot1,mc1_slot1} exist; <tmp>/ps2r.ini exists with `paths.iso = `;
+  * <tmp>/memcards/{mc0,mc1,mc0_slot1,mc1_slot1} exist; <tmp>/nativeee.ini exists with `[paths]` / `iso = `;
   * <tmp>/game_files/.nativeee_build_id equals `nativeee --version` (the GameFilesStamp);
   * RED vectors on the same binary: the right serial with the BUILD's expectation (no injection)
     -> exit 1 `REFUSED -- SLUS_123.45 is present but it is not the ELF this build recompiled` and NO
@@ -71,9 +71,9 @@ def judge_accept(code, err, data, elf_bytes, build_id):
     for card in ("mc0", "mc1", "mc0_slot1", "mc1_slot1"):
         if not os.path.isdir(os.path.join(data, "memcards", card)):
             fails.append("memcard dir missing: %s" % card)
-    ini = os.path.join(data, "ps2r.ini")
-    if not os.path.isfile(ini) or "paths.iso = " not in open(ini).read():
-        fails.append("ps2r.ini missing or without paths.iso")
+    ini = os.path.join(data, "nativeee.ini")
+    if not os.path.isfile(ini) or "iso = " not in open(ini).read():
+        fails.append("nativeee.ini missing or without paths.iso")
     stamp = os.path.join(data, "game_files", ".nativeee_build_id")
     if not os.path.isfile(stamp):
         fails.append("stamp missing")
@@ -124,7 +124,7 @@ def selftest():
             f.write(b"\x01CD001")
         for c in ("mc0", "mc1", "mc0_slot1", "mc1_slot1"):
             os.makedirs(os.path.join(data, "memcards", c))
-        open(os.path.join(data, "ps2r.ini"), "w").write("paths.iso = \n")
+        open(os.path.join(data, "nativeee.ini"), "w").write("[paths]\niso = \n")
         open(os.path.join(data, "game_files", ".nativeee_build_id"), "w").write("B1\n")
         err = "\n".join("nativeee: " + s + " x" for s in LADDER)
         ok &= judge_accept(0, err, data, elf, "B1") == []
@@ -223,7 +223,7 @@ def main():
     if fails:
         print("FAIL root_first_run_extract:\n  " + "\n  ".join(fails))
         return 1
-    print("PASS root_first_run_extract: accept (raw .bin -> plain .iso, ELF byte-equal, memcards, ps2r.ini, stamp == %s); "
+    print("PASS root_first_run_extract: accept (raw .bin -> plain .iso, ELF byte-equal, memcards, nativeee.ini, stamp == %s); "
           "3 refusals left nothing; a later-stage failure removed its ELF, no stamp" % build_id)
     return 0
 

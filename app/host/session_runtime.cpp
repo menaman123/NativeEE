@@ -465,12 +465,15 @@ void SessionRuntime::PumpMain() {
     ProcessCommands();
     // The menu just opened: re-read the settings file and apply what another
     // writer changed (SettingsResync), through the rows' own requests.
-    if (controls_.MenuOpen() && !menu_was_open_ && reread_) {
+    // (The first pump only records the state: a menu that starts open is not a re-open, and
+    // the command line's --set pins must stand for the session until the user opens the menu.)
+    if (controls_.MenuOpen() && !menu_was_open_ && reread_ && !first_pump_) {
         const auto plan = SettingsResync::Plan(reread_(), controls_.Read().runtime, controls_.Read().capabilities);
         for (const auto& request : plan) controls_.Submit(request.first, request.second);
         if (!plan.empty()) ++settings_resyncs_;
     }
     menu_was_open_ = controls_.MenuOpen();
+    first_pump_ = false;
     if (input_) {
         input_->SetUiCapture(controls_.MenuOpen());
         input_->ServicePending();

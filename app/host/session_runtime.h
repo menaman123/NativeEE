@@ -299,6 +299,7 @@ private:
     Persist persist_;
     Reread reread_;
     bool menu_was_open_ = false;
+    bool first_pump_ = true;
     uint64_t settings_resyncs_ = 0;
     std::string window_dump_dir_;
     std::string renderer_;
