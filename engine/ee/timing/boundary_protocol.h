@@ -68,9 +68,25 @@ public:
     bool ShouldPark(uint32_t declared, uint32_t processed) const { return ShouldPark(declared, processed, runahead_); }
 
     // The KernlTimer wait hook: block until the emu clock may have advanced
-    // past `deadline` (T0 counts; the caller re-reads its clock).
+    // past `deadline` (T0 counts; the caller re-reads its clock). Play: the park
+    // on the pacer's tick also ends on a queued foreign wake (EeEventQueue: a GS
+    // FINISH raised by the GIF drain thread, an IOP completion), which the
+    // holder applies before returning -- the console takes a pending interrupt
+    // at once, it does not sleep to the next vblank over it; the caller
+    // re-reads its clock / re-evaluates and parks again.
     void Wait(uint64_t deadline);
     std::function<void(uint64_t)> WaitHook();
+    std::function<void()> FireDueFieldsHook();
+    // A wall field is due: under Play (wall-locked, not bypassed) the pacer has
+    // noted a tick no boundary has fired yet. The deterministic policy and the
+    // bypass modes never report one (the running thread's vblank wake,
+    // EeYieldPoint::WakeVblankIfWallFieldDue, is inert there by construction).
+    bool WallFieldDue() const;
+    // E432: fire the wall fields the pacer has noted (WallFieldDue) on the calling
+    // guest thread, with no park -- the console's vblank landing mid-frame on the
+    // running thread. Nothing when none is due or the caller is not a guest thread.
+    void FireDueFields();
+    uint64_t DueFieldFires() const { return due_field_fires_; }
     // Play pacer: a tick fired (wakes the timer waiters and the parked boundary).
     void NotifyTick();
     // The wall-locked boundary (Play policy with a host pacer): the boundary's
@@ -80,8 +96,19 @@ public:
     // the reference parked until the NEXT vblank edge after the frame's
     // work). Returns true when it parked; a boundary that found a tick already
     // noted was LATE (frame work > period) and is counted, never burst-repaid.
-    bool ParkForPacerTick();
+    // E433: the park is REGISTERED with the event queue (as the timer wait is): a
+    // foreign wake -- the MTVU worker's i-bit stall latch (Intc::RaiseDeferred ->
+    // kDeferredLatched), a GS FINISH from the drain thread, an IOP completion --
+    // ends the wait early, `on_wake` runs on this (holder) thread with no tick
+    // fired (the caller applies the queue, collects the latched causes and
+    // dispatches the handlers: the console's interrupt landing on the thread
+    // that waits for the vblank), and the park resumes to the same deadline.
+    // Without it a worker stalled on an i-bit waited for the next wall edge
+    // whenever the EE was early (the hub load: 18 stalls a frame, 0 pictures/s
+    // windows). Census pace= wakes.
+    bool ParkForPacerTick(const std::function<void()>& on_wake = {});
     static constexpr uint32_t kBoundaryParkPeriods = 2;
+    uint64_t PaceWakes() const { return pace_wakes_; }
     uint64_t PaceParks() const { return pace_parks_; }
     uint64_t PaceLate() const { return pace_late_; }
     uint64_t PaceTimeouts() const { return pace_timeouts_; }
@@ -145,6 +172,8 @@ private:
     uint32_t runahead_ = kRunaheadDefault;
     uint64_t waits_ = 0;
     uint64_t deferred_ = 0;
+    uint64_t due_field_fires_ = 0;
+    uint64_t pace_wakes_ = 0;
     uint64_t pace_parks_ = 0;
     uint64_t pace_late_ = 0;
     uint64_t pace_timeouts_ = 0;

@@ -119,12 +119,22 @@ void FiberPosix::Switch(Fiber to) {
     if (from == target) return;
     t_current = target;
     if (swapcontext(&from->ctx, &target->ctx) != 0) {
-        t_current = from;
+        t_current = from;   // no switch happened: still this thread's slot
         std::fprintf(stderr, "platform: swapcontext failed\n");
         std::abort();
     }
-    // Resumed: whoever switched back to us set t_current before swapping.
-    t_current = from;
+    // Resumed. Nothing to restore: whoever switched back into us stored `from`
+    // (= us) into ITS thread's t_current before swapping, and we are running on
+    // that thread now. A store here would be wrong, not redundant: the IOP
+    // kernel resumes a coroutine from whichever host thread runs Dispatch, so
+    // the thread that resumed us may differ from the one we parked on, and the
+    // compiler is entitled to reuse the thread_local address it resolved above
+    // (TLS is per-thread-invariant across calls) -- the store would land in the
+    // ORIGINAL thread's slot and leave it naming this fiber while that thread
+    // runs on its own stack. Its next Switch then saves its host context into
+    // this fiber's record, and the next resume of this fiber from another
+    // thread jumps onto a dead region of the first thread's stack
+    // (tests/iop/test_fiber_migrate.cpp pins the rule).
 }
 
 Fiber FiberPosix::Current() {

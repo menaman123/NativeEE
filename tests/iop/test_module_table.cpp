@@ -1,7 +1,8 @@
 // tests/iop/test_module_table.cpp -- IopModuleTable (ctest IopModuleTable): the
 // FRAME pump points over the kernel. Pinned: the boundary pump's quantum drain
 // (dues serviced up to the INCLUSIVE frame ceiling -- P4-CEILING-INCLUSIVE: 60
-// pumps of a 16,667 us timer fire 61 beats), the park-loop pump's one-quantum
+// pumps of a 16,667 us timer fire 61 beats), N delivered fields -> N quanta
+// (PumpAtBoundary(N) in lockstep with N single pumps), the park-loop pump's one-quantum
 // cap, OnModuleLoaded running every started thread to its first block before
 // returning, the no-op rules (before boot, under REALTIME), PumpAfterEeService
 // resuming exactly the woken Wait::Rpc parkee, the policy read from Config, the
@@ -61,6 +62,40 @@ static void TestQuantumDrain() {
     CHECK(per_pump_ok, "each pump drains every due of its quantum (15..18 beats of a 1 ms timer)");
     CHECK(beats == 134, "recorded count: 134 beats over 8 pumps (one beat per pass + forward resync at the jump)");
     CHECK(k.Clock().Frames() == (uint64_t)pumps, "one frame boundary per PumpAtBoundary");
+}
+
+static void TestFieldsPerBoundary() {
+    // N delivered fields -> N IOP quanta (the play-mode clock contract: a late
+    // boundary that delivered N fields runs the IOP N frame quanta, so the IOP's
+    // 240 Hz timers keep pace with the SPU's 800 frames per field). Pinned
+    // against a reference kernel pumped one field at a time: the frame count,
+    // the virtual time and the beats of a 989snd-like 4,167 us timer are
+    // identical whether the fields arrive as one boundary or as N boundaries;
+    // fields=0 is one quantum (a boundary never delivers less than its own field).
+    IopModuleTable a(IopClock::Policy::Frame), b(IopClock::Policy::Frame);
+    int beats_a = 0, beats_b = 0;
+    a.Kernel().StartPeriodicTimerUs(4167, [&]() -> bool { beats_a++; return true; });
+    b.Kernel().StartPeriodicTimerUs(4167, [&]() -> bool { beats_b++; return true; });
+    a.OnModuleLoaded(0);
+    b.OnModuleLoaded(0);
+    const uint64_t pattern[] = {1, 3, 1, 7, 2, 1, 15};
+    uint64_t fields_total = 0;
+    bool lockstep = true;
+    for (uint64_t n : pattern) {
+        a.PumpAtBoundary(n);
+        for (uint64_t i = 0; i < n; i++) b.PumpAtBoundary();
+        fields_total += n;
+        if (a.Kernel().Clock().Frames() != fields_total || a.Kernel().Clock().NowUs() != b.Kernel().Clock().NowUs() ||
+            beats_a != beats_b)
+            lockstep = false;
+    }
+    std::printf("fields per boundary: %llu fields -> frames=%llu beats=%d (reference %d)\n",
+                (unsigned long long)fields_total, (unsigned long long)a.Kernel().Clock().Frames(), beats_a, beats_b);
+    CHECK(lockstep, "PumpAtBoundary(N) == N PumpAtBoundary(): frames, virtual time and timer beats in lockstep");
+    CHECK(a.Kernel().Clock().Frames() == fields_total, "N delivered fields -> N IOP frame quanta");
+    CHECK(beats_a == beats_b && beats_a >= (int)(fields_total * 4 - 1), "the 240 Hz-class timer beat ~4 times per field");
+    a.PumpAtBoundary(0);
+    CHECK(a.Kernel().Clock().Frames() == fields_total + 1, "fields=0 is one quantum");
 }
 
 static void TestInclusiveCeiling() {
@@ -271,6 +306,7 @@ int main() {
     TestPumpToInstantFiresOnlyWhatThePresentPassed();
     TestQuantumDrain();
     TestInclusiveCeiling();
+    TestFieldsPerBoundary();
     TestParkLoopPumpBound();
     TestOnModuleLoadedRunsToFirstBlock();
     TestNoOpRules();

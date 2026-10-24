@@ -1,0 +1,1540 @@
+{
+  "schema": 1,
+  "file": "nativeee.ini",
+  "bindings_file": "bindings.ini",
+  "legacy_files": [
+    "ps2r.ini",
+    "display.ini"
+  ],
+  "resolution": [
+    "--config <file>",
+    "<executable folder>/nativeee.ini",
+    "<user data>/nativeee.ini"
+  ],
+  "grammar": {
+    "line": "key = value",
+    "sections": "a [section] header scopes the short key name; the flat section.key form is read too",
+    "comments": "# or ; to the end of the line",
+    "write": "replace the key's line in place; a new key goes after the last key of its [section], or in a new [section] appended at the end; write the whole file to a temporary and rename it",
+    "booleans": "on | off"
+  },
+  "settings": [
+    {
+      "key": "audio.enabled",
+      "section": "audio",
+      "name": "enabled",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "audio.interpolation",
+      "section": "audio",
+      "name": "interpolation",
+      "type": "enum",
+      "default": "linear",
+      "kind": "choice",
+      "user_facing": true,
+      "values": [
+        "linear",
+        "gaussian"
+      ],
+      "label": "Sound smoothing",
+      "help": "How the console's sound samples are smoothed. Console-accurate matches the original hardware; Standard is a little brighter.",
+      "choices": [
+        {
+          "value": "linear",
+          "label": "Standard"
+        },
+        {
+          "value": "gaussian",
+          "label": "Console-accurate"
+        }
+      ]
+    },
+    {
+      "key": "audio.sdr_block_ms",
+      "section": "audio",
+      "name": "sdr_block_ms",
+      "type": "int",
+      "default": "8",
+      "kind": "number",
+      "user_facing": false
+    },
+    {
+      "key": "audio.volume",
+      "section": "audio",
+      "name": "volume",
+      "type": "int",
+      "default": "100",
+      "kind": "number",
+      "user_facing": true,
+      "label": "Volume",
+      "help": "The game's loudness, 0 to 100.",
+      "min": 0,
+      "max": 100
+    },
+    {
+      "key": "cdvd.delivery_visibility",
+      "section": "cdvd",
+      "name": "delivery_visibility",
+      "type": "enum",
+      "default": "poll",
+      "kind": "choice",
+      "user_facing": false,
+      "values": [
+        "boundary",
+        "poll"
+      ]
+    },
+    {
+      "key": "cdvd.latency_model",
+      "section": "cdvd",
+      "name": "latency_model",
+      "type": "enum",
+      "default": "instant",
+      "kind": "choice",
+      "user_facing": false,
+      "values": [
+        "instant",
+        "modelled"
+      ]
+    },
+    {
+      "key": "cdvd.latency_scale",
+      "section": "cdvd",
+      "name": "latency_scale",
+      "type": "float",
+      "default": "1",
+      "kind": "number",
+      "user_facing": false
+    },
+    {
+      "key": "cdvd.load_turbo",
+      "section": "cdvd",
+      "name": "load_turbo",
+      "type": "bool",
+      "default": "off",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "cdvd.mc_latency_polls",
+      "section": "cdvd",
+      "name": "mc_latency_polls",
+      "type": "int",
+      "default": "4",
+      "kind": "number",
+      "user_facing": false
+    },
+    {
+      "key": "cdvd.poll_latency_scale",
+      "section": "cdvd",
+      "name": "poll_latency_scale",
+      "type": "float",
+      "default": "1",
+      "kind": "number",
+      "user_facing": false
+    },
+    {
+      "key": "dev.log_level",
+      "section": "dev",
+      "name": "log_level",
+      "type": "enum",
+      "default": "quiet",
+      "kind": "choice",
+      "user_facing": false,
+      "values": [
+        "quiet",
+        "error",
+        "warn",
+        "info",
+        "narrate"
+      ]
+    },
+    {
+      "key": "diag.perf",
+      "section": "diag",
+      "name": "perf",
+      "type": "bool",
+      "default": "off",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "diag.tick_census",
+      "section": "diag",
+      "name": "tick_census",
+      "type": "bool",
+      "default": "off",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "diag.vu1_lockstep",
+      "section": "diag",
+      "name": "vu1_lockstep",
+      "type": "bool",
+      "default": "off",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "engine.cop0_count",
+      "section": "engine",
+      "name": "cop0_count",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "engine.ee_fast_dispatch",
+      "section": "engine",
+      "name": "ee_fast_dispatch",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "engine.ee_runahead",
+      "section": "engine",
+      "name": "ee_runahead",
+      "type": "int",
+      "default": "2",
+      "kind": "number",
+      "user_facing": false
+    },
+    {
+      "key": "engine.ee_yield_spin_gate",
+      "section": "engine",
+      "name": "ee_yield_spin_gate",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "engine.mtvu",
+      "section": "engine",
+      "name": "mtvu",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "engine.mtvu_depth",
+      "section": "engine",
+      "name": "mtvu_depth",
+      "type": "int",
+      "default": "2",
+      "kind": "number",
+      "user_facing": false
+    },
+    {
+      "key": "engine.mtvu_depth_hold",
+      "section": "engine",
+      "name": "mtvu_depth_hold",
+      "type": "int",
+      "default": "0",
+      "kind": "number",
+      "user_facing": false
+    },
+    {
+      "key": "engine.mtvu_early_finish",
+      "section": "engine",
+      "name": "mtvu_early_finish",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "engine.mtvu_kick_drop",
+      "section": "engine",
+      "name": "mtvu_kick_drop",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "engine.mtvu_wait_probe",
+      "section": "engine",
+      "name": "mtvu_wait_probe",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "engine.pacing",
+      "section": "engine",
+      "name": "pacing",
+      "type": "enum",
+      "default": "realtime",
+      "kind": "choice",
+      "user_facing": false,
+      "values": [
+        "realtime",
+        "freerun"
+      ]
+    },
+    {
+      "key": "engine.shutdown_wait_s",
+      "section": "engine",
+      "name": "shutdown_wait_s",
+      "type": "int",
+      "default": "10",
+      "kind": "number",
+      "user_facing": false
+    },
+    {
+      "key": "engine.time_regime_pin",
+      "section": "engine",
+      "name": "time_regime_pin",
+      "type": "int",
+      "default": "-1",
+      "kind": "number",
+      "user_facing": false
+    },
+    {
+      "key": "engine.turbo",
+      "section": "engine",
+      "name": "turbo",
+      "type": "int",
+      "default": "0",
+      "kind": "number",
+      "user_facing": false
+    },
+    {
+      "key": "engine.vu1_aot_chain",
+      "section": "engine",
+      "name": "vu1_aot_chain",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "engine.vu1_aot_codegen",
+      "section": "engine",
+      "name": "vu1_aot_codegen",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "engine.vu1_aot_compiler",
+      "section": "engine",
+      "name": "vu1_aot_compiler",
+      "type": "str",
+      "default": "",
+      "kind": "text",
+      "user_facing": false
+    },
+    {
+      "key": "engine.vu1_aot_corpus",
+      "section": "engine",
+      "name": "vu1_aot_corpus",
+      "type": "str",
+      "default": "",
+      "kind": "text",
+      "user_facing": false
+    },
+    {
+      "key": "engine.vu1_aot_fallback",
+      "section": "engine",
+      "name": "vu1_aot_fallback",
+      "type": "enum",
+      "default": "block",
+      "kind": "choice",
+      "user_facing": false,
+      "values": [
+        "block",
+        "interp"
+      ]
+    },
+    {
+      "key": "engine.vu1_aot_mac_acc",
+      "section": "engine",
+      "name": "vu1_aot_mac_acc",
+      "type": "bool",
+      "default": "off",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "engine.vu1_aot_opt",
+      "section": "engine",
+      "name": "vu1_aot_opt",
+      "type": "int",
+      "default": "2",
+      "kind": "number",
+      "user_facing": false
+    },
+    {
+      "key": "engine.vu1_aot_pack",
+      "section": "engine",
+      "name": "vu1_aot_pack",
+      "type": "str",
+      "default": "",
+      "kind": "text",
+      "user_facing": false
+    },
+    {
+      "key": "engine.vu1_aot_prelude",
+      "section": "engine",
+      "name": "vu1_aot_prelude",
+      "type": "str",
+      "default": "",
+      "kind": "text",
+      "user_facing": false
+    },
+    {
+      "key": "engine.vu1_aot_region_blocks",
+      "section": "engine",
+      "name": "vu1_aot_region_blocks",
+      "type": "int",
+      "default": "1",
+      "kind": "number",
+      "user_facing": false
+    },
+    {
+      "key": "engine.vu1_aot_region_ops",
+      "section": "engine",
+      "name": "vu1_aot_region_ops",
+      "type": "int",
+      "default": "48",
+      "kind": "number",
+      "user_facing": false
+    },
+    {
+      "key": "engine.vu1_aot_region_taken",
+      "section": "engine",
+      "name": "vu1_aot_region_taken",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "engine.vu1_aot_sysroot",
+      "section": "engine",
+      "name": "vu1_aot_sysroot",
+      "type": "str",
+      "default": "",
+      "kind": "text",
+      "user_facing": false
+    },
+    {
+      "key": "engine.vu1_aot_verify",
+      "section": "engine",
+      "name": "vu1_aot_verify",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "engine.vu1_mode",
+      "section": "engine",
+      "name": "vu1_mode",
+      "type": "enum",
+      "default": "cached",
+      "kind": "choice",
+      "user_facing": false,
+      "values": [
+        "hle",
+        "cached",
+        "interp",
+        "block",
+        "aot"
+      ]
+    },
+    {
+      "key": "fixes.look_rest_seconds",
+      "section": "fixes",
+      "name": "look_rest_seconds",
+      "type": "bool",
+      "default": "off",
+      "kind": "switch",
+      "user_facing": true,
+      "label": "Fix: head-look rest time",
+      "help": "The original never set how long a head-look rests, so it used leftover memory. On stores zero."
+    },
+    {
+      "key": "fixes.skid_mark_init",
+      "section": "fixes",
+      "name": "skid_mark_init",
+      "type": "bool",
+      "default": "off",
+      "kind": "switch",
+      "user_facing": true,
+      "label": "Fix: skid-mark colours",
+      "help": "The original never set the first skid-mark strip's colours, so it used leftover memory. On clears them."
+    },
+    {
+      "key": "game.rtc_fixed",
+      "section": "game",
+      "name": "rtc_fixed",
+      "type": "bool",
+      "default": "off",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "gs.queue",
+      "section": "gs",
+      "name": "queue",
+      "type": "enum",
+      "default": "pipelined",
+      "kind": "choice",
+      "user_facing": false,
+      "values": [
+        "inline",
+        "thread",
+        "pipelined"
+      ]
+    },
+    {
+      "key": "hle.audio_mix",
+      "section": "hle",
+      "name": "audio_mix",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "hle.culling",
+      "section": "hle",
+      "name": "culling",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "hle.files",
+      "section": "hle",
+      "name": "files",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "hle.graphics_distortion",
+      "section": "hle",
+      "name": "graphics_distortion",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "hle.graphics_frame",
+      "section": "hle",
+      "name": "graphics_frame",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "hle.graphics_meshes",
+      "section": "hle",
+      "name": "graphics_meshes",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "hle.graphics_movie",
+      "section": "hle",
+      "name": "graphics_movie",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "hle.graphics_screen",
+      "section": "hle",
+      "name": "graphics_screen",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "hle.graphics_shadows",
+      "section": "hle",
+      "name": "graphics_shadows",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "hle.graphics_sky",
+      "section": "hle",
+      "name": "graphics_sky",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "hle.graphics_sprites",
+      "section": "hle",
+      "name": "graphics_sprites",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "hle.graphics_strips",
+      "section": "hle",
+      "name": "graphics_strips",
+      "type": "enum",
+      "default": "all",
+      "kind": "choice",
+      "user_facing": false,
+      "values": [
+        "model",
+        "plain",
+        "all"
+      ]
+    },
+    {
+      "key": "hle.graphics_text",
+      "section": "hle",
+      "name": "graphics_text",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "hle.graphics_textures",
+      "section": "hle",
+      "name": "graphics_textures",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "hle.input_service",
+      "section": "hle",
+      "name": "input_service",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "hle.libmc_format_in_t0",
+      "section": "hle",
+      "name": "libmc_format_in_t0",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "hle.math_helpers",
+      "section": "hle",
+      "name": "math_helpers",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "hle.meta_arena",
+      "section": "hle",
+      "name": "meta_arena",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "hle.movie_lifecycle",
+      "section": "hle",
+      "name": "movie_lifecycle",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "hle.movie_start",
+      "section": "hle",
+      "name": "movie_start",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "hle.movie_step",
+      "section": "hle",
+      "name": "movie_step",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "hle.movie_stop",
+      "section": "hle",
+      "name": "movie_stop",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "hle.movie_wait",
+      "section": "hle",
+      "name": "movie_wait",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "hle.music",
+      "section": "hle",
+      "name": "music",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "hle.music_buffers",
+      "section": "hle",
+      "name": "music_buffers",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "hle.save_storage",
+      "section": "hle",
+      "name": "save_storage",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "hle.service_time",
+      "section": "hle",
+      "name": "service_time",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "hle.sound_bank_headers",
+      "section": "hle",
+      "name": "sound_bank_headers",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "hle.sound_samples",
+      "section": "hle",
+      "name": "sound_samples",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "hle.startup",
+      "section": "hle",
+      "name": "startup",
+      "type": "enum",
+      "default": "native",
+      "kind": "choice",
+      "user_facing": false,
+      "values": [
+        "retained",
+        "native"
+      ]
+    },
+    {
+      "key": "hle.stream_files",
+      "section": "hle",
+      "name": "stream_files",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "input.bindings_file",
+      "section": "input",
+      "name": "bindings_file",
+      "type": "str",
+      "default": "default_bindings.ini",
+      "kind": "text",
+      "user_facing": false
+    },
+    {
+      "key": "input.device",
+      "section": "input",
+      "name": "device",
+      "type": "str",
+      "default": "auto",
+      "kind": "text",
+      "user_facing": true,
+      "label": "Controller",
+      "help": "auto uses the first controller found; none turns controllers off."
+    },
+    {
+      "key": "input.kbm_pad",
+      "section": "input",
+      "name": "kbm_pad",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": true,
+      "label": "Keyboard and mouse",
+      "help": "Use the keyboard and mouse as the controller."
+    },
+    {
+      "key": "input.rumble",
+      "section": "input",
+      "name": "rumble",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": true,
+      "label": "Vibration",
+      "help": "Lets the game shake your controller."
+    },
+    {
+      "key": "iop.dispatch",
+      "section": "iop",
+      "name": "dispatch",
+      "type": "enum",
+      "default": "frame",
+      "kind": "choice",
+      "user_facing": false,
+      "values": [
+        "realtime",
+        "frame"
+      ]
+    },
+    {
+      "key": "iop.restored_timer_due",
+      "section": "iop",
+      "name": "restored_timer_due",
+      "type": "enum",
+      "default": "one_period",
+      "kind": "choice",
+      "user_facing": false,
+      "values": [
+        "one_period",
+        "at_restore"
+      ]
+    },
+    {
+      "key": "launcher.elf_sha256",
+      "section": "launcher",
+      "name": "elf_sha256",
+      "type": "str",
+      "default": "",
+      "kind": "text",
+      "user_facing": false
+    },
+    {
+      "key": "launcher.show",
+      "section": "launcher",
+      "name": "show",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "loader.ring_cache",
+      "section": "loader",
+      "name": "ring_cache",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "log.channels",
+      "section": "log",
+      "name": "channels",
+      "type": "str",
+      "default": "all",
+      "kind": "text",
+      "user_facing": false
+    },
+    {
+      "key": "log.ring_events",
+      "section": "log",
+      "name": "ring_events",
+      "type": "int",
+      "default": "65536",
+      "kind": "number",
+      "user_facing": false
+    },
+    {
+      "key": "meta.profile",
+      "section": "meta",
+      "name": "profile",
+      "type": "str",
+      "default": "default",
+      "kind": "text",
+      "user_facing": false
+    },
+    {
+      "key": "meta.source_fingerprint",
+      "section": "meta",
+      "name": "source_fingerprint",
+      "type": "str",
+      "default": "",
+      "kind": "text",
+      "user_facing": false
+    },
+    {
+      "key": "paths.game_files",
+      "section": "paths",
+      "name": "game_files",
+      "type": "str",
+      "default": "",
+      "kind": "folder",
+      "user_facing": true,
+      "label": "Game files folder",
+      "help": "The files taken from your disc. Empty uses the game files folder inside the data folder."
+    },
+    {
+      "key": "paths.iso",
+      "section": "paths",
+      "name": "iso",
+      "type": "str",
+      "default": "",
+      "kind": "file",
+      "user_facing": true,
+      "label": "Disc image",
+      "help": "Your disc image. Empty uses the copy inside the game files folder."
+    },
+    {
+      "key": "paths.log_dir",
+      "section": "paths",
+      "name": "log_dir",
+      "type": "str",
+      "default": "",
+      "kind": "text",
+      "user_facing": false
+    },
+    {
+      "key": "paths.mc_dir",
+      "section": "paths",
+      "name": "mc_dir",
+      "type": "str",
+      "default": "",
+      "kind": "folder",
+      "user_facing": true,
+      "label": "Memory cards folder",
+      "help": "Empty uses the memory cards folder inside the data folder."
+    },
+    {
+      "key": "paths.save_dir",
+      "section": "paths",
+      "name": "save_dir",
+      "type": "str",
+      "default": "",
+      "kind": "folder",
+      "user_facing": true,
+      "label": "Save states folder",
+      "help": "Empty uses the logs folder inside the data folder."
+    },
+    {
+      "key": "paths.texture_packs",
+      "section": "paths",
+      "name": "texture_packs",
+      "type": "str",
+      "default": "",
+      "kind": "folder",
+      "user_facing": true,
+      "label": "Textures folder",
+      "help": "Each texture pack is a folder in here. Empty uses the textures folder inside the data folder."
+    },
+    {
+      "key": "paths.user_data",
+      "section": "paths",
+      "name": "user_data",
+      "type": "str",
+      "default": "",
+      "kind": "folder",
+      "user_facing": true,
+      "label": "Data folder",
+      "help": "Where memory cards, save states, textures and the game files live. Empty uses the usual place for this computer."
+    },
+    {
+      "key": "qol.fast_forward",
+      "section": "qol",
+      "name": "fast_forward",
+      "type": "int",
+      "default": "1",
+      "kind": "number",
+      "user_facing": true,
+      "label": "Cutscene fast-forward",
+      "help": "How many times faster a cutscene plays while the fast-forward button is held. 1 is off.",
+      "min": 1,
+      "max": 8
+    },
+    {
+      "key": "qol.skip_movies",
+      "section": "qol",
+      "name": "skip_movies",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": true,
+      "label": "Skip movies",
+      "help": "Start or Cross skips a movie, the opening one included."
+    },
+    {
+      "key": "save.restore_mode",
+      "section": "save",
+      "name": "restore_mode",
+      "type": "enum",
+      "default": "live",
+      "kind": "choice",
+      "user_facing": false,
+      "values": [
+        "live",
+        "relaunch"
+      ]
+    },
+    {
+      "key": "save.slot",
+      "section": "save",
+      "name": "slot",
+      "type": "int",
+      "default": "0",
+      "kind": "number",
+      "user_facing": true,
+      "label": "Quick-save slot",
+      "help": "The slot F5 saves to and F8 loads from.",
+      "min": 0,
+      "max": 9
+    },
+    {
+      "key": "time.maint_eepaced",
+      "section": "time",
+      "name": "maint_eepaced",
+      "type": "bool",
+      "default": "off",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "time.t0_tickpaced",
+      "section": "time",
+      "name": "t0_tickpaced",
+      "type": "bool",
+      "default": "off",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "time.tick_deterministic",
+      "section": "time",
+      "name": "tick_deterministic",
+      "type": "bool",
+      "default": "off",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "time.tick_sync",
+      "section": "time",
+      "name": "tick_sync",
+      "type": "bool",
+      "default": "off",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "triage.disk_budget_mb",
+      "section": "triage",
+      "name": "disk_budget_mb",
+      "type": "int",
+      "default": "2048",
+      "kind": "number",
+      "user_facing": false
+    },
+    {
+      "key": "triage.enabled",
+      "section": "triage",
+      "name": "enabled",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "triage.fallbacks",
+      "section": "triage",
+      "name": "fallbacks",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "triage.fps_target",
+      "section": "triage",
+      "name": "fps_target",
+      "type": "int",
+      "default": "60",
+      "kind": "number",
+      "user_facing": false
+    },
+    {
+      "key": "triage.perf",
+      "section": "triage",
+      "name": "perf",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "triage.ring_period_s",
+      "section": "triage",
+      "name": "ring_period_s",
+      "type": "int",
+      "default": "10",
+      "kind": "number",
+      "user_facing": false
+    },
+    {
+      "key": "triage.spikes",
+      "section": "triage",
+      "name": "spikes",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "ui.gui_open",
+      "section": "ui",
+      "name": "gui_open",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "ui.menu_pages",
+      "section": "ui",
+      "name": "menu_pages",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "ui.perf_overlay",
+      "section": "ui",
+      "name": "perf_overlay",
+      "type": "bool",
+      "default": "off",
+      "kind": "switch",
+      "user_facing": true,
+      "label": "Performance readout",
+      "help": "Shows the game speed and the pictures per second in a corner of the window."
+    },
+    {
+      "key": "video.anisotropy",
+      "section": "video",
+      "name": "anisotropy",
+      "type": "int",
+      "default": "1",
+      "kind": "choice",
+      "user_facing": true,
+      "label": "Texture detail at an angle",
+      "help": "Keeps textures sharp when seen at a slant. Off leaves them as the game drew them.",
+      "choices": [
+        {
+          "value": "1",
+          "label": "Off"
+        },
+        {
+          "value": "2",
+          "label": "2x"
+        },
+        {
+          "value": "4",
+          "label": "4x"
+        },
+        {
+          "value": "8",
+          "label": "8x"
+        },
+        {
+          "value": "16",
+          "label": "16x"
+        }
+      ]
+    },
+    {
+      "key": "video.aspect",
+      "section": "video",
+      "name": "aspect",
+      "type": "enum",
+      "default": "auto",
+      "kind": "choice",
+      "user_facing": true,
+      "values": [
+        "auto",
+        "4:3",
+        "16:9",
+        "16:10",
+        "21:9"
+      ],
+      "label": "Aspect ratio",
+      "help": "The shape the game draws for. Auto follows the window; 4:3 is the original television.",
+      "choices": [
+        {
+          "value": "auto",
+          "label": "Auto"
+        },
+        {
+          "value": "4:3",
+          "label": "4:3"
+        },
+        {
+          "value": "16:9",
+          "label": "16:9"
+        },
+        {
+          "value": "16:10",
+          "label": "16:10"
+        },
+        {
+          "value": "21:9",
+          "label": "21:9"
+        }
+      ]
+    },
+    {
+      "key": "video.backend",
+      "section": "video",
+      "name": "backend",
+      "type": "enum",
+      "default": "auto",
+      "kind": "choice",
+      "user_facing": true,
+      "values": [
+        "gl",
+        "soft",
+        "metal",
+        "auto"
+      ],
+      "label": "Graphics",
+      "help": "Which graphics system draws the game. Automatic picks the best one for this computer.",
+      "choices": [
+        {
+          "value": "gl",
+          "label": "Open graphics"
+        },
+        {
+          "value": "soft",
+          "label": "Software"
+        },
+        {
+          "value": "metal",
+          "label": "Apple graphics"
+        },
+        {
+          "value": "auto",
+          "label": "Automatic"
+        }
+      ]
+    },
+    {
+      "key": "video.capture_wait_ms",
+      "section": "video",
+      "name": "capture_wait_ms",
+      "type": "int",
+      "default": "8",
+      "kind": "number",
+      "user_facing": false
+    },
+    {
+      "key": "video.custom_offset_x",
+      "section": "video",
+      "name": "custom_offset_x",
+      "type": "int",
+      "default": "0",
+      "kind": "number",
+      "user_facing": false
+    },
+    {
+      "key": "video.custom_offset_y",
+      "section": "video",
+      "name": "custom_offset_y",
+      "type": "int",
+      "default": "0",
+      "kind": "number",
+      "user_facing": false
+    },
+    {
+      "key": "video.custom_scale_pct",
+      "section": "video",
+      "name": "custom_scale_pct",
+      "type": "int",
+      "default": "100",
+      "kind": "number",
+      "user_facing": false
+    },
+    {
+      "key": "video.fit_mode",
+      "section": "video",
+      "name": "fit_mode",
+      "type": "enum",
+      "default": "fit",
+      "kind": "choice",
+      "user_facing": false,
+      "values": [
+        "stretch",
+        "fit",
+        "fill",
+        "integer",
+        "custom"
+      ]
+    },
+    {
+      "key": "video.fps_cap",
+      "section": "video",
+      "name": "fps_cap",
+      "type": "int",
+      "default": "60",
+      "kind": "number",
+      "user_facing": false
+    },
+    {
+      "key": "video.frame_cap",
+      "section": "video",
+      "name": "frame_cap",
+      "type": "enum",
+      "default": "60",
+      "kind": "choice",
+      "user_facing": true,
+      "values": [
+        "off",
+        "30",
+        "60"
+      ],
+      "label": "Picture rate",
+      "help": "How often a new picture is shown. 60 shows every one; 30 shows every other one at a steady pace; Off shows them as they come.",
+      "choices": [
+        {
+          "value": "off",
+          "label": "Off"
+        },
+        {
+          "value": "30",
+          "label": "30"
+        },
+        {
+          "value": "60",
+          "label": "60"
+        }
+      ]
+    },
+    {
+      "key": "video.fullscreen",
+      "section": "video",
+      "name": "fullscreen",
+      "type": "enum",
+      "default": "windowed",
+      "kind": "choice",
+      "user_facing": true,
+      "values": [
+        "windowed",
+        "fullscreen",
+        "borderless"
+      ],
+      "label": "Window",
+      "help": "A window, the whole screen, or a borderless window covering the desktop.",
+      "choices": [
+        {
+          "value": "windowed",
+          "label": "Window"
+        },
+        {
+          "value": "fullscreen",
+          "label": "Full screen"
+        },
+        {
+          "value": "borderless",
+          "label": "Borderless"
+        }
+      ]
+    },
+    {
+      "key": "video.interp",
+      "section": "video",
+      "name": "interp",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "video.present_relax",
+      "section": "video",
+      "name": "present_relax",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "video.render_rate",
+      "section": "video",
+      "name": "render_rate",
+      "type": "enum",
+      "default": "60",
+      "kind": "choice",
+      "user_facing": true,
+      "values": [
+        "60",
+        "display"
+      ],
+      "label": "Render rate",
+      "help": "60 shows one picture per game step; Display draws at the display's own rate.",
+      "choices": [
+        {
+          "value": "60",
+          "label": "60"
+        },
+        {
+          "value": "display",
+          "label": "Display"
+        }
+      ],
+      "hidden": true
+    },
+    {
+      "key": "video.scale",
+      "section": "video",
+      "name": "scale",
+      "type": "int",
+      "default": "1",
+      "kind": "choice",
+      "user_facing": true,
+      "label": "Picture scale",
+      "help": "How many times the original resolution the game is drawn at. Window follows the window size.",
+      "choices": [
+        {
+          "value": "0",
+          "label": "Window"
+        },
+        {
+          "value": "1",
+          "label": "1x"
+        },
+        {
+          "value": "2",
+          "label": "2x"
+        },
+        {
+          "value": "3",
+          "label": "3x"
+        },
+        {
+          "value": "4",
+          "label": "4x"
+        }
+      ]
+    },
+    {
+      "key": "video.texture_filter",
+      "section": "video",
+      "name": "texture_filter",
+      "type": "enum",
+      "default": "title",
+      "kind": "choice",
+      "user_facing": true,
+      "values": [
+        "title",
+        "point",
+        "bilinear",
+        "trilinear"
+      ],
+      "label": "Texture smoothing",
+      "help": "How textures are sampled. Original is what the game asked for.",
+      "choices": [
+        {
+          "value": "title",
+          "label": "Original"
+        },
+        {
+          "value": "point",
+          "label": "Sharp"
+        },
+        {
+          "value": "bilinear",
+          "label": "Smooth"
+        },
+        {
+          "value": "trilinear",
+          "label": "Smooth, blended with distance"
+        }
+      ]
+    },
+    {
+      "key": "video.texture_pack",
+      "section": "video",
+      "name": "texture_pack",
+      "type": "str",
+      "default": "none",
+      "kind": "text",
+      "user_facing": true,
+      "label": "Texture pack",
+      "help": "A folder of replacement textures inside your textures folder. none keeps the game's own."
+    },
+    {
+      "key": "video.vsync",
+      "section": "video",
+      "name": "vsync",
+      "type": "bool",
+      "default": "off",
+      "kind": "switch",
+      "user_facing": true,
+      "label": "Wait for the display",
+      "help": "Shows each picture in step with the display. Removes tearing; may add a little delay."
+    }
+  ]
+}

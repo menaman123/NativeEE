@@ -1,6 +1,7 @@
 // tests/core/test_config.cpp -- Config schema peak defaults, string access,
-// loader precedence (defaults < ps2r.ini < --config < --set < --profile),
-// display.ini compatibility (the original test_display_settings cases), the
+// loader precedence (defaults < nativeee.ini | --config < --set < --profile),
+// the legacy ps2r.ini / display.ini migration and the --display-ini compatibility
+// read (the original test_display_settings cases), the
 // validator DAG, the deterministic preset (PROFILE.md rows) and the
 // fingerprint golden. argv[1] = scratch dir; argv[2] = the generated
 // docs/filemap/settings_table.tsv whose header carries the golden.
@@ -69,7 +70,7 @@ static void TestPeakDefaults() {
     CHECK(c.video.fullscreen == FullscreenMode::Windowed);   // A2: the window's mode, persisted
     CHECK(c.video.render_rate == RenderRate::Tick60);        // A3: one presented frame per game tick
     CHECK(c.harness.display_hz == 0);                        // A3: the real display's refresh
-    CHECK(c.video.backend == VideoBackend::Gl);
+    CHECK(c.video.backend == VideoBackend::Auto);   // round 3: Metal on an Apple-silicon host, else GL (resolved at Create)
     CHECK(c.video.fit_mode == FitMode::Fit);
     CHECK(c.video.aspect == AspectSel::Auto);
     {
@@ -81,6 +82,11 @@ static void TestPeakDefaults() {
         CHECK(e.Set("video.render_rate", "display", &err) && e.video.render_rate == RenderRate::Display);
         CHECK(e.Set("video.render_rate", "60", &err) && e.video.render_rate == RenderRate::Tick60);
         CHECK(!e.Set("video.render_rate", "120", &err));
+        CHECK(e.video.frame_cap == FrameCap::Hz60);   // the presented-frame cadence: every field by default
+        CHECK(e.Set("video.frame_cap", "30", &err) && e.video.frame_cap == FrameCap::Hz30);
+        CHECK(e.Set("video.frame_cap", "off", &err) && e.video.frame_cap == FrameCap::Off);
+        CHECK(e.Set("video.frame_cap", "60", &err) && e.video.frame_cap == FrameCap::Hz60);
+        CHECK(!e.Set("video.frame_cap", "45", &err));
         std::string v;
         CHECK(e.Get("video.fullscreen", &v) && v == "fullscreen");
     }
@@ -93,6 +99,14 @@ static void TestPeakDefaults() {
     CHECK(c.engine.vu1_mode == Vu1Mode::Cached);
     CHECK(c.engine.mtvu == true);
     CHECK(c.engine.mtvu_depth == 2);
+    CHECK(c.engine.mtvu_depth_hold == 0);        // round 5: the hold off (it costs pictures when the chain is consumer-bound)
+    CHECK(c.video.capture_wait_ms == 8);         // round 5: the prompt present capture on (the latency track's gates, 2026-10-23)
+    CHECK(c.video.present_relax == true);        // round 5: the presenter's relax on (same gates)
+    CHECK(c.engine.mtvu_early_finish == true);   // E425/E426/E427 on by default (the finish track's gates)
+    CHECK(c.engine.mtvu_wait_probe == true);     // E430 on by default (the waitsites track's gates, 2026-10-22)
+    CHECK(c.engine.ee_yield_spin_gate == true);  // E432 on by default (the waitsites track's gates, 2026-10-22)
+    CHECK(c.engine.ee_fast_dispatch == true);    // eecode round 4: the raw dispatch fast path (gates green 2026-10-22)
+    CHECK(c.engine.cop0_count == true);          // round 5: the COP0 Count register advances (finalize5 gates green 2026-10-23)
     CHECK(c.engine.ee_runahead == 2);
     CHECK(c.engine.pacing == Pacing::Realtime);
     CHECK(c.engine.time_regime_pin == -1);
@@ -301,6 +315,14 @@ static void TestFingerprint() {
     c.paths.iso = "/x.iso";              // excluded
     c.diag.tick_census = true;           // an observer: excluded
     c.engine.mtvu_kick_drop = false;     // the worker's host scheduling: excluded
+    c.engine.mtvu_depth_hold = 1;        // the hold cap (round 5): where the EE parks on the worker, excluded
+    c.video.capture_wait_ms = 0;         // when the window's picture is read back (round 5; default 8): excluded
+    c.video.present_relax = false;       // when the presenter shows a posted picture (round 5; default on): excluded
+    c.engine.mtvu_early_finish = false;  // the FINISH raise / boundary scheduling (E425): excluded
+    c.engine.mtvu_wait_probe = false;    // the observation point's probe (E430): excluded
+    c.engine.ee_yield_spin_gate = false; // the yield point's spin gate (E432): excluded
+    c.engine.ee_fast_dispatch = false;   // the host dispatch mechanics of a guest call: excluded
+    c.engine.cop0_count = false;         // the COP0 Count clock (not an image property): excluded
     CHECK(c.Fingerprint() == "engine.mtvu=off;video.scale=2;profile=default");
     // Hash semantics: FNV over each entry followed by ";".
     const std::string fp = c.Fingerprint();
@@ -333,6 +355,10 @@ static void TestDeterministicProfile() {
     CHECK(d.video.vsync == false);                               // PS2_NOVSYNC=1
     CHECK(d.engine.pacing == Pacing::Freerun);                   // PS2_VBLANK_FREERUN=1
     CHECK(d.engine.mtvu == false);                               // PS2_MTVU=0
+    CHECK(d.engine.mtvu_early_finish == false);                  // the parser-raised FINISH (E425 pinned off)
+    CHECK(d.engine.mtvu_wait_probe == false);                    // the unconditional idle loop (E430 pinned off)
+    CHECK(d.engine.ee_yield_spin_gate == false);             // the free-running yield budget (E432 pinned off)
+    CHECK(d.engine.cop0_count == true);                      // Count advances as on the console; the oracle bases are frozen with it (gsc_h600_cop0)
     CHECK(d.engine.time_regime_pin == 1);                        // PS2_TIME_EMU_REGIME=1
     CHECK(d.cdvd.latency_model == CdvdLatencyModel::Instant);    // PS2_CDVD_INSTANT=1
     CHECK(d.cdvd.latency_scale == 0.0);                          // PS2_DVD_LATENCY_SCALE=0
@@ -619,7 +645,7 @@ static void TestServiceOnlyStartupRefusals() {
         return l.Load((int)argv.size(), argv.data(), out);
     };
     std::remove(P("display.ini").c_str());
-    std::remove(P("ps2r.ini").c_str());
+    std::remove(P("nativeee.ini").c_str());
     {
         Config c;
         ConfigLoader::Result r = LoadServiceOnly(c, {"--set", "hle.startup=retained"});
@@ -667,7 +693,7 @@ static void TestServiceOnlyStartupRefusals() {
 
 static void TestLoaderPrecedence() {
     std::remove(P("display.ini").c_str());
-    WriteFile(P("ps2r.ini"), "# comment\n[video]\nscale = 3\nfps_cap = 30 ; trailing\n[engine]\nmtvu = off\n"
+    WriteFile(P("nativeee.ini"), "# comment\n[video]\nscale = 3\nfps_cap = 30 ; trailing\n[engine]\nmtvu = off\n"
                              "engine.turbo = 1\n");
     WriteFile(P("extra.ini"), "video.fps_cap = 45\ncdvd.latency_model = modelled\n");
     Config c;
@@ -675,9 +701,13 @@ static void TestLoaderPrecedence() {
     CHECK(r.ok);
     CHECK(c.video.scale == 3 && c.video.fps_cap == 30 && !c.engine.mtvu && c.engine.turbo == 1);
 
+    // --config names THE store: the folder's nativeee.ini is not read beside it.
     r = Load(c, {"--config", P("extra.ini")});
-    CHECK(r.ok && c.video.fps_cap == 45 && c.video.scale == 3);
+    CHECK(r.ok && c.video.fps_cap == 45 && c.video.scale == 1);
     CHECK(c.cdvd.latency_model == CdvdLatencyModel::Modelled);
+    CHECK(r.settings_file == P("extra.ini") && r.settings_source == "--config");
+    r = Load(c, {});
+    CHECK(r.ok && r.settings_file == P("nativeee.ini") && r.settings_source == "user data" && !r.settings_migrated);
 
     r = Load(c, {"--config", P("extra.ini"), "--set", "video.fps_cap=50", "--set", "video.scale=4;engine.turbo=2"});
     CHECK(r.ok && c.video.fps_cap == 50 && c.video.scale == 4 && c.engine.turbo == 2);
@@ -896,17 +926,17 @@ static void TestLoaderPrecedence() {
     CHECK(r.notes.size() >= 9 && r.notes[0] == "hle.graphics_shadows disabled: requires video.backend=gl");
     r = Load(c, {});
     CHECK(r.ok && r.notes.empty());   // the compiled defaults degrade nothing
-    WriteFile(P("ps2r.ini"), "[harness]\nlegacy_input_save = on\n");
+    WriteFile(P("nativeee.ini"), "[harness]\nlegacy_input_save = on\n");
     r = Load(c, {});
     CHECK(!r.ok && r.error.find("harness.legacy_input_save") != std::string::npos &&
           r.error.find("--set harness.legacy_input_save=on") != std::string::npos);
     WriteFile(P("extra.ini"), "harness.live_restore = on\n");
     r = Load(c, {"--config", P("extra.ini")});
     CHECK(!r.ok && r.error.find("harness.live_restore") != std::string::npos);
-    WriteFile(P("ps2r.ini"), "[harness]\nheadless = on\n");
+    WriteFile(P("nativeee.ini"), "[harness]\nheadless = on\n");
     r = Load(c, {});
     CHECK(!r.ok && r.error.find("harness.headless") != std::string::npos);
-    WriteFile(P("ps2r.ini"), "# comment\n[video]\nscale = 3\nfps_cap = 30 ; trailing\n[engine]\nmtvu = off\n"
+    WriteFile(P("nativeee.ini"), "# comment\n[video]\nscale = 3\nfps_cap = 30 ; trailing\n[engine]\nmtvu = off\n"
                              "engine.turbo = 1\n");
     r = Load(c, {"--set", "video.nope=1"});
     CHECK(!r.ok && r.error.find("unknown config key") != std::string::npos);
@@ -918,17 +948,17 @@ static void TestLoaderPrecedence() {
     CHECK(!r.ok && r.error.find("requires a value") != std::string::npos);
     r = Load(c, {"--bogus"});
     CHECK(!r.ok && r.error.find("unknown option") != std::string::npos);
-    r = Load(c, {"--set", "time.tick_sync=on"});   // ps2r.ini turned mtvu off -> ok
+    r = Load(c, {"--set", "time.tick_sync=on"});   // nativeee.ini turned mtvu off -> ok
     CHECK(r.ok);
     r = Load(c, {"--set", "time.tick_sync=on;engine.mtvu=on"});
     CHECK(!r.ok && r.error.find("tick_sync") != std::string::npos);
-    WriteFile(P("ps2r.ini"), "video.nope = 1\n");
+    WriteFile(P("nativeee.ini"), "video.nope = 1\n");
     r = Load(c, {});
     CHECK(!r.ok && r.error.find("unknown config key") != std::string::npos);
-    WriteFile(P("ps2r.ini"), "garbage line\n");
+    WriteFile(P("nativeee.ini"), "garbage line\n");
     r = Load(c, {});
     CHECK(!r.ok && r.error.find("key=value") != std::string::npos);
-    std::remove(P("ps2r.ini").c_str());
+    std::remove(P("nativeee.ini").c_str());
     r = Load(c, {"--version"});
     CHECK(r.ok && r.show_version);
     r = Load(c, {"--config", P("missing.ini")});
@@ -936,29 +966,68 @@ static void TestLoaderPrecedence() {
 }
 
 static void TestDisplayIniCompat() {
+    std::remove(P("nativeee.ini").c_str());
     std::remove(P("ps2r.ini").c_str());
+    std::remove(P("display.ini").c_str());
+    std::remove(P("ps2r.ini.migrated").c_str());
+    std::remove(P("display.ini.migrated").c_str());
     Config c;
     // Defaults == absent file.
     CHECK(c.video.fit_mode == FitMode::Fit && c.video.aspect == AspectSel::Auto &&
           c.video.custom_scale_pct == 100);
-    // Save -> load round trip through the compatibility renderer.
+    // The one-time migration: a root with the former ps2r.ini + display.ini and no
+    // nativeee.ini -> nativeee.ini written from both (display.ini's five keys win),
+    // the former files renamed .migrated, the Result says so.
     c.video.fit_mode = FitMode::Fill;
     c.video.aspect = AspectSel::R16_9;
     c.video.custom_scale_pct = 250;
     c.video.custom_offset_x = -40;
     c.video.custom_offset_y = 64;
     WriteFile(P("display.ini"), ConfigLoader::RenderDisplayIni(c));
+    WriteFile(P("ps2r.ini"), "# mine\nvideo.aspect = 4:3\n[ui]\nperf_overlay = on\n");
     Config d;
     ConfigLoader::Result r = Load(d, {});
-    CHECK(r.ok);
-    CHECK(d.video.fit_mode == FitMode::Fill && d.video.aspect == AspectSel::R16_9);
+    CHECK(r.ok && r.settings_migrated && r.settings_file == P("nativeee.ini"));
+    CHECK(d.video.fit_mode == FitMode::Fill && d.video.aspect == AspectSel::R16_9 && d.ui.perf_overlay);
     CHECK(d.video.custom_scale_pct == 250 && d.video.custom_offset_x == -40 && d.video.custom_offset_y == 64);
-    // Malformed / unknown lines ignored; out-of-range values clamped.
-    WriteFile(P("display.ini"),
+    CHECK(std::ifstream(P("nativeee.ini")).good() && std::ifstream(P("ps2r.ini.migrated")).good() &&
+          std::ifstream(P("display.ini.migrated")).good() && !std::ifstream(P("ps2r.ini")).good() && !std::ifstream(P("display.ini")).good());
+    {
+        bool noted = false;
+        for (const auto& n : r.notes) noted = noted || n.find("settings: moved to") != std::string::npos;
+        CHECK(noted);
+    }
+    // The second start reads the store alone; a display.ini written afterwards is not consulted.
+    WriteFile(P("display.ini"), "mode = integer\n");
+    r = Load(d, {});
+    CHECK(r.ok && !r.settings_migrated && d.video.fit_mode == FitMode::Fill && d.ui.perf_overlay);
+    std::remove(P("display.ini").c_str());
+    // Migration refused when the store exists already (never overwritten), and
+    // turned off (SetMigrateLegacy(false)): the legacy files are read in place.
+    std::remove(P("nativeee.ini").c_str());
+    WriteFile(P("ps2r.ini"), "[video]\nscale = 3\n");
+    {
+        std::vector<char*> argv;
+        static std::vector<std::string> keep;
+        keep = {"nativeee"};
+        for (auto& s : keep) argv.push_back(&s[0]);
+        ConfigLoader l;
+        l.SetSearchDir(g_dir);
+        l.SetMigrateLegacy(false);
+        Config e;
+        r = l.Load((int)argv.size(), argv.data(), e);
+        CHECK(r.ok && !r.settings_migrated && e.video.scale == 3 && std::ifstream(P("ps2r.ini")).good() && !std::ifstream(P("nativeee.ini")).good());
+    }
+    std::remove(P("ps2r.ini").c_str());
+    std::remove(P("ps2r.ini.migrated").c_str());
+    std::remove(P("display.ini.migrated").c_str());
+    // --display-ini <path>: the compatibility read of an explicitly named file
+    // (the original loader's clamps; malformed / unknown lines ignored).
+    WriteFile(P("old_display.ini"),
               "; comment only\ngarbage line without equals\nunknown_key = 7\nmode = warp9\n"
               "aspect = 4:3\ncustom_scale = 100000\n  custom_offset_x   =   -12   ; trailing comment\n"
               "custom_offset_y = -99999\n");
-    r = Load(d, {});
+    r = Load(d, {"--display-ini", P("old_display.ini")});
     CHECK(r.ok);
     CHECK(d.video.fit_mode == FitMode::Fit);          // unknown mode value ignored (default stands)
     CHECK(d.video.aspect == AspectSel::R4_3);
@@ -978,11 +1047,12 @@ static void TestDisplayIniCompat() {
         ConfigLoader::ApplyDisplayIniText(std::string("aspect = ") + aspects[i] + "\n", m);
         CHECK((int)m.video.aspect == i);
     }
-    // --set wins over display.ini (a later tier).
-    WriteFile(P("display.ini"), "mode = fill\n");
-    r = Load(d, {"--set", "video.fit_mode=integer"});
+    // --set wins over --display-ini (a later tier).
+    WriteFile(P("old_display.ini"), "mode = fill\n");
+    r = Load(d, {"--display-ini", P("old_display.ini"), "--set", "video.fit_mode=integer"});
     CHECK(r.ok && d.video.fit_mode == FitMode::Integer);
-    std::remove(P("display.ini").c_str());
+    std::remove(P("old_display.ini").c_str());
+    std::remove(P("nativeee.ini").c_str());
 }
 
 int main(int argc, char** argv) {

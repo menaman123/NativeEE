@@ -95,18 +95,71 @@ void FillColor(test::FakeBackend& be, RenderTarget& t, uint8_t r, uint8_t g, uin
         for (int x = 0; x < t.identity.width; ++x) be.SetPixel(t.views.color, x, y, r, g, b, a);
 }
 
+// The grab -> deposit pixel sharing (consumer_b B1): a colour writeback of an
+// attachment the caller just read in full takes its rows from the offered bytes --
+// the same deposit, no backend readback; a different attachment, a rect outside
+// the offer or a revoked / disabled offer read the GPU as before.
+void OfferedPixels() {
+    World w;
+    RenderTarget& t = w.cache.GetOrCreate(0x0, 64, 64, 0x00, 0);
+    FillColor(w.be, t, 0x10, 0x20, 0x30, 0x80);
+    // The reference deposit (GPU read).
+    t.AfterDraw(MakeDraw(0x0, 64, 0x00), Drew(0, 8, 64, 16), 1, 1);
+    const int rb0 = w.be.readbacks;
+    CHECK(w.cache.Readback().SyncRtToVram(w.be, t, w.vram, 1, nullptr, 0) == 64 * 8);
+    CHECK(w.be.readbacks == rb0 + 1);
+    const uint32_t ref = VramWord(w.vram, PsmLayout::PixelByteAddress(Psm::CT32, 3, 8, 0, 1));
+    CHECK(ref == 0x80302010u);
+    // The same rows offered as a full-attachment grab (bottom-up rows, w*4 stride).
+    std::vector<uint8_t> grab(64 * 64 * 4, 0);
+    w.be.Readback(t.views.color, render::Rect{0, 0, 64, 64}, grab.data(), 64 * 4);
+    FillColor(w.be, t, 0x11, 0x22, 0x33, 0x44);   // the GPU moved on; the offer is what the grab saw
+    const int rb1 = w.be.readbacks;
+    w.cache.Readback().OfferPixels(t.views.color, 64, 64, &grab);
+    t.AfterDraw(MakeDraw(0x0, 64, 0x00), Drew(0, 8, 64, 16), 2, 2);
+    CHECK(w.cache.Readback().SyncRtToVram(w.be, t, w.vram, 2, nullptr, 0) == 64 * 8);
+    CHECK(w.be.readbacks == rb1);   // no GPU read
+    CHECK(w.cache.Readback().OfferedReads() == 1);
+    CHECK(VramWord(w.vram, PsmLayout::PixelByteAddress(Psm::CT32, 3, 8, 0, 1)) == ref);   // the offered bytes
+    // Revoked: the GPU is read again (the new content lands).
+    w.cache.Readback().RevokeOffer();
+    t.AfterDraw(MakeDraw(0x0, 64, 0x00), Drew(0, 8, 64, 16), 3, 3);
+    CHECK(w.cache.Readback().SyncRtToVram(w.be, t, w.vram, 3, nullptr, 0) == 64 * 8);
+    CHECK(w.be.readbacks == rb1 + 1);
+    CHECK(VramWord(w.vram, PsmLayout::PixelByteAddress(Psm::CT32, 3, 8, 0, 1)) == 0x44332211u);
+    // Another attachment or a rect past the offer: not served by it.
+    RenderTarget& u = w.cache.GetOrCreate(0x100000, 64, 64, 0x00, 0);
+    FillColor(w.be, u, 1, 2, 3, 4);
+    w.cache.Readback().OfferPixels(t.views.color, 64, 64, &grab);
+    u.AfterDraw(MakeDraw(0x100000, 64, 0x00), Drew(0, 0, 64, 8), 4, 4);
+    const int rb2 = w.be.readbacks;
+    CHECK(w.cache.Readback().SyncRtToVram(w.be, u, w.vram, 4, nullptr, 0) == 64 * 8);
+    CHECK(w.be.readbacks == rb2 + 1);
+    w.cache.Readback().OfferPixels(t.views.color, 64, 8, &grab);   // the offer covers rows 0..8 only
+    t.AfterDraw(MakeDraw(0x0, 64, 0x00), Drew(0, 8, 64, 16), 5, 5);
+    CHECK(w.cache.Readback().SyncRtToVram(w.be, t, w.vram, 5, nullptr, 0) == 64 * 8);
+    CHECK(w.be.readbacks == rb2 + 2);
+    // Disabled: the offer is refused.
+    w.cache.Readback().SetOfferEnabled(false);
+    w.cache.Readback().OfferPixels(t.views.color, 64, 64, &grab);
+    t.AfterDraw(MakeDraw(0x0, 64, 0x00), Drew(0, 8, 64, 16), 6, 6);
+    CHECK(w.cache.Readback().SyncRtToVram(w.be, t, w.vram, 6, nullptr, 0) == 64 * 8);
+    CHECK(w.be.readbacks == rb2 + 3);
+    CHECK(w.cache.Readback().OfferedReads() == 1);
+}
+
 // Invariant 9: the colour writeback covers only drawn_since_sync rows, then nothing.
 void Inv09() {
     World w;
     RenderTarget& t = w.cache.GetOrCreate(0x0, 64, 64, 0x00, 0);
-    FillColor(w.be, t, 0x10, 0x20, 0x30, 0xFF);
+    FillColor(w.be, t, 0x10, 0x20, 0x30, 0x80);
     // Nothing drawn -> nothing staged (a target that has not drawn since its sync writes back nothing).
     CHECK(w.cache.Readback().SyncRtToVram(w.be, t, w.vram, 1, nullptr, 0) == 0);
     t.AfterDraw(MakeDraw(0x0, 64, 0x00), Drew(0, 8, 64, 16), 1, 1);
     const uint32_t n = w.cache.Readback().SyncRtToVram(w.be, t, w.vram, 1, nullptr, 0);
     CHECK(n == 64 * 8);
     CHECK(!t.coherence.HasDrawnSinceSync());
-    // Row 8 landed (CT32 word, alpha 255 -> 0x80); row 0 did not.
+    // Row 8 landed (CT32 word, the alpha byte as stored -- the stored-alpha convention); row 0 did not.
     CHECK(VramWord(w.vram, PsmLayout::PixelByteAddress(Psm::CT32, 3, 8, 0, 1)) == 0x80302010u);
     CHECK(VramWord(w.vram, PsmLayout::PixelByteAddress(Psm::CT32, 3, 0, 0, 1)) == 0u);
     CHECK(w.cache.Readback().SyncRtToVram(w.be, t, w.vram, 2, nullptr, 0) == 0);
@@ -278,6 +331,40 @@ void Inv12() {
     t.coherence.alt16_stale.Union(-8, 60, 80, 90);
     t.RefreshAlt16FromMain(w.be);
     CHECK(t.coherence.alt16_stale.Empty());
+    // E251: a backend with the kCopyPack5551 pass refreshes through CopyRect (no
+    // Readback, no Upload) and the companion holds the SAME bytes the CPU route
+    // produced -- a pseudo-random main image, both routes over the same stale rect.
+    for (int y = 0; y < 64; ++y)
+        for (int x = 0; x < 64; ++x) {
+            const uint32_t h = static_cast<uint32_t>(x * 73856093) ^ static_cast<uint32_t>(y * 19349663) ^ 0x5bd1e995u;
+            w.be.SetPixel(t.views.color, x, y, uint8_t(h), uint8_t(h >> 8), uint8_t(h >> 16), uint8_t(h >> 24));
+        }
+    t.coherence.alt16_stale.Reset();
+    t.coherence.alt16_stale.Union(3, 5, 61, 59);
+    const int readbacks_before = w.be.readbacks, uploads_before = w.be.uploads;
+    t.RefreshAlt16FromMain(w.be);                       // the CPU route
+    const std::vector<uint8_t> cpu = w.be.At(t.views.alt16).rgba;
+    CHECK(w.be.readbacks == readbacks_before + 1 && w.be.uploads == uploads_before + 1);
+    CHECK(w.be.pack_copies == 0);
+    const uint64_t seq_cpu = t.coherence.alt_author_seq;
+    for (uint8_t& b : w.be.At(t.views.alt16).rgba) b = 0xA5;   // scramble the companion
+    w.be.copy_pack5551 = true;
+    t.coherence.alt16_stale.Union(3, 5, 61, 59);
+    t.RefreshAlt16FromMain(w.be);                       // the GPU route
+    CHECK(w.be.pack_copies == 1);
+    CHECK(w.be.readbacks == readbacks_before + 1 && w.be.uploads == uploads_before + 1);   // no readback / upload
+    CHECK(t.coherence.alt_author_seq == seq_cpu + 1 && t.views.alt16_has_content);
+    const std::vector<uint8_t>& gpu = w.be.At(t.views.alt16).rgba;
+    bool same = true;
+    for (int y = 5; y < 59 && same; ++y)
+        for (int x = 3; x < 61; ++x)
+            if (std::memcmp(&cpu[(size_t(y) * 64 + x) * 4], &gpu[(size_t(y) * 64 + x) * 4], 4) != 0) { same = false; break; }
+    CHECK(same);
+    bool outside_untouched = true;
+    for (int x = 0; x < 64; ++x)
+        if (gpu[(size_t(2) * 64 + x) * 4] != 0xA5) outside_untouched = false;   // row 2: outside the stale rect
+    CHECK(outside_untouched);
+    w.be.copy_pack5551 = false;
 }
 
 // Item 3: the main route's valid rect is the UNCLAMPED triangle bbox, its drawn
@@ -300,7 +387,7 @@ void DrawnRects() {
     CHECK(ds.x0 == 0 && ds.y0 == 2 && ds.x1 == 64 && ds.y1 == 10);        // tri bbox ∩ scissor
     CHECK(t.coherence.z_drawn_since_sync.y1 == 40);                        // Z: all vertices
     // The Cd-copy dirty union follows the drawn rect (both routes).
-    CHECK(t.coherence.cd_copy.dirty_y0 == 2 && t.coherence.cd_copy.dirty_y1 == 10);
+    CHECK(t.coherence.cd_copy.dirty.Union().y0 == 2 && t.coherence.cd_copy.dirty.Union().y1 == 10);
     // A draw entirely outside the scissor grows valid_rect only.
     render::DrawResult r2 = Drew(100, 100, 120, 120);
     r2.write_rect = render::Rect{};
@@ -319,13 +406,13 @@ void DrawnRects() {
         dg.bbox_tri[0] = 5.0f; dg.bbox_tri[1] = 5.0f; dg.bbox_tri[2] = 5.0f; dg.bbox_tri[3] = 30.0f;
         for (int i = 0; i < 4; ++i) dg.bbox_all[i] = dg.bbox_tri[i];
         dg.write_rect = render::Rect{5, 5, 0, 25};
-        const int cd_y1 = g.coherence.cd_copy.dirty_y1;
+        const int cd_y1 = g.coherence.cd_copy.dirty.Union().y1;
         g.AfterDraw(gd, dg, 4, 4);
         const LogicalRect& gv = g.coherence.valid_rect;
         CHECK(gv.x0 == 5 && gv.y0 == 5 && gv.x1 == 20 && gv.y1 == 30);
         const LogicalRect& gds = g.coherence.drawn_since_sync;
         CHECK(gds.x0 == 10 && gds.y0 == 10 && gds.x1 == 20 && gds.y1 == 20);
-        CHECK(g.coherence.cd_copy.dirty_y1 == cd_y1);
+        CHECK(g.coherence.cd_copy.dirty.Union().y1 == cd_y1);
         // On an EMPTY valid rect a degenerate assignment leaves it empty.
         RenderTarget& e = w.cache.GetOrCreate(0x100000, 64, 64, 0x00, 0);
         e.AfterDraw(MakeDraw(0x100000, 64, 0x00), dg, 5, 5);
@@ -410,7 +497,7 @@ void Inv13_14() {
     RenderTarget& n = w2.cache.GetOrCreate(0x0, 128, 32, 0x00, 0);
     n.AfterDraw(MakeDraw(0x0, 100, 0x00), Drew(0, 0, 128, 32), 1, 1);
     w2.cache.Readback().SyncRtToVram(w2.be, n, w2.vram, 1, nullptr, 0);
-    w2.be.SetPixel(n.views.color, 70, 0, 0x11, 0x22, 0x33, 0xFF);
+    w2.be.SetPixel(n.views.color, 70, 0, 0x11, 0x22, 0x33, 0x80);
     w2.cache.GetOrCreate(0x0, 256, 32, 0x00, 0);   // grow -> rescue
     CHECK(VramWord(w2.vram, PsmLayout::PixelByteAddress(Psm::CT32, 70, 0, 0, 2)) == 0x80332211u);
     // A never-deposited target's rescue brackets its pages but writes no bytes
@@ -527,7 +614,7 @@ void EncodeVetoes() {
     // (b) batch newer than the page: the GPU is the last author.
     t.AfterDraw(MakeDraw(0x0, 64, 0x00), Drew(0, 0, 64, 64), 2, 2);
     w.cache.Readback().SyncRtToVram(w.be, t, w.vram, /*batch_epoch=*/5, nullptr, 0);
-    CHECK(VramWord(w.vram, ee_addr) == 0x80302010u);
+    CHECK(VramWord(w.vram, ee_addr) == 0xFF302010u);   // the stored-alpha convention: the GL alpha byte 0xFF deposits as 0xFF
     // (c) protected range: an uploaded texture over rows 32.. of the footprint whose
     // page epoch (fresh settle -> 2) is >= the batch epoch (2) keeps its bytes.
     World w2;
@@ -543,11 +630,11 @@ void EncodeVetoes() {
     u.AfterDraw(MakeDraw(0x0, 64, 0x00), Drew(0, 0, 64, 64), 1, 1);
     w2.cache.Readback().SyncRtToVram(w2.be, u, w2.vram, /*batch_epoch=*/1, nullptr, 0);
     CHECK(VramWord(w2.vram, up_addr + 0x40) == 0x04030201u);         // protected (epoch 1 >= 1)
-    CHECK(VramWord(w2.vram, 0x0800) == 0x80302010u);                 // outside the range: encoded
+    CHECK(VramWord(w2.vram, 0x0800) == 0xFF302010u);                 // outside the range: encoded
     // A later batch (2 > page epoch 1): no protection.
     u.AfterDraw(MakeDraw(0x0, 64, 0x00), Drew(0, 0, 64, 64), 2, 2);
     w2.cache.Readback().SyncRtToVram(w2.be, u, w2.vram, /*batch_epoch=*/2, nullptr, 0);
-    CHECK(VramWord(w2.vram, up_addr + 0x40) == 0x80302010u);
+    CHECK(VramWord(w2.vram, up_addr + 0x40) == 0xFF302010u);
     // Evicting the upload removes the protection source.
     rf2.EvictUploadedInRange(up_addr, 0x400);
     CHECK(w2.cache.Readback().UploadedSpans().empty());
@@ -577,7 +664,7 @@ void EncodeVetoes() {
     r.AfterDraw(MakeDraw(0x0, 64, 0x00), Drew(0, 64, 64, 128), 2, 2);   // valid covers page 1 too
     LogicalRect all{0, 0, 64, 128};
     w4.cache.Readback().SyncRtToVram(w4.be, r, w4.vram, 1, &all, 0);
-    CHECK(VramWord(w4.vram, PsmLayout::PixelByteAddress(Psm::CT32, 3, 8, 0, 1)) == 0x80302010u);
+    CHECK(VramWord(w4.vram, PsmLayout::PixelByteAddress(Psm::CT32, 3, 8, 0, 1)) == 0xFF302010u);
     CHECK(VramWord(w4.vram, PsmLayout::PixelByteAddress(Psm::CT32, 3, 72, 0, 1)) == 0u);   // page 1 vetoed
 }
 
@@ -590,7 +677,7 @@ void DepositSpan() {
     FillColor(w.be, t, 0x10, 0x20, 0x30, 0xFF);
     t.AfterDraw(MakeDraw(0x0, 128, 0x00), Drew(0, 0, 128, 8), 1, 1);
     CHECK(w.cache.Readback().SyncRtToVram(w.be, t, w.vram, 1, nullptr, 0) == 128 * 8);
-    CHECK(VramWord(w.vram, PsmLayout::PixelByteAddress(Psm::CT32, 10, 2, 0, 2)) == 0x80302010u);
+    CHECK(VramWord(w.vram, PsmLayout::PixelByteAddress(Psm::CT32, 10, 2, 0, 2)) == 0xFF302010u);
     CHECK(VramWord(w.vram, PsmLayout::PixelByteAddress(Psm::CT32, 70, 2, 0, 2)) == 0u);   // not staged
     CHECK(w.vram.PendingPages() == 1);
     // With page 1 already pending (a span that reaches it), the stray pixels land.
@@ -603,7 +690,7 @@ void DepositSpan() {
     CHECK(VramWord(w2.vram, PsmLayout::PixelByteAddress(Psm::CT32, 70, 2, 0, 2)) == 0u);   // row 2 not yet drawn
     u.AfterDraw(MakeDraw(0x0, 128, 0x00), Drew(0, 0, 128, 8), 2, 2);    // span page 0; page 1 pending
     CHECK(w2.cache.Readback().SyncRtToVram(w2.be, u, w2.vram, 1, nullptr, 0) == 128 * 8);
-    CHECK(VramWord(w2.vram, PsmLayout::PixelByteAddress(Psm::CT32, 70, 2, 0, 2)) == 0x80302010u);
+    CHECK(VramWord(w2.vram, PsmLayout::PixelByteAddress(Psm::CT32, 70, 2, 0, 2)) == 0xFF302010u);
 }
 
 // Invariant 37: a target consumed by a composite clears when marked, others once per EE frame.
@@ -628,6 +715,63 @@ void Inv37() {
     d.coherence.cd_copy.valid = true;
     d.PrepareDraw(w.be, MakeDraw(0x70000, 512, 0x00), 1, 0x70000, &p);
     CHECK(p.do_frame_clear && p.clear_color && !d.coherence.cd_copy.valid);
+}
+
+// Invariant 38 (E330): the GS never clears a buffer by itself -- the engine's per-frame
+// clear stands in for the game's own clear at the START of a target's frame, so it fires
+// only on a frame-OPENING draw and a due clear waits for one. A 16-bit FRAME over 32-bit
+// content (the companion route) and a self-read (TEX0.TBP0 == FRAME.FBP) open nothing:
+// a double-buffered title writes its DISPLAYED buffer with exactly those mid-frame.
+void Inv38() {
+    World w;
+    render::DrawParams p;
+    // (a) The displayed 32-bit buffer touched mid-frame by a 16-bit shuffle: no clear, and
+    // the frame key is NOT consumed (an opening draw of the same frame still clears).
+    RenderTarget& t = w.cache.GetOrCreate(0x70000, 512, 224, 0x00, 0);
+    t.PrepareDraw(w.be, MakeDraw(0x70000, 512, 0x00), 10, 0x0, &p);
+    CHECK(p.do_frame_clear && !p.clear_color);        // frame 10 opens on a 32-bit draw (not the scanout)
+    t.AfterDraw(MakeDraw(0x70000, 512, 0x00), Drew(0, 0, 512, 224), 1, 1);   // 32-bit content committed
+    t.PrepareDraw(w.be, MakeDraw(0x70000, 512, 0x02), 11, 0x70000, &p);
+    CHECK(p.alt16_route);                             // the 16-bit view over 32-bit content
+    CHECK(!p.do_frame_clear);                         // E330: not an opening draw -> no clear of the displayed buffer
+    DrawIr self = MakeDraw(0x70000, 512, 0x00);
+    self.tex_enabled = true;
+    self.tex.tbp = 0x70000;
+    self.tex.psm = 0x1B;                              // the PSMT8H-of-FRAME post pass reads itself
+    t.PrepareDraw(w.be, self, 11, 0x70000, &p);
+    CHECK(!p.do_frame_clear);                         // a self-read opens nothing either
+    DrawIr other = MakeDraw(0x70000, 512, 0x00);
+    other.tex_enabled = true;
+    other.tex.tbp = 0x108000;                         // a textured scene draw
+    t.PrepareDraw(w.be, other, 11, 0x70000, &p);
+    CHECK(p.do_frame_clear && p.clear_color);         // the due clear fires on the first opening draw (scanout: colour too)
+    t.PrepareDraw(w.be, other, 11, 0x70000, &p);
+    CHECK(!p.do_frame_clear);                         // consumed
+    // (b) The pure rules.
+    CHECK(RenderTarget::FrameOpeningDraw(MakeDraw(0x0, 512, 0x00), false));
+    CHECK(!RenderTarget::FrameOpeningDraw(MakeDraw(0x0, 512, 0x02), true));
+    CHECK(!RenderTarget::FrameOpeningDraw(self, false));
+    CHECK(RenderTarget::FrameOpeningDraw(other, false));
+    // A composite reads the source's colour in its own class.
+    CHECK(RenderTarget::IsCompositeRead(0x00, true));     // CT32 read of 32-bit content
+    CHECK(RenderTarget::IsCompositeRead(0x01, true));     // CT24
+    CHECK(!RenderTarget::IsCompositeRead(0x02, true));    // a 16-bit VIEW of 32-bit content: a shuffle
+    CHECK(!RenderTarget::IsCompositeRead(0x0A, true));
+    CHECK(!RenderTarget::IsCompositeRead(0x1B, true));    // PSMT8H: a palette lookup of the alpha byte
+    CHECK(!RenderTarget::IsCompositeRead(0x24, true) && !RenderTarget::IsCompositeRead(0x2C, true));
+    CHECK(RenderTarget::IsCompositeRead(0x0A, false));    // CT16S read of a 16-bit accumulator (the Crash composite)
+    CHECK(RenderTarget::IsCompositeRead(0x02, false) && RenderTarget::IsCompositeRead(0x00, false));
+    CHECK(!RenderTarget::IsCompositeRead(0x13, false) && !RenderTarget::IsCompositeRead(0x14, false));
+    // (c) A consumption-keyed clear also waits for an opening draw.
+    RenderTarget& s2 = w.cache.GetOrCreate(0x0, 512, 224, 0x00, 0);
+    s2.PrepareDraw(w.be, MakeDraw(0x0, 512, 0x00), 20, 0x70000, &p);
+    CHECK(p.do_frame_clear);
+    s2.AfterDraw(MakeDraw(0x0, 512, 0x00), Drew(0, 0, 512, 224), 1, 1);
+    s2.MarkCompositeConsumed();
+    s2.PrepareDraw(w.be, MakeDraw(0x0, 512, 0x02), 20, 0x70000, &p);
+    CHECK(p.alt16_route && !p.do_frame_clear && s2.coherence.needs_frame_clear);
+    s2.PrepareDraw(w.be, MakeDraw(0x0, 512, 0x00), 20, 0x70000, &p);
+    CHECK(p.do_frame_clear && !s2.coherence.needs_frame_clear);
 }
 
 // Uploaded(addr) textures: exact key, containing span, in-place same-size replace,
@@ -764,14 +908,17 @@ void RefreshFromVram() {
 
 
 // The refresh arms read the COMMITTED mirror: CT32 keeps the attachment RGB and
-// takes alpha from the mirror byte (x2 capped 255); CT16 decodes the 5551 image,
-// rows under a newer EE upload keep the attachment; a pending deposit shadow is
-// never observed; the tail stamps the voucher and clears the aliased pages.
+// takes alpha from the mirror byte VERBATIM (the stored-alpha convention) except
+// where the main route drew since the target's bytes last reached the mirror;
+// CT16 decodes the 5551 image, rows under a newer EE upload keep the attachment;
+// a pending deposit shadow is never observed; the tail stamps the voucher and
+// clears the aliased pages.
 void RefreshArms() {
     World w;
     TargetRefresher rf(w.be, w.vram, w.cache);
     RenderTarget& t = w.cache.GetOrCreate(0x100000, 64, 64, 0x00, 0);
     t.AfterDraw(MakeDraw(0x100000, 64, 0x00), Drew(0, 0, 64, 64), 1, 1);
+    t.coherence.main_drawn_since_deposit.Reset();   // the draw's bytes reached the mirror
     FillColor(w.be, t, 0x11, 0x22, 0x33, 0xFF);
     // Mirror alpha 0x40 at (5,9); the pending shadow says 0x7F there (a staged,
     // uncommitted deposit) -- the merge must read the mirror.
@@ -786,16 +933,28 @@ void RefreshArms() {
     rf.RefreshFromVram(t, 0, 64, 0);
     const uint8_t* px = &w.be.At(t.views.color).rgba[(9 * 64 + 5) * 4];
     CHECK(px[0] == 0x11 && px[1] == 0x22 && px[2] == 0x33);   // RGB from the attachment
-    CHECK(px[3] == 0x80);                                      // 0x40 * 2 from the MIRROR, not 0x7F * 2
+    CHECK(px[3] == 0x40);                                      // the MIRROR's byte verbatim, not 0x7F, not 2x
     const uint8_t* px2 = &w.be.At(t.views.color).rgba[(0 * 64 + 0) * 4];
     CHECK(px2[3] == 0x00);                                     // mirror alpha 0 elsewhere
     CHECK(t.coherence.vram_coherent_class == 1);
     CHECK(!w.cache.AliasPages().AnyAliased(0x100000, 64 * 64 * 4));
-    // Cap: mirror alpha 0x90 -> 255.
+    // The whole byte range survives (0x90 > 0x80 is a legal GS alpha, no cap).
     const uint8_t word2[4] = {0, 0, 0, 0x90};
     w.vram.WriteStream(PsmLayout::PixelByteAddress(Psm::CT32, 1, 1, 0x100000 / 256, 1), word2, 4);
     rf.RefreshFromVram(t, 0, 64, 0);
-    CHECK(w.be.At(t.views.color).rgba[(1 * 64 + 1) * 4 + 3] == 0xFF);
+    CHECK(w.be.At(t.views.color).rgba[(1 * 64 + 1) * 4 + 3] == 0x90);
+    // The later writer owns the byte: a main-route draw over rows 8..16 x 0..32 after
+    // the deposit keeps the attachment's alpha there; everything else imports.
+    FillColor(w.be, t, 0x11, 0x22, 0x33, 0x25);
+    t.AfterDraw(MakeDraw(0x100000, 64, 0x00), Drew(0, 8, 32, 16), 1, 2);
+    rf.RefreshFromVram(t, 0, 64, 0);
+    CHECK(w.be.At(t.views.color).rgba[(9 * 64 + 5) * 4 + 3] == 0x25);     // drawn since: kept
+    CHECK(w.be.At(t.views.color).rgba[(9 * 64 + 40) * 4 + 3] == 0x00);    // same row, outside: imported
+    CHECK(w.be.At(t.views.color).rgba[(1 * 64 + 1) * 4 + 3] == 0x90);     // other rows: imported
+    CHECK(w.be.At(t.views.color).rgba[(9 * 64 + 5) * 4 + 0] == 0x11);     // RGB always the attachment's
+    // A writeback of the target's own bytes resets the rect: the next import takes the mirror.
+    w.cache.SyncDrawn(t, 0);
+    CHECK(t.coherence.main_drawn_since_deposit.Empty());
     // A scoped band stamps no voucher.
     t.coherence.vram_coherent_class = 0;
     rf.RefreshFromVram(t, 0, 8, 0);
@@ -831,6 +990,101 @@ void RefreshArms() {
     CHECK(w.be.At(s.views.color).rgba[(70 * 64 + 2) * 4] == 0xFF);
 }
 
+// The alias import's alpha merge has two routes and one result: with the backend's
+// alpha-lane pass (Caps::alpha_lane_write) the band's mirror alpha goes up as an R8
+// lane and a colour-masked write lands it -- no readback of the attachment, no RGBA
+// re-upload; without it the attachment is read back, merged and re-uploaded. Over a
+// pseudo-random attachment and mirror, with a main_drawn_since_deposit rect, a scoped
+// band and a whole-image import, the two routes leave byte-identical attachments
+// (RGB untouched, alpha = the mirror byte verbatim, the newer rect kept); the GPU
+// route's census counts it and performs no readback; a scale-2 target folds the
+// lane onto every physical texel of the logical pixel.
+void AlphaMergeRoutes() {
+    auto run = [](bool gpu, int scale, std::vector<uint8_t>* out, int* readbacks, int* uploads, uint64_t* merges_gpu) {
+        World w;
+        w.scale.SetFactor(scale);
+        w.be.alpha_lane_write = gpu;
+        TargetRefresher rf(w.be, w.vram, w.cache);
+        RenderTarget& t = w.cache.GetOrCreate(0x100000, 64, 96, 0x00, 0);
+        t.AfterDraw(MakeDraw(0x100000, 64, 0x00), Drew(0, 0, 64, 96), 1, 1);
+        t.coherence.main_drawn_since_deposit.Reset();
+        // Pseudo-random attachment (physical texels) and mirror words.
+        uint32_t seed = 0x1234567u;
+        auto rnd = [&seed]() { seed = seed * 1664525u + 1013904223u; return uint8_t(seed >> 24); };
+        test::FakeBackend::Surface& att = w.be.At(t.views.color);
+        for (uint8_t& b : att.rgba) b = rnd();
+        for (int y = 0; y < 96; ++y)
+            for (int x = 0; x < 64; ++x) {
+                const uint8_t word[4] = {rnd(), rnd(), rnd(), rnd()};
+                w.vram.WriteStream(PsmLayout::PixelByteAddress(Psm::CT32, uint32_t(x), uint32_t(y), 0x100000 / 256, 1), word, 4);
+            }
+        w.vram.SettleWrites();
+        // A main-route draw since the deposit over rows 20..40 x 8..48 keeps the attachment there.
+        t.AfterDraw(MakeDraw(0x100000, 64, 0x00), Drew(8, 20, 48, 40), 1, 2);
+        const int rb0 = w.be.readbacks, up0 = w.be.uploads;
+        rf.RefreshFromVram(t, 16, 64, 0);    // a scoped band
+        rf.RefreshFromVram(t, 0, 96, 0);     // the whole image
+        *readbacks = w.be.readbacks - rb0;
+        *uploads = w.be.uploads - up0;
+        *merges_gpu = rf.AlphaMergesGpu();
+        *out = w.be.At(t.views.color).rgba;
+    };
+    std::vector<uint8_t> cpu, gpu;
+    int rb_cpu = 0, up_cpu = 0, rb_gpu = 0, up_gpu = 0;
+    uint64_t mg_cpu = 0, mg_gpu = 0;
+    run(false, 1, &cpu, &rb_cpu, &up_cpu, &mg_cpu);
+    run(true, 1, &gpu, &rb_gpu, &up_gpu, &mg_gpu);
+    CHECK(cpu.size() == gpu.size() && cpu == gpu);        // byte-identical attachments
+    CHECK(rb_cpu == 2 && rb_gpu == 0);                    // the GPU route reads nothing back
+    CHECK(up_cpu == 2 && up_gpu == 2);                    // RGBA rows vs the R8 lane: one upload each
+    CHECK(mg_cpu == 0 && mg_gpu == 2);
+    // The merge's semantics on the GPU route alone: alpha = mirror byte, RGB kept, the newer rect kept.
+    {
+        World w;
+        w.be.alpha_lane_write = true;
+        TargetRefresher rf(w.be, w.vram, w.cache);
+        RenderTarget& t = w.cache.GetOrCreate(0x100000, 64, 64, 0x00, 0);
+        t.AfterDraw(MakeDraw(0x100000, 64, 0x00), Drew(0, 0, 64, 64), 1, 1);
+        t.coherence.main_drawn_since_deposit.Reset();
+        FillColor(w.be, t, 0x11, 0x22, 0x33, 0x25);
+        const uint8_t word[4] = {0xAA, 0xBB, 0xCC, 0x40};
+        w.vram.WriteStream(PsmLayout::PixelByteAddress(Psm::CT32, 5, 9, 0x100000 / 256, 1), word, 4);
+        w.vram.WriteStream(PsmLayout::PixelByteAddress(Psm::CT32, 40, 9, 0x100000 / 256, 1), word, 4);
+        t.AfterDraw(MakeDraw(0x100000, 64, 0x00), Drew(0, 8, 32, 16), 1, 2);
+        rf.RefreshFromVram(t, 0, 64, 0);
+        const uint8_t* kept = &w.be.At(t.views.color).rgba[(9 * 64 + 5) * 4];
+        const uint8_t* imported = &w.be.At(t.views.color).rgba[(9 * 64 + 40) * 4];
+        CHECK(kept[3] == 0x25 && imported[3] == 0x40);
+        CHECK(imported[0] == 0x11 && imported[1] == 0x22 && imported[2] == 0x33);
+        CHECK(w.be.At(t.views.color).rgba[(1 * 64 + 1) * 4 + 3] == 0x00);
+        CHECK(w.be.alpha_lane_writes == 1 && rf.AlphaMergesGpu() == 1 && rf.AlphaMergesCpu() == 0);
+        CHECK(t.coherence.vram_coherent_class == 1);
+    }
+    // Scale 2: every physical texel of a logical pixel takes that pixel's lane byte; RGB untouched.
+    {
+        World w;
+        w.scale.SetFactor(2);
+        w.be.alpha_lane_write = true;
+        TargetRefresher rf(w.be, w.vram, w.cache);
+        RenderTarget& t = w.cache.GetOrCreate(0x100000, 64, 64, 0x00, 0);
+        CHECK(t.identity.scale == 2);
+        t.AfterDraw(MakeDraw(0x100000, 64, 0x00), Drew(0, 0, 64, 64), 1, 1);
+        t.coherence.main_drawn_since_deposit.Reset();
+        test::FakeBackend::Surface& att = w.be.At(t.views.color);
+        for (size_t i = 0; i < att.rgba.size(); i += 4) { att.rgba[i] = uint8_t(i); att.rgba[i + 1] = 7; att.rgba[i + 2] = 9; att.rgba[i + 3] = 0x25; }
+        const uint8_t word[4] = {0, 0, 0, 0x77};
+        w.vram.WriteStream(PsmLayout::PixelByteAddress(Psm::CT32, 5, 9, 0x100000 / 256, 1), word, 4);
+        rf.RefreshFromVram(t, 0, 64, 0);
+        const uint32_t pw = att.desc.width;
+        for (int dy = 0; dy < 2; ++dy)
+            for (int dx = 0; dx < 2; ++dx) {
+                const uint8_t* px = &att.rgba[((9 * 2 + dy) * pw + (5 * 2 + dx)) * 4];
+                CHECK(px[3] == 0x77 && px[1] == 7 && px[2] == 9);
+            }
+        CHECK(att.rgba[((9 * 2) * pw + (6 * 2)) * 4 + 3] == 0x00);
+    }
+}
+
 // The band read and its de-swizzle walk share one page-row stride (track 1d review
 // F1): RefreshAlphaMerge addresses the mirror at the TARGET width, RefreshCt16 at
 // the render FBW. With render_fbw != width and a band starting past the first page
@@ -852,6 +1106,7 @@ void RefreshBandStride() {
         TargetRefresher rf(w.be, w.vram, w.cache);
         RenderTarget& t = w.cache.GetOrCreate(0x100000, 64, 64, 0x00, 0);
         t.AfterDraw(MakeDraw(0x100000, 128, 0x00), Drew(0, 0, 64, 64), 1, 1);
+        t.coherence.main_drawn_since_deposit.Reset();
         CHECK(t.identity.render_fbw == 128 && t.identity.width == 64);
         FillColor(w.be, t, 0x11, 0x22, 0x33, 0xFF);
         pattern(w.vram, 0x100000, 4 * 8192, 7);
@@ -864,7 +1119,7 @@ void RefreshBandStride() {
             for (int x = 0; x < 64; ++x) {
                 uint8_t m[4];
                 w.vram.ReadMirror(PsmLayout::PixelByteAddress(Psm::CT32, x, y, 0x100000 / 256, 64 / 64), 4, m);
-                const uint8_t want = uint8_t(std::min<uint32_t>(uint32_t(m[3]) * 2u, 255u));
+                const uint8_t want = m[3];
                 const uint8_t* px = &w.be.At(t.views.color).rgba[(y * 64 + x) * 4];
                 if (px[0] != 0x11 || px[1] != 0x22 || px[2] != 0x33 || px[3] != want) ++bad;
             }
@@ -909,6 +1164,7 @@ void RefreshBandStride() {
         TargetRefresher rf(w.be, w.vram, w.cache);
         RenderTarget& t = w.cache.GetOrCreate(0x300000, 128, 64, 0x00, 0);
         t.AfterDraw(MakeDraw(0x300000, 128, 0x00), Drew(0, 0, 128, 64), 1, 1);
+        t.coherence.main_drawn_since_deposit.Reset();
         FillColor(w.be, t, 1, 2, 3, 0xFF);
         pattern(w.vram, 0x300000, 4 * 8192, 5);
         rf.RefreshFromVram(t, 32, 64, 0);
@@ -917,7 +1173,7 @@ void RefreshBandStride() {
             for (int x = 0; x < 128; ++x) {
                 uint8_t m[4];
                 w.vram.ReadMirror(PsmLayout::PixelByteAddress(Psm::CT32, x, y, 0x300000 / 256, 2), 4, m);
-                if (w.be.At(t.views.color).rgba[(y * 128 + x) * 4 + 3] != uint8_t(std::min<uint32_t>(uint32_t(m[3]) * 2u, 255u))) ++bad;
+                if (w.be.At(t.views.color).rgba[(y * 128 + x) * 4 + 3] != m[3]) ++bad;
             }
         CHECK(bad == 0);
     }
@@ -1078,7 +1334,7 @@ void PendingLedger() {
     w.vram.NoteCpuWrite(VramImage::Span{0x302000, 0x2000});
     w.cache.Destroy(0x300000);
     CHECK(!w.cache.Has(0x300000) && w.vram.Page(0x300000 / 8192).shadow_epoch == 40);
-    CHECK(VramWord(w.vram, PsmLayout::PixelByteAddress(Psm::CT32, 5, 5, 0x300000 / 256, 1)) == 0x80332211u);
+    CHECK(VramWord(w.vram, PsmLayout::PixelByteAddress(Psm::CT32, 5, 5, 0x300000 / 256, 1)) == 0xFF332211u);
     CHECK(VramWord(w.vram, PsmLayout::PixelByteAddress(Psm::CT32, 5, 40, 0x300000 / 256, 1)) == 0u);   // page 385: CPU-authored, kept
     // ... and the rescue is a FOOTPRINT deposit, not a drawn-rows one: with the drawn
     // rect already consumed by a sync (nothing drawn since), the rows still land.
@@ -1092,7 +1348,7 @@ void PendingLedger() {
     w.be.SetPixel(h.views.color, 9, 9, 0x77, 0x88, 0x99, 0xFF);   // changed after the sync, nothing "drawn"
     CHECK(w.cache.SyncDrawn(h, 50) == 0);                          // a plain sync writes nothing now
     w.cache.Destroy(0x310000);
-    CHECK(VramWord(w.vram, PsmLayout::PixelByteAddress(Psm::CT32, 9, 9, 0x310000 / 256, 1)) == 0x80998877u);
+    CHECK(VramWord(w.vram, PsmLayout::PixelByteAddress(Psm::CT32, 9, 9, 0x310000 / 256, 1)) == 0xFF998877u);
     // The alias page walks CLAMP at page 511 (no 4 MiB wrap): a region running past
     // the end marks the tail pages only, never a low page; one starting past the
     // end marks nothing.
@@ -1105,6 +1361,30 @@ void PendingLedger() {
     CHECK(!ap.AnyCpuDirty(0x400000, 0x2000));      // a query past the end is false, not page 0
     ap.ClearAliased(0x3FE000, 0x8000);
     CHECK(!ap.IsAliased(511));
+    // Word-range marks (the per-draw ClearCpuDirty is masks, not a bit walk): a span
+    // inside one word, one crossing word boundaries, one ending on a word's last page;
+    // every page in the span is set and the neighbours outside it are not.
+    AliasPageSet ws;
+    auto span_ok = [&](uint32_t first, uint32_t last) {
+        for (uint32_t p = 0; p < VramImage::kPageCount; ++p)
+            if (ws.IsCpuDirty(p) != (p >= first && p <= last)) return false;
+        return true;
+    };
+    ws.MarkCpuDirty(3 * VramImage::kPageBytes, 5 * VramImage::kPageBytes);          // pages 3..7
+    CHECK(span_ok(3, 7));
+    CHECK(ws.AnyCpuDirty(7 * VramImage::kPageBytes, 1) && !ws.AnyCpuDirty(8 * VramImage::kPageBytes, 64 * VramImage::kPageBytes));
+    ws.ClearCpuDirty(0, 512 * VramImage::kPageBytes);
+    CHECK(span_ok(1, 0));                                                           // all clear
+    ws.MarkCpuDirty(60 * VramImage::kPageBytes, 70 * VramImage::kPageBytes);        // pages 60..129: three words
+    CHECK(span_ok(60, 129));
+    CHECK(ws.AnyCpuDirty(63 * VramImage::kPageBytes, 2 * VramImage::kPageBytes) && !ws.AnyCpuDirty(130 * VramImage::kPageBytes, 1));
+    ws.ClearCpuDirty(64 * VramImage::kPageBytes, 64 * VramImage::kPageBytes);       // the middle word exactly
+    CHECK(ws.IsCpuDirty(60) && ws.IsCpuDirty(63) && !ws.IsCpuDirty(64) && !ws.IsCpuDirty(127) && ws.IsCpuDirty(128) && ws.IsCpuDirty(129));
+    ws.MarkCpuDirty(0, 64 * VramImage::kPageBytes);                                 // pages 0..63 = word 0 whole
+    CHECK(ws.IsCpuDirty(0) && ws.IsCpuDirty(63) && !ws.IsCpuDirty(64));
+    ws.ClearCpuDirty(0, 512 * VramImage::kPageBytes);
+    ws.MarkCpuDirty(511 * VramImage::kPageBytes, 3 * VramImage::kPageBytes);        // the last page, clamped
+    CHECK(span_ok(511, 511));
 }
 
 // The per-draw render size rule (TargetDims): FBW in (0, 1024] else the window
@@ -1200,9 +1480,11 @@ int main(int argc, char** argv) {
     const std::string which = argc > 1 ? argv[1] : "all";
     const bool all = which == "all";
     if (all || which == "inv09") Inv09();
+    if (all || which == "offer") OfferedPixels();
     if (all || which == "inv10") Inv10();
     if (all || which == "inv11") Inv11();
     if (all || which == "inv12") Inv12();
+    if (all || which == "alphamerge") AlphaMergeRoutes();
     if (all || which == "inv13") Inv13_14();
     if (all || which == "inv14") Inv13_14();
     if (all || which == "inv20") Inv20();
@@ -1210,6 +1492,7 @@ int main(int argc, char** argv) {
     if (all || which == "inv24") Inv24();
     if (all || which == "inv35") Inv35();
     if (all || which == "inv37") Inv37();
+    if (all || which == "inv38") Inv38();
     if (all || which == "rects") DrawnRects();
     if (all || which == "authors") AuthorSeqs();
     if (all || which == "zsat") ZSaturate();

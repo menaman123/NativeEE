@@ -317,7 +317,7 @@ static void TestRunMetaAndFrameCap() {
     CHECK(lines.size() > 8 && lines[6] == "frames=71" && lines[8] == "finalized=1");
     CHECK(m.Render().find("frames=71\n") != std::string::npos);
 
-    FrameCap cap;
+    ps2r::verify::FrameCap cap;
     int fin = 0;
     cap.AddFinalizer([&] { fin++; });
     CHECK(!cap.Armed());

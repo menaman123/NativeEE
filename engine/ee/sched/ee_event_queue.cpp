@@ -45,14 +45,51 @@ void EeEventQueue::Enqueue(const Event& ev) {
 }
 
 void EeEventQueue::PokeParks() {
+    // The holder (if any) applies the event at its next scheduling point: only
+    // its own parks need the wake (the boundary protocol's field park, a park
+    // inside an idle grant). Blocked threads stay blocked. With no holder ONE
+    // park wakes: the last runner's, else the lowest guest tid's (header).
+    EeRunToken& token = EeRunToken::Instance();
+    const int owner = token.OwnerTid();
     std::lock_guard<std::mutex> plk(park_mu_);
+    int target = owner;
+    if (owner == EeRunToken::kNone) {
+        pokes_all_.fetch_add(1, std::memory_order_relaxed);
+        const int last = token.LastOwnerTid();
+        bool last_parked = false;
+        int lowest = EeRunToken::kNone;   // lowest GUEST tid with a park
+        for (const auto& p : parks_) {
+            if (!p.active) continue;
+            if (p.tid == last) last_parked = true;
+            if (p.tid >= 0 && (lowest == EeRunToken::kNone || p.tid < lowest)) lowest = p.tid;
+        }
+        // Neither: only non-guest registrants (tid kNone) are parked -- the loop
+        // below pokes them all (target kNone matches each).
+        target = last_parked ? last : lowest;
+        last_idle_poke_tid_.store(target, std::memory_order_relaxed);
+    } else {
+        pokes_holder_.fetch_add(1, std::memory_order_relaxed);
+    }
     for (auto& p : parks_) {
-        if (!p.active) continue;
+        if (!p.active || p.tid != target) continue;
         // Empty-lock + notify: a parked waiter either sees pending_ in its
         // predicate or receives this notification.
         { std::lock_guard<std::mutex> olk(*p.m); }
         p.cv->notify_all();
     }
+}
+
+bool EeEventQueue::ParkWakeDue() const {
+    if (!pending_.load(std::memory_order_acquire)) return false;
+    EeRunToken& token = EeRunToken::Instance();
+    const int owner = token.OwnerTid();
+    return owner == EeRunToken::kNone || owner == token.CurrentTid();
+}
+
+void EeEventQueue::PokeIfOrphaned() {
+    if (!pending_.load(std::memory_order_acquire)) return;
+    if (EeRunToken::Instance().OwnerTid() != EeRunToken::kNone) return;
+    PokeParks();
 }
 
 void EeEventQueue::DrainOnToken() {
@@ -105,7 +142,7 @@ int EeEventQueue::RegisterPark(std::mutex* m, std::condition_variable* cv) {
     std::lock_guard<std::mutex> plk(park_mu_);
     for (int i = 0; i < kMaxParks; i++) {
         if (!parks_[i].active) {
-            parks_[i] = ParkSlot{m, cv, true};
+            parks_[i] = ParkSlot{m, cv, EeRunToken::Instance().CurrentTid(), true};
             return i;
         }
     }

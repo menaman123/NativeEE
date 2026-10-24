@@ -1,11 +1,16 @@
 // engine/iop/hle/thbase/thbase_module.h -- ThbaseModule: the IOP kernel's
 // thbase library as the recompiled module sees it, routed to IopKernel:
-// CreateThread (idx 4), DeleteThread (5), StartThread (6), TerminateThread
-// (10), ChangeThreadPriority (14), GetThreadId (20), SleepThread (24),
-// WakeupThread (25), DelayThread (33), USec2SysClock (39). Arguments in
-// $a0..$a3, result in $v0. A started thread's body runs the recompiled
-// function at the ThreadParam entry on a fresh IopContext whose $sp/$gp come
-// from the title's ThreadLayout (data, not engine constants).
+// CreateThread (idx 4), DeleteThread (5), StartThread (6), ExitDeleteThread
+// (9), TerminateThread (10), ChangeThreadPriority (14),
+// RotateThreadReadyQueue (16), GetThreadId (20), SleepThread (24),
+// WakeupThread (25), iWakeupThread (26), DelayThread (33), USec2SysClock (39).
+// Arguments in $a0..$a3, result in $v0. A started thread's body runs the
+// recompiled function at the ThreadParam entry on a fresh IopContext whose
+// $sp/$gp come from the title's ThreadLayout (data, not engine constants) --
+// or, with a stack allocator bound (SetStackAllocator), from a stack of the
+// ThreadParam's own size taken from the sysmem heap as the console's
+// CreateThread does, and the CREATING thread's $gp (several hosted modules,
+// each with its own $gp) when the layout's gp is 0.
 #pragma once
 
 #include <atomic>
@@ -52,12 +57,29 @@ public:
 
     ThbaseModule(IopModuleTable& table, IopMemory& mem, FunctionResolver resolve, ThreadLayout layout);
 
+    // Per-thread stacks from the heap (the console's shape): alloc(size) -> base
+    // address (0 = exhausted), free(base). Unbound: the ThreadLayout band formula.
+    using StackAlloc = std::function<uint32_t(uint32_t size)>;
+    using StackFree = std::function<void(uint32_t addr)>;
+    void SetStackAllocator(StackAlloc alloc, StackFree free);
+
     // int CreateThread(ThreadParam*) -> tid; param +0x08 entry, +0x0C stack size, +0x10 priority.
     void CreateThread(IopContext& ctx);
     // int DeleteThread(tid) -> 0.
     void DeleteThread(IopContext& ctx);
     // int StartThread(tid, arg) -> 0; arms the body with $a0 = arg.
     void StartThread(IopContext& ctx);
+    // int ExitThread() -> never returns: the running thread ends (idx 8).
+    void ExitThread(IopContext& ctx);
+    // int ExitDeleteThread() -> never returns: the running thread ends and is deleted.
+    void ExitDeleteThread(IopContext& ctx);
+    // int ReferThreadStatus(tid, ThreadStatus*) -> 0: {attr, option, status, entry, stack,
+    // stackSize, gpReg, initPriority, currentPriority, waitType, waitId, wakeupCount} (idx 22).
+    void ReferThreadStatus(IopContext& ctx);
+    // int RotateThreadReadyQueue(prio) -> 0: the running thread yields to equals.
+    void RotateThreadReadyQueue(IopContext& ctx);
+    // int iWakeupThread(tid): the interrupt-context form (same rule as WakeupThread here).
+    void iWakeupThread(IopContext& ctx);
     // int TerminateThread(tid) -> 0.
     void TerminateThread(IopContext& ctx);
     // int ChangeThreadPriority(tid, prio): requeue and reschedule, or an IOP error.
@@ -88,6 +110,25 @@ public:
     // reconcile owns its wait state). Returns true when a body was armed.
     bool RestoreThread(int tid, uint32_t entry, uint32_t priority, uint32_t arg, bool started);
 
+    // One thread's creation record as a savestate section carries it: what
+    // CreateThread recorded (entry, the creating thread's $gp, the heap stack)
+    // and what StartThread armed ($a0). `started` = a body is armed.
+    struct ThreadRecord {
+        uint32_t entry = 0, gp = 0, stack_base = 0, stack_size = 0, arg = 0;
+        bool started = false;
+    };
+    ThreadRecord ExportThread(int tid) const;
+    // Savestate restore of one record into an EMPTY slot (the kernel was reset):
+    // registers the tid at `initial_priority`, installs the record, and when
+    // `started` arms the body StartThread arms on the RECORDED stack and $gp --
+    // the thread then runs from its entry to its first park on the restored RAM.
+    // `priority` (the effective one at the save) is applied after the arm.
+    // False when the tid is live, the entry has no recompiled body, or the arm failed.
+    bool RestoreThreadRecord(int tid, const ThreadRecord& record, uint32_t initial_priority, uint32_t priority);
+    void SetNextTid(int tid) { next_tid_ = (tid > 0 && tid < kMaxThreads) ? tid : 1; }
+    // Forgets every record (the kernel's ResetForRestore counterpart).
+    void ResetRecords();
+
 private:
     bool ArmBody(int tid, uint32_t arg, const GuestFunction& body);
 
@@ -95,8 +136,14 @@ private:
     IopMemory& mem_;
     FunctionResolver resolve_;
     ThreadLayout layout_;
+    StackAlloc stack_alloc_;
+    StackFree stack_free_;
     int next_tid_ = 1;
     uint32_t entry_[kMaxThreads] = {};
+    uint32_t gp_[kMaxThreads] = {};           // the creating thread's $gp (layout gp == 0)
+    uint32_t stack_base_[kMaxThreads] = {};   // heap-allocated stack (allocator bound), 0 = band formula
+    uint32_t stack_size_[kMaxThreads] = {};
+    uint32_t arg_[kMaxThreads] = {};          // StartThread's $a0 (the record a savestate re-arms)
     bool started_[kMaxThreads] = {};
     std::atomic<uint64_t> priority_calls_{0}, priority_changes_{0}, priority_errors_{0};
     std::atomic<uint64_t> delay_kernel_{0}, delay_host_{0};

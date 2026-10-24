@@ -47,11 +47,40 @@ ROOT = os.path.abspath(os.path.join(HERE, ".."))
 LEDGER = os.path.join(ROOT, "docs", "filemap", "FLAG_LEDGER.md")
 PLAN = os.path.join(ROOT, "docs", "phases", "PHASE1_PLAN.md")
 PROFILE_NAME = "deterministic"
-FINGERPRINT_EXCLUDED_PREFIXES = ("harness.", "paths.", "meta.")
+FINGERPRINT_EXCLUDED_PREFIXES = ("harness.", "paths.", "meta.", "diag.")
+# Keys Config::Fingerprint() excludes by name (engine/core/config/config.cpp
+# FingerprintExcluded): host scheduling / toolchain choices that change nothing
+# the title executes or an image carries. A preset may pin them (det column)
+# without entering the fingerprint.
+FINGERPRINT_EXCLUDED_KEYS = (
+    "engine.mtvu_kick_drop",
+    "engine.mtvu_early_finish",
+    "engine.mtvu_wait_probe",
+    "engine.ee_yield_spin_gate",
+    "engine.ee_fast_dispatch",
+    "engine.cop0_count",
+    "engine.vu1_aot_corpus",
+    "engine.mtvu_depth_hold",
+    "video.capture_wait_ms",
+    "video.present_relax",
+    "engine.vu1_aot_codegen",
+    "engine.vu1_aot_compiler",
+    "engine.vu1_aot_sysroot",
+    "engine.vu1_aot_prelude",
+    "engine.vu1_aot_opt",
+    "engine.vu1_aot_pack",
+    "engine.vu1_aot_region_blocks",
+    "engine.vu1_aot_region_ops",
+    "engine.vu1_aot_region_taken",
+    "engine.vu1_aot_chain",
+    "engine.vu1_aot_mac_acc",
+    "save.restore_mode",
+)
 
 # key, type, peak, det ("=" = unchanged by the preset), source_var
 ROWS = [
     ("audio.enabled", "bool", "on", "=", "PS2_SOUND"),
+    ("audio.interpolation", "enum(linear|gaussian)", "linear", "=", "-"),
     ("audio.sdr_block_ms", "int", "8", "=", "PS2_SDR_BLOCK_MS"),
     ("audio.volume", "int", "100", "=", "GUI"),
     ("cdvd.delivery_visibility", "enum(boundary|poll)", "poll", "=", "-"),
@@ -63,15 +92,36 @@ ROWS = [
     ("dev.log_level", "enum(quiet|error|warn|info|narrate)", "quiet", "=", "PS2_LOG"),
     ("diag.perf", "bool", "off", "=", "PS2_PERF"),
     ("diag.tick_census", "bool", "off", "=", "-"),
+    ("diag.vu1_lockstep", "bool", "off", "=", "-"),
+    ("engine.cop0_count", "bool", "on", "on", "-"),
+    ("engine.ee_fast_dispatch", "bool", "on", "=", "-"),
     ("engine.ee_runahead", "int", "2", "=", "PS2_EE_RUNAHEAD"),
+    ("engine.ee_yield_spin_gate", "bool", "on", "off", "-"),
     ("engine.mtvu", "bool", "on", "off", "PS2_MTVU"),
     ("engine.mtvu_depth", "int", "2", "=", "PS2_MTVU_MAX_FRAMES"),
+    ("engine.mtvu_depth_hold", "int", "0", "0", "-"),
+    ("engine.mtvu_early_finish", "bool", "on", "off", "-"),
     ("engine.mtvu_kick_drop", "bool", "on", "=", "-"),
+    ("engine.mtvu_wait_probe", "bool", "on", "off", "-"),
     ("engine.pacing", "enum(realtime|freerun)", "realtime", "freerun", "PS2_VBLANK_FREERUN"),
     ("engine.shutdown_wait_s", "int", "10", "=", "PS2_SHUTDOWN_WAIT"),
     ("engine.time_regime_pin", "int", "-1", "1", "PS2_TIME_EMU_REGIME"),
     ("engine.turbo", "int", "0", "=", "-"),
-    ("engine.vu1_mode", "enum(hle|cached|interp)", "cached", "=", "PS2_VU_MODE"),
+    ("engine.vu1_aot_chain", "bool", "on", "=", "-"),
+    ("engine.vu1_aot_codegen", "bool", "on", "=", "-"),
+    ("engine.vu1_aot_compiler", "str", "", "=", "-"),
+    ("engine.vu1_aot_corpus", "str", "", "=", "-"),
+    ("engine.vu1_aot_fallback", "enum(block|interp)", "block", "=", "-"),
+    ("engine.vu1_aot_mac_acc", "bool", "off", "=", "-"),
+    ("engine.vu1_aot_opt", "int", "2", "=", "-"),
+    ("engine.vu1_aot_pack", "str", "", "=", "-"),
+    ("engine.vu1_aot_prelude", "str", "", "=", "-"),
+    ("engine.vu1_aot_region_blocks", "int", "1", "=", "-"),
+    ("engine.vu1_aot_region_ops", "int", "48", "=", "-"),
+    ("engine.vu1_aot_region_taken", "bool", "on", "=", "-"),
+    ("engine.vu1_aot_sysroot", "str", "", "=", "-"),
+    ("engine.vu1_aot_verify", "bool", "on", "=", "-"),
+    ("engine.vu1_mode", "enum(hle|cached|interp|block|aot)", "cached", "=", "PS2_VU_MODE"),
     ("fixes.look_rest_seconds", "bool", "off", "=", "-"),
     ("fixes.skid_mark_init", "bool", "off", "=", "-"),
     ("game.rtc_fixed", "bool", "off", "on", "PS2_RTC_FIXED"),
@@ -168,14 +218,17 @@ ROWS = [
     ("ui.perf_overlay", "bool", "off", "=", "-"),
     ("video.anisotropy", "int", "1", "=", "-"),
     ("video.aspect", "enum(auto|4:3|16:9|16:10|21:9)", "auto", "=", "display.ini:aspect"),
-    ("video.backend", "enum(gl|soft)", "gl", "=", "RENDERER_BACKEND"),
+    ("video.backend", "enum(gl|soft|metal|auto)", "auto", "gl", "RENDERER_BACKEND"),
+    ("video.capture_wait_ms", "int", "8", "0", "-"),
     ("video.custom_offset_x", "int", "0", "=", "display.ini:custom_offset_x"),
     ("video.custom_offset_y", "int", "0", "=", "display.ini:custom_offset_y"),
     ("video.custom_scale_pct", "int", "100", "=", "display.ini:custom_scale"),
     ("video.fit_mode", "enum(stretch|fit|fill|integer|custom)", "fit", "=", "display.ini:mode"),
     ("video.fps_cap", "int", "60", "0", "PS2_FPS_CAP"),
+    ("video.frame_cap", "enum(off|30|60)", "60", "=", "-"),
     ("video.fullscreen", "enum(windowed|fullscreen|borderless)", "windowed", "=", "-"),
     ("video.interp", "bool", "on", "off", "PS2_GS_INTERP"),
+    ("video.present_relax", "bool", "on", "off", "-"),
     ("video.render_rate", "enum(60|display)", "60", "=", "-"),
     ("video.scale", "int", "1", "=", "PS2_GS_SCALE"),
     ("video.texture_filter", "enum(title|point|bilinear|trilinear)", "title", "=", "-"),
@@ -270,7 +323,7 @@ def ledger_master_outcomes():
 def fingerprint(rows):
     parts = []
     for key, _t, peak, det, _s in rows:
-        if key.startswith(FINGERPRINT_EXCLUDED_PREFIXES):
+        if key.startswith(FINGERPRINT_EXCLUDED_PREFIXES) or key in FINGERPRINT_EXCLUDED_KEYS:
             continue
         if det != "=" and det != peak:
             parts.append("%s=%s;" % (key, det))

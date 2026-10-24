@@ -8,6 +8,7 @@
 #include "engine/ee/hle/kernl_boot.h"
 #include "engine/ee/hle/semaphores.h"
 #include "engine/ee/hle/thread_manager.h"
+#include "engine/ee/mem/main_memory.h"
 #include "engine/ee/recomp_abi/host_app/memory.h"
 
 namespace {
@@ -72,7 +73,7 @@ inline void RetU(CpuContext& ctx, uint32_t v) { ctx.cpuRegs.GPR.r[2].UL[0] = v; 
 
 bool LooksLikeGuestPtr(uint32_t v) {
     if (v == 0) return true;
-    const uint32_t norm = v & 0x1FFFFFFFu;
+    const uint32_t norm = MainMemory::Phys(v);
     return norm < BootEnv::kRamTop && norm >= 0x10000u;
 }
 }  // namespace
@@ -93,8 +94,52 @@ int SyscallTable::Normalize(uint32_t v1) {
     return (sn < 0) ? static_cast<int>(static_cast<uint8_t>(-sn)) : static_cast<int>(static_cast<uint8_t>(v1 & 0xff));
 }
 
+bool SyscallTable::IsBlockingWait(int num) {
+    switch (num) {
+        case 50:   // SleepThread
+        case 55:   // SuspendThread (self)
+        case 59:   // JoinThread
+        case 68:   // WaitSema
+        case 86:   // WaitEventFlag
+            return true;
+        default: return false;
+    }
+}
+
+bool SyscallTable::WouldBlockNow(int num, const CpuContext& ctx) {
+    switch (num) {
+        case 50: {   // SleepThread: a banked WakeupThread is consumed at once (R4)
+            auto info = ThreadManager::Instance().Current();
+            if (!info) return false;
+            std::lock_guard<std::mutex> lk(info->m);
+            return info->wakeup_count <= 0;
+        }
+        case 55:   // SuspendThread (self)
+        case 59:   // JoinThread
+            return true;
+        case 68: {   // WaitSema: count > 0 -> count--, return (S3)
+            SemaStatus st;
+            if (Semaphores::Instance().ReferStatus(As(ctx, 0), st) != KE_OK) return false;
+            return st.count <= 0;
+        }
+        case 86: {   // WaitEventFlag: the pattern test (E2); an error return is not a park
+            const uint32_t wait_bits = A(ctx, 1), mode = A(ctx, 2);
+            if ((mode & ~WEF_MODE_MASK) != 0 || wait_bits == 0) return false;
+            EventFlagStatus st;
+            if (EventFlags::Instance().ReferStatus(As(ctx, 0), st) != KE_OK) return false;
+            return !EventFlags::Satisfied(st.bits, wait_bits, mode);
+        }
+        default: return false;
+    }
+}
+
 void SyscallTable::SetGuestCall(GuestCall fn) { guest_call_ = std::move(fn); }
 void SyscallTable::SetTickClock(std::function<uint64_t()> now) { tick_now_ = std::move(now); }
+void SyscallTable::SetCop0CountClock(std::function<uint64_t()> now) { cop0_count_now_ = std::move(now); }
+void SyscallTable::SeatCop0Count(CpuContext& ctx) const {
+    if (!cop0_count_now_) return;
+    ctx.cpuRegs.CP0.r[9] = static_cast<uint32_t>(cop0_count_now_()) + cop0_count_reseat_;
+}
 uint32_t SyscallTable::CustomSyscallAddress(int num) const {
     return (num >= 0 && num < 256) ? custom_syscall_[num] : 0;
 }
@@ -110,6 +155,7 @@ void SyscallTable::RunGuest(uint32_t addr, CpuContext& ctx) {
 void SyscallTable::Dispatch(uint32_t v1, CpuContext& ctx) {
     const int num = Normalize(v1);
     if (trace_) trace_(num, NameOf(num));
+    if (pre_dispatch_) pre_dispatch_(num, ctx);
     if (custom_syscall_[num] != 0) {  // SetSysCall redirected this number to guest code
         RunGuest(custom_syscall_[num], ctx);
         return;
@@ -127,8 +173,8 @@ void SyscallTable::Dispatch(uint32_t v1, CpuContext& ctx) {
         case 19: RemoveHandler(dmac_handlers_, ctx, 15); break;
         case 20: ToggleMask(*intc_mask_ptr_, ctx, true); break;
         case 21: ToggleMask(*intc_mask_ptr_, ctx, false); break;
-        case 22: ToggleMask(dmac_mask_, ctx, true); break;
-        case 23: ToggleMask(dmac_mask_, ctx, false); break;
+        case 22: ToggleDmacMask(ctx, true); break;
+        case 23: ToggleDmacMask(ctx, false); break;
         case 24: case 30: SetAlarm(ctx); break;
         case 25: case 31: ReleaseAlarm(ctx); break;
         case 32: case 33: case 34: case 35: case 36: case 37: case 38: case 39: case 40: case 41:
@@ -142,10 +188,10 @@ void SyscallTable::Dispatch(uint32_t v1, CpuContext& ctx) {
             break;
         case 61: RetU(ctx, KernlBoot::InitHeap(A(ctx, 0), As(ctx, 1), ctx)); break;
         case 62: RetU(ctx, KernlBoot::EndOfHeap()); break;
-        case 64: case 65: case 66: case 67: case 68: case 69: case 70: Semas(num, ctx); break;
+        case 64: case 65: case 66: case 67: case 68: case 69: case 70: case 71: case 72: Semas(num, ctx); break;
         case 74: RetS(ctx, 0); break;  // SetOsdConfigParam: accepted
         case 75: GetOsdConfigParam(ctx); break;
-        case 80: case 81: case 82: case 83: case 84: case 85: case 86: case 87: case 88:
+        case 80: case 81: case 82: case 83: case 84: case 85: case 86: case 87: case 88: case 89: case 90:
             EventFlagsCall(num, ctx);
             break;
         case 92: SetHandlerActive(intc_handlers_, ctx, true); break;
@@ -153,9 +199,10 @@ void SyscallTable::Dispatch(uint32_t v1, CpuContext& ctx) {
         case 94: SetHandlerActive(dmac_handlers_, ctx, true); break;
         case 95: SetHandlerActive(dmac_handlers_, ctx, false); break;
         case 100: RetS(ctx, 0); break;  // FlushCache: caches are coherent here
+        case 104: RetS(ctx, 0); break;  // iFlushCache (the VIF1 i-bit handler's write-back): the same
         case 107: RetS(ctx, 0); break;  // sceSifStopDma: SIF0 STR cleared (no DMAC yet)
-        case 112: ctx.cpuRegs.GPR.r[2].UD[0] = gs_imr_; break;
-        case 113: gs_imr_ = ctx.cpuRegs.GPR.r[4].UD[0]; break;
+        case 112: ctx.cpuRegs.GPR.r[2].UD[0] = gs_imr_.load(std::memory_order_relaxed); break;
+        case 113: gs_imr_.store(ctx.cpuRegs.GPR.r[4].UD[0], std::memory_order_relaxed); break;
         case 116: SetSysCall(ctx); break;
         case 118: RetS(ctx, -1); break;  // sceSifDmaStat: -1 = transfer complete
         case 119: SifSetDma(ctx); break;
@@ -166,9 +213,9 @@ void SyscallTable::Dispatch(uint32_t v1, CpuContext& ctx) {
         case 127: RetS(ctx, static_cast<int32_t>(BootEnv::kRamTop)); break;
         // Documented labels OLD left as logged no-ops ($v0 untouched).
         case 0: case 1: case 6: case 7: case 10: case 11: case 12: case 13: case 14: case 15:
-        case 26: case 27: case 28: case 29: case 49: case 59: case 71: case 72: case 76: case 77:
-        case 78: case 79: case 89: case 90: case 96: case 97: case 98: case 99: case 102: case 103:
-        case 104: case 106: case 108: case 109: case 110: case 111: case 114: case 115: case 117:
+        case 26: case 27: case 28: case 29: case 49: case 59: case 76: case 77:
+        case 78: case 79: case 96: case 97: case 98: case 99: case 102: case 103:
+        case 106: case 108: case 109: case 110: case 111: case 114: case 115: case 117:
         case 123: case 125: case 126:
             NotImplemented(NameOf(num));
             break;
@@ -179,10 +226,14 @@ void SyscallTable::Dispatch(uint32_t v1, CpuContext& ctx) {
                                           static_cast<uint64_t>(num) | 0x5C00000000ull, ctx.cpuRegs.pc);
             break;
     }
+    // The syscall's return instant: the free-running Count the guest reads next
+    // (a thread woken from a park returns through here with the fresh value).
+    SeatCop0Count(ctx);
 }
 
 // ---- COP0 writes (row 6). Count (rd 9) is the free-running counter: a guest
-// write reseats it, reads come from the register (the timing layer advances it).
+// write reseats it (engine.cop0_count: the offset against the emu-domain clock),
+// reads come from the register (SeatCop0Count advances it).
 void SyscallTable::HandleMtc0(CpuContext& ctx, uint8_t rd, uint32_t value) {
     auto& cp0 = ctx.cpuRegs.CP0;
     switch (rd) {
@@ -195,6 +246,10 @@ void SyscallTable::HandleMtc0(CpuContext& ctx, uint8_t rd, uint32_t value) {
         case 11:  // Compare: clears the timer interrupt (IP7)
             cp0.r[11] = value;
             cp0.n.Cause &= ~0x8000u;
+            break;
+        case 9:  // Count: the guest reseats the free-running counter
+            if (cop0_count_now_) cop0_count_reseat_ = value - static_cast<uint32_t>(cop0_count_now_());
+            cp0.r[9] = value;
             break;
         default:
             cp0.r[rd] = value;
@@ -283,6 +338,13 @@ void SyscallTable::ToggleMask(uint32_t& mask, CpuContext& ctx, bool enable) {
     if (enable && !was_set) mask |= (1u << bit);
     if (!enable && was_set) mask &= ~(1u << bit);
     RetS(ctx, enable ? (was_set ? 0 : 1) : (was_set ? 1 : 0));
+}
+
+void SyscallTable::ToggleDmacMask(CpuContext& ctx, bool enable) {
+    const int channel = As(ctx, 0);
+    const uint32_t before = dmac_mask_;
+    ToggleMask(dmac_mask_, ctx, enable);
+    if (dmac_mask_ != before && dmac_mask_sink_) dmac_mask_sink_(channel, enable);
 }
 
 // sceSifSetDma with no IOP: a list without a command entry (attr & 4) returns
@@ -482,6 +544,24 @@ void SyscallTable::Semas(int num, CpuContext& ctx) {
         case 66: case 67: RetS(ctx, sm.Signal(As(ctx, 0))); return;
         case 68: RetS(ctx, sm.Wait(As(ctx, 0))); return;
         case 69: case 70: RetS(ctx, sm.Poll(As(ctx, 0))); return;
+        case 71: case 72: {  // ReferSemaStatus / iReferSemaStatus(sid, SemaParam*): currentCount, maxCount,
+            // initCount, numWaitThreads, attr, option (SDK eekernel.h order); returns the id, or KE_UNKNOWN_SEMID.
+            const int sid = As(ctx, 0);
+            const uint32_t p = A(ctx, 1);
+            SemaStatus st;
+            const int r = sm.ReferStatus(sid, st);
+            if (r != KE_OK) { RetS(ctx, r); return; }
+            if (p != 0) {
+                memory::write<int32_t>(p + 0x00, st.count);
+                memory::write<int32_t>(p + 0x04, st.max_count);
+                memory::write<int32_t>(p + 0x08, st.init_count);
+                memory::write<int32_t>(p + 0x0C, st.wait_threads);
+                memory::write<uint32_t>(p + 0x10, st.attr);
+                memory::write<uint32_t>(p + 0x14, st.option);
+            }
+            RetS(ctx, sid);
+            return;
+        }
         default: return;
     }
 }
@@ -511,6 +591,23 @@ void SyscallTable::EventFlagsCall(int num, CpuContext& ctx) {
             RetS(ctx, r);
             return;
         }
+        case 89: case 90: {  // ReferEventFlagStatus / iReferEventFlagStatus(eid, EventFlagParam*): attr, option,
+            // initPattern, currentPattern, numWaitThreads (SDK eekernel.h order); returns the id, or KE_UNKNOWN_EVFID.
+            const int eid = As(ctx, 0);
+            const uint32_t p = A(ctx, 1);
+            EventFlagStatus st;
+            const int r = ef.ReferStatus(eid, st);
+            if (r != KE_OK) { RetS(ctx, r); return; }
+            if (p != 0) {
+                memory::write<uint32_t>(p + 0x00, st.attr);
+                memory::write<uint32_t>(p + 0x04, st.option);
+                memory::write<uint32_t>(p + 0x08, st.init_bits);
+                memory::write<uint32_t>(p + 0x0C, st.bits);
+                memory::write<int32_t>(p + 0x10, st.wait_threads);
+            }
+            RetS(ctx, eid);
+            return;
+        }
         default: return;
     }
 }
@@ -522,12 +619,13 @@ void SyscallTable::ResetForTest() {
     next_dmac_id_ = 1;
     intc_mask_ = dmac_mask_ = 0;
     *intc_mask_ptr_ = 0;
-    gs_imr_ = 0;
+    gs_imr_.store(0, std::memory_order_relaxed);
     for (uint32_t& c : custom_syscall_) c = 0;
     for (uint32_t& r : sif_sys_reg_) r = 0;
     sif_dma_id_ = 0;
     sif_dma_copy_ = nullptr;
     sif_dma_hook_ = nullptr;
+    pre_dispatch_ = nullptr;
     sif_dma_bytes_ = 0;
     unknown_count_ = not_implemented_count_ = 0;
     last_unknown_ = -1;

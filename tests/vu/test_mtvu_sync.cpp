@@ -7,11 +7,13 @@
 // worker's register file (identical to inline, the inline unit untouched);
 // TryVif1StatBusyView = VPS=3|VEW|FQC=16 only while a segment is in flight;
 // the site counters; DeferOn. No wall-clock assert: fake clock, predicate waits.
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <thread>
 #include <vector>
 
 #include "engine/gif/gif_arbiter.h"
@@ -280,10 +282,152 @@ struct TestMtvuSync {
         CHECK(r.sync.SyncCount(SyncSite::Vu1EeKick) == 1, "no sync counted for the fall-through");
     }
 
+    // A VIF1 feed that parks the worker inside EVERY span until that span is
+    // released (a counting gate), and submits one A+D PATH2 packet per span so
+    // each span's marker carries a packet.
+    struct CountingGate : MtvuVifFeed {
+        std::mutex mtx;
+        std::condition_variable cv;
+        unsigned entered = 0, released = 0;
+        GifArbiter* arbiter = nullptr;
+        void ProcessVif1(const uint8_t*, size_t) override {
+            unsigned mine;
+            {
+                std::unique_lock<std::mutex> lk(mtx);
+                mine = ++entered;
+                cv.notify_all();
+                cv.wait(lk, [&] { return released >= mine; });
+            }
+            const std::vector<uint8_t> pkt = AdPacket();
+            arbiter->submit(GifPath::Path2, pkt.data(), pkt.size());
+        }
+        void SetVif1TteFeed(bool) override {}
+        void ResetVif1Latch() override {}
+        void BindVu1(VuUnit*) override {}
+        void WaitEntered(unsigned n) {
+            std::unique_lock<std::mutex> lk(mtx);
+            cv.wait(lk, [&] { return entered >= n; });
+        }
+        void ReleaseOne() {
+            std::lock_guard<std::mutex> lk(mtx);
+            ++released;
+            cv.notify_all();
+        }
+    };
+    struct GateRig2 {
+        CountingGate feed;
+        RegisterOpStream ops;
+        GifRegs gif_regs;
+        GifParser parser;
+        GifArbiter arbiter;
+        VuUnit vu1w;
+        RunaheadGuard guard;
+        FakeClock clock;
+        MtvuBackpressure backpressure;
+        MtvuWorker worker;
+        MtvuSync sync;
+        std::atomic<int> delivered{0};
+        bool hold_after_first = false;   // the drain observer parks until the worker is idle (the seal race)
+        GateRig2()
+            : parser(ops, gif_regs), arbiter(parser), vu1w(1, &arbiter), guard(2), backpressure(guard, clock),
+              worker(feed, vu1w, arbiter, backpressure, MtvuSettings{true, 2}), sync(worker, arbiter) {
+            feed.arbiter = &arbiter;
+            arbiter.SetDrainObserver(&GateRig2::OnDrain, this);
+        }
+        static void OnDrain(void* user, const GifArbiterPacket&) {
+            auto* r = static_cast<GateRig2*>(user);
+            r->delivered++;
+            if (r->hold_after_first) {
+                // Inside the drain (drain_busy_ held): release the span and wait until the
+                // worker has sealed AND published idle -- the exact interleaving in which the
+                // loop's next check reads idle with a marker sealed after this drain began.
+                r->hold_after_first = false;
+                r->feed.ReleaseOne();
+                while (!r->worker.WorkerIdle()) std::this_thread::yield();
+            }
+        }
+    };
+
+    // WaitProgress: the idle EE parks until a seal lands, drains it on this
+    // thread and reports "still busy"; the last seal reports idle. Nothing
+    // outstanding = true at once, nothing drained.
+    static void WaitProgressDeliversSeals() {
+        GateRig2 r;
+        CHECK(r.sync.WaitProgress(), "worker down: nothing outstanding");
+        r.worker.Start();
+        CHECK(r.sync.WaitProgress() && r.sync.ProgressWaits() == 0 && r.sync.ProgressIdle() == 1,
+              "idle worker, empty arbiter: immediate, no park");
+        uint8_t span[16] = {0};
+        r.worker.SubmitVif1(span, 16);
+        r.worker.SubmitVif1(span, 16);
+        r.feed.WaitEntered(1);
+        // A releaser thread stands in for the worker's progress while this thread parks.
+        std::thread releaser([&] {
+            r.feed.ReleaseOne();
+            r.feed.WaitEntered(2);
+            // Hold the second span until the EE has parked once more.
+            while (r.sync.ProgressWaits() < 2) std::this_thread::yield();
+            r.feed.ReleaseOne();
+        });
+        bool idle = true;
+        int laps = 0;
+        while (laps < 10000) {
+            ++laps;
+            idle = r.sync.WaitProgress();
+            if (idle) break;
+        }
+        releaser.join();
+        CHECK(idle, "the loop ends with the worker idle");
+        CHECK(r.delivered == 2, "both spans' packets were drained by the parked EE");
+        CHECK(r.sync.ProgressWaits() >= 2, "the EE parked at least once per span");
+        CHECK(!r.arbiter.hasPending() && r.worker.WorkerIdle(), "nothing left in the pipeline");
+        r.worker.Stop();
+    }
+
+    // Sync: the worker seals its last marker before it publishes idle. A drain
+    // that began with the marker unsealed, followed by an idle read, used to
+    // end Sync with that marker in the inbox; Sync now drains once more.
+    static void SyncDrainsTheMarkerSealedDuringItsDrain() {
+        GateRig2 r;
+        r.worker.Start();
+        const std::vector<uint8_t> pkt = AdPacket();
+        r.arbiter.submit(GifPath::Path3, pkt.data(), pkt.size());   // a plain slot AHEAD of the span's marker
+        uint8_t span[16] = {0};
+        r.worker.SubmitVif1(span, 16);
+        r.feed.WaitEntered(1);
+        r.hold_after_first = true;
+        r.sync.Sync(SyncSite::Other);
+        CHECK(r.worker.WorkerIdle(), "idle after Sync");
+        CHECK(r.delivered == 2, "the marker sealed during the drain was collected before Sync returned");
+        CHECK(!r.arbiter.hasPending() && !r.arbiter.hasSealedReady(), "inbox empty");
+        r.worker.Stop();
+    }
+
+    // TryDrainPending: a plain EE slot queued while the worker thread exists
+    // (PATH3 behind no marker) has no sealed-ready hint; the dispatch-point
+    // drain delivers it, the hint-only eager drain does not.
+    static void TryDrainPendingDeliversPlainSlots() {
+        GateRig2 r;
+        r.worker.Start();
+        const std::vector<uint8_t> pkt = AdPacket();
+        r.arbiter.submit(GifPath::Path3, pkt.data(), pkt.size());
+        CHECK(r.arbiter.hasPending() && !r.arbiter.hasSealedReady(), "a plain slot, no sealed hint");
+        r.sync.TryEagerDrain();
+        CHECK(r.delivered == 0, "the hint-only drain leaves it");
+        r.sync.TryDrainPending();
+        CHECK(r.delivered == 1 && !r.arbiter.hasPending(), "the dispatch-point drain delivers it");
+        r.sync.TryDrainPending();
+        CHECK(r.delivered == 1, "nothing pending: no-op");
+        r.worker.Stop();
+    }
+
     static void Run() {
         SyncWaitsAndDrains();
         SyncOpsIdentical();
         RedirectRunsOnWorker();
+        WaitProgressDeliversSeals();
+        SyncDrainsTheMarkerSealedDuringItsDrain();
+        TryDrainPendingDeliversPlainSlots();
     }
 };
 

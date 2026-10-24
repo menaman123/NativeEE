@@ -5,6 +5,7 @@
 
 #include "engine/platform/host/platform.h"
 #include PS2R_GL_HEADER
+#include "engine/platform/sdl/gl_context.h"
 
 namespace ps2r::app {
 
@@ -21,13 +22,27 @@ SessionWindow::~SessionWindow() {
     if (window_) SDL_DestroyWindow(window_);
 }
 
+void SessionWindow::SetTitle(const std::string& title) {
+    if (window_) SDL_SetWindowTitle(window_, title.c_str());
+}
+
 bool SessionWindow::Open(std::string& error) {
-    // The composition root has initialized SDL video and requested GL 4.1.
+    // The composition root has initialized SDL video. The 4.1 core profile must be
+    // requested HERE, before this window exists: the renderer's hidden GL window used
+    // to request it as a side effect, but a Metal-backed session (video.backend=auto on
+    // Apple silicon) creates no GL window at all, and SDL's default is a legacy 2.1
+    // context in which the overlay's / blit's `#version 410` shaders do not compile --
+    // the window stayed black while the console frames rendered.
+    // SDL_CreateWindow would initialise the video subsystem itself and RESET the GL
+    // attributes in doing so: initialise it first, then request.
+    if (!SDL_WasInit(SDL_INIT_VIDEO) && SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) { error = SDL_GetError(); return false; }
+    platform::GlContext::RequestAttributes();
     window_ = SDL_CreateWindow("the title", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         960, 672, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_SHOWN);
     if (!window_) { error = SDL_GetError(); return false; }
     context_ = SDL_GL_CreateContext(window_);
     if (!context_) { error = SDL_GetError(); return false; }
+    if (!platform::GlContext::LoadEntryPoints(&error)) return false;
     // The main pump schedules presentation; SetVSync applies video.vsync.
     SDL_GL_SetSwapInterval(vsync_ ? 1 : 0);
     gui_ready_ = gui_.Initialize(window_, context_, error);

@@ -51,7 +51,7 @@ set_tests_properties(VerifyFreezeSessionLegSelftest PROPERTIES TIMEOUT 60)
 add_test(NAME VerifyPlatformIdentitySelftest
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/verify/platform_identity.py --selftest)
 set_tests_properties(VerifyPlatformIdentitySelftest PROPERTIES TIMEOUT 60
-    ENVIRONMENT "PS2R_PLATFORM_REF=${CMAKE_SOURCE_DIR}/games/${PS2R_TITLE}/verify/platform_ref/s3")
+    ENVIRONMENT "PS2R_PLATFORM_REF=${PS2R_GAMES_DIR}/${PS2R_TITLE}/verify/platform_ref/s3")
 # VerifyPlatformIdentity: the gate itself when a candidate leg of another host is handed in
 # (-DPS2R_PLATFORM_CANDIDATE=<leg dir> at configure time); SKIP 77 without one. The candidate is
 # produced by verify/run_leg.py on the other host (platform_ref/README.md); game files never enter CI.
@@ -59,7 +59,7 @@ set(PS2R_PLATFORM_CANDIDATE "" CACHE PATH "A leg dir replayed on another host fo
 if(PS2R_PLATFORM_CANDIDATE)
     add_test(NAME VerifyPlatformIdentity
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/verify/platform_identity.py
-                --ref ${CMAKE_SOURCE_DIR}/games/${PS2R_TITLE}/verify/platform_ref/s3
+                --ref ${PS2R_GAMES_DIR}/${PS2R_TITLE}/verify/platform_ref/s3
                 --candidate ${PS2R_PLATFORM_CANDIDATE} --report ${CMAKE_BINARY_DIR}/platform_identity.md)
 else()
     add_test(NAME VerifyPlatformIdentity COMMAND ${CMAKE_COMMAND} -E env sh -c "echo 'VerifyPlatformIdentity: SKIP (no PS2R_PLATFORM_CANDIDATE)'; exit 77")
@@ -218,11 +218,11 @@ set_tests_properties(VerifyRegressionRefSelftest PROPERTIES TIMEOUT 60)
 # --check reads the GENERATED recompiled.h / recompiled.cpp (PS2R_RECOMP_DIR): a title test.
 if(TARGET ps2r_title_recomp)
     add_test(NAME TitleSymbolsTable
-        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/games/${PS2R_TITLE}/symbols/build_symbols.py --check)
+        COMMAND ${Python3_EXECUTABLE} ${PS2R_GAMES_DIR}/${PS2R_TITLE}/symbols/build_symbols.py --check)
     set_tests_properties(TitleSymbolsTable PROPERTIES TIMEOUT 60 ENVIRONMENT "${PS2R_RECOMP_TEST_ENV}")
 endif()
 add_test(NAME TitleSymbolsTableSelftest
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/games/${PS2R_TITLE}/symbols/build_symbols.py --selftest)
+    COMMAND ${Python3_EXECUTABLE} ${PS2R_GAMES_DIR}/${PS2R_TITLE}/symbols/build_symbols.py --selftest)
 set_tests_properties(TitleSymbolsTableSelftest PROPERTIES TIMEOUT 60)
 
 # VerifyAnchorsTable (P8.36-D): games/<t>/verify/anchors.tsv (the 13-leg index) equals the frozen baseline tree --

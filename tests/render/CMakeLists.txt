@@ -9,15 +9,38 @@ function(ps2r_render_test name)
 endfunction()
 
 ps2r_render_test(test_blend_ff_map)
+ps2r_render_test(test_cd_copy_policy)
 ps2r_render_test(test_vertex_convert)
 ps2r_render_test(test_gl_shader_library)
 ps2r_render_test(test_gl_state_cache)
 ps2r_render_test(test_gl_device_smoke)
+ps2r_render_test(test_gl_async_readback)
+ps2r_render_test(test_gl_raster_rule)
+ps2r_render_test(test_gl_alpha_convention)
+ps2r_render_test(test_gl_alpha_fail_split)
+ps2r_render_test(test_gl_date_blend)
+target_link_libraries(test_gl_alpha_convention PRIVATE ps2r_gs_hle_texsrc ps2r_gs_format)
 ps2r_render_test(test_gl_present)
 ps2r_render_test(test_blend_equation_pin)
+ps2r_render_test(test_sw_blend_integer)
 ps2r_render_test(test_s9_stencil_smoke)
 ps2r_render_test(test_inherited_uniforms)
 ps2r_render_test(test_texture_filter)
+if(APPLE)   # ps2r_render_metal (engine/render is configured after tests/: test on the platform)
+    add_executable(test_metal_device_smoke test_metal_device_smoke.cpp)
+    target_link_libraries(test_metal_device_smoke PRIVATE ps2r_render_metal ps2r_gs_ir ps2r_core)
+    target_compile_options(test_metal_device_smoke PRIVATE -Wall -Wextra -Werror -O2)
+    # The Metal arm's device smoke (the GL smoke's checks on MetalDevice; SKIP without a device).
+    add_test(NAME Render_MetalDeviceSmoke COMMAND test_metal_device_smoke)
+    set_tests_properties(Render_MetalDeviceSmoke PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+    # The Metal arm's BeginReadback / PollReadback: a blit into a pooled shared buffer behind the
+    # command buffer's serial hands back the synchronous read's bytes; release-only Poll (null out).
+    add_executable(test_metal_async_readback test_metal_async_readback.cpp)
+    target_link_libraries(test_metal_async_readback PRIVATE ps2r_render_metal ps2r_gs_ir ps2r_core)
+    target_compile_options(test_metal_async_readback PRIVATE -Wall -Wextra -Werror -O2)
+    add_test(NAME Render_MetalAsyncReadback COMMAND test_metal_async_readback)
+    set_tests_properties(Render_MetalAsyncReadback PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+endif()
 
 # The rendering pins over a title's frozen PCSX2 baselines (title-screen draws, whole-frame
 # replays, the attract-sequence correctness gate) were ONE title's: they keyed on that title's
@@ -35,6 +58,11 @@ set_tests_properties(ToolsGsf1ExportSelftest PROPERTIES TIMEOUT 60)
 add_test(NAME Render_BlendFfMapTable COMMAND test_blend_ff_map)
 add_test(NAME Gs_Inv34_ReverseSubtract COMMAND test_blend_ff_map)
 set_tests_properties(Render_BlendFfMapTable Gs_Inv34_ReverseSubtract PROPERTIES TIMEOUT 120)
+
+# The Cd-copy elision with the dirty-rect list: strips skip past the union, a copy drops the
+# rects inside its box, overflow falls back to the union, force_full / Invalidate clear.
+add_test(NAME Render_CdCopyPolicyList COMMAND test_cd_copy_policy)
+set_tests_properties(Render_CdCopyPolicyList PROPERTIES TIMEOUT 120)
 
 # G6: fused conversion == the straightforward reference loops (3 modes, random verts, bbox rules).
 add_test(NAME Render_VertexConvert COMMAND test_vertex_convert)
@@ -57,7 +85,29 @@ set_tests_properties(Render_StateCacheEquivalence PROPERTIES TIMEOUT 120 SKIP_RE
 
 # Device smoke: surface create / clear / readback, one untextured triangle through the executor.
 add_test(NAME Render_DeviceSmoke COMMAND test_gl_device_smoke)
+# BeginReadback / PollReadback: a pack buffer behind a fence hands back the synchronous read's bytes.
+add_test(NAME Render_AsyncReadback COMMAND test_gl_async_readback)
+set_tests_properties(Render_AsyncReadback PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 set_tests_properties(Render_DeviceSmoke PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+
+# The GS pixel coverage rule (integer sample point, x0 <= i < x1) through the executor.
+add_test(NAME Render_RasterRule COMMAND test_gl_raster_rule)
+set_tests_properties(Render_RasterRule PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+
+# The ONE alpha convention: TEXA'd CT16 texels, the dual-source As factor, the stored byte.
+add_test(NAME Render_AlphaConvention COMMAND test_gl_alpha_convention)
+set_tests_properties(Render_AlphaConvention PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+
+# The per-pixel alpha test's two populations: AFAIL FB_ONLY / RGB_ONLY / ZB_ONLY / KEEP write
+# masks for the failing pixels, FBMSK / ZMSK for the passing ones, As untouched by the test.
+add_test(NAME Render_AlphaFailSplit COMMAND test_gl_alpha_fail_split)
+set_tests_properties(Render_AlphaFailSplit PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+
+# A DATE-only destination copy of a blended draw: the draw's OWN ALPHA tuple, once (fixed-
+# function when exact -- the shadow counter's self-overlapping faces accumulate -- else the
+# shader arm), the copy tracker channel-aware (alpha-masking strips do not re-copy).
+add_test(NAME Render_DateBlend COMMAND test_gl_date_blend)
+set_tests_properties(Render_DateBlend PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 
 # Window-pixel pins: logical content crop, orientation, allocation scale and
 # failure before clear/swap. Includes the unchanged full-image present mapping.
@@ -68,6 +118,9 @@ set_tests_properties(Render_Present PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 # plus the MODULATE 0x80=1.0 convention and the texel-alpha chain feeding As (sample pixels).
 add_test(NAME Render_BlendEquationPin COMMAND test_blend_equation_pin)
 set_tests_properties(Render_BlendEquationPin PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+# The shader blend arm's integer equation ((A - B) * C >> 7 floors the signed product).
+add_test(NAME Render_SwBlendInteger COMMAND test_sw_blend_integer)
+set_tests_properties(Render_SwBlendInteger PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 
 # 6E'': the stencil-composite primitives on a real context -- D24S8 surface, ClearStencil,
 # one strip's three passes (StripCount + two const quads), the 32 materialise quads

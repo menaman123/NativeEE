@@ -7,7 +7,8 @@
 // point the resolver's decode path uses. The pin: the palette index the letters use
 // decodes to the yellow the console shows (the dump's screenshot letter pixel /2:
 // the vertex colour 0xFF modulates 2x, GS User's Manual 3.4.4 "0x80 = 1.0"), the
-// decoded atlas carries that yellow and the texel-alpha lane is 0x7f (GPU 0xFE).
+// decoded atlas carries that yellow and the texel-alpha lane is the stored 0x7f
+// (the stored-alpha convention: no GPU rescale).
 // `--dump <ppm>` writes the decoded level for inspection.
 #include <algorithm>
 #include <cmath>
@@ -145,7 +146,7 @@ int main(int argc, char** argv) {
     TextureDecoder::Decode(vram.Bytes(), v, nullptr, nullptr, &texels);
     CHECK(texels.size() == 32 * 32, "32x32 texels");
 
-    // Histogram of the decoded texels (GPU alpha in bits 24-31).
+    // Histogram of the decoded texels (the stored alpha byte in bits 24-31).
     std::map<uint32_t, int> hist;
     for (uint32_t p : texels) hist[p]++;
     std::printf("decoded texel histogram (%zu distinct):\n", hist.size());
@@ -153,7 +154,7 @@ int main(int argc, char** argv) {
     for (auto& kv : hist) top.push_back({kv.second, kv.first});
     std::sort(top.begin(), top.end(), [](auto& a, auto& b) { return a.first > b.first; });
     for (size_t i = 0; i < top.size() && i < 12; i++)
-        std::printf("  %08x (r=%3u g=%3u b=%3u gpu_a=%3u) x%d\n", top[i].second, top[i].second & 0xFF,
+        std::printf("  %08x (r=%3u g=%3u b=%3u a=%3u) x%d\n", top[i].second, top[i].second & 0xFF,
                     (top[i].second >> 8) & 0xFF, (top[i].second >> 16) & 0xFF, top[i].second >> 24, top[i].first);
     std::printf("palette (PS2 alpha) first 16: ");
     for (int i = 0; i < 16; i++) std::printf("%08x ", palette[i]);
@@ -162,17 +163,17 @@ int main(int argc, char** argv) {
     // The console's letter yellow: the dump screenshot's letter pixel (238,216,16) is the
     // texel modulated by the 0xFF vertex colour (2x, clamped) -> the texel is within one
     // GS step of (119,108,8). The pin: some decoded texel (and some palette entry) is that
-    // yellow with the atlas's PS2 alpha 0x7f (GPU 0xFE).
+    // yellow with the atlas's PS2 alpha 0x7f, stored as 0x7f.
     auto near = [](uint32_t p, int r, int g, int b, int tol) {
         return std::abs(int(p & 0xFF) - r) <= tol && std::abs(int((p >> 8) & 0xFF) - g) <= tol &&
                std::abs(int((p >> 16) & 0xFF) - b) <= tol;
     };
-    // The atlas's palette carries PS2 alpha 0x7f on its colour entries (GPU 0xFE after the
-    // decoder's one scaling, PixelConvert::ScaleAlphaPs2ToGpu: a < 0x80 -> 2a).
+    // The atlas's palette carries PS2 alpha 0x7f on its colour entries; the decoder
+    // stores the byte as is (the stored-alpha convention).
     int yellow_texels = 0, yellow_opaque = 0;
     for (uint32_t p : texels)
-        if (near(p, 119, 108, 8, 3)) { yellow_texels++; if ((p >> 24) >= 0xFE) yellow_opaque++; }
-    std::printf("yellow (119,108,8)+-3 texels: %d (gpu alpha >= 0xFE: %d)\n", yellow_texels, yellow_opaque);
+        if (near(p, 119, 108, 8, 3)) { yellow_texels++; if ((p >> 24) == 0x7F) yellow_opaque++; }
+    std::printf("yellow (119,108,8)+-3 texels: %d (alpha 0x7f: %d)\n", yellow_texels, yellow_opaque);
     int pal_yellow = -1;
     for (int i = 0; i < 256; i++)
         if (near(palette[i], 119, 108, 8, 3)) { pal_yellow = i; break; }
@@ -180,7 +181,7 @@ int main(int argc, char** argv) {
                 pal_yellow >= 0 ? palette[pal_yellow] : 0u);
     CHECK(pal_yellow >= 0, "the CLUT carries the letters' yellow (119,108,8)+-3");
     CHECK(yellow_texels > 0, "the decoded 32x32 atlas carries the letters' yellow");
-    CHECK(yellow_texels == yellow_opaque, "the yellow texels decode with PS2 alpha 0x7f -> GPU 0xFE (opaque class)");
+    CHECK(yellow_texels == yellow_opaque, "the yellow texels decode with the stored PS2 alpha 0x7f");
 
     if (dump) { WritePpm(dump, 32, 32, texels); std::printf("decoded atlas -> %s\n", dump); }
     if (dump_levels) {

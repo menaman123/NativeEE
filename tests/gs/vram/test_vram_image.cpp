@@ -6,10 +6,12 @@
 #include <string>
 #include <vector>
 
+#include "engine/gs/vram/page_occupancy.h"
 #include "engine/gs/vram/page_record.h"
 #include "engine/gs/vram/vram_image.h"
 #include "engine/gs/vram/vram_op_log.h"
 
+using ps2r::gs::PageOccupancy;
 using ps2r::gs::PageRecord;
 using ps2r::gs::VramImage;
 using ps2r::gs::VramOpLog;
@@ -508,8 +510,166 @@ static void NoBytesRuns() {
     }
 }
 
+
+// PageOccupancy: the eviction filter's ledger is conservative against BOTH exact
+// overlap predicates the record sets use -- the DecodeCache's wrap-aware test on
+// the unwrapped 8 MiB line and the TargetRefresher's plain interval test -- over a
+// deterministic pseudo-random population of footprints (including ranges that
+// wrap the 4 MiB image and ranges of 4 MiB or more); Add / Remove keep the counts
+// exact; an empty ledger answers false without a fold.
+static void PageOcc() {
+    static constexpr uint64_t kVram = 4ull * 1024u * 1024u;
+    auto wrap_overlap = [](uint32_t s0, uint32_t n0, uint32_t s1, uint32_t n1) {
+        const uint64_t a0 = s0 % kVram, a1 = a0 + std::min<uint64_t>(n0, kVram);
+        const uint64_t b0 = s1 % kVram, b1 = b0 + std::min<uint64_t>(n1, kVram);
+        return (a0 < b1 && b0 < a1) || (a0 + kVram < b1) || (b0 + kVram < a1);
+    };
+    auto plain_overlap = [](uint32_t s0, uint32_t n0, uint32_t s1, uint32_t n1) {
+        return uint64_t(s1) < uint64_t(s0) + n0 && uint64_t(s0) < uint64_t(s1) + n1;
+    };
+    uint32_t seed = 0x9E3779B9u;
+    auto rnd = [&seed]() { seed = seed * 1664525u + 1013904223u; return seed; };
+    struct Rec { uint32_t start, size; };
+    std::vector<Rec> live;
+    PageOccupancy occ;
+    CHECK(occ.Empty() && !occ.AnyIn(0, kVram), "empty ledger: AnyIn false");
+    for (int i = 0; i < 48; ++i) {
+        Rec r;
+        r.start = rnd() % kVram;
+        const uint32_t pick = rnd() % 8;
+        r.size = pick == 0 ? 0x10000u * (1 + rnd() % 80) : pick == 1 ? kVram + rnd() % 0x20000 : 0x100u * (1 + rnd() % 4096);
+        if (pick == 2) r.start = kVram - 0x1000 - rnd() % 0x2000;   // straddles the wrap
+        occ.Add(r.start, r.size);
+        live.push_back(r);
+    }
+    CHECK(occ.Live() == 48, "48 records live");
+    int queries = 0, filtered = 0;
+    for (int q = 0; q < 4000; ++q) {
+        const uint32_t qs = rnd() % kVram;
+        const uint32_t qn = (q % 3 == 0) ? 8192u * (1 + rnd() % 64) : 0x40u * (1 + rnd() % 2048);
+        bool any_wrap = false, any_plain = false;
+        for (const Rec& r : live) {
+            any_wrap = any_wrap || wrap_overlap(qs, qn, r.start, r.size);
+            any_plain = any_plain || plain_overlap(qs, qn, r.start, r.size);
+        }
+        const bool filter = occ.AnyIn(qs, qn);
+        ++queries;
+        if (!filter) ++filtered;
+        if ((any_wrap || any_plain) && !filter) CHECK(false, "AnyIn false where an exact predicate overlaps (false negative)");
+        // Remove some and re-add others along the way: the counts stay exact.
+        if (q % 97 == 0 && !live.empty()) {
+            const size_t k = rnd() % live.size();
+            occ.Remove(live[k].start, live[k].size);
+            live.erase(live.begin() + static_cast<long>(k));
+        }
+        if (q % 131 == 0) {
+            Rec r{static_cast<uint32_t>(rnd() % kVram), 0x100u * (1 + rnd() % 2048)};
+            occ.Add(r.start, r.size);
+            live.push_back(r);
+        }
+    }
+    CHECK(occ.Live() == live.size(), "live count follows Add / Remove");
+    CHECK(filtered > 0, "the ledger filters some queries");
+    for (const Rec& r : live) occ.Remove(r.start, r.size);
+    CHECK(occ.Empty() && !occ.AnyIn(0, kVram), "all removed: empty, AnyIn false");
+    occ.Add(0, 0);
+    CHECK(occ.Empty(), "an empty footprint adds nothing");
+    occ.Add(kVram - 8192, 16384);    // the last page and the first
+    CHECK(occ.AnyIn(0, 16) && occ.AnyIn(kVram - 1, 1) && !occ.AnyIn(8192, 8192), "a wrapping footprint marks both ends only");
+    occ.Clear();
+    CHECK(occ.Empty(), "Clear empties");
+    std::printf("pageocc: %d queries, %d filtered\n", queries, filtered);
+}
+
+// The deferred-deposit gate: an owed span's readers / writers / stagers / the save
+// assertion run the gate first (which stages the owed deposit), spans that do not
+// overlap do not; a CommitDeposits while owed is recorded and the completion commits
+// the owed pages itself (ReadMirror sees committed bytes afterwards); ClearDeferred
+// before staging keeps the completion out of its own gate.
+static void DeferredGate() {
+    VramImage v;
+    int gates = 0;
+    std::vector<uint8_t> payload(VramImage::kPageBytes, 0xAB);
+    const uint32_t owed_lo = 0x70000, owed_sz = 0x4000;   // two pages
+    v.SetDeferredGate([&] {
+        ++gates;
+        v.ClearDeferred();   // the completion unregisters first ...
+        v.StageDeposit(owed_lo, payload.data(), payload.size(), 5);   // ... then stages (passes the gate)
+        if (v.DeferredCommitOwed()) v.CommitDepositsIn(VramImage::Span{owed_lo, owed_sz});
+    });
+    // Nothing owed: no gate.
+    std::vector<uint8_t> buf(0x1000, 0);
+    uint8_t* b = buf.data();
+    v.ReadView(owed_lo, 8, b);
+    CHECK(gates == 0, "no gate while nothing is owed");
+    // Owed: a non-overlapping reader passes; an overlapping one gates (once: the completion clears).
+    v.NoteDeferred(VramImage::Span{owed_lo, owed_sz});
+    CHECK(v.HasDeferred(), "owed");
+    v.ReadView(0x100000, 64, b);
+    v.ReadMirror(0x6F000, 0x1000, b);   // ends exactly at the owed start: no overlap
+    CHECK(gates == 0, "readers of other spans do not gate");
+    v.ReadView(owed_lo + 0x1FFF, 1, b);  // the last byte of the first owed page (the staged payload is one page)
+    CHECK(gates == 1 && !v.HasDeferred(), "an overlapping reader gates once and the registration is cleared");
+    CHECK(b[0] == 0xAB, "the reader sees the staged deposit (the view overlays the pending shadow)");
+    // Writers gate too (the EE write must land after the deposit, as it did in stream order).
+    v.NoteDeferred(VramImage::Span{owed_lo, owed_sz});
+    v.WriteStream(owed_lo + 0x100, payload.data(), 16);
+    CHECK(gates == 2, "WriteStream over the owed span gates");
+    v.NoteDeferred(VramImage::Span{owed_lo, owed_sz});
+    v.NoteStreamWrite(VramImage::Span{owed_lo + 0x2000, 0x100});
+    CHECK(gates == 3, "NoteStreamWrite over the owed span gates");
+    v.NoteDeferred(VramImage::Span{owed_lo, owed_sz});
+    v.ViewSignature(VramImage::Span{owed_lo, 1});
+    CHECK(gates == 4, "ViewSignature over the owed span gates");
+    v.NoteDeferred(VramImage::Span{owed_lo, owed_sz});
+    v.StageDeposit(owed_lo + 0x1000, payload.data(), 16, 6);
+    CHECK(gates == 5, "another deposit onto the owed span gates (order kept)");
+    // A commit while owed is recorded; the completion commits the owed pages so the
+    // committed bytes (ReadMirror) carry the deposit right after.
+    VramImage w;
+    int wg = 0;
+    w.SetDeferredGate([&] {
+        ++wg;
+        const bool commit = w.DeferredCommitOwed();
+        w.ClearDeferred();
+        w.StageDeposit(owed_lo, payload.data(), payload.size(), 5);
+        if (commit) w.CommitDepositsIn(VramImage::Span{owed_lo, owed_sz});
+    });
+    w.NoteDeferred(VramImage::Span{owed_lo, owed_sz});
+    w.SettleWrites();   // the EE boundary's commit: nothing staged yet -> owed
+    CHECK(w.DeferredCommitOwed() && w.HasDeferred(), "a commit while owed is recorded, the span stays owed");
+    w.ReadMirror(owed_lo, 8, b);
+    CHECK(wg == 1 && b[0] == 0xAB, "ReadMirror gated: the completion staged AND committed (the owed commit)");
+    CHECK(w.PendingPages() == 0, "the owed pages were committed, none pending");
+    // Without an owed commit the completion only stages: ReadMirror (committed bytes) reads the old bytes, ReadView the deposit.
+    VramImage u;
+    u.SetDeferredGate([&] {
+        u.ClearDeferred();
+        u.StageDeposit(owed_lo, payload.data(), payload.size(), 5);
+    });
+    u.NoteDeferred(VramImage::Span{owed_lo, owed_sz});
+    u.ReadMirror(owed_lo, 8, b);
+    CHECK(b[0] == 0x00 && u.PendingPages() == 1, "no commit owed: staged pending, the committed bytes unchanged");
+    u.ReadView(owed_lo, 8, b);
+    CHECK(b[0] == 0xAB, "the view shows the pending deposit");
+    // The save assertion gates whatever is owed (whole image).
+    VramImage x;
+    int xg = 0;
+    x.SetDeferredGate([&] { ++xg; x.ClearDeferred(); });
+    x.NoteDeferred(VramImage::Span{0x3FF000, 0x2000});   // the last page, clamped (no wrap)
+    x.AssertNoStaleAtSave();
+    CHECK(xg == 1, "AssertNoStaleAtSave gates");
+    x.NoteDeferred(VramImage::Span{0x3FF000, 0x2000});
+    x.ReadView(0, 16, b);
+    CHECK(xg == 1, "page 0 does not overlap an owed last page (no wrap)");
+    x.GateRaw(VramImage::Span{0x3FF800, 1});
+    CHECK(xg == 2, "GateRaw over the owed span gates");
+    CHECK(x.Stats().deferred_gates == 2, "the census counts the gated completions");
+}
+
 int main(int argc, char** argv) {
     const std::string c = argc > 1 ? argv[1] : "all";
+    if (c == "deferredgate" || c == "all") DeferredGate();
     if (c == "inv04" || c == "all") Inv04();
     if (c == "nobytes" || c == "all") NoBytesRuns();
     if (c == "inv05" || c == "all") Inv05();
@@ -522,6 +682,7 @@ int main(int argc, char** argv) {
     if (c == "inv39" || c == "all") Inv39();
     if (c == "viewsig" || c == "all") ViewSig();
     if (c == "oplog" || c == "all") OpLogReplay();
+    if (c == "pageocc" || c == "all") PageOcc();
     std::printf("test_vram_image %s: %d checks, %d failures\n", c.c_str(), g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

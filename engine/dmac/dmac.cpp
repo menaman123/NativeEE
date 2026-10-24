@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <utility>
 
+#include "engine/core/log/log.h"
 #include "engine/core/savestate/payload_reader.h"
 #include "engine/core/savestate/savestate_format.h"
+#include "engine/ee/sched/ee_run_token.h"
 #include "engine/gif/gif_arbiter.h"
 
 namespace {
@@ -31,6 +33,7 @@ void Dmac::SetGuestCall(GuestCall fn) { guest_call_ = std::move(fn); }
 void Dmac::SetSifCallback(SifCallback fn) { sif_ = std::move(fn); }
 void Dmac::SetIpuFeedInput(IpuCallback fn) { ipu_feed_input_ = std::move(fn); }
 void Dmac::SetIpuDrainOutput(IpuDrainCallback fn) { ipu_drain_output_ = std::move(fn); }
+void Dmac::SetIpuInputRoom(IpuRoomCallback fn) { ipu_input_room_ = std::move(fn); }
 void Dmac::SetInterruptRaise(InterruptRaise fn) { raise_ = std::move(fn); }
 
 // ---- MMIO -------------------------------------------------------------------
@@ -137,9 +140,11 @@ void Dmac::Write32(uint32_t addr, uint32_t value) {
             ch_[ch].chcr = value;
             if (value & DmacChcr::kStr) {
                 StartChannel(ch);
-                // SPR owns STR; IPU FROM may still be waiting for output.
+                // SPR owns STR; IPU FROM may still be waiting for output and IPU TO for
+                // FIFO room (STR stays set with the remaining QWC until the IPU consumes:
+                // libmpeg polls D4_QWC / D4_CHCR.STR to tell "in flight" from "done").
                 const bool vif1_parked = (ch == kVif1) && deferred_.Active();
-                if (!vif1_parked && ch != kSprFrom && ch != kSprTo && ch != kIpuFrom)
+                if (!vif1_parked && ch != kSprFrom && ch != kSprTo && ch != kIpuFrom && ch != kIpuTo)
                     ch_[ch].chcr &= ~DmacChcr::kStr;
             }
             break;
@@ -231,6 +236,7 @@ void Dmac::StartChannel(int ch) {
             // FROM IPU: channel 3 copies the output FIFO to memory.
             if (regs.qwc > 0 && ipu_drain_output_) {
                 const size_t bytes = static_cast<size_t>(regs.qwc) * 16;
+                PS2R_LOG(DMAC, Narrate, "dmac-ipu: fromIPU chcr=0x%08x madr=0x%08x qwc=%u", regs.chcr, regs.madr, regs.qwc);
                 if (uint8_t* dst = walker_.Translate(regs.madr, bytes)) {
                     const size_t transferred = std::min(bytes, ipu_drain_output_(dst, bytes));
                     const uint32_t qwords = static_cast<uint32_t>(transferred / 16);
@@ -242,13 +248,31 @@ void Dmac::StartChannel(int ch) {
             CompleteChannel(ch);
             break;
         case kIpuTo:
-            // TO IPU: channel 4 copies memory to the input FIFO.
+            // TO IPU: channel 4 copies memory to the input FIFO -- as much as the FIFO
+            // takes when a room callback is bound; the rest stays queued (STR, QWC, MADR)
+            // until the IPU consumes and the host restarts the channel.
             if (regs.qwc > 0 && ipu_feed_input_) {
-                const size_t bytes = static_cast<size_t>(regs.qwc) * 16;
-                if (uint8_t* src = walker_.Translate(regs.madr, bytes)) {
-                    ipu_feed_input_(src, bytes);
-                    regs.madr += static_cast<uint32_t>(bytes);
+                uint32_t qwords = regs.qwc;
+                if (ipu_input_room_) {
+                    const size_t room = ipu_input_room_() / 16;
+                    if (room < qwords) qwords = static_cast<uint32_t>(room);
                 }
+                PS2R_LOG(DMAC, Narrate, "dmac-ipu: toIPU chcr=0x%08x madr=0x%08x qwc=%u feed=%u", regs.chcr, regs.madr,
+                         regs.qwc, qwords);
+                if (qwords > 0) {
+                    const size_t bytes = static_cast<size_t>(qwords) * 16;
+                    if (uint8_t* src = walker_.Translate(regs.madr, bytes)) {
+                        // MADR/QWC advance before the feed: the IPU may retry a pending
+                        // command on it, free room and kick this channel again from inside.
+                        regs.madr += static_cast<uint32_t>(bytes);
+                        regs.qwc -= qwords;
+                        ipu_feed_input_(src, bytes);
+                    } else {
+                        regs.qwc = 0;
+                    }
+                }
+                // Waits for FIFO room (no completion yet), or a nested kick already completed it.
+                if (regs.qwc != 0 || (regs.chcr & DmacChcr::kStr) == 0) break;
             }
             CompleteChannel(ch);
             break;
@@ -293,31 +317,60 @@ bool Dmac::CheckInterrupt() const {
     return (g_.stat & DmacStat::kBeis) != 0 || (status & mask) != 0;
 }
 
+void Dmac::SetChannelInterruptMask(int ch, bool enable) {
+    if (ch < 0 || ch >= kDmacChannelCount) return;
+    const uint32_t bit = DmacStat::Cis(ch) << DmacStat::kCimShift;
+    const bool was_pending = CheckInterrupt();
+    if (enable) g_.stat |= bit;
+    else g_.stat &= ~bit;
+    if (raise_ && !was_pending && CheckInterrupt()) raise_();
+}
+
 void Dmac::DispatchInterrupt(CpuContext& ctx) {
     const uint32_t status = g_.stat & DmacStat::kCisMask;
     const uint32_t mask = (g_.stat >> DmacStat::kCimShift) & DmacStat::kCisMask;
     const uint32_t pending = status & mask;
+    if (pending == 0) return;
+    // Interrupt context (EeRunToken::IsrBegin/IsrEnd): a handler's iSignalSema
+    // readies its thread, the hand-over waits for the handler's exit.
+    EeRunToken::Instance().IsrBegin();
     for (int ch = 0; ch < kDmacChannelCount; ++ch) {
         if (!(pending & DmacStat::Cis(ch))) continue;
+        // Acknowledged before the handlers run (even with none): a transfer the handler
+        // itself re-arms may complete inside it and must raise the next interrupt.
+        g_.stat &= ~DmacStat::Cis(ch);
         const std::vector<DmacHandler> chain = handlers_.ForCause(ch);
         for (const DmacHandler& h : chain) {
             if (!h.active) continue;
+            // handler(channel, arg, addr) on the interrupted thread; its registers are the
+            // interrupted code's and come back intact (the kernel's ISR frame).
             const uint32_t saved_pc = ctx.cpuRegs.pc;
-            const uint32_t saved_ra = ctx.cpuRegs.GPR.r[31].UL[0];
-            ctx.cpuRegs.GPR.r[4].UL[0] = static_cast<uint32_t>(ch);  // $a0 = channel
-            ctx.cpuRegs.GPR.r[28].UL[0] = h.gp;                        // $gp
+            const auto saved_gpr = ctx.cpuRegs.GPR;
+            ctx.cpuRegs.GPR.r[4].UD[0] = static_cast<uint64_t>(static_cast<int64_t>(ch));                 // $a0
+            ctx.cpuRegs.GPR.r[5].UD[0] = static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(h.arg)));  // $a1
+            ctx.cpuRegs.GPR.r[6].UD[0] = 0;                                                               // $a2
+            ctx.cpuRegs.GPR.r[28].UD[0] = static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(h.gp)));  // $gp
             if (guest_call_) guest_call_(h.pc, ctx);
             const int32_t result = static_cast<int32_t>(ctx.cpuRegs.GPR.r[2].UL[0]);
             ctx.cpuRegs.pc = saved_pc;
-            ctx.cpuRegs.GPR.r[31].UL[0] = saved_ra;
+            ctx.cpuRegs.GPR = saved_gpr;
             if (result == -1) break;  // the handler ends this channel's chain
         }
-        g_.stat &= ~DmacStat::Cis(ch);  // acknowledged even with no handlers
     }
+    EeRunToken::Instance().IsrEnd();
 }
 
 void Dmac::FlushDeferredVif1() { deferred_.FlushDeferredVif1(ch_[kVif1], DmacDeferredVif1::FlushReason::Explicit); }
 void Dmac::ChaseVif1Tail() { deferred_.ChaseVif1Tail(ch_[kVif1]); }
+
+void Dmac::ObserveAtKernelWait() {
+    // The flush drains the arbiter itself (the walk's PATH2 lands before the
+    // queued PATH3); with nothing parked only the PATH3 backlog is delivered.
+    // Parked or not, the wait ends the END-slot append race (the tail records go).
+    const bool parked = deferred_.Active();
+    deferred_.FlushDeferredVif1(ch_[kVif1], DmacDeferredVif1::FlushReason::KernelWait);
+    if (!parked && arbiter_.hasPending()) arbiter_.drain();
+}
 
 // ---- savestate ----------------------------------------------------------------
 

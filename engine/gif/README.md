@@ -23,6 +23,7 @@ drain thread (5G); hle/ reserved.
 |---|---|---|
 | `gif_tag.h/.cpp` | `GifTag` (`Parse(lo,hi)`), `GifPath`, `GifFormat`, `GsReg`, `GifTagClass` + `ClassifyGifTag`, `GifTransferState` | `host_app/gif.h:15-26, :29-87, :89-112`; `host_app/gif.cpp:3646-3673` (eligibility predicates) |
 | `gs_sink.h/.cpp` | `GsSink` — abstract, 10 pure virtuals, one per GS mutation the parser performs, plus `ImageSpan(data, qwords)` (default: the per-quadword `ImageData` sequence; the parser delivers a tag's IMAGE quadwords as one span and `GsStateSink` stores it whole — track 1d) | the `g_gs_state` surface reached from `host_app/gif.cpp` (`:3641`, `:3926-3928`, `:3933`, `:4317`, `:3211-3264`, `:4541-5224`, `:4419-4422`) |
+| `null_gs_sink.h/.cpp` | `NullGsSink : GsSink` — every call a no-op: the sink of a parser whose consumer is not the GS (the VU1 AOT tier's verifier judges a program by the bytes it kicked, taken at the arbiter's submit tap; `ps2r_gif`, no GS dependency) | NEW |
 | `hle/gs_state_sink.h/.cpp`, `hle/gs_sink_fanout.h/.cpp` | `GsStateSink : GsSink` over the GS façade and `GsSinkFanout : GsSink` (library `ps2r_gif_hle`, integration item 6.4) — see `hle/README.md` | `host_app/gif.cpp:4374-4425` (FinishDMA flush) |
 | (moved) `engine/gs/hle/ir/register_op_stream.h/.cpp` | `RegisterOpStream : GsSink` — the recording sink now lives beside the DrawIR records (Phase-5 checklist (h) move 1); `GsSink` stays here | — |
 | `gif_regs.h/.cpp` | `GifRegs : MmioHandler` — CTRL/MODE/STAT/TAG0-3/CNT/P3CNT/P3TAG, VIF PATH3 mask, owns `GifTransferState` | `host_app/gif.h:120-202` (members); `host_app/gif.cpp:185-206` (Reset), `:215-300` (Read), `:302-341` (Write) |
@@ -75,6 +76,11 @@ drain thread (5G); hle/ reserved.
 - `FinishPath3` (OLD `FinishDMA`): a mid-IMAGE transfer is kept open, nothing else happens
   (tail kept); any other incomplete tag is abandoned, the GS is told to finish, the tail is
   cleared. The arbiter calls it once after a drain pass that delivered any PATH3 packet.
+- PATH1 packet buffers are pooled: `XgKick` hands the arbiter the buffer it staged the packet in
+  (no second copy); the drain owner collects a pass's PATH1 buffers (capacity <= one VU1 data memory)
+  and returns them under one lock (`recyclePath1Buffers`, bounded by `kPath1PoolMax`); the VU1 unit
+  takes them back in batches (`acquirePath1Buffers`). Larger buffers fall to the staging pool's rule.
+  `openMarker` reserves `kMarkerReservePackets` slots for the worker's fills.
 - Submission order is the arbiter's whole contract: the order packets were submitted is the
   order the GS sees them; no path-priority sort. `is_directhl` / `is_path3_image` are computed
   and unused (DIRECTHL pre-empting a PATH3 IMAGE is not modelled).

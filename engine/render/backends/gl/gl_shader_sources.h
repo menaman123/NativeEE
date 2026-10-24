@@ -20,6 +20,12 @@ public:
     static const char* StencilInvertFragment();
     static const char* ConstVertex();
     static const char* ConstFragment();
+    static const char* HalfwordShuffleFragment();
+    static const char* Pack5551Fragment();
+    // The alpha-lane write (Backend::WriteAlphaLane): alpha = the R8 lane texel at the
+    // fragment's logical position inside u_origin / u_scale; fragments inside u_exclude
+    // (physical, half-open) are discarded. Colour mask A only at the call site.
+    static const char* AlphaLaneFragment();
 };
 
 }  // namespace render

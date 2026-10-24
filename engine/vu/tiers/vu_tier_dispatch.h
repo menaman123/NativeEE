@@ -2,9 +2,12 @@
 // The VU execution ladder, written once: a program start (MSCAL / MSCNT /
 // MSCALF / VCALLMS / CMSAR0 / a resume) is offered to the VU1 HLE library, then
 // to the MTVU redirect, then run on the configured tier -- cached (the
-// default) or the interpreter reference. Both tiers consume the ONE decoder,
-// stall model, flag pipeline and XGKICK; their identity is proven by the
-// differential tests, never assumed.
+// default), the block tier (VU1 only: VU0 stays on the cached tier under it),
+// the AOT tier (VU1 only: a verified image on its specialised block table,
+// anything else on the AOT tier's fallback; engine/vu/vu1_aot/) or the
+// interpreter reference. Every tier consumes the ONE decoder, stall model,
+// flag pipeline and XGKICK; their identity is proven by the differential
+// tests, never assumed.
 //
 // Cross-thread contract: the two hook slots are plain callbacks installed by
 // the composition root (the HLE runtime, the MTVU worker); null means absent.
@@ -13,20 +16,31 @@
 // nothing changed. VU0 never enters the hooks.
 #include <cstdint>
 #include <memory>
+#include <string>
 
+#include "engine/vu/tiers/vu_block_tier.h"
 #include "engine/vu/tiers/vu_cached_tier.h"
 #include "engine/vu/tiers/vu_interpreter_tier.h"
+#include "engine/vu/vu1_aot/vu1_aot_tier.h"
 
+class VuLockstep;
 class VuUnit;
 
 // The fallback tier a program runs on when no hook takes it.
-enum class VuTierMode : uint8_t { Cached, Interp };
+enum class VuTierMode : uint8_t { Cached, Interp, Block, Aot };
 
 // Module-local settings (the Config keys `engine.vu1_mode` / the VU1 HLE gate
 // are copied here at integration).
 struct VuSettings {
     VuTierMode vu1_mode = VuTierMode::Cached;
     bool hle_enabled = false;  // the HLE library consult; the corpus tools run tiers only
+    // Config diag.vu1_lockstep: every VU1 kick the tier runs is ALSO run on
+    // the interpreter reference on a shadow unit and the end states diffed
+    // (VuLockstep); the GS sees the tier's packets only. Off in play.
+    bool lockstep = false;
+    // Where the lockstep writes the entry state of each reported divergence
+    // as a Vu1Case ("" = nowhere); the composition points it under user_data.
+    std::string lockstep_dump_dir;
 };
 
 class VuTierDispatch {
@@ -39,16 +53,23 @@ public:
     static constexpr uint64_t kDefaultCycleCap = 1000000;  // bundles before a runaway program is cut
 
     explicit VuTierDispatch(VuSettings settings = VuSettings{}, uint64_t cycle_cap = kDefaultCycleCap);
+    ~VuTierDispatch();
 
-    // The ladder: hle (VU1, enabled, hook set) -> mtvu (VU1, hook set) -> tier.
+    // The ladder: hle (VU1, enabled, hook set) -> mtvu (VU1, hook set) -> tier
+    // (Block / Aot: VU1 on that tier, VU0 on the cached tier).
     void Execute(VuUnit& unit, uint32_t start_pc);
+    // The tier step alone (the configured tier on this unit, no hooks): what
+    // Execute runs once the hooks declined; the lockstep A/B's real leg.
+    void RunTier(VuUnit& unit, uint32_t start_pc);
+    // The lockstep A/B (settings.lockstep; built at the first VU1 kick), for a census.
+    const VuLockstep* lockstep() const { return lockstep_.get(); }
     // A parked VU0 (self-spin suspend) resumes through the ladder.
     void ResumeIfWaiting(VuUnit& unit);
 
     void SetHleHook(HleHook fn, void* user);
     void SetMtvuHook(MtvuHook fn, void* user);
 
-    // One cap serves both tiers (the tool's --cycle-cap).
+    // One cap serves every tier (the tool's --cycle-cap).
     void set_cycle_cap(uint64_t cap);
     uint64_t cycle_cap() const { return interp_.cycle_cap(); }
 
@@ -56,15 +77,22 @@ public:
     const VuSettings& settings() const { return settings_; }
     VuInterpreterTier& interp() { return interp_; }
     VuCachedTier& cached() { return cached_; }
-    // Bundles retired on either tier (the catalog's exec count).
-    uint64_t bundles() const { return interp_.bundles() + cached_.bundles(); }
+    VuBlockTier& block() { return block_; }
+    Vu1AotTier& aot() { return aot_; }
+    const Vu1AotTier& aot() const { return aot_; }
+    // Bundles retired on any tier (the catalog's exec count; the AOT tier's
+    // native runs retire on the block tier's counter).
+    uint64_t bundles() const { return interp_.bundles() + cached_.bundles() + block_.bundles(); }
 
 private:
     VuSettings settings_;
     VuInterpreterTier interp_;
     VuCachedTier cached_;
+    VuBlockTier block_;
+    Vu1AotTier aot_;
     HleHook hle_ = nullptr;
     void* hle_user_ = nullptr;
     MtvuHook mtvu_ = nullptr;
     void* mtvu_user_ = nullptr;
+    std::unique_ptr<VuLockstep> lockstep_;
 };

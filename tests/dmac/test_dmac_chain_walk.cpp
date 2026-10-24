@@ -298,6 +298,25 @@ void TestMaxTags() {
     CHECK((rig.dmac.globals().stat & DmacStat::Cis(1)) != 0 && (rig.dmac.channel(1).chcr & DmacChcr::kStr) == 0);
 }
 
+void TestLongChainReachesEnd() {
+    // A real display list is longer than any round-number guard: 12000 CNT tags
+    // (qwc 0, each the next quadword) then END. The console walks to the END; so
+    // must the walk -- the guard is the RAM + scratchpad quadword count, where a
+    // longer walk has necessarily re-read a slot (a loop).
+    Rig rig;
+    constexpr int kTags = 12000;
+    const uint32_t base = 0x00400000u;
+    for (int i = 0; i < kTags; ++i) PutTag(rig, base + 16u * static_cast<uint32_t>(i), 0, DmacTagId::kCnt);
+    PutTag(rig, base + 16u * kTags, 0, DmacTagId::kEnd);
+    DmacChannelRegs regs;
+    regs.chcr = kChainKick;
+    regs.tadr = base;
+    const DmacVifWalkResult res = rig.dmac.walker().WalkVifChain(1, regs);
+    CHECK(res.completed && res.tag_count == kTags + 1 && res.last_id == DmacTagId::kEnd);
+    CHECK(res.last_tag_tadr == base + 16u * kTags);
+    CHECK(ChainWalker::kMaxTags == (MainMemory::kSize + Scratchpad::kSize) / 16);
+}
+
 void TestTte() {
     // TTE: the tag's upper two words are fed as one quadword before the data.
     // MARK 0x1234 in word 2 (NOP in word 3) changes VIF1_MARK only with TTE.
@@ -493,6 +512,7 @@ int main() {
     TestIrqTie();
     TestTerminators();
     TestMaxTags();
+    TestLongChainReachesEnd();
     TestTte();
     TestVifNormalAndEarlyReturns();
     TestGifChain();

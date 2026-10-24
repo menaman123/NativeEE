@@ -4,6 +4,7 @@
 #include <cstdint>
 
 #include "engine/ee/mem/fast_mem.h"
+#include "engine/ee/mem/main_memory.h"
 #include "engine/ee/mem/quad_word.h"
 #include "engine/ee/recomp_abi/recomp_abi.h"
 
@@ -27,11 +28,11 @@ inline void write_quad(uint32_t address, const QuadWord& value) {
     RecompAbi::Memory().WriteQuad(address, value);
 }
 
-// Host pointer to `size` bytes of main RAM at a KUSEG/KSEG0/KSEG1 address
+// Host pointer to `size` bytes of main RAM at a KUSEG/KSEG0/KSEG1/UCAB address
 // (block copies: disc sectors landing in EE RAM). Null when the range leaves
 // main RAM -- MMIO and the scratchpad have no linear host image here.
 inline uint8_t* get_pointer(uint32_t address, size_t size) {
-    return RecompAbi::Memory().Ram().Pointer(address & 0x1FFFFFFFu, size);
+    return RecompAbi::Memory().Ram().Pointer(MainMemory::Phys(address), size);
 }
 
 }  // namespace memory

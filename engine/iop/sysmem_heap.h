@@ -10,9 +10,13 @@
 //   [..., kCeiling)                  heap continues above the band; kCeiling leaves
 //                                    the callback scratch stacks at the top of RAM
 //                                    (which grow down) 2 KiB of guard.
-// Blocks are 16-byte rounded; Free coalesces byte-adjacent neighbours and
-// reclaims a free tail; QueryMaxFree is the largest single allocatable block
-// (the real QueryMaxFreeMemSize contract). Savestate contract: only heap_ptr
+// Blocks are rounded to the kernel's allocation unit of 256 bytes (SYSMEM manages
+// its arena in 256-byte blocks; AllocSysMemory rounds the request up and
+// QueryBlockSize / QueryMaxFreeMemSize answer in those units) -- a module that
+// writes a few words past its request (a second title's spiop fills a 0x48-byte handler
+// node into a 0x38-byte block) stays inside its own block, as on the console.
+// Free coalesces byte-adjacent neighbours and reclaims a free tail; QueryMaxFree
+// is the largest single allocatable block (the real QueryMaxFreeMemSize contract). Savestate contract: only heap_ptr
 // is serialized; the maps are transient (a restored heap starts with an empty
 // free list, and an unknown Free is a no-op).
 #pragma once
@@ -24,6 +28,7 @@ namespace ps2r::iop {
 
 class SysmemHeap {
 public:
+    static constexpr uint32_t kBlockUnit   = 0x100;   // SYSMEM's allocation granularity
     static constexpr uint32_t kArenaSize   = 2u * 1024u * 1024u;
     static constexpr uint32_t kCeiling     = kArenaSize - 0x800;
     static constexpr uint32_t kFloor       = 0x28000;
@@ -33,11 +38,28 @@ public:
     static_assert(kFloor < kStackBandLo && kStackBandLo < kStackBandHi && kStackBandHi < kCeiling,
                   "floor < stack band < ceiling");
 
+    // The arena's layout as the composition root sets it (the defaults are the
+    // constants above): a root hosting several modules raises the floor past
+    // their images and sizes the stack band for their threads -- title data,
+    // passed in, never engine constants.
+    struct Layout {
+        uint32_t floor = kFloor;
+        uint32_t stack_band_lo = kStackBandLo;
+        uint32_t stack_band_hi = kStackBandHi;
+        uint32_t ceiling = kCeiling;
+    };
+
+    SysmemHeap() : SysmemHeap(Layout{}) {}
+    explicit SysmemHeap(const Layout& layout);
+    const Layout& GetLayout() const { return layout_; }
+
     // Allocated address, or 0 on arena exhaustion (the real kernel's failure shape).
     uint32_t Alloc(uint32_t size);
     // Freed rounded size, or 0 for an unknown block (no-op).
     uint32_t Free(uint32_t addr);
     uint32_t QueryMaxFree() const;
+    // The rounded size of the live block at `addr` (0 = not a live block).
+    uint32_t BlockSize(uint32_t addr) const;
 
     uint32_t HeapPtr() const { return heap_ptr_; }
     // Savestate restore: set the serialized bump tail and drop the transient maps.
@@ -46,6 +68,7 @@ public:
     size_t LiveBlocks() const { return alloc_sizes_.size(); }
 
 private:
+    Layout layout_;
     uint32_t heap_ptr_ = kFloor;
     std::map<uint32_t, uint32_t> alloc_sizes_;   // addr -> rounded size
     std::map<uint32_t, uint32_t> free_blocks_;   // addr -> size (coalesced)

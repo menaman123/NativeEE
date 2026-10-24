@@ -6,6 +6,16 @@
 ## Belongs here
 
 - IopKernel, IopCoroutine, IopHostThread, IopClock, SifRpcBridge, IopModuleTable, IopLoader, IopMemory, SysmemHeap, hle/ (stock Sony modules)
+- `iop_relocator.{h,inl}` (header-only): the IRX relocation (R_MIPS_32/26/HI16+LO16) both `tools/iop_recompiler --base`
+  and `IopLoader::LoadSections(irx, size, base)` apply -- the same code, so the text the tool disassembled is the image
+  the kernel hosts; also the `.iopmod` reader and the relocation-table pointer walk the tool's discovery uses
+- `iop_library_table.{h,cpp}`: the library registry (name/version -> indexed entries: an HLE body or a guest address);
+  `abi/` (`IopAbiSurface` + `abi/host_app/*.h` + `abi/anchor/`): the generic generated-code ABI of a module recompiled
+  with `--namespace --import-call` (memory, `import_call`, `iop_resolve`; an unresolved import is handed to the
+  composition's hook -- a park -- never a silent 0)
+- Several modules per process: `IopModuleTable::OnModuleLoaded` runs each booted module's threads to their first block;
+  `SifRpcBridge` keeps one queue per RPC-dispatch thread (`RunOnRpcThread(body, tid)`); `ThbaseModule` takes thread stacks
+  from the heap (`SetStackAllocator`) and the creating thread's `$gp`; `SysmemHeap::Layout` sets floor/band/ceiling
 
 ## Does not belong here
 

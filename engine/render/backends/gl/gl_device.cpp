@@ -5,6 +5,7 @@
 #include PS2R_GL_HEADER
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <limits>
@@ -15,14 +16,41 @@
 namespace ps2r {
 namespace render {
 
+namespace {
+bool HasExtension(const char* name) {
+    GLint n = 0;
+    glGetIntegerv(GL_NUM_EXTENSIONS, &n);
+    for (GLint i = 0; i < n; ++i) {
+        const char* e = reinterpret_cast<const char*>(glGetStringi(GL_EXTENSIONS, static_cast<GLuint>(i)));
+        if (e && std::strcmp(e, name) == 0) return true;
+    }
+    return false;
+}
+}  // namespace
+
 GlDevice::GlDevice(const GlDeviceSettings& settings) : settings_(settings) {}
 
 GlDevice::~GlDevice() { Shutdown(); }
+
+const CallCensus* GlDevice::Census() const {
+    census_.buffer_maps = vertices_.Maps();   // the stream keeps its own count
+    return &census_;
+}
 
 bool GlDevice::Init(std::function<void()> swap) {
     Shutdown();
     swap_ = std::move(swap);
     state_.InvalidateAll();
+    state_.SetCensus(&census_);
+    uniforms_.SetCensus(&census_);
+    // Dual-source blending (GL 3.3 core): the PS2 program's second fragment output
+    // carries the blend factors. Required by the fixed-function blend arm as is;
+    // the unified blend state (one state for every FUNC_ADD tuple) is gated on it too.
+    {
+        GLint dual = 0;
+        glGetIntegerv(GL_MAX_DUAL_SOURCE_DRAW_BUFFERS, &dual);
+        dual_source_ = dual >= 1;
+    }
     if (!shaders_.Build(uniforms_)) return false;
     if (!vertices_.Init(state_)) return false;
 
@@ -110,6 +138,16 @@ bool GlDevice::Init(std::function<void()> swap) {
         }
     }
     executor_ = std::make_unique<GlDrawExecutor>(*this);
+    // NV_texture_barrier (exposed by Apple's GL-on-Metal 4.1 and by Mesa): the
+    // destination read without the copy. Looked up by name; absent = the copy route.
+    texture_barrier_ = nullptr;
+    if (HasExtension("GL_NV_texture_barrier"))
+        texture_barrier_ = reinterpret_cast<TextureBarrierFn>(host::GlGetProcAddress("glTextureBarrierNV"));
+    // OFF by default: Apple's GL-on-Metal barrier is not coherent at the 32-row
+    // tile boundaries for a same-pass attachment read (1-px horizontal lines every
+    // 32 rows on the Paris capture, 0.15-0.4 % of the pixels, delta up to 36); the
+    // copy route is the reference. Opt-in for a driver whose barrier is exact.
+    cd_copy_by_barrier_ = false;
     initialized_ = true;
     return true;
 }
@@ -120,7 +158,7 @@ void GlDevice::Shutdown() {
     for (auto& kv : surfaces_) ReleaseSurface(kv.second);
     surfaces_.clear();
     pool_.DropAll(state_);
-    readbacks_.clear();
+    ReleaseReadbacks();
     if (dummy_tex_) { state_.DeleteTextures(1, &dummy_tex_); dummy_tex_ = 0; }
     vertices_.Shutdown(state_);
     if (scanout_vbo_) { state_.DeleteBuffers(1, &scanout_vbo_); scanout_vbo_ = 0; }
@@ -131,6 +169,7 @@ void GlDevice::Shutdown() {
     if (const_vao_) { state_.DeleteVertexArrays(1, &const_vao_); const_vao_ = 0; }
     if (sten_fbo_) { state_.DeleteFramebuffers(1, &sten_fbo_); sten_fbo_ = 0; }
     if (res_fbo_) { state_.DeleteFramebuffers(1, &res_fbo_); res_fbo_ = 0; }
+    ReleaseDeferredCapture();
     if (capture_fbo_) { state_.DeleteFramebuffers(1, &capture_fbo_); capture_fbo_ = 0; }
     if (capture_tex_) { state_.DeleteTextures(1, &capture_tex_); capture_tex_ = 0; }
     capture_w_ = capture_h_ = 0;
@@ -143,11 +182,14 @@ void GlDevice::Shutdown() {
 Caps GlDevice::QueryCaps() const {
     Caps c;
     c.max_texture_size = max_texture_size_;
-    c.staging_readback = false;
+    c.staging_readback = true;   // BeginReadback: a pack buffer behind a fence
     c.reverse_subtract = true;
     c.depth_sample = true;
-    c.texture_barrier = false;
+    c.texture_barrier = texture_barrier_ != nullptr;
     c.compute = false;
+    c.copy_pack5551 = shaders_.Pack5551Program() != 0;
+    c.alpha_lane_write = shaders_.AlphaLaneProgram() != 0;
+    c.dual_source_blend = dual_source_;
     return c;
 }
 
@@ -292,7 +334,7 @@ void GlDevice::Clear(SurfaceId color, SurfaceId depth, uint32_t rgba, float z, u
         glClearDepth(static_cast<double>(z));
         bits |= GL_DEPTH_BUFFER_BIT;
     }
-    if (bits) glClear(bits);
+    if (bits) { census_.clears++; glClear(bits); }
 }
 
 void GlDevice::Upload(SurfaceId id, const Rect& rect, const void* bytes, size_t stride) {
@@ -324,6 +366,8 @@ void GlDevice::Upload(SurfaceId id, const Rect& rect, const void* bytes, size_t 
         glTexSubImage2D(GL_TEXTURE_2D, 0, rect.x, rect.y, rect.w, rect.h, ext, type,
                         bytes);
     }
+    census_.uploads++;
+    census_.upload_bytes += static_cast<uint64_t>(rect.w) * static_cast<uint64_t>(rect.h) * bpp;
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     state_.BindTex2D(0);
 }
@@ -334,6 +378,8 @@ void GlDevice::UploadLevel(SurfaceId id, int level, int w, int h, const void* rg
     state_.ActiveTexture(GL_TEXTURE0);
     state_.BindTex2D(it->second.tex);
     glTexImage2D(GL_TEXTURE_2D, level, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    census_.uploads++;
+    census_.upload_bytes += static_cast<uint64_t>(w) * static_cast<uint64_t>(h) * 4u;
     state_.BindTex2D(0);
 }
 
@@ -358,6 +404,8 @@ void GlDevice::FinishMipChain(SurfaceId id, int authored_levels, bool synthesize
             state_.BindFb(GL_READ_FRAMEBUFFER, fbo);
             glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, s.tex,
                                    authored_levels);
+            census_.readbacks++;
+            census_.readback_bytes += cur.size();
             glReadPixels(0, 0, cw, ch, GL_RGBA, GL_UNSIGNED_BYTE, cur.data());
             state_.BindFb(GL_READ_FRAMEBUFFER, 0);
             state_.DeleteFramebuffers(1, &fbo);
@@ -450,6 +498,7 @@ void GlDevice::ClearStencil(SurfaceId stencil, uint8_t value) {
     state_.Disable(GL_SCISSOR_TEST);
     glStencilMask(0xFF);
     glClearStencil(value);
+    census_.clears++;
     glClear(GL_STENCIL_BUFFER_BIT);
 }
 
@@ -477,6 +526,7 @@ void GlDevice::DrawConstQuad(SurfaceId color, SurfaceId stencil, const Rect& sci
                 ((rgba >> 24) & 0xFF) / 255.0f);
     state_.BindVertexArray(const_vao_);
     ApplyStencil(st);
+    census_.draw_calls++;
     glDrawArrays(GL_TRIANGLES, 0, 3);
     ResetStencil();
     state_.BindVertexArray(0);
@@ -492,20 +542,86 @@ DrawResult GlDevice::Draw(const gs::DrawIr& ir, const gs::TextureSource& tex,
     return executor_->Draw(ir, tex, params);
 }
 
-// glCopyTexSubImage2D from the source attachment into the destination texture
-// (transform 0 = plain copy; other values are reserved).
+// kCopyPlain: glCopyTexSubImage2D from the source attachment into the destination
+// texture. kCopyPack5551: the pack program over the NDC triangle into the
+// destination's framebuffer, scissored to dst_rect, sampling the source at the
+// same physical texel (the rects coincide for the companion refresh; a shifted
+// rect falls back to the plain copy -- the pass has no offset).
 void GlDevice::CopyRect(SurfaceId src, const Rect& src_rect, SurfaceId dst, const Rect& dst_rect,
                         uint32_t transform) {
-    (void)transform;
     const GlSurface* s = Surface(src);
     const GlSurface* d = Surface(dst);
     if (!s || !d || !s->fbo || src_rect.w <= 0 || src_rect.h <= 0) return;
+    if (transform == kCopyPack5551 && d->fbo && s->tex && shaders_.Pack5551Program() &&
+        src_rect.x == dst_rect.x && src_rect.y == dst_rect.y) {
+        EndDrawRun();
+        state_.BindFb(GL_FRAMEBUFFER, d->fbo);
+        state_.Viewport(0, 0, static_cast<int>(d->desc.width), static_cast<int>(d->desc.height));
+        state_.Enable(GL_SCISSOR_TEST);
+        state_.Scissor(dst_rect.x, dst_rect.y, dst_rect.w, dst_rect.h);
+        state_.Disable(GL_BLEND);
+        state_.Disable(GL_DEPTH_TEST);
+        state_.DepthMask(false);
+        state_.ColorMask(true, true, true, true);
+        state_.ActiveTexture(GL_TEXTURE0);
+        state_.BindTex2D(s->tex);
+        state_.UseProgram(shaders_.Pack5551Program());
+        state_.BindVertexArray(const_vao_);
+        census_.draw_calls++;
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        state_.BindVertexArray(0);
+        state_.UseProgram(0);
+        state_.BindTex2D(0);
+        state_.DepthMask(true);
+        state_.Enable(GL_DEPTH_TEST);
+        state_.Disable(GL_SCISSOR_TEST);
+        return;
+    }
     state_.BindFb(GL_READ_FRAMEBUFFER, s->fbo);
     state_.ActiveTexture(GL_TEXTURE0);
     state_.BindTex2D(d->tex);
+    census_.copies++;
+    census_.copy_bytes += static_cast<uint64_t>(src_rect.w) * static_cast<uint64_t>(src_rect.h) * 4u;
     glCopyTexSubImage2D(GL_TEXTURE_2D, 0, dst_rect.x, dst_rect.y, src_rect.x, src_rect.y, src_rect.w,
                         src_rect.h);
     state_.BindTex2D(0);
+}
+
+// The alpha-lane program over the NDC triangle into the destination's framebuffer,
+// scissored to dst_rect, colour mask A only; the lane on unit 0.
+void GlDevice::WriteAlphaLane(SurfaceId dst, const Rect& dst_rect, SurfaceId lane, const Rect& exclude) {
+    const GlSurface* d = Surface(dst);
+    const GlSurface* l = Surface(lane);
+    if (!d || !l || !d->fbo || !l->tex || dst_rect.w <= 0 || dst_rect.h <= 0 || !shaders_.AlphaLaneProgram()) return;
+    EndDrawRun();
+    const GlStencilLocations& L = shaders_.StencilLocations();
+    state_.BindFb(GL_FRAMEBUFFER, d->fbo);
+    state_.Viewport(0, 0, static_cast<int>(d->desc.width), static_cast<int>(d->desc.height));
+    state_.Enable(GL_SCISSOR_TEST);
+    state_.Scissor(dst_rect.x, dst_rect.y, dst_rect.w, dst_rect.h);
+    state_.Disable(GL_BLEND);
+    state_.Disable(GL_DEPTH_TEST);
+    state_.DepthMask(false);
+    state_.ColorMask(false, false, false, true);
+    state_.ActiveTexture(GL_TEXTURE0);
+    state_.BindTex2D(l->tex);
+    state_.UseProgram(shaders_.AlphaLaneProgram());
+    if (L.lane_origin >= 0) glUniform2i(L.lane_origin, dst_rect.x, dst_rect.y);
+    if (L.lane_scale >= 0) glUniform1i(L.lane_scale, std::max<int>(1, d->desc.scale));
+    const bool excl = exclude.w > 0 && exclude.h > 0;
+    if (L.lane_exclude >= 0)
+        glUniform4i(L.lane_exclude, excl ? exclude.x : 0, excl ? exclude.y : 0, excl ? exclude.x + exclude.w : 0,
+                    excl ? exclude.y + exclude.h : 0);
+    state_.BindVertexArray(const_vao_);
+    census_.draw_calls++;
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    state_.BindVertexArray(0);
+    state_.UseProgram(0);
+    state_.BindTex2D(0);
+    state_.ColorMask(true, true, true, true);
+    state_.DepthMask(true);
+    state_.Enable(GL_DEPTH_TEST);
+    state_.Disable(GL_SCISSOR_TEST);
 }
 
 // Rows bottom-up (attachment order); colour RGBA8, depth float.
@@ -526,6 +642,8 @@ void GlDevice::Readback(SurfaceId id, const Rect& rect, void* out, size_t stride
     }
     const size_t bpp = depth ? 4 : 4;
     glPixelStorei(GL_PACK_ROW_LENGTH, stride ? static_cast<GLint>(stride / bpp) : 0);
+    census_.readbacks++;
+    census_.readback_bytes += static_cast<uint64_t>(rect.w) * static_cast<uint64_t>(rect.h) * bpp;
     if (depth)
         glReadPixels(rect.x, rect.y, rect.w, rect.h, GL_DEPTH_COMPONENT, GL_FLOAT, out);
     else
@@ -535,29 +653,110 @@ void GlDevice::Readback(SurfaceId id, const Rect& rect, void* out, size_t stride
     if (tmp) state_.DeleteFramebuffers(1, &tmp);
 }
 
+// The asynchronous colour readback: glReadPixels into a pixel-pack buffer (the
+// GPU writes it when it gets there; nothing drains here), a fence after it.
+// Depth surfaces take the synchronous path into a pack buffer the same way.
 FenceId GlDevice::BeginReadback(SurfaceId id, const Rect& rect) {
     const GlSurface* s = Surface(id);
     if (!s || rect.w <= 0 || rect.h <= 0) return FenceId{};
+    const bool depth = s->desc.format == SurfaceFormat::Depth32f;
+    GLuint fbo = s->fbo;
+    GLuint tmp = 0;
+    if (!fbo) {
+        glGenFramebuffers(1, &tmp);
+        fbo = tmp;
+        state_.BindFb(GL_READ_FRAMEBUFFER, fbo);
+        glFramebufferTexture2D(GL_READ_FRAMEBUFFER, depth ? GL_DEPTH_ATTACHMENT : GL_COLOR_ATTACHMENT0,
+                               GL_TEXTURE_2D, s->tex, 0);
+    } else {
+        state_.BindFb(GL_READ_FRAMEBUFFER, fbo);
+    }
     PendingReadback pr;
     pr.stride = static_cast<size_t>(rect.w) * 4;
     pr.rows = rect.h;
-    pr.bytes.resize(pr.stride * static_cast<size_t>(rect.h));
-    Readback(id, rect, pr.bytes.data(), pr.stride);
+    if (!free_pbos_.empty()) {
+        pr.pbo = free_pbos_.back();
+        free_pbos_.pop_back();
+    } else {
+        GLuint b = 0;
+        glGenBuffers(1, &b);
+        pr.pbo = b;
+    }
+    const size_t bytes = pr.stride * static_cast<size_t>(rect.h);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, pr.pbo);
+    glBufferData(GL_PIXEL_PACK_BUFFER, static_cast<GLsizeiptr>(bytes), nullptr, GL_STREAM_READ);   // orphan: no stall on reuse
+    glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+    glPixelStorei(GL_PACK_ALIGNMENT, 4);
+    census_.readbacks++;
+    census_.readback_bytes += bytes;
+    if (depth)
+        glReadPixels(rect.x, rect.y, rect.w, rect.h, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+    else
+        glReadPixels(rect.x, rect.y, rect.w, rect.h, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    pr.sync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    state_.BindFb(GL_READ_FRAMEBUFFER, 0);
+    if (tmp) state_.DeleteFramebuffers(1, &tmp);
     const uint64_t f = next_fence_++;
-    readbacks_[f] = std::move(pr);
+    readbacks_[f] = pr;
     return FenceId{f};
+}
+
+bool GlDevice::ReadbackReady(FenceId fence) {
+    auto it = readbacks_.find(fence.id);
+    if (it == readbacks_.end()) return false;
+    return !it->second.sync || ReadbackReadySync(it->second.sync);
 }
 
 bool GlDevice::PollReadback(FenceId fence, void* out, size_t stride) {
     auto it = readbacks_.find(fence.id);
     if (it == readbacks_.end()) return false;
-    const PendingReadback& pr = it->second;
-    const size_t dst_stride = stride ? stride : pr.stride;
-    for (int r = 0; r < pr.rows; r++)
-        std::memcpy(static_cast<uint8_t*>(out) + dst_stride * r, pr.bytes.data() + pr.stride * r,
-                    std::min(pr.stride, dst_stride));
+    PendingReadback pr = it->second;
     readbacks_.erase(it);
+    if (pr.sync) {
+        GLsync sync = static_cast<GLsync>(pr.sync);
+        if (!ReadbackReadySync(sync)) {
+            readback_waits_++;
+            census_.readback_waits++;
+            // The commands may still sit in the client queue: flush them with the wait.
+            const auto t0 = std::chrono::steady_clock::now();
+            glClientWaitSync(sync, GL_SYNC_FLUSH_COMMANDS_BIT, 5000000000ull);
+            census_.gpu_waits++;
+            census_.gpu_wait_ns += static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count());
+        }
+        glDeleteSync(sync);
+    }
+    if (out) {
+        const size_t dst_stride = stride ? stride : pr.stride;
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, pr.pbo);
+        const size_t bytes = pr.stride * static_cast<size_t>(pr.rows);
+        if (const void* src = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, static_cast<GLsizeiptr>(bytes), GL_MAP_READ_BIT)) {
+            for (int r = 0; r < pr.rows; r++)
+                std::memcpy(static_cast<uint8_t*>(out) + dst_stride * r,
+                            static_cast<const uint8_t*>(src) + pr.stride * r, std::min(pr.stride, dst_stride));
+            glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+        }
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    }
+    free_pbos_.push_back(pr.pbo);
     return true;
+}
+
+bool GlDevice::ReadbackReadySync(void* sync) {
+    GLint status = GL_UNSIGNALED;
+    GLsizei n = 0;
+    glGetSynciv(static_cast<GLsync>(sync), GL_SYNC_STATUS, 1, &n, &status);
+    return status == GL_SIGNALED;
+}
+
+void GlDevice::ReleaseReadbacks() {
+    for (auto& kv : readbacks_) {
+        if (kv.second.sync) glDeleteSync(static_cast<GLsync>(kv.second.sync));
+        if (kv.second.pbo) { GLuint b = kv.second.pbo; glDeleteBuffers(1, &b); }
+    }
+    readbacks_.clear();
+    for (uint32_t b : free_pbos_) { GLuint g = b; glDeleteBuffers(1, &g); }
+    free_pbos_.clear();
 }
 
 // Textured quad of the source into the default framebuffer, then swap.
@@ -600,6 +799,7 @@ void GlDevice::Present(const ScanoutDesc& desc) {
     state_.Disable(GL_SCISSOR_TEST);
     state_.ColorMask(true, true, true, true);
     glClearColor(0.f, 0.f, 0.f, 1.f);
+    census_.clears++;
     glClear(GL_COLOR_BUFFER_BIT);
     if (s && s->tex) {
         const int vw = desc.dst.w > 0 ? desc.dst.w : window_w_;
@@ -621,18 +821,58 @@ void GlDevice::Present(const ScanoutDesc& desc) {
         state_.BindArrayBuffer(scanout_vbo_);
         glBufferSubData(GL_ARRAY_BUFFER,0,sizeof(quad),quad);
         state_.BindVertexArray(scanout_vao_);
+        census_.draw_calls++;
         glDrawArrays(GL_TRIANGLES, 0, 6);
         glBindSampler(0,0); // the next draw observes only its own texture parameters
         state_.BindVertexArray(0);
         state_.UseProgram(0);
         state_.Enable(GL_DEPTH_TEST);
     }
-    presented_w_ = presented_h_ = 0;
-    if (capture) {
+    if (capture && present_capture_deferred_) {
+        // The previous present's pixels first (its fence is long signalled: no
+        // drain), then this present's read into the pack buffer behind a new fence.
+        CompleteDeferredCapture(/*wait=*/true);
+        DeferredCapture& dc = deferred_capture_;
+        if (!dc.pbo) glGenBuffers(1, &dc.pbo);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, dc.pbo);
+        const size_t bytes = static_cast<size_t>(capture_w) * capture_h * 4;
+        glBufferData(GL_PIXEL_PACK_BUFFER, static_cast<GLsizeiptr>(bytes), nullptr, GL_STREAM_READ);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        census_.readbacks++;
+        census_.readback_bytes += bytes;
+        glReadPixels(0, 0, capture_w, capture_h, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+        dc.sync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        dc.w = capture_w;
+        dc.h = capture_h;
+        dc.pending = true;
+        dc.serial_lag = 0;
+        state_.BindFb(GL_READ_FRAMEBUFFER, capture_fbo_);
+        state_.BindFb(GL_DRAW_FRAMEBUFFER, 0);
+        glBlitFramebuffer(0, 0, capture_w, capture_h, 0, 0, capture_w, capture_h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        state_.BindFb(GL_FRAMEBUFFER, 0);
+        // The prompt capture (round 5): a bounded wait on this present's fence, the picture handed
+        // over now when it signalled (lag 0); otherwise the next present completes it (lag 1).
+        const bool prompt_ok = present_capture_wait_ns_ == 0 || !present_capture_gate_ || present_capture_gate_();
+        if (!prompt_ok) census_.prompt_skipped++;
+        if (prompt_ok && WaitDeferredCaptureBounded()) {
+            // A previous present's picture completed above (lag 1) and not yet handed over goes
+            // first (its own post) so this present's prompt picture does not overwrite it unshown.
+            if (presented_fresh_ && swap_) swap_();
+            CompleteDeferredCapture(/*wait=*/false);
+        } else {
+            dc.serial_lag = 1;
+        }
+    } else if (capture) {
+        presented_w_ = presented_h_ = 0;
+        presented_lag_ = 0;
+        presented_fresh_ = true;
         // The frame dump's presented image: the whole window as drawn above
         // (the display quad at its offset, black around it), bottom-up.
         presented_.assign(static_cast<size_t>(capture_w) * capture_h * 4, 0);
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        census_.readbacks++;
+        census_.readback_bytes += presented_.size();
         glReadPixels(0, 0, capture_w, capture_h, GL_RGBA, GL_UNSIGNED_BYTE, presented_.data());
         presented_w_ = capture_w;
         presented_h_ = capture_h;
@@ -640,8 +880,74 @@ void GlDevice::Present(const ScanoutDesc& desc) {
         state_.BindFb(GL_DRAW_FRAMEBUFFER, 0);
         glBlitFramebuffer(0, 0, capture_w, capture_h, 0, 0, capture_w, capture_h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
         state_.BindFb(GL_FRAMEBUFFER, 0);
+    } else {
+        presented_w_ = presented_h_ = 0;
+        presented_fresh_ = false;
     }
     if (swap_) swap_();
+}
+
+// The bounded wait of the prompt capture (SetPresentCaptureWaitNs) on the pending read's fence.
+// True = signalled within the budget (CompleteDeferredCapture(false) then maps without a wait).
+bool GlDevice::WaitDeferredCaptureBounded() {
+    DeferredCapture& dc = deferred_capture_;
+    if (present_capture_wait_ns_ == 0 || !dc.pending || !dc.sync) return false;
+    const auto t0 = std::chrono::steady_clock::now();
+    const GLenum r = glClientWaitSync(static_cast<GLsync>(dc.sync), GL_SYNC_FLUSH_COMMANDS_BIT, present_capture_wait_ns_);
+    census_.prompt_wait_ns += static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count());
+    const bool done = r == GL_ALREADY_SIGNALED || r == GL_CONDITION_SATISFIED;
+    if (done) census_.prompt_captures++;
+    else census_.prompt_timeouts++;
+    return done;
+}
+
+void GlDevice::SetPresentCaptureDeferred(bool deferred) {
+    if (present_capture_deferred_ && !deferred) CompleteDeferredCapture(/*wait=*/true);
+    present_capture_deferred_ = deferred;
+}
+
+// The pending read's pixels into presented_ (the image ReadPresented hands over).
+// `wait`: block on the fence when it has not signalled (counted); otherwise leave
+// an unsignalled read pending.
+void GlDevice::CompleteDeferredCapture(bool wait) {
+    DeferredCapture& dc = deferred_capture_;
+    if (!dc.pending) return;
+    if (dc.sync) {
+        GLenum r = glClientWaitSync(static_cast<GLsync>(dc.sync), 0, 0);
+        if (r != GL_ALREADY_SIGNALED && r != GL_CONDITION_SATISFIED) {
+            if (!wait) return;
+            present_capture_waits_++;
+            census_.capture_waits++;
+            const auto t0 = std::chrono::steady_clock::now();
+            r = glClientWaitSync(static_cast<GLsync>(dc.sync), GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull);
+            census_.gpu_waits++;
+            census_.gpu_wait_ns += static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count());
+        }
+        glDeleteSync(static_cast<GLsync>(dc.sync));
+        dc.sync = nullptr;
+    }
+    dc.pending = false;
+    const size_t bytes = static_cast<size_t>(dc.w) * dc.h * 4;
+    presented_.resize(bytes);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, dc.pbo);
+    if (const void* p = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, static_cast<GLsizeiptr>(bytes), GL_MAP_READ_BIT)) {
+        std::memcpy(presented_.data(), p, bytes);
+        glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+        presented_w_ = dc.w;
+        presented_h_ = dc.h;
+        presented_lag_ = dc.serial_lag;
+        presented_fresh_ = true;
+    } else {
+        presented_w_ = presented_h_ = 0;
+    }
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+}
+
+void GlDevice::ReleaseDeferredCapture() {
+    DeferredCapture& dc = deferred_capture_;
+    if (dc.sync) { glDeleteSync(static_cast<GLsync>(dc.sync)); dc.sync = nullptr; }
+    if (dc.pbo) { glDeleteBuffers(1, &dc.pbo); dc.pbo = 0; }
+    dc.pending = false;
 }
 
 bool GlDevice::CaptureTarget(int w, int h) {
@@ -675,6 +981,10 @@ void GlDevice::ArmPresentCapture(bool armed) {
 
 bool GlDevice::ReadPresented(std::vector<uint8_t>* rgba, int* w, int* h) {
     if (!present_capture_ || presented_w_ <= 0 || presented_h_ <= 0 || !rgba || !w || !h) return false;
+    // Under the deferred capture an image is handed over ONCE (no duplicate post when this present's
+    // own capture is still pending and the previous one was already read).
+    if (present_capture_deferred_ && !presented_fresh_) return false;
+    presented_fresh_ = false;
     *rgba = presented_;
     *w = presented_w_;
     *h = presented_h_;
@@ -685,6 +995,8 @@ void GlDevice::SetWindowSize(int w, int h) {
     window_w_ = w;
     window_h_ = h;
 }
+
+void GlDevice::FlushCommands() { glFlush(); }
 
 void GlDevice::BeginFrame() { BeginDrawRun(); }
 void GlDevice::EndFrame() { EndDrawRun(); }

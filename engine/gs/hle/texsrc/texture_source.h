@@ -36,6 +36,9 @@ struct TextureSource {
         uint8_t synth_levels = 0;    // synthesized tail levels past the authored chain
         render::SurfaceId clut;      // fmt 4..6: the 256x2 palette texture
         render::SurfaceId partner;   // fmt 5: the partner target's colour attachment
+        bool alt16_serve = false;    // Surface: the companion (5551 mirror) of a 32-bit-content target
+        render::SurfaceId alt16_main;   // ... and that target's 32-bit colour image (the half-word
+                                        // copy reads the bytes the companion cannot carry)
     };
 
     struct RegionRebase {

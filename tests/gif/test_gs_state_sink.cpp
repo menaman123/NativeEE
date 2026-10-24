@@ -1,7 +1,7 @@
 // tests/gif/test_gs_state_sink.cpp -- GsStateSink + GsSinkFanout: synthetic GIF
 // streams through GifParser(fanout{GsStateSink, RegisterOpStream}) must land in
 // the GsState façade exactly as the recorder records them. Usage:
-//   test_gs_state_sink <case>   (ad | packed | image | eop | fanout | path3 | all)
+//   test_gs_state_sink <case>   (ad | packed | packedflat | image | eop | fanout | path3 | identity | attribution | all)
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -125,15 +125,12 @@ static void AdWrites() {
     CHECK(r.counting.Draws() == 0, "no vertices: EOP flushes nothing");
 }
 
-// PACKED decoded items: RGBAQ bytes, ST with Q (non-zero applied), UV latch, FOG
-// as PRIM.FGE, then an XYZ2 strip of three -> one triangle draw whose vertices
-// carry the colour / ST the façade re-packed from the sink's decoded values.
-static void PackedItems() {
-    Rig r;
-    Init(r);
-    Bytes v;
-    // PRE PRIM = triangle (3), FST off, TME off. Descriptors: RGBAQ ST XYZ2 (strip3 lane shape).
-    put_tag(v, 3, true, true, 3, kPacked, {0x01, 0x02, 0x05});
+// The PackedItems packet: PRE PRIM = `prim` (triangle 3, optionally | IIP 8), FST off,
+// TME off; descriptors RGBAQ ST XYZ2 (strip3 lane shape); three vertices whose RGBAQ
+// is (10+i, 20+i, 30+i, 0x80), ST (0.25,0.5,Q2) (0.75,0.5,Q0) (0.25,1.0,Q4), XY 12.4
+// 0 / 10 / 10 pixels, Z 0x100, ADC 0.
+static void PutPackedTriangle(Bytes& v, uint16_t prim) {
+    put_tag(v, 3, true, true, prim, kPacked, {0x01, 0x02, 0x05});
     const uint8_t rgba[3][4] = {{10, 20, 30, 0x80}, {11, 21, 31, 0x80}, {12, 22, 32, 0x80}};
     const float st[3][3] = {{0.25f, 0.5f, 2.0f}, {0.75f, 0.5f, 0.0f}, {0.25f, 1.0f, 4.0f}};
     const uint32_t xy[3][2] = {{0, 0}, {160, 0}, {0, 160}};  // 12.4: 0, 10, 10 pixels
@@ -145,7 +142,22 @@ static void PackedItems() {
         put_u64(v, (uint64_t)xy[i][0] | ((uint64_t)xy[i][1] << 32));
         put_u64(v, (uint64_t)0x100);  // Z 0x100, ADC 0
     }
+}
+
+// PACKED decoded items: RGBAQ bytes, ST with Q (non-zero applied), UV latch, FOG
+// as PRIM.FGE, then an XYZ2 strip of three -> one triangle draw whose vertices
+// carry the colour / ST the façade re-packed from the sink's decoded values.
+// PRIM.IIP = 1 (Gouraud) so the per-vertex colours survive the kick: with IIP = 0
+// the GS flat-shades the triangle with the completing vertex's colour (GS User's
+// Manual 3.4.1; PackedFlat below pins that arm).
+static void PackedItems() {
+    Rig r;
+    Init(r);
+    Bytes v;
+    // PRE PRIM = triangle (3) | IIP (8), FST off, TME off.
+    PutPackedTriangle(v, 3 | 8);
     Feed(r, v);
+    CHECK(r.gs.Regs().prim.type == 3 && r.gs.Regs().prim.gouraud, "PRE PRIM decoded: triangle, IIP");
     CHECK(r.state_sink.RegisterWrites() == 1, "PRE wrote PRIM through WriteRegister");
     CHECK(r.state_sink.PackedWrites() == 6 && r.state_sink.Kicks() == 3, "6 packed items + 3 kicks");
     CHECK(r.state_sink.KicksOn(GifPath::Path2) == 3 && r.state_sink.KicksOn(GifPath::Path1) == 0, "the 3 kicks counted on PATH2");
@@ -176,6 +188,36 @@ static void PackedItems() {
     CHECK(r.gs.Regs().attr.u == 0x1234 && r.gs.Regs().attr.v == 0x0ABC && r.gs.Regs().attr.uv_written_since_st, "PACKED UV landed (latch set)");
     CHECK(r.gs.Regs().prim.fog, "PACKED FOG byte -> PRIM.FGE");
     CHECK(r.state_sink.PackedWrites() == 8, "two more packed items");
+}
+
+// The same packet with PRIM.IIP = 0: flat shading. The GS applies the colour of the
+// vertex whose kick completes the primitive to the whole primitive (GS User's Manual
+// 3.4.1; PCSX2 HandleProvokingVertexFirst: "PS2 is provoking last vertex") -- the
+// engine's VertexKick::PushPrimitive (E192) copies the LAST vertex's RGBA onto the
+// triangle's three vertices; ST / Q / XY stay per vertex.
+static void PackedFlat() {
+    Rig r;
+    Init(r);
+    Bytes v;
+    PutPackedTriangle(v, 3);
+    Feed(r, v);
+    CHECK(r.gs.Regs().prim.type == 3 && !r.gs.Regs().prim.gouraud, "PRE PRIM decoded: triangle, flat");
+    CHECK(r.state_sink.PackedWrites() == 6 && r.state_sink.Kicks() == 3, "6 packed items + 3 kicks");
+    CHECK(OpsOfKind(r.ops, RegisterOpKind::Rgbaq) == 3, "recorder still saw three RGBAQ items");
+    CHECK(r.counting.Draws() == 1 && r.capture.draws.size() == 1, "EOP flushed one triangle");
+    if (r.capture.draws.size() == 1) {
+        const auto& d = r.capture.draws[0];
+        CHECK(d.prim_type == 3 && d.verts.size() == 3, "triangle with three vertices");
+        if (d.verts.size() == 3) {
+            bool flat = true;
+            for (int i = 0; i < 3; ++i)
+                flat = flat && d.verts[i].r == 12 && d.verts[i].g == 22 && d.verts[i].b == 32 && d.verts[i].a == 0x80;
+            CHECK(flat, "IIP=0: every vertex carries the completing (last) vertex's RGBA");
+            CHECK(d.verts[0].s == 0.25f && d.verts[0].t == 0.5f && d.verts[0].q == 2.0f && d.verts[2].q == 4.0f,
+                  "flat shading leaves ST / Q per vertex");
+            CHECK(d.verts[1].x == 10.0f && d.verts[2].y == 10.0f, "flat shading leaves positions untouched");
+        }
+    }
 }
 
 // IMAGE: BITBLTBUF/TRXPOS/TRXREG/TRXDIR via A+D, then an IMAGE tag whose
@@ -293,6 +335,43 @@ static void Path3Finish() {
     CHECK(r.state_sink.Path3Finishes() == 2 && r.counting.Draws() == 1, "nothing queued: no draw");
     // The counting sink chained a DrawRec hash and forwarded to the capture sink.
     CHECK(r.counting.DrawHash() != CountingDrawIrSink::kHashOffset && r.capture.draws.size() == 1, "counting sink hashed and forwarded the draw");
+}
+
+// A play session without a recorder turns the recorder-only work off: the
+// counting sink's FNV chains (SetHashing) and DrawFlush's snapshot extras
+// (SetRecordSnapshot: vertex_hash, bbox). The draws themselves -- count, kind,
+// vertices -- are unchanged; only those fields stay at their initial values.
+static void RecorderExtrasOff() {
+    auto feed_triangle = [](Rig& r) {
+        Bytes a;
+        put_tag(a, 3, true, true, 4 /* strip */, kPacked, {0x05});
+        put_u64(a, 0); put_u64(a, 0x100);
+        put_u64(a, 160); put_u64(a, 0x100);
+        put_u64(a, (uint64_t)160 << 32); put_u64(a, 0x100);
+        Feed(r, a, GifPath::Path3);
+    };
+    Rig on;
+    Init(on);
+    feed_triangle(on);
+    Rig off;
+    Init(off);
+    off.counting.SetHashing(false);
+    off.gs.Flush().SetRecordSnapshot(false);
+    feed_triangle(off);
+    CHECK(on.counting.Draws() == 1 && off.counting.Draws() == 1 && on.capture.draws.size() == 1 && off.capture.draws.size() == 1,
+          "both rigs flushed one triangle");
+    CHECK(on.counting.DrawHash() != CountingDrawIrSink::kHashOffset && on.counting.Hashing(), "hashing on: the DrawRec chain moved");
+    CHECK(off.counting.DrawHash() == CountingDrawIrSink::kHashOffset && off.counting.JobHash() == CountingDrawIrSink::kHashOffset,
+          "hashing off: both chains stay at the offset basis");
+    if (on.capture.draws.size() == 1 && off.capture.draws.size() == 1) {
+        const auto& a = on.capture.draws[0];
+        const auto& b = off.capture.draws[0];
+        CHECK(a.snapshot.vertex_hash != 0 && a.bbox[3] > a.bbox[0], "snapshot on: vertex_hash and bbox filled");
+        CHECK(b.snapshot.vertex_hash == 0 && b.bbox[0] == 0 && b.bbox[3] == 0 && b.snapshot.verts_incl == 1,
+              "snapshot off: vertex_hash and bbox stay 0, the vertices are still included");
+        CHECK(a.verts.size() == b.verts.size() && a.prim_type == b.prim_type && a.vertex_count == b.vertex_count,
+              "the draw itself is the same either way");
+    }
 }
 
 // The identity stamp (invariant 28) crosses the arbiter queue: a staged identity
@@ -423,10 +502,12 @@ int main(int argc, char** argv) {
     const std::string c = argc > 1 ? argv[1] : "all";
     if (c == "ad" || c == "all") AdWrites();
     if (c == "packed" || c == "all") PackedItems();
+    if (c == "packedflat" || c == "all") PackedFlat();
     if (c == "image" || c == "all") ImageUpload();
     if (c == "eop" || c == "all") EopFlush();
     if (c == "fanout" || c == "all") Fanout();
     if (c == "path3" || c == "all") Path3Finish();
+    if (c == "extras" || c == "all") RecorderExtrasOff();
     if (c == "identity" || c == "all") IdentityStamp();
     if (c == "attribution" || c == "all") Attribution();
     std::printf("test_gs_state_sink %s: %d checks, %d failures\n", c.c_str(), g_checks, g_fail);

@@ -5,6 +5,12 @@
 //   * drawn_since_sync / z_drawn_since_sync: the union of the rectangles drawn
 //     since the last writeback; a writeback encodes ONLY those rows (a target that
 //     has not drawn since its sync writes back nothing).
+//   * main_drawn_since_deposit: the union of the rectangles the MAIN route drew
+//     since this target's bytes last reached the mirror (its own colour writeback
+//     or its companion's lane deposit). Inside it the attachment is newer than
+//     local memory: the alias import (TargetRefresher::RefreshAlphaMerge) keeps
+//     the attachment's alpha byte there and takes the mirror's elsewhere -- the
+//     GS has ONE memory, and the later writer owns the byte.
 //   * valid_rect: the lifetime union of the main image's drawn triangle bboxes
 //     (unclamped); a writeback requires it non-empty, a rescue is bounded by it.
 //   * sync_keep_mask16: the 5551 bits the last 16-bit draw did NOT write (from
@@ -43,6 +49,7 @@ struct CoherenceState {
 
     LogicalRect drawn_since_sync;
     LogicalRect z_drawn_since_sync;
+    LogicalRect main_drawn_since_deposit;
     LogicalRect valid_rect;             // lifetime union of the main image's tri bboxes
     LogicalRect alt16_stale;
     LogicalRect alt16_drawn;

@@ -35,9 +35,16 @@ public:
                             const render::DrawParams& p) override;
     void CopyRect(render::SurfaceId src, const render::Rect& sr, render::SurfaceId dst,
                   const render::Rect& dr, uint32_t) override;
+    void WriteAlphaLane(render::SurfaceId dst, const render::Rect& dst_rect, render::SurfaceId lane,
+                        const render::Rect& exclude) override;
     void Readback(render::SurfaceId id, const render::Rect& r, void* out, size_t stride) override;
+    // The asynchronous read, modelled as GL orders it: the bytes are taken at Begin
+    // (a later write to the surface does not reach the read) and handed back at Poll
+    // (rows packed at rect.w * 4 unless a stride is given). An unknown handle polls
+    // false. `readback_pending` = reads begun and not yet polled.
     render::FenceId BeginReadback(render::SurfaceId, const render::Rect&) override;
     bool PollReadback(render::FenceId, void*, size_t) override;
+    size_t readback_pending() const { return pending_reads_.size(); }
     void Present(const render::ScanoutDesc& d) override;
     void ClearStencil(render::SurfaceId stencil, uint8_t value) override;
     void DrawConstQuad(render::SurfaceId color, render::SurfaceId stencil, const render::Rect& scissor,
@@ -51,6 +58,14 @@ public:
     void SetPixel(render::SurfaceId id, int x, int y, uint8_t r, uint8_t g, uint8_t b, uint8_t a);
     void SetDepth(render::SurfaceId id, int x, int y, float d);
 
+    // Backend::kCopyPack5551 through CopyRect: advertised through QueryCaps when set
+    // (the CPU fold of TexaExpand, so a test can compare the two refresh routes).
+    bool copy_pack5551 = false;
+    int copy_rects = 0, pack_copies = 0;
+    // Backend::WriteAlphaLane: advertised through QueryCaps when set (the CPU form of
+    // the alpha-lane pass, so a test can compare the two alias-import routes).
+    bool alpha_lane_write = false;
+    int alpha_lane_writes = 0;
     int creates = 0, destroys = 0, clears = 0, uploads = 0, readbacks = 0, draws = 0, presents = 0;
     int level_uploads = 0, mip_finishes = 0, last_level = 0, last_level_w = 0, last_level_h = 0;
     int last_mip_authored = 0;
@@ -74,6 +89,13 @@ public:
 private:
     std::map<uint32_t, Surface> surfaces_;
     uint32_t next_ = 0;
+    struct PendingRead {
+        std::vector<uint8_t> bytes;
+        size_t stride = 0;
+        int rows = 0;
+    };
+    std::map<uint64_t, PendingRead> pending_reads_;
+    uint64_t next_fence_ = 1;
 };
 
 }  // namespace test

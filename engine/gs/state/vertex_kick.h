@@ -14,7 +14,10 @@
 // output; a non-drawing kick resets parity), TriangleFan 3 (keep first and last),
 // Sprite 2 expanded to two triangles (tl tr bl, tr br bl) after corner
 // normalisation (x/s/u and y/t/v of the two corners ordered min,max) with z, fog
-// and colour taken flat from the second vertex. The corners are NOT snapped to
+// and colour taken flat from the second vertex. PRIM.IIP = 0 (flat shading, 3.2.1
+// / 3.4.1): the RGBA of the vertex whose kick completes the primitive (the last
+// one -- PCSX2's "provoking last vertex") is applied to the whole line / triangle;
+// IIP = 1 keeps every vertex's own colour (Gouraud, interpolated downstream). The corners are NOT snapped to
 // pixel centres (VertexKickQuirks::round_sprite_mode 1 = normalise only, the peak
 // configuration; 0 = leave the corners as kicked).
 //
@@ -62,7 +65,11 @@ public:
 
     bool HasPending() const { return !draw_buffer_.empty(); }
     std::vector<VertexRec>& DrawBuffer() { return draw_buffer_; }
-    const std::vector<VertexRec>& Queue() const { return vertex_queue_; }
+    // The vertex queue's contents, oldest first (a copy: the queue is a fixed window).
+    const std::vector<VertexRec>& Queue() const {
+        queue_view_.assign(queue_, queue_ + queue_n_);
+        return queue_view_;
+    }
     bool BatchTextureEnable() const { return batch_texture_enable_; }
     int StripCount() const { return strip_count_; }
 
@@ -71,12 +78,30 @@ private:
     void AssembleStrip(bool draw);
     void FlushPrimitive();
     void EmitSprite();
+    // Push one assembled primitive; flat shading copies the last vertex's RGBA.
+    void PushPrimitive(const VertexRec* v, int n);
+    // A triangle of three queue slots in the given winding (the strip's parity swap).
+    void PushTriangle(const VertexRec& a, const VertexRec& b, const VertexRec& c);
     static int Needed(uint8_t prim);
+    // The 3-slot window (one more slot for the kick before the trim).
+    void QueuePush(const VertexRec& v) {
+        if (queue_n_ == kQueueSlots) QueueEraseFront();   // never reached: the trim keeps <= 3 between kicks
+        queue_[queue_n_++] = v;
+    }
+    void QueueEraseFront();
+    void QueueEraseAt(int i);
+    void QueueClear() { queue_n_ = 0; }
 
     GsRegisters* regs_;
     VertexKickQuirks quirks_;
     std::function<void()> flush_;
-    std::vector<VertexRec> vertex_queue_;
+    // The vertex queue: at most 3 vertices between kicks, 4 right after a kick (the
+    // trim follows). A fixed window: the per-kick erase-front / push of a std::vector
+    // was 16 % of the GIF drain thread's busy time in a strip-heavy hub (pipeline2).
+    static constexpr int kQueueSlots = 4;
+    VertexRec queue_[kQueueSlots];
+    int queue_n_ = 0;
+    mutable std::vector<VertexRec> queue_view_;   // Queue()'s copy
     std::vector<VertexRec> draw_buffer_;
     int strip_count_ = 0;
     bool batch_texture_enable_ = false;

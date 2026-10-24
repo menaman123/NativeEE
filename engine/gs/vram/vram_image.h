@@ -25,9 +25,22 @@
 //     page (NoteGpuElided); MaterializePages clears it once the band was
 //     refreshed; AssertNoStaleAtSave demands zero stale pages when the pending
 //     ledger is empty (the save contract).
+//   * The DEFERRED-DEPOSIT GATE (perf, gsperf L2): a colour writeback whose GPU
+//     read is still in flight (RenderTargetCache's deferred scanout deposit) owes
+//     a span of this image its bytes. The owner registers the span (NoteDeferred)
+//     and a gate callback; EVERY operation that would observe or alter that span
+//     -- ReadView, ReadMirror, ViewSignature, StageDeposit, the EE write paths,
+//     CommitDeposits, the save assertion -- first runs the gate over the span,
+//     which completes the writeback (staging it as it would have been staged at
+//     once). The image then evolves exactly as it did without the deferral: no
+//     reader can tell the deposit landed late. Spans that do not overlap pay a
+//     range test. A CommitDeposits that found a deferred span owing records the
+//     commit it owes; the gate's completion commits those pages itself
+//     (CommitDepositsIn) so ReadMirror after the boundary reads committed bytes.
 // GS User's Manual 8.1: local memory is 4 MB, addressed modulo 4 MB; a page is
 // 8 KiB; there are 512 pages.
 #pragma once
+#include <functional>
 
 #include <cstddef>
 #include <cstdint>
@@ -60,6 +73,7 @@ public:
         uint64_t settles = 0;
         uint64_t reader_stale_touches = 0;
         uint64_t save_reconciled = 0;
+        uint64_t deferred_gates = 0;   // deferred-deposit completions forced by a reader / writer
     };
 
     VramImage();
@@ -116,6 +130,22 @@ public:
     bool NeedsEagerDeposit(Span span) const;
     void ReaderTouch(Span span);
 
+    // ---- deferred-deposit gate ----------------------------------------------------
+    // The owner of a writeback whose bytes are not here yet: `span` is owed (its
+    // readers / writers run `gate` first; the gate must ClearDeferred before it
+    // stages). `commit_owed` set by the gate's completion when a CommitDeposits ran
+    // while the span was owed: the completion commits the span's pages itself.
+    void SetDeferredGate(std::function<void()> gate) { gate_ = std::move(gate); }
+    void NoteDeferred(Span span);
+    void ClearDeferred();
+    bool HasDeferred() const { return !deferred_.empty(); }
+    bool DeferredCommitOwed() const { return deferred_commit_owed_; }
+    // Commit the Pending pages of `span` only (the gate's completion of an owed commit).
+    void CommitDepositsIn(Span span);
+    // Diagnostics: print the first 40 gated (operation, span, owed range) rows on stderr.
+    void SetGateTrace(bool on) { gate_trace_ = on; }
+    // A raw reader (Bytes() / Page()) over `span`: runs the gate when the span is owed.
+    void GateRaw(Span span) const { if (!deferred_.empty()) Gate(span, "raw"); }
     // ---- mirror -----------------------------------------------------------------
     // A VramMirror observes every EE-side mutation of this image (WriteStream,
     // NoteWriteNoBytes, NoteStreamWrite, SettleWrites, NoteCpuWrite) in call
@@ -156,8 +186,18 @@ private:
     uint32_t settle_lo_ = 0xFFFFFFFFu;  // watermark of unsettled EE writes
     uint32_t settle_hi_ = 0;
     std::vector<uint64_t> settle_pages_;  // 512-bit set of pages written since settle
-    Counters counters_;
+    mutable Counters counters_;
     VramMirror* mirror_ = nullptr;
+    // The deferred-deposit gate (see the header comment). Mutable: the const
+    // readers run the gate, which completes a writeback into this image.
+    struct Owed { uint32_t lo, hi; };   // [lo, hi) bytes, clamped to 4 MiB (no wrap)
+    mutable std::vector<Owed> deferred_;
+    mutable bool deferred_commit_owed_ = false;
+    std::function<void()> gate_;
+    void Gate(Span span, const char* what) const;
+    bool gate_trace_ = false;   // SetGateTrace: the first gated spans on stderr
+    mutable uint32_t gate_traced_ = 0;
+    bool GateAll() const;   // a whole-image observation: the gate when anything is owed
 };
 
 }  // namespace gs

@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+"""vu1_aot_stage_prelude.py -- stage the headers a GENERATED VU1 image TU needs.
+
+The VU1 AOT generator (engine/vu/vu1_aot/Vu1AotEmitter) emits C++ that includes ONE
+header, engine/vu/vu1_aot/vu1_aot_prelude.h, and is compiled at RUN time by
+Vu1AotBuilder outside the source tree. This script asks the build's own compiler
+for the prelude's include closure (-MM) and copies exactly those files, under their
+tree-relative paths, into --out (plus MANIFEST.txt listing them), so the running
+engine can hand the generated TU an include root that matches the engine build it
+came from. Nothing is hand-maintained: a header the prelude starts to pull is staged
+on the next build.
+
+    vu1_aot_stage_prelude.py --compiler <c++> --root <source root> --out <dir> [--define NAME=VAL]...
+                             [--key-header <path>] [--also <tree-relative file>]...
+
+--also stages a file that is NOT in the include closure but whose text decides what a
+generated TU CONTAINS: the code generator's own sources (engine/vu/vu1_aot/
+vu1_aot_block_gen.cpp, vu1_aot_emitter.cpp). They join MANIFEST.txt and the key, so a
+generator change (a fix in the emitted text, E385) retires every cached library and
+pack built by the old generator -- those pass the corpus gate and would otherwise be
+loaded forever (the user cache and a pack are keyed by this key alone).
+
+--key-header writes the VU1 AOT ABI KEY of the staged closure as a C++ header
+(`inline const char* const kVu1AotAbiKey = "abi-<16 hex>";`): SHA-256 over every
+staged file (its tree-relative path, a newline, its bytes, a NUL) in MANIFEST order,
+then one `define=NAME=VAL` line per --define in sorted order -- the first 16 hex digits.
+The key names what a generated image library is binary-compatible with (the slot
+layout, the inlined bodies, the hazard tables -- everything the TU includes); two
+engine builds from the same VU sources share it, so a pre-built library pack built
+on one machine loads on another (the loader re-verifies it on the corpus anyway).
+Vu1AotAbiKey::Compute (engine/vu/vu1_aot/vu1_aot_abi_key.cpp) is the same
+function in C++; test_vu1_aot_pack pins the two equal. The header is rewritten
+only when its text changes (no rebuild cascade on an unchanged key).
+
+Exit 0 on success, 1 when the compiler could not produce the dependency list.
+"""
+import argparse
+import hashlib
+import os
+import shutil
+import subprocess
+import sys
+
+PRELUDE = "engine/vu/vu1_aot/vu1_aot_prelude.h"
+
+
+def closure(compiler, root, defines):
+    base = os.path.basename(compiler).lower()
+    if base.startswith("clang-cl"):
+        # clang-cl is clang with the cl command line; --driver-mode=g++ as the FIRST argument
+        # gives it the GNU one for this call, so -MM works unchanged (the windows-* presets).
+        cmd = [compiler, "--driver-mode=g++", "-std=c++17", "-I" + root, "-MM", "-x", "c++", os.path.join(root, PRELUDE)]
+        for d in defines:
+            cmd.append("-D" + d)
+        parse = "mm"
+    elif base in ("cl", "cl.exe"):
+        # MSVC cl has no -MM: /showIncludes lists every header as "Note: including file: <path>";
+        # /Zs = syntax only, no object.
+        cmd = [compiler, "/nologo", "/Zs", "/TP", "/std:c++17", "/I" + root, "/showIncludes", os.path.join(root, PRELUDE)]
+        for d in defines:
+            cmd.append("/D" + d)
+        parse = "showincludes"
+    else:
+        cmd = [compiler, "-std=c++17", "-I" + root, "-MM", "-x", "c++", os.path.join(root, PRELUDE)]
+        for d in defines:
+            cmd.append("-D" + d)
+        parse = "mm"
+    try:
+        p = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        out = p.stdout
+    except (OSError, subprocess.CalledProcessError) as e:
+        sys.stderr.write("vu1_aot_stage_prelude: %s\n" % e)
+        return None
+    if parse == "mm":
+        deps = out.replace("\\\n", " ").split(":", 1)[1].split()
+    else:
+        deps = [os.path.join(root, PRELUDE)]
+        for line in out.splitlines():
+            line = line.strip()
+            if line.startswith("Note: including file:"):
+                deps.append(line.split(":", 2)[2].strip())
+    rel = []
+    root_abs = os.path.abspath(root)
+    for d in deps:
+        a = os.path.abspath(d if os.path.isabs(d) else os.path.join(root, d))
+        if a.startswith(root_abs + os.sep):
+            rel.append(os.path.relpath(a, root_abs))
+    return sorted(set(rel))
+
+
+def abi_key(out_dir, files, defines):
+    """The ABI key of the staged closure (the grammar Vu1AotAbiKey::Compute mirrors)."""
+    h = hashlib.sha256()
+    for rel in files:
+        h.update(rel.encode("utf-8"))
+        h.update(b"\n")
+        with open(os.path.join(out_dir, rel), "rb") as f:
+            h.update(f.read())
+        h.update(b"\0")
+    for d in sorted(defines):
+        h.update(("define=%s\n" % d).encode("utf-8"))
+    return "abi-" + h.hexdigest()[:16]
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--compiler", required=True)
+    ap.add_argument("--root", required=True)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--define", action="append", default=[])
+    ap.add_argument("--key-header", default="")
+    ap.add_argument("--also", action="append", default=[])
+    a = ap.parse_args()
+    files = closure(a.compiler, a.root, a.define)
+    if not files:
+        return 1
+    files = sorted(set(files + [os.path.normpath(x) for x in a.also]))
+    manifest = os.path.join(a.out, "MANIFEST.txt")
+    have = []
+    if os.path.exists(manifest):
+        with open(manifest) as f:
+            have = [l.strip() for l in f if l.strip()]
+    changed = have != files
+    for rel in files:
+        src = os.path.join(a.root, rel)
+        dst = os.path.join(a.out, rel)
+        if (not os.path.exists(dst) or os.path.getmtime(dst) < os.path.getmtime(src)
+                or os.path.getsize(dst) != os.path.getsize(src)):
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy2(src, dst)
+            changed = True
+    # Files no longer in the closure are removed so the staged tree IS the closure.
+    for rel in have:
+        if rel not in files:
+            try:
+                os.remove(os.path.join(a.out, rel))
+            except OSError:
+                pass
+            changed = True
+    if changed or not os.path.exists(manifest):
+        os.makedirs(a.out, exist_ok=True)
+        with open(manifest, "w") as f:
+            f.write("\n".join(files) + "\n")
+    if a.key_header:
+        key = abi_key(a.out, files, a.define)
+        text = ("// GENERATED by tools/vu1_aot_stage_prelude.py at build time -- DO NOT EDIT.\n"
+                "// The VU1 AOT ABI key of this engine's staged prelude (see the script's docstring).\n"
+                "#pragma once\n"
+                "namespace ps2r::app {\n"
+                "inline const char* const kVu1AotAbiKey = \"%s\";\n"
+                "}  // namespace ps2r::app\n" % key)
+        have_text = None
+        if os.path.exists(a.key_header):
+            with open(a.key_header) as f:
+                have_text = f.read()
+        if have_text != text:
+            os.makedirs(os.path.dirname(a.key_header) or ".", exist_ok=True)
+            with open(a.key_header, "w") as f:
+                f.write(text)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

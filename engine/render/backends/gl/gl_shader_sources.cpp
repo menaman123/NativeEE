@@ -47,11 +47,25 @@ uniform int u_uv_mode;
 noperspective out vec3 v_texcoord;
 out vec4 v_color;
 out float v_fog;
+// The PS2 z itself, screen-linear: the fragment shader writes gl_FragDepth =
+// v_z * 2^-32 (see below) so the window depth is EXACT for small z.
+noperspective out float v_z;
 
 void main() {
     // PS2 screen-space coords to NDC: x in [0, width] -> [-1, 1]
     // Y: [0, height] -> [-1, 1] (PS2 top at GL bottom, scanout flips for display)
-    vec2 ndc = (a_position.xy / u_screen_size) * 2.0 - 1.0;
+    // The GS coverage rule (GS User's Manual 3.4 "Drawing Primitive"): pixel (i, j)
+    // is sampled at the INTEGER point (i, j) of the XYOFFSET-relative primitive
+    // space and drawn when x0 <= i < x1, y0 <= j < y1 -- a sprite -0.5..223.5
+    // covers rows 0..223, and 1:1 UVs are authored as x + 0.5 for the same reason.
+    // GL samples at (i + 0.5, j + 0.5): translate the primitive by +0.5 px so the
+    // two sample grids coincide, minus 1/256 px so an edge on the 12.4 grid never
+    // lands exactly on a GL sample point (that tie is the driver's rule; this one
+    // is the GS's inclusive-low / exclusive-high). The interpolants are then read
+    // at (i + 1/256, j + 1/256): a texel coordinate exactly on a boundary falls
+    // INSIDE the GS texel, never before it. PCSX2 GSRendererHW ox2 / tfx_vgs -0.05.
+    vec2 gs_px = a_position.xy + vec2(0.49609375);
+    vec2 ndc = (gs_px / u_screen_size) * 2.0 - 1.0;
     // [R112-Z-PRECISION] Z mapping: z_ndc = z/2^31 - 1  =>  window
     // d = 0.5*z_ndc + 0.5 = z/2^32 (Sterbenz-exact viewport transform,
     // default glDepthRange [0,1]). The old mapping (z/(2^32-1), NDC z in
@@ -66,8 +80,16 @@ void main() {
     // PCSX2 grounding: tfx_vgs.glsl:43,:86 gl_Position.z = z*exp2(-32)
     // with glClipControl(GL_ZERO_TO_ONE) (GSDeviceOGL.cpp:629,:785) —
     // macOS GL4.1 lacks clip control, hence the 128-step floor here.
+    // That floor is the clip-space representation only: -1 + z/2^31 rounds to
+    // -1.0 for every z < 64 (float32 ULP at 1.0 is 2^-23), so a GS Z test of
+    // such a z against a Z buffer cleared to 0 (GREATER: passes on the console,
+    // e.g. a letterbox bar at z = 16 after a Z-only clear) fails here. The
+    // fragment shader therefore writes gl_FragDepth = v_z * 2^-32 (a power-of-two
+    // scale: exact for every float z; the SAME window value d = z / 2^32 the
+    // depth-view readers decode), keeping this clip z only for clipping.
     float z_ndc = a_position.z / 2147483648.0 - 1.0;
     gl_Position = vec4(ndc, z_ndc, 1.0);
+    v_z = a_position.z;
     // [R169-GLRUN] P2.1 raw-attribute UV transform (see uniform docs above).
     vec3 tc = a_texcoord;
     if (u_uv_mode == 1)      tc = vec3(a_texcoord.xy * 0.0625, 1.0);
@@ -89,6 +111,7 @@ const char* const kPs2FragSrc = R"GLSL(
 noperspective in vec3 v_texcoord;
 in vec4 v_color;
 in float v_fog;
+noperspective in float v_z;
 
 uniform sampler2D u_texture;    // Texture sampler (binding 0)
 uniform sampler2D u_rt_texture; // Render target copy for shader-side blending (binding 1)
@@ -104,6 +127,12 @@ uniform int u_blend_c;      // 0=As, 1=Ad, 2=FIX
 uniform int u_blend_d;      // 0=Cs, 1=Cd, 2=0
 uniform float u_fix_alpha;  // FIX value (0-1 range, PS2 128=1.0)
 uniform int u_blend_enabled; // ABE flag from PRIM
+// 1 = the unified fixed-function blend state is bound -- func(SRC1_COLOR,
+// ONE_MINUS_SRC1_ALPHA), the SAME two factor paths the per-tuple states use -- and
+// frag_factor carries THIS draw's factors: .rgb = the source factor, .a = x with the
+// destination factor 1 - x, both derived from the ALPHA tuple (render::BlendFfMap
+// unified arms). 0 = the per-tuple GL state reads frag_factor = As as before.
+uniform int u_ff_unified;
 uniform int u_sw_blend;      // 1=shader-side blend active (RT copy bound)
 uniform int u_flip_v;        // 1=flip V coordinate (for RT texture reads)
 
@@ -141,6 +170,8 @@ uniform int u_ate;           // Alpha test enable
 uniform int u_atst;          // Alpha test method: 0=NEVER,1=ALWAYS,2=LESS,3=LEQUAL,4=EQUAL,5=GEQUAL,6=GREATER,7=NOTEQUAL
 uniform int u_aref;          // Alpha reference value (0-255)
 uniform int u_afail;         // Alpha fail action: 0=KEEP,1=FB_ONLY,2=ZB_ONLY,3=RGB_ONLY
+uniform int u_afail_pass;    // Population this pass draws: 0=every fragment (the static arms),
+                             // 1=the pixels that PASS the alpha test, 2=the pixels that FAIL it
 
 // Destination alpha test params (PS2 TEST register)
 uniform int u_date;          // Destination alpha test enable
@@ -159,6 +190,11 @@ uniform vec3 u_fogcol;       // Fog distant color (RGB, 0-1 range)
 // a 1 bit means PRESERVE the destination bit (GS convention).
 uniform int u_fbmsk16_en;
 uniform int u_fbmsk16;
+// The 32-bit twin: FRAME.FBMSK with a byte that is neither 0x00 nor 0xFF on a
+// 32-bit frame (a sub-byte channel write, e.g. 0xFFFF80FF = G[6:0] only) merges
+// bit-exactly against the destination copy; glColorMask can only widen it.
+uniform int u_fbmsk32_en;
+uniform int u_fbmsk32;
 
 // [R163-ZTEX2] Depth-attachment sampling mode. 0 = normal color fetch.
 // Nonzero = u_texture is a GL_DEPTH_COMPONENT32F depth attachment being
@@ -273,7 +309,14 @@ uniform int u_zsrc_num;
 uniform int u_zsrc_den;
 uniform int u_clut_raw;
 
-out vec4 frag_color;
+// The stored-alpha convention (ONE for the pipeline): every texel, CLUT entry and colour attachment
+// stores the GS alpha byte as the GS does (0..0xFF, 0x80 = 1.0 only where the GS
+// applies it: the blend factor As and the alpha test's AREF compare in stored
+// units). GL fixed-function blending reads its As factor from the second (dual-
+// source, index 1) output: frag_factor.a = min(2 * As, 255) / 255, the GS
+// As / 0x80 ratio; frag_color.a stays the stored byte.
+layout(location = 0, index = 0) out vec4 frag_color;
+layout(location = 0, index = 1) out vec4 frag_factor;
 
 #ifdef S83_IDXSCALE
 // [S83-IDXSCALE] Requantize an interpolated GS texel coordinate to the
@@ -293,6 +336,11 @@ vec2 S83NativeCenter(vec2 rt) {
 #endif
 
 void main() {
+    // The window depth: d = PS2 z / 2^32 exactly (the vertex shader's clip z keeps
+    // the 128-unit floor of the NDC representation; see kPs2VertSrc). Written on
+    // every path, before any discard.
+    float frag_z = v_z * exp2(-32.0);
+    gl_FragDepth = frag_z;
     // --- PS2 SCANMSK (Scanline Mask for Interlaced Rendering) ---
     // Per GS spec: prohibits drawing to even or odd Y rows of the framebuffer.
     // MSK=0: normal (no mask), MSK=2: even Y prohibited, MSK=3: odd Y prohibited.
@@ -355,12 +403,8 @@ void main() {
             // [R163-ZTEX2] CLASS Z32N: native PSMZ32 read of a Z32 depth
             // attachment. Legacy chain: SyncZToVRAM Z32 encode (raw 4 bytes
             // of trunc(clamp(d)*2^32)) -> DecodePSMZ32 (raw bytes as RGBA)
-            // -> dispatcher ScaleAlphaPS2ToGPU once -> upload. Identity
-            // footprint: uses the shared uv verbatim (like fmt 2). The
-            // shared tex.a rescale below rounds the alpha trip back:
-            // a8 < 128 -> 2*a8 -> floor(/2) = a8; a8 >= 128 -> 255 -> 128
-            // -- byte-identical to the legacy uploaded texel's
-            // post-rescale value.
+            // -> upload. Identity footprint: uses the shared uv verbatim
+            // (like fmt 2). The alpha byte is the stored one (the stored-alpha convention).
             float df = texture(u_texture, uv).r;
             uint z = (df >= 1.0) ? 0xFFFFFFFFu
                                  : uint(max(df, 0.0) * exp2(32.0));
@@ -369,7 +413,7 @@ void main() {
                        float((z >> 16u) & 0xFFu),
                        0.0);
             uint a8 = (z >> 24u) & 0xFFu;
-            tex.a = (a8 >= 128u) ? 255.0 : float(a8 << 1u);  // ScaleAlphaPS2ToGPU
+            tex.a = float(a8);
         } else if (u_depth_fmt == 3) {
             // [R163-ZTEX2] CLASS Z16V: PSMZ16 view of a Z32 depth
             // attachment. For every Z16 reader texel (x,y) the legacy chain
@@ -434,15 +478,11 @@ void main() {
             // CT32 word at the SAME (x,y) (DecodePSMT8H walks
             // GetAddressPSMCT32(x,y) and reads vram[addr+3]). Legacy chain
             // transcription:
-            //   SyncRTToVRAM CT32 encode: ps2_a = (a_gpu >= 255) ? 128 :
-            //     a_gpu/2; gs_vram[addr+3] = ps2_a
-            //   DecodePSMT8H: idx = ps2_a; texel = eff_clut[idx] with RAW
-            //     PS2 alpha (ReadCLUT32 outputs raw alpha)
-            //   dispatcher ScaleAlphaPS2ToGPU once
-            // The CLUT texture is uploaded PRE-FOLDED (CSM1) and PRE-SCALED
-            // (ScaleAlphaPS2ToGPU) on the CPU, so the lookup result == the
-            // legacy uploaded texel byte-for-byte; the shared tex.a rescale
-            // line below then applies identically.
+            //   SyncRTToVRAM CT32 encode: gs_vram[addr+3] = a (the stored
+            //     alpha byte, the stored-alpha convention)
+            //   DecodePSMT8H: idx = that byte; texel = eff_clut[idx] with
+            //     the CLUT's own alpha byte
+            // The CLUT texture is uploaded PRE-FOLDED (CSM1), both rows raw.
             // NOTE (A.2/W4): RAW reader texel space (v_texcoord * inv_q),
             // never the shared normalized `uv`; u_tex_size = TARGET dims.
             // texelFetch flip rule: same u_flip_v convention as the fmt=3
@@ -473,11 +513,7 @@ void main() {
             vec4 src = (u_idx_self != 0)
                      ? texelFetch(u_rt_texture, tc, 0)
                      : texelFetch(u_texture,   tc, 0);
-            uint a_gpu = uint(floor(src.a * 255.0 + 0.5));
-            uint idx = (a_gpu >= 255u) ? 128u : (a_gpu >> 1u);  // inverse scale
-            // floor(+0.5) = the legacy uploaded-texel read (floor(norm*255
-            // +0.5)); identity for the exact unorm round-trip and byte-
-            // identical to legacy either way.
+            uint idx = uint(floor(src.a * 255.0 + 0.5));   // the stored alpha byte
             tex = floor(texelFetch(u_clut, ivec2(int(idx), u_clut_raw), 0) * 255.0 + 0.5);
         } else if (u_idx_fmt == 5) {
             // [R164-IDXTEX] CLASS IDX-B: PSMT8H read over CT16-rendered
@@ -651,21 +687,10 @@ void main() {
             tex = floor(tex_norm * 255.0 + 0.5);
         }
 
-        // Sampled textures carry GPU-convention alpha: the decoder applies
-        // ScaleAlphaPS2ToGPU (ps2>=128 ? 255 : ps2*2) once per texel, and RT
-        // color attachments store the post-rescale alpha written below. The
-        // TFX / alpha-test / FBA math in this shader is PS2-space (0x80 =
-        // opaque), and the final u_sw_blend==0 rescale converts to GL space
-        // exactly once. Without this inverse the alpha is scaled TWICE and
-        // the GL blend factor is 2x the GS value — mid-alpha (0x40-0x7f)
-        // translucent layers (iceberg shell) saturate fully opaque (R97/R99).
-        // [S9-CLUTRAW] Row-1 CLUT texels (idx arms with u_clut_raw=1) carry
-        // the RAW PS2 alpha already — the inverse would halve it and the
-        // prescale round-trip caps >=128 at 128, destroying the inverted-Z
-        // hi byte the blob-shadow slab test needs. Skip it for that class.
-        if (u_idx_fmt == 0 || u_clut_raw == 0) {
-            tex.a = (tex.a >= 255.0) ? 128.0 : floor(tex.a * 0.5);
-        }
+        // The stored-alpha convention: sampled textures, CLUT rows and colour attachments all
+        // carry the stored GS alpha byte (the decoder applies TEXA and nothing
+        // else); tex.a is already in the units the TFX / alpha-test / FBA math
+        // below uses (0x80 = 1.0 where the GS says so).
 
         // PS2 TFX texture functions operate in integer space.
         // Multiply: (A * B) >> 7  which is trunc(A * B / 128.0)
@@ -743,33 +768,15 @@ void main() {
             alpha_pass = (alpha_int != u_aref);  // NOTEQUAL
         }
 
-        if (!alpha_pass) {
-            // AFAIL controls what happens when the alpha test fails:
-            // 0=KEEP: discard entirely (no FB or ZB write)
-            // 1=FB_ONLY: write FB but not ZB (handled via depth mask on CPU side)
-            // 2=ZB_ONLY: write ZB but not FB (handled via color mask on CPU side)
-            // 3=RGB_ONLY: write RGB but not A or ZB
-            // For KEEP (most common), discard the fragment entirely.
-            // For other modes, we'd need multi-pass or stencil tricks.
-            // For now, implement KEEP (discard) which covers the vast majority
-            // of game usage. FB_ONLY/ZB_ONLY/RGB_ONLY are rare edge cases.
-            if (u_afail == 0) {
-                discard;
-            }
-            // AFAIL=1 (FB_ONLY): let the fragment through but depth write is
-            // disabled on the CPU side when this case is detected.
-            // AFAIL=2 (ZB_ONLY): would need to zero out color output.
-            // AFAIL=3 (RGB_ONLY): would need to mask alpha channel.
-            // These are handled approximately for now.
-            if (u_afail == 2) {
-                // ZB_ONLY: suppress color write by outputting transparent
-                result = vec4(0.0);
-            }
-            if (u_afail == 3) {
-                // RGB_ONLY: keep RGB but zero alpha to suppress alpha write
-                result.a = 0.0;
-            }
-        }
+        // The two populations the GS writes differently (AFAIL names what a FAILING
+        // pixel still updates; a PASSING one updates per FBMSK / ZMSK). KEEP drops the
+        // failing pixels here; FB_ONLY / ZB_ONLY / RGB_ONLY are drawn as two passes by
+        // the executor -- u_afail_pass selects the population of this pass and the
+        // GL write masks of the pass carry the AFAIL arm -- so the fragment's colour and
+        // alpha (the blend's As) are never altered by the test.
+        if (!alpha_pass && u_afail == 0) discard;
+        if (u_afail_pass == 1 && !alpha_pass) discard;
+        if (u_afail_pass == 2 && alpha_pass) discard;
     }
 
     // --- PS2 Destination Alpha Test (TEST register: DATE, DATM) ---
@@ -818,9 +825,9 @@ void main() {
         float dstz = (zb.a * 16777216.0 + zb.b * 65536.0 +
                       zb.g * 256.0 + zb.r) / 4294967296.0;
         if (u_zsrc_en == 3) {
-            if (gl_FragCoord.z <= dstz) discard;   // GREATER fails
+            if (frag_z <= dstz) discard;           // GREATER fails
         } else {
-            if (gl_FragCoord.z < dstz) discard;    // GEQUAL fails
+            if (frag_z < dstz) discard;            // GEQUAL fails
         }
     }
 
@@ -833,14 +840,18 @@ void main() {
         // Read destination color from RT copy (PCSX2: sample_from_rt)
         vec4 RT = texelFetch(u_rt_texture, ivec2(gl_FragCoord.xy), 0);
 
-        // Convert to PS2 color space [0, 255] for the blend math
-        vec3 Cs = result.rgb * 255.0;
-        // Alpha must be in PS2 scale: 0-128 maps to 0.0-1.0.
-        // result.a is in GL normalized [0,1] where PS2 128 = 128/255 ≈ 0.502.
-        // Convert: As_ps2 = result.a * (255.0/128.0), clamped to [0,1].
-        float As = clamp(result.a * (255.0 / 128.0), 0.0, 1.0);
-        vec3 Cd = RT.rgb * 255.0;
-        float Ad = clamp(RT.a * (255.0 / 128.0), 0.0, 1.0);
+        // The GS equation is INTEGER arithmetic (GS User's Manual 3.6.2):
+        //     Cv = ((A - B) * C >> 7) + D
+        // with A, B, D the 8-bit colours and C the alpha BYTE (As, Ad or FIX; 0x80 =
+        // 1.0). The product's low 7 bits are dropped by the shift -- floor, never
+        // round-to-nearest (62 * 2 >> 7 = 0: the FIX=2 "G[0] := G[6]" pass of the
+        // colour-grade mask chain reads bit 6 and nothing else). Every operand is
+        // taken as its integer byte first so the float product is exact.
+        vec3 Cs = floor(result.rgb * 255.0 + 0.5);
+        // As in alpha-byte units, saturating at 0x80 (the pipeline's factor convention).
+        float As = min(floor(result.a * 255.0 + 0.5), 128.0);
+        vec3 Cd = floor(RT.rgb * 255.0 + 0.5);
+        float Ad = min(floor(RT.a * 255.0 + 0.5), 128.0);
 
         // Select A
         vec3 A_val;
@@ -854,11 +865,11 @@ void main() {
         else if (u_blend_b == 1) B_val = Cd;
         else B_val = vec3(0.0);
 
-        // Select C (scalar alpha multiplier)
+        // Select C (the alpha byte; FIX arrives as FIX / 128)
         float C_val;
         if (u_blend_c == 0) C_val = As;
         else if (u_blend_c == 1) C_val = Ad;
-        else C_val = u_fix_alpha;
+        else C_val = floor(u_fix_alpha * 128.0 + 0.5);
 
         // Select D
         vec3 D_val;
@@ -866,8 +877,9 @@ void main() {
         else if (u_blend_d == 1) D_val = Cd;
         else D_val = vec3(0.0);
 
-        // PS2 blend: (A - B) * C + D
-        vec3 blended = (A_val - B_val) * C_val + D_val;
+        // PS2 blend: ((A - B) * C >> 7) + D -- the shift floors the signed product
+        // (an integer product over a power of two is exact in float).
+        vec3 blended = floor((A_val - B_val) * C_val / 128.0) + D_val;
 
         // [S8-WRAPBLEND] COLCLAMP applies to the raw blend RESULT.
         // COLCLAMP=1: saturate to [0,255] (legacy behavior, unchanged).
@@ -879,7 +891,7 @@ void main() {
         if (u_colclamp != 0) {
             result.rgb = clamp(blended, vec3(0.0), vec3(255.0)) / 255.0;
         } else {
-            result.rgb = mod(floor(blended + 0.5), 256.0) / 255.0;
+            result.rgb = mod(blended, 256.0) / 255.0;
         }
         // Alpha: source alpha passes through (PS2 writes As to framebuffer)
     } else if (u_blend_enabled == 0) {
@@ -909,6 +921,11 @@ void main() {
     // Alpha is always clamped regardless of COLCLAMP setting
     result.a = clamp(result.a, 0.0, 1.0);
 
+    // The GL fixed-function blend factor (the stored-alpha convention): the GS scales As by 1/0x80
+    // (0x80 = 1.0, saturating), taken from the pixel's alpha BEFORE FBA (FBA
+    // alters the stored byte, not the blend input). Written to index 1 below.
+    float as_factor = clamp(result.a * (255.0 / 128.0), 0.0, 1.0);
+
     // PS2 FBA (Force Bit Alpha): bitwise OR bit 7 into the output alpha.
     // Per GS spec: A_out = A_in | (FBA << 7)
     // Applied AFTER blending — modifies the pixel written to the framebuffer,
@@ -921,37 +938,19 @@ void main() {
         result.a = float(min(a_int, 255)) / 255.0;
     }
 
-    // --- PS2 Alpha Convention: 0x80 (128) = fully opaque ---
-    // PS2 alpha range is 0-128 where 128 = 1.0. Values above 128 are clamped.
-    // All internal math above operates in PS2 native space (0-255 integer or
-    // 0.0-1.0 GL normalized where 128/255 ≈ 0.502 = PS2 opaque).
-    // GL blending and framebuffer writes interpret alpha 1.0 as fully opaque,
-    // so we must rescale: PS2 alpha 128 → GL alpha 1.0.
-    // Formula: gl_alpha = min(ps2_alpha * 2, 255) / 255.0
-    // In normalized space: gl_alpha = min(result.a * (255.0/128.0), 1.0)
-    //
-    // NOTE: Only apply the rescale when GL fixed-function blending is active
-    // (u_sw_blend == 0). When shader-side blending is active, the blend math
-    // already operates in PS2 native space and the alpha written to the
-    // framebuffer should remain in PS2 convention for correct DATE/FBA behavior
-    // in subsequent passes.
-    //
-    // [S9-ABIT16] 16-bit COLOR frames (PSMCT16/16S) store only the A-bit:
-    // the FBO alpha channel now encodes it directly (1.0 iff PS2 alpha >=
-    // 0x80), REPLACING the x2 rescale for those targets. The x2 convention
-    // destroyed the bit for PS2 alphas in [0x40,0x7F] (doubled >= 0x80) —
-    // the blob-shadow accumulator's 0x78 clear read back as DATE-blocked
-    // everywhere, discarding all 108 volume strips. With the A-bit stored,
-    // the DATE test above and the fbmsk16 merge below keep their bit-7
-    // semantics unchanged. FF-blended draws (u_blend_enabled=1, u_sw_blend
-    // =0) are excluded: GL uses this output as the blend FACTOR, which
-    // needs the x2 scale (s9_shadow.h Abit16Applies — the recipe never
-    // authors accumulator alpha through FF blend). 32-bit targets are
-    // byte-identical to the legacy path.
+    // --- The stored alpha (the stored-alpha convention) ---
+    // 32-bit frames store result.a as the GS alpha byte, whatever the blend route
+    // (the x2 "GL convention" rescale is gone: the fixed-function factor travels
+    // on frag_factor, so DATE, FBA, the PSMT8H alpha-byte serves, the FBMSK
+    // merges and SyncRTToVRAM all read one convention).
+    // [S9-ABIT16] 16-bit COLOR frames (PSMCT16/16S) store only the A-bit: the
+    // FBO alpha channel encodes it directly (1.0 iff PS2 alpha >= 0x80), which
+    // the DATE test above, the fbmsk16 merge below, the fmt=5/6 serves and the
+    // 16-bit SyncRTToVRAM pack (bit 15 = a > 127) all read as the bit. FF-blended
+    // draws (u_blend_enabled=1, u_sw_blend=0) are excluded as before (the recipe
+    // never authors accumulator alpha through FF blend).
     if (u_fb16 != 0 && (u_blend_enabled == 0 || u_sw_blend != 0)) {
         result.a = (int(result.a * 255.0 + 0.5) >= 128) ? 1.0 : 0.0;
-    } else if (u_sw_blend == 0) {
-        result.a = clamp(result.a * (255.0 / 128.0), 0.0, 1.0);
     }
 
     // --- [WN4-CT16Q] Retail 16-bit frame write rule ---
@@ -1020,7 +1019,37 @@ void main() {
         result.a = ((merged & 0x8000) != 0) ? 1.0 : 0.0;
     }
 
+    // --- Exact-bit FBMSK merge for 32-bit frames ---
+    // GS FBMSK semantics per bit over the stored RGBA8 word (a 1 bit PRESERVES the
+    // destination bit); all four channels are GL-writable for this draw and the
+    // merge runs here over the destination copy, in the stored convention.
+    if (u_fbmsk32_en != 0) {
+        ivec4 s32 = ivec4(result * 255.0 + 0.5);
+        vec4 dst32 = texelFetch(u_rt_texture, ivec2(gl_FragCoord.xy), 0);
+        ivec4 d32 = ivec4(dst32 * 255.0 + 0.5);
+        ivec4 m32 = ivec4(u_fbmsk32 & 0xFF, (u_fbmsk32 >> 8) & 0xFF, (u_fbmsk32 >> 16) & 0xFF,
+                          (u_fbmsk32 >> 24) & 0xFF);
+        ivec4 merged32 = (s32 & ~m32) | (d32 & m32);
+        result = vec4(merged32) / 255.0;
+    }
+
     frag_color = result;
+    if (u_ff_unified != 0) {
+        // (A - B) * C + D with A, B, D in {Cs, Cd, 0}: the Cs coefficient is
+        // C * ([A=Cs] - [B=Cs]) + [D=Cs], the Cd coefficient C * ([A=Cd] - [B=Cd]) + [D=Cd].
+        // Every unified arm has both in [0, 1] and each expression below is a sum of
+        // 0, +-1 and +-C, so the factors are bit-exactly as_factor / 1 / 0 -- the same
+        // values the per-tuple states take from SRC1 / ONE / ZERO -- and the hardware
+        // forms 1 - x for the destination on the very path (ONE_MINUS_SRC1_ALPHA) the
+        // 0101 state used; for 0101 the output is vec4(As), identical to the old one.
+        // (FIX arms are not unified: the blend constant is not quantised like an output.)
+        float C = as_factor;
+        float sf = C * (float(u_blend_a == 0) - float(u_blend_b == 0)) + float(u_blend_d == 0);
+        float x = (1.0 - float(u_blend_d == 1)) - C * (float(u_blend_a == 1) - float(u_blend_b == 1));
+        frag_factor = vec4(sf, sf, sf, x);
+    } else {
+        frag_factor = vec4(as_factor);
+    }
 }
 )GLSL";
 
@@ -1154,9 +1183,9 @@ void main() {
     ivec2 tdim = textureSize(u_rt_texture, 0);  // == u_tex_size (target dims)
     ivec2 tc = clamp(ivec2(floor(rtc)), ivec2(0), tdim - 1);
     vec4 src = texelFetch(u_rt_texture, tc, 0);
-    // [R164-IDXTEX] fmt=4 index reconstruction (generic arm verbatim).
-    uint a_gpu = uint(floor(src.a * 255.0 + 0.5));
-    uint idx = (a_gpu >= 255u) ? 128u : (a_gpu >> 1u);
+    // [R164-IDXTEX] fmt=4 index reconstruction (generic arm verbatim): the
+    // stored alpha byte (the stored-alpha convention).
+    uint idx = uint(floor(src.a * 255.0 + 0.5));
     // Verified CLUT row-1 texel fold, ORACLE-effective table ([GD4]):
     // the physical grid holds {FFFFFF, 255-CSM1(p)} and the legacy
     // chain's two CSM1 involutions cancel, so the generic serve's row-1
@@ -1190,6 +1219,92 @@ void main() {
     frag_color = result;
 }
 )";
+// The half-word shuffle pass (HalfwordShuffle::Op executed over the 32-bit image):
+// per 32-bit pixel, dest half := CT16-frame-write(TEXA-expand(src other half)) merged
+// under FBMSK16 with the dest half; the other half untouched. unit 0 = the source
+// image (the sibling target, or the destination copy for a self read), unit 1 = the
+// destination copy. Both are the same physical grid as the bound attachment.
+const char* const kHalfwordShuffleFragSrc = R"(
+#version 410 core
+
+uniform sampler2D u_texture;    // source 32-bit image (unit 0)
+uniform sampler2D u_rt_texture; // destination copy (unit 1)
+uniform int u_dest_hi;          // 1: write the high half-word (bytes B, A); 0: the low (R, G)
+uniform int u_mask16;           // FBMSK folded to 5551: 1 keeps the destination bit
+uniform int u_ta0;              // TEXA.TA0 / TA1 / AEM for the source half-word's A bit
+uniform int u_ta1;
+uniform int u_aem;
+
+out vec4 frag_color;
+
+int Word(vec4 c) {
+    ivec4 b = ivec4(c * 255.0 + 0.5);
+    return b.r | (b.g << 8) | (b.b << 16) | (b.a << 24);
+}
+
+void main() {
+    ivec2 p = ivec2(gl_FragCoord.xy);
+    ivec2 sdim = textureSize(u_texture, 0);
+    ivec2 ddim = textureSize(u_rt_texture, 0);
+    ivec2 sp = clamp(p * sdim / max(ddim, ivec2(1)), ivec2(0), sdim - ivec2(1));
+    int dst = Word(texelFetch(u_rt_texture, p, 0));
+    int src = Word(texelFetch(u_texture, sp, 0));
+    int src_half = (u_dest_hi != 0) ? (src & 0xFFFF) : ((src >> 16) & 0xFFFF);
+    // CT16 texel -> RGBA by TEXA (5-bit fields << 3 exact), DECAL, -> CT16 frame
+    // write (>> 3 per field, A bit = alpha >= 0x80): the colour bits survive
+    // unchanged; the A bit follows TA1 (bit set) or TA0 / AEM (bit clear).
+    int abit = (src_half >> 15) & 1;
+    int rgb15 = src_half & 0x7FFF;
+    int alpha = (abit != 0) ? u_ta1 : ((u_aem != 0 && rgb15 == 0) ? 0 : u_ta0);
+    int out_half = rgb15 | ((alpha >= 0x80) ? 0x8000 : 0);
+    int dst_half = (u_dest_hi != 0) ? ((dst >> 16) & 0xFFFF) : (dst & 0xFFFF);
+    int new_half = (out_half & ~u_mask16) | (dst_half & u_mask16);
+    int word = (u_dest_hi != 0) ? ((dst & 0xFFFF) | (new_half << 16))
+                                : ((dst & int(0xFFFF0000u)) | new_half);
+    frag_color = vec4(float(word & 0xFF), float((word >> 8) & 0xFF), float((word >> 16) & 0xFF),
+                      float((word >> 24) & 0xFF)) / 255.0;
+}
+)";
+// The 16-bit companion refresh (Backend::kCopyPack5551): per physical texel of the
+// destination rect, the source texel through Truncate32To16 then Expand16To32 --
+// 5-bit truncation, bit-replicated widening, alpha bit (>= 0x80) -> 0xFF / 0x00. The
+// same bytes the CPU route (Readback -> TexaExpand -> Upload) produced, with no
+// GPU -> CPU round trip. unit 0 = the source image; the NDC triangle, scissored.
+const char* const kPack5551FragSrc = R"(
+#version 410 core
+
+uniform sampler2D u_texture;
+out vec4 frag_color;
+
+void main() {
+    ivec2 p = ivec2(gl_FragCoord.xy);
+    ivec4 b = ivec4(texelFetch(u_texture, p, 0) * 255.0 + 0.5);
+    ivec3 c5 = b.rgb >> 3;
+    ivec3 c8 = (c5 << 3) | (c5 >> 2);
+    int a = (b.a >= 128) ? 255 : 0;
+    frag_color = vec4(vec3(c8), float(a)) / 255.0;
+}
+)";
+// The alpha-lane write: the lane byte at the fragment's logical texel of the rect
+// (origin = the rect's physical corner, scale = physical / logical) becomes the
+// attachment's alpha; the colour mask keeps RGB; u_exclude's fragments discard.
+const char* const kAlphaLaneFragSrc = R"(
+#version 410 core
+
+uniform sampler2D u_lane;
+uniform ivec2 u_origin;
+uniform int u_scale;
+uniform ivec4 u_exclude;
+out vec4 frag_color;
+
+void main() {
+    ivec2 p = ivec2(gl_FragCoord.xy);
+    if (p.x >= u_exclude.x && p.x < u_exclude.z && p.y >= u_exclude.y && p.y < u_exclude.w) discard;
+    ivec2 l = (p - u_origin) / max(u_scale, 1);
+    float a = texelFetch(u_lane, l, 0).r;
+    frag_color = vec4(0.0, 0.0, 0.0, a);
+}
+)";
 // Constant-colour NDC triangle for the stencil-masked quads.
 const char* const kConstVertSrc = R"(
 #version 410 core
@@ -1214,6 +1329,9 @@ const char* GlShaderSources::StencilStripFragment() { return kStencilStripFragSr
 const char* GlShaderSources::StencilInvertFragment() { return kStencilInvertFragSrc; }
 const char* GlShaderSources::ConstVertex() { return kConstVertSrc; }
 const char* GlShaderSources::ConstFragment() { return kConstFragSrc; }
+const char* GlShaderSources::HalfwordShuffleFragment() { return kHalfwordShuffleFragSrc; }
+const char* GlShaderSources::Pack5551Fragment() { return kPack5551FragSrc; }
+const char* GlShaderSources::AlphaLaneFragment() { return kAlphaLaneFragSrc; }
 
 }  // namespace render
 }  // namespace ps2r

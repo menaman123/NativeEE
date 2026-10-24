@@ -132,6 +132,13 @@ uint32_t TexresTrace::WriteBytes(const std::string& dir, const std::string& pref
                 std::fclose(f);
                 ++n;
             }
+            // ... and its stored alpha byte (P5), the convention the shader's TFX / alpha test read.
+            if (std::FILE* f = std::fopen((base + "_tex_alpha.pgm").c_str(), "wb")) {
+                std::fprintf(f, "P5\n%d %d\n255\n", l.tex_w, l.tex_h);
+                for (int i = 0; i < l.tex_w * l.tex_h; ++i) std::fwrite(l.texels.data() + size_t(i) * 4 + 3, 1, 1, f);
+                std::fclose(f);
+                ++n;
+            }
         }
     }
     return n;

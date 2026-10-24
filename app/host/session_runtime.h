@@ -11,6 +11,7 @@
 #include <thread>
 #include <vector>
 
+#include "app/host/frame_pacer.h"
 #include "app/host/session_controls.h"
 #include "app/host/session_window.h"
 #include "app/host/shutdown_census.h"
@@ -74,6 +75,8 @@ public:
     // Main thread, any time: video.vsync / video.fps_cap readers for the
     // presenter. fps_cap <= 0 presents on every pump (vsync, when on, paces).
     void ConfigurePresentation(bool vsync, int fps_cap);
+    // Main thread, after Open: the window's title bar names the title (TitleProfile::display_name).
+    void SetWindowTitle(const std::string& title) { window_.SetTitle(title); }
     // The session's display shape (video.aspect; Charter 2 A1): the window's
     // drawable size feeds `auto`, and the picture is fit at the ratio in force.
     void SetAspect(std::shared_ptr<gs::AspectSelection> aspect);
@@ -91,9 +94,16 @@ public:
     // Main thread before Run: the user-facing settings the in-game menu (the
     // title's added pages, MenuExtension) and the GUI share. `perf_overlay` is
     // the ui.perf_overlay seed; `persist` writes one `key=value` into the
-    // settings file after a change is applied (empty = nothing persisted).
+    // settings file after a change is applied (empty = nothing persisted);
+    // `reread` returns the file's (key, value) entries and is consulted every
+    // time the menu OPENS (SettingsResync): a value another writer -- the
+    // launcher's Settings page -- changed meanwhile is applied as if the row had
+    // been clicked (empty = no re-read).
     using Persist = std::function<void(const std::string& key, const std::string& value)>;
-    void ConfigureSettings(bool perf_overlay, Persist persist);
+    using Reread = std::function<std::vector<std::pair<std::string, std::string>>()>;
+    void ConfigureSettings(bool perf_overlay, Persist persist, Reread reread = {});
+    // The re-reads that submitted at least one request (census).
+    uint64_t SettingsResyncs() const { return settings_resyncs_; }
     // Any thread: the live user-facing values the in-game menu mirrors.
     bool PerfOverlay() const { return perf_overlay_.load(); }
     bool FullscreenState() const { return fullscreen_state_.load(); }
@@ -111,12 +121,19 @@ public:
         int render_rate = 0;
         int display_mode = 0;
         int display_hz = 0;
+        int frame_cap = 2;   // video.frame_cap's index: 0 off, 1 30, 2 60 (FramePacer::Cap)
+        bool present_relax = false;   // video.present_relax: the pacer's relax policy (frame_pacer.h)
     };
     void ConfigureDisplayRows(const DisplaySettings& seed);
     int ScaleSetting() const { return scale_setting_.load(); }          // 0 = native window, 1..4
     int EffectiveScale() const { return effective_scale_.load(); }      // the factor in force / requested, 1..4
     int AspectSetting() const { return aspect_setting_.load(); }
     int RenderRateSetting() const { return render_rate_.load(); }
+    // The presented-frame cadence in force (video.frame_cap's index; FramePacer::Cap) and
+    // the pacer's census row ("cap=..:admitted=..:held=..:superseded=..:late=..:slipped=..:slip_ms=.."). Any thread
+    // for the index; the row is read after Run (main).
+    int FrameCapSetting() const { return frame_cap_.load(); }
+    std::string FrameCapCensus() const { return pacer_.CensusRow(); }
     int DisplayModeState() const { return display_mode_.load(); }
     bool VSyncState() const { return vsync_state_.load(); }
     // The display rate the presenter paces at under render_rate=display (Hz).
@@ -125,15 +142,31 @@ public:
     // since the last take (1..4; 0 = none pending). The caller applies it on
     // the backend owner between frames (VideoStack::ApplyScale).
     int TakeScaleRequest() { return scale_request_.exchange(0); }
+    // Main thread before Run: the pause-menu shape -- Escape opens the menu and
+    // pauses the game (hooks.pause must exist for the pause), the panel's Resume /
+    // Quit; off, Escape is the window close (the first title's shape).
+    void ConfigurePauseMenu(bool on);
+    // Main thread before Run: the menu's Controls page model (the keyboard rows'
+    // press-to-bind over the composition's bindings file + live mapper reload).
+    void ConfigureControlsPage(ControlsSection::Model model);
     // Main thread before Run: called after EVERY frame the presenter draws to
-    // the window (the display-rate render census and the camera interpolation).
-    void SetPresentObserver(std::function<void(std::chrono::steady_clock::time_point)> observer);
+    // the window (the display-rate render census and the camera interpolation);
+    // `new_picture` = this draw showed a picture the window had not shown before
+    // (a Live present), else the held picture again (a Hold: the presented-frame
+    // cadence a player sees is the train of the new_picture draws); `tag` = the
+    // PostFrame tag of the picture on the window (the producer's frame ordinal; 0 =
+    // untagged) and `posted_ns` its PostFrame instant (Park::NowNs) -- the latency
+    // census's shown edge is matched to its picture by the tag, never by order.
+    void SetPresentObserver(std::function<void(std::chrono::steady_clock::time_point, bool new_picture, uint64_t tag, uint64_t posted_ns)> observer);
     uint64_t Presents() const { return presents_.load(); }
     // Main thread before Run: at the end of the session the presenter's LAST
     // window image (the picture plus the GUI overlays -- what the user saw) is
     // written as <dir>/w_final.ppm; "" = off. The Root pins on the PRESENTED
     // frame read it.
     void ConfigureWindowDump(std::string dir);
+    // Main thread before Run: the video backend in force, shown on the F1 panel's Session
+    // state ("metal (auto): Apple M4"); "" = not shown.
+    void SetRenderer(std::string renderer);
     // Runs bootstrap/relaunch/join on a large-stack host thread while main
     // pumps. Shutdown's deadline stays on main, never inside JoinAll.
     int Run(std::function<int()> game, unsigned shutdown_seconds);
@@ -145,7 +178,9 @@ public:
     // End of a complete game boundary, holding the existing game run token.
     // False asks the caller to unwind. Paused waits retain that token.
     bool Boundary(uint64_t frame);
-    void PostFrame(std::vector<uint8_t> rgba, int width, int height);
+    // `tag`: the producer's ordinal for this picture (0 = none), handed back to the
+    // present observer when the picture is shown.
+    void PostFrame(std::vector<uint8_t> rgba, int width, int height, uint64_t tag = 0);
     // Any thread: a synthetic PRESS of F<number> (1..12) through the REAL key
     // route -- a SDL_KEYDOWN/SDL_KEYUP pair pushed into SDL's own queue, stamped
     // as SDL stamps a physical press (the keyboard-focus window's id; 0 when no
@@ -212,6 +247,8 @@ private:
     struct Frame {
         std::vector<uint8_t> rgba;
         int width = 0, height = 0;
+        uint64_t posted_ns = 0;   // Park::NowNs() at PostFrame (the pacer's lateness input)
+        uint64_t tag = 0;         // the producer's ordinal (PostFrame tag; the observer's)
     };
     void PumpMain();
     void Publish();
@@ -245,13 +282,27 @@ private:
     std::atomic<bool> perf_overlay_{false}, fullscreen_state_{false}, keyboard_state_{true}, vsync_state_{false};
     bool display_rows_ = false;
     std::atomic<int> scale_setting_{1}, effective_scale_{1}, scale_request_{0}, aspect_setting_{0}, render_rate_{0},
-        display_mode_{0};
+        display_mode_{0}, frame_cap_{2};
+    // The presented-frame cadence (video.frame_cap): the pacer admits the OLDEST waiting
+    // picture at its edges (at once when the edge stood open); the one behind it waits
+    // its turn (main-thread only). A third arrival drops the oldest (Supersede).
+    FramePacer pacer_;
+    Frame pending_frame_;   // the oldest waiting picture
+    Frame queued_frame_;    // the one posted behind it
     int display_hz_ = 0;
-    std::function<void(std::chrono::steady_clock::time_point)> present_observer_;
+    std::function<void(std::chrono::steady_clock::time_point, bool, uint64_t, uint64_t)> present_observer_;
+    bool picture_fresh_ = false;   // a picture uploaded since the last draw (the observer's new_picture)
+    uint64_t shown_tag_ = 0, shown_posted_ns_ = 0;   // the picture on the window: its PostFrame tag / instant
     std::atomic<uint64_t> presents_{0};
+    std::atomic<uint64_t> doubled_frames_{0};   // the pacer's doubled census, published for Publish()
     std::atomic<uint64_t> display_swaps_{0}, display_swap_max_us_{0}, display_swap_total_us_{0};
     Persist persist_;
+    Reread reread_;
+    bool menu_was_open_ = false;
+    bool first_pump_ = true;
+    uint64_t settings_resyncs_ = 0;
     std::string window_dump_dir_;
+    std::string renderer_;
     int fps_cap_ = 60;
     std::atomic<bool> closing_{false}, paused_{false};
     std::atomic<uint64_t> frame_{0};

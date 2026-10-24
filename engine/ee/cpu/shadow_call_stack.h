@@ -21,8 +21,14 @@ public:
     // the fixed-capacity stack is full (the frame is then not recorded).
     static bool Push(uint32_t func_addr, uint32_t ra);
     static void Pop();
+    // The generated common TU's EE_CALL_STACK_MAX (recompiler.cpp): the frame cap.
+    static constexpr uint32_t kCapacity = 128;
     // Calling owner only; incomplete/truncated/opaque live chains refuse.
     static bool Complete();
+    // Why Complete() is false, by name: a latched rejected push (the stack
+    // overflowed since it last emptied) / the live opaque scopes (0 = none).
+    static bool PushRejected();
+    static uint32_t OmittedScopes();
     // Generated common TU records rejected pushes. Manual failed Push callers
     // skip Pop, so that loss remains latched until the represented stack empties.
     static void RejectedPush();

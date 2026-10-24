@@ -1,14 +1,14 @@
 #include "app/host/launcher_settings.h"
 
-#include <sys/stat.h>
-#include <dirent.h>
-
 #include <algorithm>
 #include <cstdio>
+#include <filesystem>
+#include <system_error>
 
 #include "app/gui/savestate_rows.h"
 #include "app/host/savestate_slots.h"
 #include "engine/core/config/config.h"
+#include "engine/core/config/config_store.h"
 #include "engine/core/config/settings_file.h"
 #include "imgui.h"
 
@@ -20,7 +20,8 @@ const char* kAspects[] = {"auto", "4:3", "16:9", "16:10", "21:9"};
 }  // namespace
 
 LauncherSettings::LauncherSettings(Config& cfg, std::string settings_file, std::string user_data_root)
-    : cfg_(cfg), settings_file_(std::move(settings_file)), user_data_root_(std::move(user_data_root)), bindings_(user_data_root_) {
+    : cfg_(cfg), settings_file_(std::move(settings_file)), user_data_root_(std::move(user_data_root)),
+      bindings_(ConfigStore::DirOf(settings_file_)) {
     fixes_ = {
         {"fixes.look_rest_seconds", "Head-look rest time initialised",
          "RETAIL_BUGS.md Characters: LookController::Construct FUN_00147310 never stores restSeconds (+0x60); a new head-look "
@@ -64,21 +65,19 @@ bool LauncherSettings::Persist(const char* key, const std::string& value) {
 
 std::vector<std::string> LauncherSettings::TexturePacks() const {
     std::vector<std::string> packs;
-    if (DIR* d = ::opendir(cfg_.paths.texture_packs.c_str())) {
-        while (dirent* e = ::readdir(d)) {
-            const std::string name = e->d_name;
-            if (name.empty() || name[0] == '.') continue;
-            struct stat st;
-            if (::stat((cfg_.paths.texture_packs + "/" + name).c_str(), &st) == 0 && S_ISDIR(st.st_mode)) packs.push_back(name);
-        }
-        ::closedir(d);
+    std::error_code ec;
+    for (const auto& e : std::filesystem::directory_iterator(cfg_.paths.texture_packs, ec)) {
+        const std::string name = e.path().filename().string();
+        if (name.empty() || name[0] == '.') continue;
+        std::error_code dir_ec;
+        if (e.is_directory(dir_ec)) packs.push_back(name);
     }
     std::sort(packs.begin(), packs.end());
     return packs;
 }
 
 void LauncherSettings::DrawDisplayPage() {
-    ImGui::TextDisabled("Mirrors the in-game Options > Display page; applied when the game starts, persisted to ps2r.ini.");
+    ImGui::TextDisabled("The same rows as the in-game Options > Display page; applied when the game starts, saved to your settings file.");
     ImGui::Spacing();
     if (ImGui::Checkbox("FPS / game Hz overlay (ui.perf_overlay)", &cfg_.ui.perf_overlay)) PersistBool("ui.perf_overlay", cfg_.ui.perf_overlay);
     if (ImGui::Checkbox("VSync (video.vsync)", &cfg_.video.vsync)) PersistBool("video.vsync", cfg_.video.vsync);
@@ -114,8 +113,8 @@ void LauncherSettings::DrawDisplayPage() {
 bool LauncherSettings::SaveBindings() {
     std::string err;
     if (!bindings_.Save(&err)) { Note(err); return false; }
-    cfg_.input.bindings_file = bindings_.Path();
-    return Persist("input.bindings_file", bindings_.Path());
+    Note("controls saved: " + bindings_.Path());
+    return true;
 }
 
 void LauncherSettings::OfferKey(const std::string& sdl_key_name) {
@@ -166,7 +165,7 @@ void LauncherSettings::DrawControlsPage(const std::vector<std::string>& controll
     ImGui::Spacing();
     ImGui::SeparatorText("Keyboard bindings (click, then press a key; Backspace unbinds, Escape cancels)");
     DrawBindingTable("keys", ControlsBindings::Target::Key, bindings_.Keys());
-    ImGui::TextDisabled("Written to %s (input.bindings_file).", bindings_.Path().c_str());
+    ImGui::TextDisabled("Saved to %s, beside your settings file.", bindings_.Path().c_str());
 }
 
 std::vector<LauncherSettings::SlotRow> LauncherSettings::SaveSlots() const {

@@ -9,8 +9,46 @@ tier dispatch (`VuTierDispatch`, mode + HLE-library consult) and the MTVU worker
   (ONE class; the upper/lower instruction bodies are TU-private halves). Rules and kept divergences are in the header
   comment and in `engine/vu/README.md` "Interpreter notes".
 - `vu_cached_tier.h/.cpp` + `vu_cached_tier_exec.cpp` — `VuCachedTier` (ONE class; the fast instruction bodies are a
-  TU-private half) with the `VuCachedProgram` POD (the table entry) declared in its header.
-- `vu_tier_dispatch.h/.cpp` — `VuTierDispatch` (the Execute ladder) with `VuSettings` / `VuTierMode` and the two hook slots.
+  TU-private half: `ExecUpperFast` dispatching to `ExecUpperFmac` / `ExecUpperAcc` over the `VuFloat` lane kernels,
+  `ExecLowerFast`; NOP words are short-circuited in `ExecBundle`) with the `VuCachedProgram` POD (the table entry)
+  declared in its header.
+- `vu_block_tier.h/.cpp` — `VuBlockTier` (ONE class; the instruction bodies are the cached tier's resolved
+  kind -> body tables `VuCachedTier::UpperFastFn / LowerFastFn`) with the `VuBlockOp` / `VuBlock` / `VuBlockProgram`
+  PODs declared in its header: per image (hash key, epoch fast path, 64-entry table) a lazily built table of
+  straight-line blocks keyed by entry address -- ops pre-resolved (upper / lower body pointer, stall-model entry per
+  static class, stall kind None / Push / Model, hazard flags), the delay slot merged into its branch / E-bit block,
+  successors chained (`fall` / `jump` with static branch targets), and the STATIC STALL SCHEDULE (`Schedule` /
+  `StaticStall`: the FMAC read-after-write recurrence over the three previous writers) applied by addition once the
+  model has agreed on two consecutive ops at or past the fourth (`kWarmupOps 3`, `kMatchStreak 2`, `kMinStaticOps 3`),
+  the FMAC ring rebuilt from recorded issue cycles (`StallModel::MaterializeFmacIssued`) on leaving static mode; a
+  post-issue clock advance (second XGKICK, WAITQ/WAITP) re-arms a 3-op model guard. VU1 only (VU0 and a misaligned
+  entry run elsewhere). Flag bookkeeping is never skipped (STATUS sticky bits are observable across programs).
+- `vu_tier_dispatch.h/.cpp` — `VuTierDispatch` (the Execute ladder) with `VuSettings` / `VuTierMode {Cached, Interp,
+  Block, Aot}` and the two hook slots; `Block` / `Aot` run VU1 on that tier and VU0 on the cached tier. `Aot` is the
+  generic run-time recompiler of `engine/vu/vu1_aot/` (owned here as the `aot_` member: a verified image on its
+  (kind, dest)-specialised block table, every other image on the AOT tier's fallback).
+- `vu_lockstep.h/.cpp` — `VuLockstep`, the tier A/B IN THE RUNNING GAME (Config `diag.vu1_lockstep`, `VuSettings::
+  lockstep`): every VU1 kick the dispatch's tier runs is also run on the interpreter reference on a shadow unit cloned
+  from the real one at the kick (`VuUnit::CopyStateFrom`: record, flag rings, stall tables, XGKICK drain state), and
+  the end states are diffed -- registers (field-named), data memory, clock, Q/P latches, bundles, the kicked bytes
+  (`XgKick::SetSubmitTap`; the shadow's kicks are muted). The first divergences are printed with a bisect (both tiers
+  re-run from the entry under growing cycle caps until the states part: bundle index, pc, slot words, field) and the
+  entry state written as a Vu1Case; every one is counted (`Summary()` for a census). What a corpus of single-kick
+  cases cannot see: the state the game carries ACROSS kicks -- the E385 generator bug diverged a frame-1121 kick that
+  no corpus case took, and every later case replayed "identically" from its already-diverged entry.
+  `tests/vu/test_vu_lockstep.cpp` (`VuLockstepChain`) runs it over a probe's consecutive kick cases.
+- `vu_block_tier` also carries the AOT tier's hooks: `VuBlockProgram::resolve` (a `VuBlockOpResolver`, null = `ResolveOp`),
+  `SetResolver(prog, fn)` (re-resolves the built blocks, recomputes the schedule), `ExecuteAcquired(unit, pc, prog)`, and
+  `VuBlock::native` (a `VuBlock::NativeFn`: the GENERATED function for the block -- `RunOps` over its ops with every slot a
+  compile-time constant, emitted by `engine/vu/vu1_aot/Vu1AotEmitter`; the loop calls it instead of `RunOps` when the
+  block runs whole and keeps the successor / TPC / delay-slot / yield / sled duties; `ClearNative`). The structural half
+  is static and unit-free for the generator: `DecodeImage(micro, bytes, prog)`, `BuildBlock(prog, slot)`,
+  `StallClassMask(cls)` (the ONE class -> mask table), `PinHardwired` (inline, `vu_block_tier.inl`).
+- `vu_cached_tier_exec.inl` holds the body templates (`ExecUpperK<K, D>` / `ExecLowerK<K, D>` and the two FMAC
+  families), public and `PS2R_FORCE_INLINE`, included from `vu_cached_tier.h`: `D` is the dest mask (-1 = dynamic);
+  `UpperFastFnD / LowerFastFnD` (`vu_cached_tier_exec.cpp`) are the (kind, dest) tables the AOT resolver installs, the
+  dynamic tables are the `D = -1` instantiations (byte-identical), and a generated block calls the templates directly
+  with a `static constexpr` slot (one source text for all three).
 - `mtvu_settings.h` — `MtvuSettings {enabled=true, depth_frames=2}` (types-only; mirrors the Config keys `engine.mtvu` /
   `engine.mtvu_depth`, copied by the composition root; deterministic profile `{false, 2}`).
 - `mtvu_clock.h/.cpp` — `MtvuClock` (virtual `NowNs()`, default = the process steady clock via `ps2r::Park::NowNs`;

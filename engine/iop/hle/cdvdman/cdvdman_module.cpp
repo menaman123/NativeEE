@@ -113,4 +113,15 @@ void CdvdmanModule::sceCdCallback(IopContext& ctx) {
 
 void CdvdmanModule::sceCdMmode(IopContext& ctx) { ctx.gpr[2] = 1; }
 
+void CdvdmanModule::sceCdTrayReq(IopContext& ctx) {
+    if (const uint32_t out = ctx.gpr[5]) mem_.Write<uint32_t>(out, 0);
+    ctx.gpr[2] = 1;
+}
+
+void CdvdmanModule::sceCdStop(IopContext& ctx) { ctx.gpr[2] = 1; }
+
+void CdvdmanModule::sceCdApplySCmd(IopContext& ctx) { ctx.gpr[2] = 1; }
+
+void CdvdmanModule::sceCdBreak(IopContext& ctx) { ctx.gpr[2] = 1; }
+
 }  // namespace ps2r::iop::hle

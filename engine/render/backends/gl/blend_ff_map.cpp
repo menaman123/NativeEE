@@ -14,14 +14,17 @@ FfBlendMap BlendFfMap::Map(uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
     auto is = [&](uint8_t A, uint8_t B, uint8_t C, uint8_t D) {
         return a == A && b == B && c == C && d == D;
     };
-    if (is(0, 1, 0, 1)) {            // (Cs-Cd)*As+Cd = Cs*As + Cd*(1-As)
-        m.src_rgb = kGlSrcAlpha;
-        m.dst_rgb = kGlOneMinusSrcAlpha;
+    if (a == b) {                    // (X-X)*C = 0 whatever C: Cv = D exactly
+        m.src_rgb = (d == 0) ? kGlOne : kGlZero;    // D = Cs
+        m.dst_rgb = (d == 1) ? kGlOne : kGlZero;    // D = Cd; D = 2 -> zero
+    } else if (is(0, 1, 0, 1)) {     // (Cs-Cd)*As+Cd = Cs*As + Cd*(1-As)
+        m.src_rgb = kGlSrc1Alpha;
+        m.dst_rgb = kGlOneMinusSrc1Alpha;
     } else if (is(0, 2, 0, 1)) {     // (Cs-0)*As+Cd
-        m.src_rgb = kGlSrcAlpha;
+        m.src_rgb = kGlSrc1Alpha;
         m.dst_rgb = kGlOne;
     } else if (is(0, 2, 0, 2)) {     // (Cs-0)*As+0
-        m.src_rgb = kGlSrcAlpha;
+        m.src_rgb = kGlSrc1Alpha;
         m.dst_rgb = kGlZero;
     } else if (is(0, 1, 2, 1)) {     // (Cs-Cd)*FIX+Cd
         m.src_rgb = kGlConstantAlpha;
@@ -33,28 +36,28 @@ FfBlendMap BlendFfMap::Map(uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
         m.uses_fix = true;
     } else if (is(1, 0, 0, 0)) {     // (Cd-Cs)*As+Cs = Cd*As + Cs*(1-As)
         m.eq_rgb = kGlFuncAdd;
-        m.src_rgb = kGlOneMinusSrcAlpha;
-        m.dst_rgb = kGlSrcAlpha;
+        m.src_rgb = kGlOneMinusSrc1Alpha;
+        m.dst_rgb = kGlSrc1Alpha;
     } else if (is(0, 2, 2, 2)) {     // (Cs-0)*FIX+0
         m.src_rgb = kGlConstantAlpha;
         m.dst_rgb = kGlZero;
         m.uses_fix = true;
     } else if (is(0, 1, 0, 0)) {     // (Cs-Cd)*As+0: SUBTRACT = Src*sf - Dst*df
         m.eq_rgb = kGlFuncSubtract;
-        m.src_rgb = kGlSrcAlpha;
-        m.dst_rgb = kGlSrcAlpha;
+        m.src_rgb = kGlSrc1Alpha;
+        m.dst_rgb = kGlSrc1Alpha;
     } else if (is(2, 1, 0, 1)) {     // (0-Cd)*As+Cd = Cd*(1-As)
         m.src_rgb = kGlZero;
-        m.dst_rgb = kGlOneMinusSrcAlpha;
+        m.dst_rgb = kGlOneMinusSrc1Alpha;
     } else if (is(1, 2, 0, 0)) {     // (Cd-0)*As+0 = Cd*As
         m.src_rgb = kGlZero;
-        m.dst_rgb = kGlSrcAlpha;
+        m.dst_rgb = kGlSrc1Alpha;
     } else if (is(0, 2, 0, 0)) {     // (Cs-0)*As+0
-        m.src_rgb = kGlSrcAlpha;
+        m.src_rgb = kGlSrc1Alpha;
         m.dst_rgb = kGlZero;
     } else if (is(2, 0, 0, 1)) {     // (0-Cs)*As+Cd = Cd - Cs*As: REVERSE_SUBTRACT
         m.eq_rgb = kGlFuncReverseSubtract;
-        m.src_rgb = kGlSrcAlpha;
+        m.src_rgb = kGlSrc1Alpha;
         m.dst_rgb = kGlOne;
     } else if (is(2, 0, 2, 1)) {     // (0-Cs)*FIX+Cd = Cd - Cs*FIX
         m.eq_rgb = kGlFuncReverseSubtract;
@@ -68,8 +71,8 @@ FfBlendMap BlendFfMap::Map(uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
         m.uses_fix = true;
     } else {                         // inexpressible: standard alpha blend approximation
         m.matched = false;
-        m.src_rgb = kGlSrcAlpha;
-        m.dst_rgb = kGlOneMinusSrcAlpha;
+        m.src_rgb = kGlSrc1Alpha;
+        m.dst_rgb = kGlOneMinusSrc1Alpha;
     }
     return m;
 }
@@ -77,6 +80,18 @@ FfBlendMap BlendFfMap::Map(uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
 bool BlendFfMap::Equal(const FfBlendMap& x, const FfBlendMap& y) {
     return x.matched == y.matched && x.uses_fix == y.uses_fix && x.eq_rgb == y.eq_rgb &&
            x.src_rgb == y.src_rgb && x.dst_rgb == y.dst_rgb;
+}
+
+bool BlendFfMap::Unified(const FfBlendMap& m) {
+    if (!m.matched || m.uses_fix || m.eq_rgb != kGlFuncAdd) return false;
+    const bool src_ok = m.src_rgb == kGlSrc1Alpha || m.src_rgb == kGlOne || m.src_rgb == kGlZero;
+    const bool dst_ok = m.dst_rgb == kGlOneMinusSrc1Alpha || m.dst_rgb == kGlOne || m.dst_rgb == kGlZero;
+    // 0201 -- (SRC1, ONE), Cs * As + Cd -- is NOT unified: with the destination factor
+    // formed as 1 - 0 on the SRC1 path instead of the constant ONE, 39 of 301 Paris
+    // frames moved one pixel by one LSB (the driver's blend arithmetic for a constant
+    // ONE factor differs in rounding from the general path). It keeps its own state.
+    if (m.src_rgb == kGlSrc1Alpha && m.dst_rgb == kGlOne) return false;
+    return src_ok && dst_ok;
 }
 
 bool BlendFfMap::RouteWrapBlend(bool alpha_blend, bool colclamp) {

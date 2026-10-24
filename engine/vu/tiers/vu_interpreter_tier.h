@@ -23,6 +23,7 @@
 #include <cstdint>
 
 #include "engine/ee/cpu/cpu_state.h"
+#include "engine/vu/vu_float.h"
 
 class VuUnit;
 
@@ -49,25 +50,44 @@ public:
     // Bundles retired across every run of this tier (the catalog's exec count).
     uint64_t bundles() const { return bundles_; }
 
-private:
-    // The cached tier reuses these bodies for the kinds it has no fast form of
-    // and for the shared program-end drain (ONE semantics, two dispatchers).
-    friend class VuCachedTier;
-
+    // The bodies the other dispatchers share (ONE semantics): the cached tier
+    // for the kinds it has no fast form of, the block tier through the cached
+    // tier's resolved bodies, and the GENERATED blocks (engine/vu/vu1_aot/,
+    // free functions in a generated TU -- hence public) for CLIP, DIV, the
+    // GENERIC words and the program-end drain.
     // The upper word (RunUpper dispatches func >= 0x3C to the special-2 table).
     void RunUpper(VuUnit& u, uint32_t upper);
-    void RunSpecial2Upper(VuUnit& u, uint32_t upper);
     void RunClip(VuUnit& u, const VR_reg& fs_raw, const VR_reg& ft_raw);
     // The lower word; `pc` is the bundle's byte address.
     void RunLower(VuUnit& u, uint32_t lower, uint32_t pc, bool& branch_taken, uint32_t& branch_target);
-    void RunLowerSpecial(VuUnit& u, uint32_t lower);
-    void RunEfu(VuUnit& u, uint32_t lower, uint32_t funct2, uint32_t t3);
     // FDIV-pipe bodies shared by the lower word and the legacy upper encodings.
     void DoDiv(VuUnit& u, uint32_t fs, uint32_t fsf, uint32_t ft, uint32_t ftf);
-    void DoSqrt(VuUnit& u, uint32_t ft, uint32_t ftf);
-    void DoRsqrt(VuUnit& u, uint32_t fs, uint32_t fsf, uint32_t ft, uint32_t ftf);
+    // DIV over operand VALUES (the register-resident generated blocks pass
+    // their locals): DoDiv's body with the two source registers named.
+    void DivLanes(VuUnit& u, const VR_reg& fs_raw, uint32_t fsf, const VR_reg& ft_raw, uint32_t ftf);
+    // The EFU lane arithmetic RunEfu and the generated blocks share: the sum of
+    // squares of a CLAMPED vector as the fused chain the reference's compiler
+    // formed, and the reciprocal with the EFU's zero rule (1/0 = FLT_MAX).
+    static float EfuSumSq(const VR_reg& clamped);
+    static float EfuRecip(float v);
+    // The CLIP judgement over the RAW operands (RunClip's body: the six outside
+    // bits, the PushClip is the caller's) and the FDIV quotient + status bits
+    // over the CLAMPED operands (DivLanes' body, the PushQ the caller's) --
+    // inline so a generated block does not call out of the dylib per word.
+    static uint32_t ClipJudge(const VR_reg& fs_raw, const VR_reg& ft_raw);
+    static float DivQuotient(float num, float den, uint16_t& status);
     // Program end / yield / park: every pipe drained, a pending kick completed.
     void DrainAll(VuUnit& u);
+
+private:
+    friend class VuCachedTier;
+    friend class VuBlockTier;
+
+    void RunSpecial2Upper(VuUnit& u, uint32_t upper);
+    void RunLowerSpecial(VuUnit& u, uint32_t lower);
+    void RunEfu(VuUnit& u, uint32_t lower, uint32_t funct2, uint32_t t3);
+    void DoSqrt(VuUnit& u, uint32_t ft, uint32_t ftf);
+    void DoRsqrt(VuUnit& u, uint32_t fs, uint32_t fsf, uint32_t ft, uint32_t ftf);
 
     static VR_reg Clamp4(const VR_reg& v);
     static void PinHardwired(VUregs& regs);
@@ -75,3 +95,5 @@ private:
     uint64_t cycle_cap_;
     uint64_t bundles_ = 0;
 };
+
+#include "engine/vu/tiers/vu_interpreter_tier.inl"

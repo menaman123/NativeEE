@@ -129,10 +129,35 @@ target_link_libraries(test_vu_macro_bridge PRIVATE ps2r_private_fixtures)
 # ladder, the epoch fast path + 64-entry eviction, and the dispatch hooks.
 ps2r_vu_test(test_vu_cached_tier VuCachedSuperblock)
 
+# VuBlockTier: the block tier against the interpreter on hand-encoded programs
+# (block then interp on a fresh unit -> identical regs / data / clock / bundles /
+# kicked op stream), each swept over EVERY cycle cap (TPC and the writeback
+# ring at a cut), the static stall schedule vs the stall model on 3000 random
+# straight-line sequences, the block structure (terminals, merged delay slot,
+# static targets, lazily chained successors), stall kinds, the post-issue
+# advance guard (a second XGKICK inside a static run), FDIV / WAITQ mid-block,
+# XTOP yields in a body and in a delay slot, the NOP sled, the image-end wrap,
+# a misaligned entry (interpreter leg), VU0 staying on the cached tier, the
+# epoch fast path + 64-entry eviction.
+ps2r_vu_test(test_vu_block_tier VuBlockTier)
+
+# Vu1AotSpecializer: the AOT tier's (kind, dest)-specialised bodies against the
+# dynamic bodies on every upper / lower encoding under every dest mask and
+# several random register files -> identical registers, data, clock, branch
+# verdict; every (kind, dest) pair exercised. Arg: random register files per encoding.
+ps2r_vu_test(test_vu1_aot_specializer Vu1AotSpecializer 3)
+
+# Vu1AotVerifier: the verification gate on fabricated corpus cases (identical /
+# empty / mixed images, the corpus hash) and the tier's status machine
+# (unverified -> fallback + observer, verified -> native on the specialised
+# table, refused -> dynamic bodies, the interpreter fallback, assume_verified).
+ps2r_vu_test(test_vu1_aot_verifier Vu1AotVerifier)
+
 # VuCachedVsInterpCorpus: every recorded VU1 case under the frozen corpus
-# directory through both tiers on fresh units -> identical post regs / data /
-# clock / bundles / kicks (SKIP 77 when the corpus is absent), plus the three
-# retail VU0 fixture images from their entry points through both tiers.
+# directory through the cached, block and AOT tiers (the last with every image
+# assumed verified) and the interpreter on fresh units -> identical post regs /
+# data / clock / bundles / kicks (SKIP 77 when the corpus is absent), plus the
+# three retail VU0 fixture images from their entry points through both tiers.
 # The fixture directory is the private root's at run time ({PRIVATE_FIXTURES}/tests/vu/fixtures via the
 # runner; no FIXTURES precondition -- the binary skips the images itself and still runs the corpus).
 add_executable(test_vu_cached_vs_interp test_vu_cached_vs_interp.cpp)
@@ -146,6 +171,7 @@ set_tests_properties(VuCachedVsInterpCorpus PROPERTIES TIMEOUT 600)
 # Vu1ReplaySelftest: the corpus tool's built-in check -- fabricated case
 # round-trip through WriteCase/ReadCase, two interpreter replays identical,
 # interp == cached on it (the COMPARE grammar), the transform ground truth.
+if(TARGET vu1_replay)   # the corpus tool is optional in this tree (tools/vu1_replay may define no executable)
 add_test(NAME Vu1ReplaySelftest COMMAND vu1_replay --selftest)
 set_tests_properties(Vu1ReplaySelftest PROPERTIES TIMEOUT 120)
 
@@ -181,6 +207,7 @@ set_tests_properties(Vu1CollectSweep PROPERTIES LABELS long TIMEOUT 18000 SKIP_R
 if(NOT PS2R_VU1_SWEEP)
   set_tests_properties(Vu1CollectSweep PROPERTIES DISABLED TRUE)
 endif()
+endif()   # TARGET vu1_replay
 
 # ---- VU1 HLE mechanism + library (5D) ----
 # VuGsPacketCodec: GifPacketBuilder -> GsPacketDiff::Decode -> Diff round trip
@@ -191,6 +218,33 @@ target_link_libraries(test_gs_packet PRIVATE ps2r_vu1_replay_lib)
 target_compile_options(test_gs_packet PRIVATE -Wall -Wextra -Werror -O2)
 add_test(NAME VuGsPacketCodec COMMAND test_gs_packet)
 set_tests_properties(VuGsPacketCodec PROPERTIES TIMEOUT 120)
+
+# Vu1CaptureReplay: one Vu1Case recorded by a title composition's capture probe (a file OUTSIDE
+# the tree -- no game bytes are checked in) replayed on a fresh unit through the interpreter tier:
+# the kicked GIF stream decoded, the run summary, and an optional per-bundle register trace
+# (--trace) for a reference evaluator to diff against. SKIP 77 with no argument / absent file;
+# the ctest row carries no argument and always skips -- the tool is run by hand on a capture.
+add_executable(test_vu1_capture_replay test_vu1_capture_replay.cpp)
+target_link_libraries(test_vu1_capture_replay PRIVATE ps2r_vu1_replay_lib)
+target_compile_options(test_vu1_capture_replay PRIVATE -Wall -Wextra -Werror -O2)
+add_test(NAME Vu1CaptureReplay COMMAND test_vu1_capture_replay)
+set_tests_properties(Vu1CaptureReplay PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+
+# VuLockstepChain: the in-game tier A/B (VuLockstep, Config diag.vu1_lockstep) over a CHAIN of
+# consecutive recorded kicks (a capture probe's case_<nnn>_<pc>.bin + kicks_<nnn>.bin for one stretch
+# of a run; the inter-kick memory writes are in the next case): every case restored into one unit,
+# the configured tier and the interpreter run side by side and must agree on registers, data memory,
+# clock, latches, bundles and kicked bytes; the tier's packets must equal the recording. The AOT
+# tier with the generated libraries under <chain>/native when the directory has them (built by
+# tools/vu1_aot_pack or test_vu1_aot_native --keep). The chain lives OUTSIDE the tree
+# (PS2R_VU1_KICK_CHAIN, a cache path; SKIP 77 when unset or absent). The corpus gap this closes: a
+# single-kick corpus replays an entry both tiers reproduce even after the game has diverged.
+set(PS2R_VU1_KICK_CHAIN "" CACHE PATH "a capture probe's consecutive VU1 kick cases for VuLockstepChain (empty = SKIP)")
+add_executable(test_vu_lockstep test_vu_lockstep.cpp)
+target_link_libraries(test_vu_lockstep PRIVATE ps2r_vu ps2r_gs_ir)
+target_compile_options(test_vu_lockstep PRIVATE -Wall -Wextra -Werror -O2)
+add_test(NAME VuLockstepChain COMMAND test_vu_lockstep ${PS2R_VU1_KICK_CHAIN} --native ${PS2R_VU1_KICK_CHAIN}/native)
+set_tests_properties(VuLockstepChain PROPERTIES TIMEOUT 600 SKIP_RETURN_CODE 77)
 
 # Vu1HleMechanism: Vu1Registry lookup rules, Vu1ImageAnalyzer on synthetic
 # images, KickLowering's one-slot-per-kick raw tier, and Vu1HleRuntime::Hook
@@ -227,6 +281,7 @@ target_compile_options(test_kick_lowering PRIVATE -Wall -Wextra -Werror -O2)
 add_test(NAME KickLowering COMMAND test_kick_lowering)
 set_tests_properties(KickLowering PROPERTIES TIMEOUT 120)
 
+if(TARGET vu1_replay)
 # Vu1HleGroupA: the corpus tool's --hle verdict on every group-A case (the
 # fam / ttx / pcs / lit programs) must be PASS; SKIP 77 when the corpus is absent.
 add_test(NAME Vu1HleGroupA
@@ -286,6 +341,7 @@ add_test(NAME Vu1CatalogIdentity
             --cases ${PS2R_OG_ROOT}/vutrace_cases2
             --out ${CMAKE_BINARY_DIR}/tests/vu/catalog_vs_old)
 set_tests_properties(Vu1CatalogIdentity PROPERTIES TIMEOUT 1200 SKIP_RETURN_CODE 77)
+endif()   # TARGET vu1_replay
 
 # Vu1LibraryPurity (G8): the family signature literals, every vs_* stamp and
 # every image / variant hash of the library appear nowhere under engine/ or tools/.
@@ -299,7 +355,7 @@ set_tests_properties(Vu1LibraryPurity PROPERTIES TIMEOUT 120)
 # 8 sorted corpus cases -- the library program under the EXACT tolerance with
 # the interpreter appended as the wildcard reference. The tool exits 2 on an
 # unreadable case, so the rows are registered only when the corpus is present.
-if(EXISTS "${PS2R_OG_ROOT}/vutrace_cases2")
+if(TARGET vu1_replay AND EXISTS "${PS2R_OG_ROOT}/vutrace_cases2")
     foreach(i RANGE 0 7)
         add_test(NAME Vu1HleRef_vu1_case_000${i}_1748
             COMMAND vu1_replay --hle --hle-ref --exact --skip-unregistered
@@ -367,7 +423,7 @@ add_executable(test_vu_vif_gif_sections_anchors test_vu_vif_gif_sections_anchors
 target_link_libraries(test_vu_vif_gif_sections_anchors PRIVATE ps2r_dmac ps2r_gs_ir)
 target_compile_options(test_vu_vif_gif_sections_anchors PRIVATE -Wall -Wextra -Werror -O2)
 add_test(NAME VuVifGifSectionsAnchors COMMAND test_vu_vif_gif_sections_anchors
-    "${CMAKE_SOURCE_DIR}/games/${PS2R_TITLE}/verify/restore_mhash_expected.tsv"
+    "${PS2R_GAMES_DIR}/${PS2R_TITLE}/verify/restore_mhash_expected.tsv"
     "${PS2R_OG_ROOT}/save_states")
 set_tests_properties(VuVifGifSectionsAnchors PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 

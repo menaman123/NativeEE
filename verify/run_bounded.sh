@@ -30,6 +30,10 @@ mkdir -p "$(dirname "$LOGFILE")"
 "$@" >>"$LOGFILE" 2>&1 &
 CHILD=$!
 
+# Wall time from the clock, not from the poll count: a loaded host stretches each
+# poll iteration (sleep + the ps/stat forks) well past POLL_S, and a counted
+# elapsed then fires the timeout minutes late (observed: 1300 s -> 41+ min).
+started=$(date +%s)
 elapsed=0
 stalled=0
 last_size=""
@@ -42,7 +46,7 @@ kill_with() {  # $1 = reason, $2 = exit code
 
 while kill -0 "$CHILD" 2>/dev/null; do
   sleep "$POLL_S"
-  elapsed=$((elapsed + POLL_S))
+  elapsed=$(( $(date +%s) - started ))
   rss_kb="$(ps -o rss= -p "$CHILD" 2>/dev/null | tr -d ' ')"
   if [ -n "$rss_kb" ] && [ "$rss_kb" -gt "$RSS_LIMIT_KB" ]; then
     kill_with "RSS ${rss_kb} KB > ${RSS_LIMIT_KB} KB" 137

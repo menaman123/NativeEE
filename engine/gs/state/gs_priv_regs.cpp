@@ -1,8 +1,6 @@
 // gs/state/gs_priv_regs.cpp -- GsPrivRegs (see gs_priv_regs.h).
 #include "engine/gs/state/gs_priv_regs.h"
 
-#include <cstring>
-
 namespace ps2r {
 namespace gs {
 
@@ -12,11 +10,7 @@ void GsPrivRegs::SetJobContext(uint32_t* seq_counter, const uint32_t* src_frame,
     vram_epoch_ = std::move(vram_epoch);
 }
 
-uint32_t GsPrivRegs::TakeInterrupts() {
-    const uint32_t n = interrupts_;
-    interrupts_ = 0;
-    return n;
-}
+uint32_t GsPrivRegs::TakeInterrupts() { return interrupts_.exchange(0, std::memory_order_relaxed); }
 
 namespace {
 int SlotIndex(uint32_t a) {
@@ -38,17 +32,32 @@ GsPrivRegs::GsPrivRegs() { Reset(); }
 // not register state: a reset does not clear them, so a DISPLAY rewrite of the
 // same geometry after CSR.RESET emits no SetWindow job.
 void GsPrivRegs::Reset() {
-    std::memset(regs_, 0, sizeof(regs_));
-    csr_ = kCsrAfterReset;
+    for (std::atomic<uint64_t>& r : regs_) r.store(0, std::memory_order_relaxed);
+    csr_.store(kCsrAfterReset, std::memory_order_relaxed);
     interlaced_ = false;
+    frame_mode_ = false;
 }
 
-uint64_t& GsPrivRegs::Slot(uint32_t addr) {
+std::atomic<uint64_t>& GsPrivRegs::Slot(uint32_t addr) {
     const int i = SlotIndex(addr);
     return i < 0 ? none_ : regs_[i];
 }
 
+uint64_t GsPrivRegs::SlotValue(uint32_t addr) const {
+    const int i = SlotIndex(addr);
+    return i < 0 ? 0 : regs_[i].load(std::memory_order_relaxed);
+}
+
 void GsPrivRegs::PushJob(JobKind kind, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4) {
+    if (!sink_) return;
+    if (job_deferrer_) {
+        job_deferrer_([this, kind, a1, a2, a3, a4] { PushJobNow(kind, a1, a2, a3, a4); });
+        return;
+    }
+    PushJobNow(kind, a1, a2, a3, a4);
+}
+
+void GsPrivRegs::PushJobNow(JobKind kind, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4) {
     if (!sink_) return;
     JobRec j{};
     j.type = static_cast<uint32_t>(kind);
@@ -60,9 +69,8 @@ void GsPrivRegs::PushJob(JobKind kind, uint32_t a1, uint32_t a2, uint32_t a3, ui
 }
 
 uint64_t GsPrivRegs::Read(uint32_t addr) const {
-    if ((addr & 0xFFFF) == kCsr) return csr_;
-    const int i = SlotIndex(addr);
-    return i < 0 ? 0 : regs_[i];
+    if ((addr & 0xFFFF) == kCsr) return csr_.load(std::memory_order_relaxed);
+    return SlotValue(addr);
 }
 
 void GsPrivRegs::WriteLower(uint32_t addr, uint32_t value) {
@@ -76,45 +84,67 @@ void GsPrivRegs::WriteUpper(uint32_t addr, uint32_t value) {
 void GsPrivRegs::Write(uint32_t addr, uint64_t v) {
     ++writes_;  // the half writes (WriteLower / WriteUpper) arrive here, so each counts once
     switch (addr & 0xFFFF) {
-        case kSmode2:  // INT 0 FFMD 1 DPMS 2-3
-            Slot(addr) = v;
+        case kSmode2: {  // INT 0 FFMD 1 DPMS 2-3
+            Slot(addr).store(v, std::memory_order_relaxed);
             interlaced_ = (v & 1) != 0;
+            const bool frame_mode = (v & 2) != 0;
+            if (frame_mode != frame_mode_) {
+                // The buffer line count of both circuits' windows changed (see Display):
+                // re-derive them from the latched DISPLAY values.
+                frame_mode_ = frame_mode;
+                EmitWindow(kDisplay1);
+                EmitWindow(kDisplay2);
+            }
             return;
+        }
         case kDispfb1: case kDispfb2: Dispfb(addr, v); return;
         case kDisplay1: case kDisplay2: Display(addr, v); return;
         case kBgcolor:  // R 0-7 G 8-15 B 16-23
-            if (Slot(addr) == v) return;
-            Slot(addr) = v;
+            if (SlotValue(addr) == v) return;
+            Slot(addr).store(v, std::memory_order_relaxed);
             PushJob(JobKind::SetClearColor, v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF, 0);
             return;
         case kCsr:
             if (v & (1u << 9)) {  // RESET
                 Reset();
-                csr_ = 0;
+                csr_.store(0, std::memory_order_relaxed);
                 return;
             }
-            csr_ &= ~(v & 0x1F);  // write-1-to-clear SIGNAL FINISH HSINT VSINT EDWINT; FLUSH (bit 8) no-op
+            csr_.fetch_and(~(v & 0x1F), std::memory_order_relaxed);  // write-1-to-clear SIGNAL FINISH HSINT VSINT EDWINT; FLUSH (bit 8) no-op
             return;
         default:
-            Slot(addr) = v;
+            Slot(addr).store(v, std::memory_order_relaxed);
             return;
     }
 }
 
 // DISPFB (6.x): FBP 0-8 (2048 words) FBW 9-14 (64 px) PSM 15-19 DBX 32-42 DBY 43-53.
 void GsPrivRegs::Dispfb(uint32_t addr, uint64_t v) {
-    if (Slot(addr) == v) return;  // idempotent
-    Slot(addr) = v;
+    if (SlotValue(addr) == v) return;  // idempotent
+    Slot(addr).store(v, std::memory_order_relaxed);
     const uint32_t fbp = v & 0x1FF, fbw = (v >> 9) & 0x3F, psm = (v >> 15) & 0x1F;
     PushJob(JobKind::SetFrontBuffer, fbp * 8192, fbw * 64, psm, 0);
 }
 
 // DISPLAY (6.x): DX 0-11 DY 12-22 MAGH 23-26 MAGV 27-28 DW 32-43 DH 44-54. The
-// window is the content size (DW+1)/(MAGH+1) x (DH+1)/(MAGV+1) clamped to
-// [1,1024]; the job carries window<<16 | content per axis and the VCK dims.
+// window is the raster size (DW+1)/(MAGH+1) x (DH+1)/(MAGV+1) clamped to [1,1024];
+// the content is the frame-buffer rectangle the CRTC reads for it: the same, except
+// in interlaced FRAME mode (SMODE2 INT=1 FFMD=1, GS User's Manual 6.3 / 3.5: every
+// line of the buffer is read in EACH field, so a field's (DH+1)/(MAGV+1) raster lines
+// come from half as many buffer lines -- a 448-line display scans a 224-line
+// buffer, line-doubled) where the content height is half the raster height. FIELD
+// mode (FFMD=0) and non-interlaced displays read one buffer line per raster line.
+// The job carries window<<16 | content per axis and the VCK dims; a SMODE2 change
+// of the mode re-derives both circuits' windows from the latched DISPLAY values.
 void GsPrivRegs::Display(uint32_t addr, uint64_t v) {
-    if (Slot(addr) == v) return;
-    Slot(addr) = v;
+    if (SlotValue(addr) == v) return;
+    Slot(addr).store(v, std::memory_order_relaxed);
+    EmitWindow(addr);
+}
+
+void GsPrivRegs::EmitWindow(uint32_t addr) {
+    const uint64_t v = SlotValue(addr);
+    if (v == 0) return;   // no DISPLAY value latched for this circuit
     const int circuit = ((addr & 0xFFFF) == kDisplay1) ? 1 : 2;
     const int magh = (v >> 23) & 0xF, magv = (v >> 27) & 3;
     const int dw = (v >> 32) & 0xFFF, dh = (v >> 44) & 0x7FF;
@@ -126,6 +156,7 @@ void GsPrivRegs::Display(uint32_t addr, uint64_t v) {
     }
     auto clampw = [](int x) { return x < 1 ? 1 : (x > 1024 ? 1024 : x); };
     const int window_w = clampw(content_w), window_h = clampw(content_h);
+    if (interlaced_ && frame_mode_) content_h = (content_h + 1) / 2;   // frame mode: half the buffer lines per field
     const uint32_t packed_w = (static_cast<uint32_t>(window_w) << 16) | (content_w & 0xFFFF);
     const uint32_t packed_h = (static_cast<uint32_t>(window_h) << 16) | (content_h & 0xFFFF);
     const uint32_t packed_vck = ((static_cast<uint32_t>(dw + 1) & 0xFFFF) << 16) | ((dh + 1) & 0xFFFF);
@@ -138,22 +169,37 @@ void GsPrivRegs::Display(uint32_t addr, uint64_t v) {
 // SIGNAL (5.x): ID 0-31 IDMSK 32-63 -> SIGLBLID low half; CSR.SIGNAL; GS interrupt.
 void GsPrivRegs::Signal(uint64_t value) {
     const uint64_t id = value & 0xFFFFFFFF, idmsk = value >> 32;
-    uint64_t& s = regs_[SlotIndex(kSiglblid)];
-    s = (s & ~idmsk) | (id & idmsk);
-    csr_ |= kCsrSignal;
-    interrupts_++;
+    std::atomic<uint64_t>& s = regs_[SlotIndex(kSiglblid)];
+    s.fetch_and(~idmsk, std::memory_order_relaxed);
+    s.fetch_or(id & idmsk, std::memory_order_relaxed);
+    csr_.fetch_or(kCsrSignal, std::memory_order_relaxed);
+    interrupts_.fetch_add(1, std::memory_order_relaxed);
+    if (interrupt_observer_) interrupt_observer_(kCsrSignal);
 }
 
 void GsPrivRegs::Finish() {
-    csr_ |= kCsrFinish;
-    interrupts_++;
+    if (finish_consumer_ && finish_consumer_()) {
+        // Pre-raised at the EE's staging point: the bit was set and the edge
+        // raised there; setting the bit again here would undo the guest's W1C
+        // clear of that very event.
+        finishes_consumed_.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    FinishNow();
+}
+
+void GsPrivRegs::FinishNow() {
+    csr_.fetch_or(kCsrFinish, std::memory_order_relaxed);
+    interrupts_.fetch_add(1, std::memory_order_relaxed);
+    if (interrupt_observer_) interrupt_observer_(kCsrFinish);
 }
 
 // LABEL: ID 0-31 IDMSK 32-63 -> SIGLBLID high half; no interrupt.
 void GsPrivRegs::Label(uint64_t value) {
     const uint64_t id = value & 0xFFFFFFFF, idmsk = value >> 32;
-    uint64_t& s = regs_[SlotIndex(kSiglblid)];
-    s = (s & ~(idmsk << 32)) | ((id & idmsk) << 32);
+    std::atomic<uint64_t>& s = regs_[SlotIndex(kSiglblid)];
+    s.fetch_and(~(idmsk << 32), std::memory_order_relaxed);
+    s.fetch_or((id & idmsk) << 32, std::memory_order_relaxed);
 }
 
 }  // namespace gs

@@ -2,7 +2,9 @@ add_library(ps2r_session_restart STATIC ../host/session_restart.cpp ../host/sess
 target_link_libraries(ps2r_session_restart PUBLIC ps2r_session_checkpoint)
 target_compile_options(ps2r_session_restart PRIVATE -Wall -Wextra -Werror)
 
-if(PS2R_PRODUCT_TESTS)
+# The restart proofs link ps2r_continuation_checkpoint, a target this tree does not define
+# (never built since the import); they stay out of the default build until it exists.
+if(PS2R_PRODUCT_TESTS AND TARGET ps2r_continuation_checkpoint)
     # Use the production source with the existing narrow fixture support in
     # both root and isolated builds. No title body or duplicate shadow ABI.
     add_executable(test_session_restart "${PS2R_PRODUCT_ROOT}/tests/app/test_session_restart.cpp"

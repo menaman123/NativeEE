@@ -4,6 +4,7 @@
 // CHCR.STR -> CompleteChannel, status W1C and mask toggles, handler dispatch
 // once a mask bit is restored, SPR transfers, the deferred VIF1 kick's
 // register-file observation points, and the TAG_DMAC codec.
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -481,6 +482,56 @@ void TestSavestateSection() {
 
 }  // namespace
 
+// Dn_MADR bit 31 is the SPR flag: a fromIPU drain whose MADR names the scratchpad
+// (libmpeg's macroblock buffers) lands there, not at the masked RAM address; the
+// plain RAM form still lands in RAM. The same translation serves toIPU's source.
+void TestChannelSprFlag() {
+    Rig rig;
+    std::vector<uint8_t> produced(64);
+    for (uint32_t i = 0; i < 64; ++i) produced[i] = static_cast<uint8_t>(0xC0 + i);
+    rig.dmac.SetIpuDrainOutput([&produced](uint8_t* host, size_t bytes) {
+        const size_t n = std::min(bytes, produced.size());
+        std::memcpy(host, produced.data(), n);
+        return n;
+    });
+    const int ch = static_cast<int>(DmacChannelId::IpuFrom);
+    std::memset(rig.spad.Data() + 0x1800, 0, 64);
+    std::memset(rig.ram.Data() + 0x1800, 0, 64);
+    rig.dmac.channel(ch).madr = 0x80001800u;   // SPR | 0x1800
+    rig.dmac.channel(ch).qwc = 4;
+    rig.dmac.channel(ch).chcr = DmacChcr::kStr;
+    rig.dmac.StartChannel(ch);
+    CHECK(rig.dmac.channel(ch).qwc == 0 && (rig.dmac.channel(ch).chcr & DmacChcr::kStr) == 0);
+    CHECK(rig.dmac.channel(ch).madr == 0x80001840u);
+    bool spad_ok = true, ram_untouched = true;
+    for (uint32_t i = 0; i < 64; ++i) {
+        spad_ok = spad_ok && rig.spad.Data()[0x1800 + i] == static_cast<uint8_t>(0xC0 + i);
+        ram_untouched = ram_untouched && rig.ram.Data()[0x1800 + i] == 0;
+    }
+    CHECK(spad_ok);
+    CHECK(ram_untouched);
+    // The RAM form.
+    rig.dmac.channel(ch).madr = 0x00002800u;
+    rig.dmac.channel(ch).qwc = 4;
+    rig.dmac.channel(ch).chcr = DmacChcr::kStr;
+    rig.dmac.StartChannel(ch);
+    bool ram_ok = true;
+    for (uint32_t i = 0; i < 64; ++i) ram_ok = ram_ok && rig.ram.Data()[0x2800 + i] == static_cast<uint8_t>(0xC0 + i);
+    CHECK(ram_ok);
+    // toIPU reads its source through the same flag.
+    std::vector<uint8_t> fed;
+    rig.dmac.SetIpuFeedInput([&fed](uint8_t* host, size_t bytes) { fed.insert(fed.end(), host, host + bytes); });
+    for (uint32_t i = 0; i < 32; ++i) rig.spad.Data()[0x2000 + i] = static_cast<uint8_t>(0x30 + i);
+    const int to = static_cast<int>(DmacChannelId::IpuTo);
+    rig.dmac.channel(to).madr = 0x80002000u;
+    rig.dmac.channel(to).qwc = 2;
+    rig.dmac.channel(to).chcr = DmacChcr::kStr | DmacChcr::kDir;
+    rig.dmac.StartChannel(to);
+    bool fed_ok = fed.size() == 32;
+    for (uint32_t i = 0; fed_ok && i < 32; ++i) fed_ok = fed[i] == static_cast<uint8_t>(0x30 + i);
+    CHECK(fed_ok);
+}
+
 int main() {
     std::printf("sizeof(DmacChannelRegs) = %zu\n", sizeof(DmacChannelRegs));
     CHECK(sizeof(DmacChannelRegs) == 28);
@@ -491,6 +542,7 @@ int main() {
     TestCompleteAndMask();
     TestDispatch();
     TestSprCopy();
+    TestChannelSprFlag();
     TestDeferredObservationPoints();
     TestSavestateSection();
     if (g_fail) {

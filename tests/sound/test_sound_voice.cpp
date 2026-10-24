@@ -9,6 +9,7 @@
 // ===========================================================================
 #include <cassert>
 #include <cstdint>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -195,7 +196,7 @@ static void TestAttackMonotonic() {
     float l, r;
     uint16_t prev = 0;
     bool rose = false;
-    for (int i = 0; i < 2000; i++) {
+    for (int i = 0; i < 2000 && v.Phase() == ps2r::sound::EnvPhase::Attack; i++) {
         v.Step(RamData(ram), l, r);
         const uint16_t e = v.Envx();
         CHECK(e >= prev);
@@ -239,13 +240,14 @@ static void TestRekeyRestarts() {
     CHECK(v.Keyed());
 }
 
-// 11. Volume gains scale output; sweep mode (bit15) keeps the current gain.
+// 11. Volume gains scale output (0x3FFF = full scale; 0x7FFF is the phase-inverted near-zero of the
+// signed register); a sweep write (bit15) ramps from the current gain, never jumps.
 static void TestVolumeMapping() {
     TestRam ram;
     PutBlock(ram, 0x8000, 7, 0);
     Voice v;
     ProgramBasic(v, 0x8000);
-    v.SetVolL(0x7FFF);                 // full
+    v.SetVolL(0x3FFF);                 // full
     v.SetVolR(0x0000);                 // silent
     v.KeyOn();
     float l, r;
@@ -276,10 +278,10 @@ static void TestSilenceHardStop() {
     CHECK(l == 0.0f && r == 0.0f);
 }
 
-// VOLX readback scale: a fixed volume write F presents as the
-// hardware current level 2*F (clamped to 0x7FFF). STREAM.IRX's music ramp
-// stepper (module FUN_00010d28) compares VOLX against target*2 — this scale
-// is what lets the ramp converge and background music become audible.
+// VOLX readback: a fixed volume write F presents as the hardware's current level,
+// the signed 16-bit value F << 1 (0x3FFF -> 0x7FFE; 0x7FFF -> 0xFFFE, the inverted
+// phase one step below zero). STREAM.IRX's music ramp stepper (module FUN_00010d28)
+// compares VOLX against target*2 — this scale is what lets the ramp converge.
 static void TestVolxReadbackScale() {
     Voice v;
     v.SetVolL(0);
@@ -289,8 +291,9 @@ static void TestVolxReadbackScale() {
     CHECK(v.VolxL() == 0x2E62 * 2);          // readback = 2x fixed value
     v.SetVolL(0x3FFF);                       // max game volume
     CHECK(v.VolxL() == 0x3FFF * 2);
-    v.SetVolL(0x7FFF);                       // full-scale fixed write clamps
-    CHECK(v.VolxL() == 0x7FFF);
+    v.SetVolL(0x7FFF);                       // bit 14 set: negative (phase-inverted) level -2
+    CHECK(v.VolxL() == 0xFFFE);
+    CHECK(Voice::FixedVolumeLevel(0x7FFF) == -2);
 }
 
 // Volume sweep (bit15 register): an upward sweep (the module's
@@ -336,7 +339,59 @@ static void TestVolumeSweepFadeIn() {
     CHECK(v.VolxL() == 0);
 }
 
+// 15. The resampler knob: linear (the default) reproduces a constant block exactly at half pitch; the
+//     SPU2 Gaussian (audio.interpolation=gaussian) is a 4-tap kernel whose weights sum to 0x7F80 (a
+//     constant comes out 0.4 % low, as on the hardware), whose output at a step between two blocks is
+//     monotonic (no ringing: the kernel is all-positive bar the -1 tails), and which is the SAME on
+//     every voice (the knob is process-wide). The default is restored afterwards.
+static void TestInterpolationKnob() {
+    TestRam ram;
+    PutBlock(ram, 0x8000, 0, 0);           // 28 zeros
+    PutBlock(ram, 0x8010, 4, 0);           // 28 x 0x4000
+    PutBlock(ram, 0x8020, 4, 0);
+    auto run = [&](bool gaussian, std::vector<int32_t>* out) {
+        Voice::SetGaussian(gaussian);
+        Voice v;
+        ProgramBasic(v, 0x8000, 0x800);    // half pitch: two output samples per source sample
+        v.KeyOn();
+        float l, r;
+        for (int i = 0; i < 120; i++) {
+            v.Step(RamData(ram), l, r);
+            out->push_back(static_cast<int32_t>(std::lround(l / 0.5f * 32768.0f * 32768.0f / 32767.0f)));   // undo the 0x3FFF gain
+        }
+    };
+    std::vector<int32_t> lin, gau;
+    run(false, &lin);
+    run(true, &gau);
+    Voice::SetGaussian(false);
+    CHECK(!Voice::Gaussian());
+    // Linear settles to the block's level; the Gaussian to 0x7F80/0x8000 of it (the kernel's DC gain, -0.034 dB).
+    const int32_t top_lin = lin[119], top_gau = gau[119];
+    CHECK(top_lin > 16000);
+    CHECK(std::abs(top_gau - (top_lin * 0x7F80) / 0x8000) <= 2);
+    // Both transitions are monotonic non-decreasing across the step (no overshoot / ringing; the -1 tails
+    // of the gauss table dip at most a couple of LSB).
+    bool mono_lin = true, mono_gau = true;
+    for (size_t i = 1; i < lin.size(); i++) {
+        if (lin[i] < lin[i - 1] - 2) mono_lin = false;
+        if (gau[i] < gau[i - 1] - 2) mono_gau = false;
+    }
+    CHECK(mono_lin);
+    CHECK(mono_gau);
+    // The Gaussian's step is wider than linear's (4 source samples vs 2): more output samples strictly inside (0, top).
+    auto inside = [](const std::vector<int32_t>& o, int32_t top) {
+        int n = 0;
+        for (int32_t x : o) if (x > 8 && x < top - 8) n++;
+        return n;
+    };
+    CHECK(inside(lin, top_lin) == 1);   // half pitch: one midpoint sample
+    CHECK(inside(gau, top_gau) >= 4);
+    std::printf("interpolation: linear settles %d, gaussian settles %d (x 0x7F80/0x8000); step width lin %d gau %d\n",
+                top_lin, top_gau, inside(lin, top_lin), inside(gau, top_gau));
+}
+
 int main() {
+    TestInterpolationKnob();
     TestKeyOnResetsNax();
     TestPitchUnityBlockAdvance();
     TestPitchHalfRate();

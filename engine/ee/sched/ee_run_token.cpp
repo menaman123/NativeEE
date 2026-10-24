@@ -1,6 +1,9 @@
 // EeRunToken implementation; the model and the thbase rule are in the header.
 #include "engine/ee/sched/ee_run_token.h"
 
+#include "engine/ee/sched/ee_yield_point.h"
+#include "engine/platform/host/platform.h"
+
 #include <atomic>
 
 namespace {
@@ -10,6 +13,10 @@ thread_local int t_prio = 0;
 thread_local bool t_holds = false;
 thread_local int t_park_depth = 0;
 thread_local bool t_guest_attached = false;
+thread_local uint64_t t_cpu_at_enter = 0;   // CpuCensus: the host thread's CPU clock at GuestEnter
+thread_local int t_isr_depth = 0;            // IsrBegin .. IsrEnd nesting on this host thread
+thread_local bool t_preempt_deferred = false;  // a PreemptPoint recorded inside the handler
+thread_local bool t_idle = false;              // this host thread holds the idle grant (TryIdleAcquire .. IdleRelease)
 }  // namespace
 
 EeRunToken& EeRunToken::Instance() {
@@ -75,6 +82,7 @@ void EeRunToken::ElectLocked() {
 
 void EeRunToken::ReleaseLocked(int tid) {
     if (owner_ == tid) {
+        if (tid >= 0 && !t_idle) last_owner_ = tid;
         owner_ = kNone;
         owner_running_ = false;
         ElectLocked();
@@ -86,11 +94,14 @@ void EeRunToken::AcquireSlow(int tid) {
     cv_.wait(lk, [&] { return owner_ == tid || shutdown_; });
     owner_running_ = true;
     t_holds = true;
+    lk.unlock();
+    EeYieldPoint::Instance().NoteSchedulingPoint();   // E432: the thread was scheduled, it is not spinning
 }
 
 void EeRunToken::GuestEnter(int tid, int prio) {
     t_tid = tid;
     t_prio = prio;
+    t_cpu_at_enter = ps2r::host::ThreadCpuTimeNs();
     {
         std::lock_guard<std::mutex> lk(mu_);
         if (!t_guest_attached) ++attached_guests_;
@@ -109,6 +120,11 @@ void EeRunToken::GuestEnter(int tid, int prio) {
 
 void EeRunToken::GuestExit(int tid) {
     if (t_tid != tid) return;  // only the entering host thread may exit a tid
+    if (tid >= 0 && tid < kMaxTid) {
+        const uint64_t now = ps2r::host::ThreadCpuTimeNs();
+        if (now > t_cpu_at_enter) cpu_ns_[tid].fetch_add(now - t_cpu_at_enter, std::memory_order_relaxed);
+        cpu_live_ns_[tid].store(0, std::memory_order_relaxed);
+    }
     {
         std::lock_guard<std::mutex> lk(mu_);
         if (t_guest_attached) --attached_guests_;
@@ -122,7 +138,15 @@ void EeRunToken::GuestExit(int tid) {
     t_tid = kNone;
 }
 
+void EeRunToken::SnapshotCpu() {
+    const int tid = t_tid;
+    if (tid < 0 || tid >= kMaxTid) return;
+    const uint64_t now = ps2r::host::ThreadCpuTimeNs();
+    cpu_live_ns_[tid].store(now > t_cpu_at_enter ? now - t_cpu_at_enter : 0, std::memory_order_relaxed);
+}
+
 void EeRunToken::BlockBegin(int tid) {
+    if (t_tid == tid) SnapshotCpu();
     {
         std::lock_guard<std::mutex> lk(mu_);
         if (Ready* r = FindReady(tid)) r->valid = false;
@@ -150,6 +174,132 @@ void EeRunToken::ParkEnd() {
     BlockEnd(t_tid);
 }
 
+void EeRunToken::WaitVblank() {
+    SnapshotCpu();
+    if (!t_holds || t_tid == kNone) return;
+    const int tid = t_tid;
+    uint64_t field_seen = 0, wall_seen = 0;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        bool others = false;
+        for (const auto& r : ready_)
+            if (r.valid && r.tid != tid) others = true;
+        vblank_waits_.fetch_add(1, std::memory_order_relaxed);
+        if (!others) {  // idle EE: the vblank is now
+            vblank_waits_idle_.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        field_seen = field_gen_;
+        wall_seen = wall_tick_gen_;
+        if (Ready* r = FindReady(tid)) r->valid = false;  // WAITING, not READY (BlockBegin's body)
+        ReleaseLocked(tid);
+        ++vblank_waiters_;  // an all-blocked EE wakes THIS thread, never the idle grant
+        for (auto& w : vblank_waiter_)
+            if (w.tid == kNone) {
+                w.tid = tid;
+                w.prio = t_prio;
+                break;
+            }
+    }
+    cv_.notify_all();
+    t_holds = false;
+    {
+        std::unique_lock<std::mutex> lk(mu_);
+        cv_.wait(lk, [&] {
+            if (shutdown_ || field_gen_ != field_seen || wall_tick_gen_ != wall_seen) return true;
+            for (const auto& r : ready_)
+                if (r.valid) return false;
+            return true;  // every other thread blocked: idle, the vblank is now
+        });
+        // Rejoin the ready set under the lock that ends the wait. Between the waiter's
+        // leave below and BlockEnd's MakeReady there was an instant with no owner, no
+        // READY thread and no vblank waiter: a thread that had just blocked (its
+        // IdleWhileBlocked) took the idle grant there and passed a field of its own over
+        // this thread's boundary -- one extra idle field (VBON / TIM2 +1, ee_yield isrs
+        // +2) in 3 of 12 Paris 600 lockstep runs with the early FINISH, none without it
+        // (the window is wider when the logic thread blocks while the worker still runs).
+        // The slot assigned here makes BlockEnd's MakeReady the idempotent no-op; a wall
+        // tick wake (WakeVblankWaitersForWallTick) assigned it already.
+        if (!shutdown_) {
+            if (Ready* r = SlotFor(tid)) {
+                r->prio = t_prio;
+                if (r->seq == 0) r->seq = NextSeq();
+            }
+        }
+        --vblank_waiters_;
+        for (auto& w : vblank_waiter_)
+            if (w.tid == tid) w.tid = kNone;
+    }
+    BlockEnd(tid);
+}
+
+bool EeRunToken::WakeVblankWaitersForWallTick() {
+    if (!t_holds || t_idle) return false;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (vblank_waiters_ == 0) return false;
+        ++wall_tick_gen_;
+        // READY now, from the holder's side: the holder's PreemptPoint sees the
+        // waiter at once (its own BlockEnd's MakeReady is then the idempotent no-op).
+        for (const auto& w : vblank_waiter_) {
+            if (w.tid == kNone) continue;
+            Ready* r = SlotFor(w.tid);
+            if (!r) continue;
+            r->prio = w.prio;
+            if (r->seq == 0) r->seq = NextSeq();
+        }
+    }
+    wall_tick_wakes_.fetch_add(1, std::memory_order_relaxed);
+    cv_.notify_all();
+    return true;
+}
+
+uint32_t EeRunToken::VblankWaiters() {
+    std::lock_guard<std::mutex> lk(mu_);
+    return vblank_waiters_;
+}
+
+bool EeRunToken::TryIdleAcquire(int tid) {
+    if (tid == kNone || tid == kHostTid || t_holds || t_idle) return false;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (shutdown_ || hold_election_ || owner_ != kNone || vblank_waiters_ != 0) return false;
+        for (const auto& r : ready_)
+            if (r.valid) return false;   // something to schedule: not idle
+        owner_ = tid;
+        owner_running_ = true;
+    }
+    t_holds = true;
+    t_idle = true;
+    idle_grants_.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
+void EeRunToken::IdleRelease(int tid) {
+    if (!t_idle) return;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (owner_ == tid) {
+            owner_ = kNone;
+            owner_running_ = false;
+            ElectLocked();   // whatever the field readied runs now
+        }
+    }
+    cv_.notify_all();
+    t_holds = false;
+    t_idle = false;
+}
+
+bool EeRunToken::CurrentThreadIdling() const { return t_idle; }
+
+void EeRunToken::NoteFieldElapsed() {
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        ++field_gen_;
+    }
+    cv_.notify_all();
+}
+
 void EeRunToken::MakeReady(int tid, int prio) {
     {
         std::lock_guard<std::mutex> lk(mu_);
@@ -174,10 +324,25 @@ uint64_t EeRunToken::RetiredReadyNoops() {
     return retired_ready_noops_;
 }
 
+void EeRunToken::IsrBegin() { ++t_isr_depth; }
+
+void EeRunToken::IsrEnd() {
+    if (t_isr_depth > 0) --t_isr_depth;
+    if (t_isr_depth != 0 || !t_preempt_deferred) return;
+    t_preempt_deferred = false;
+    PreemptPoint();  // the handler's exit: the one dispatch edge of the interrupt
+}
+
+bool EeRunToken::InIsr() const { return t_isr_depth > 0; }
+
 void EeRunToken::PreemptPoint() {
-    if (!t_holds) return;
+    if (!t_holds || t_idle) return;   // the idle runner hands over at IdleRelease, never mid-field
     const int tid = t_tid;
     if (tid == kNone) return;
+    if (t_isr_depth > 0) {
+        t_preempt_deferred = true;
+        return;
+    }
     bool yield = false;
     {
         std::lock_guard<std::mutex> lk(mu_);
@@ -198,7 +363,7 @@ void EeRunToken::PreemptPoint() {
 }
 
 void EeRunToken::Rotate(int rot_prio) {
-    if (!t_holds) return;
+    if (!t_holds || t_idle) return;
     const int tid = t_tid;
     if (tid == kNone) return;
     int my_prio = t_prio;
@@ -287,12 +452,15 @@ bool EeRunToken::RestartAfterJoin(std::string* error) {
     for (auto& ready : ready_) ready = Ready{};
     for (auto& retired : retired_) retired = false;
     owner_ = kNone;
+    last_owner_ = kNone;
     owner_running_ = false;
     hold_election_ = false;
     shutdown_ = false;
     t_tid = kNone;
     t_prio = 0;
     t_park_depth = 0;
+    t_idle = false;
+    vblank_waiters_ = 0;
     // Scheduling sequence and diagnostic counters remain monotonic.
     if (error) error->clear();
     return true;
@@ -309,6 +477,16 @@ int EeRunToken::CurrentTid() const { return t_tid; }
 bool EeRunToken::ElectionHeld() {
     std::lock_guard<std::mutex> lk(mu_);
     return hold_election_;
+}
+
+int EeRunToken::OwnerTid() {
+    std::lock_guard<std::mutex> lk(mu_);
+    return owner_;
+}
+
+int EeRunToken::LastOwnerTid() {
+    std::lock_guard<std::mutex> lk(mu_);
+    return last_owner_;
 }
 
 int EeRunToken::OwnerForTest() {
@@ -329,14 +507,21 @@ void EeRunToken::ResetForTest() {
     for (auto& r : retired_) r = false;
     retired_ready_noops_ = 0;
     owner_ = kNone;
+    last_owner_ = kNone;
     owner_running_ = false;
     shutdown_ = false;
     hold_election_ = false;
     attached_guests_ = attached_hosts_ = 0;
+    for (auto& w : vblank_waiter_) w = VblankWaiter{};
+    vblank_waiters_ = 0;
     t_tid = kNone;
     t_holds = false;
     t_park_depth = 0;
     t_guest_attached = false;
+    t_isr_depth = 0;
+    t_preempt_deferred = false;
+    t_idle = false;
+    vblank_waiters_ = 0;
 }
 
 EeRunToken::HostGate::HostGate() {
@@ -375,4 +560,23 @@ EeRunToken::ParkScope::ParkScope() {
 
 EeRunToken::ParkScope::~ParkScope() {
     if (armed_) Instance().ParkEnd();
+}
+
+uint64_t EeRunToken::CpuNs(int tid) const {
+    if (tid < 0 || tid >= kMaxTid) return 0;
+    return cpu_ns_[tid].load(std::memory_order_relaxed) + cpu_live_ns_[tid].load(std::memory_order_relaxed);
+}
+
+std::string EeRunToken::CpuCensus() const {
+    std::string out;
+    uint64_t total = 0;
+    for (int tid = 0; tid < kMaxTid; ++tid) {
+        const uint64_t ns = CpuNs(tid);
+        if (ns < 1000000u) continue;   // below a millisecond: the one-shot threads
+        total += ns;
+        if (!out.empty()) out += ',';
+        out += std::to_string(tid) + ':' + std::to_string(ns / 1000000u);
+    }
+    out += ";total=" + std::to_string(total / 1000000u);
+    return out;
 }

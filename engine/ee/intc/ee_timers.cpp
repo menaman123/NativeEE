@@ -111,7 +111,7 @@ int EeTimers::Pump(CpuContext& ctx) {
             RecomputeDispatchable();
             intc_.Raise(Intc::kTim0 + i);
             in_dispatch_ = true;
-            intc_.Dispatch(ctx, Intc::kTim0 + i);  // STAT & MASK gated
+            intc_.Dispatch(ctx, Intc::kTim0 + i, Intc::kSiteTimerPump);  // STAT & MASK gated
             in_dispatch_ = false;
             ++dispatch_count_;
             ++fired;

@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "engine/gs/format/texa_expand.h"
+#include "engine/gs/hle/ir/halfword_shuffle.h"
 
 namespace ps2r {
 namespace gs {
@@ -23,25 +24,19 @@ render::SurfaceDesc ColorDesc(const TargetIdentity& id, bool renderable) {
     return d;
 }
 
-void ExtendCdDirty(render::CdCopyState& cd, int x0, int y0, int x1, int y1) {
-    if (x1 <= x0 || y1 <= y0) return;
-    if (cd.dirty_x0 >= cd.dirty_x1 || cd.dirty_y0 >= cd.dirty_y1) {
-        cd.dirty_x0 = x0; cd.dirty_y0 = y0; cd.dirty_x1 = x1; cd.dirty_y1 = y1;
-        return;
-    }
-    cd.dirty_x0 = std::min(cd.dirty_x0, x0);
-    cd.dirty_y0 = std::min(cd.dirty_y0, y0);
-    cd.dirty_x1 = std::max(cd.dirty_x1, x1);
-    cd.dirty_y1 = std::max(cd.dirty_y1, y1);
+// The Cd-copy tracker's dirty sets (gs::CdDirtySet: the union + the rect list): every
+// write lands in `dirty`; a write whose colour mask included ALPHA in `dirty_alpha` too
+// (an alpha-only read of the copy -- DATE without a shader blend -- is decided on that).
+void ExtendCdDirty(render::CdCopyState& cd, int x0, int y0, int x1, int y1, bool wrote_alpha) {
+    cd.dirty.Extend(x0, y0, x1, y1);
+    if (wrote_alpha) cd.dirty_alpha.Extend(x0, y0, x1, y1);
 }
 
 }  // namespace
 
 uint16_t RenderTarget::Fbmsk16From32(uint32_t m) {
-    // Fold the 8-bit channel masks onto the 5551 fields: a channel field is
-    // masked when its high bits are; alpha keeps bit 15 from bit 31.
-    return static_cast<uint16_t>(((m >> 3) & 0x1F) | ((m >> 6) & 0x3E0) | ((m >> 9) & 0x7C00) |
-                                 ((m >> 16) & 0x8000));
+    // One definition of the RGBA8 -> 5551 fold, in the ir library.
+    return HalfwordShuffle::Fbmsk16From32(m);
 }
 
 uint32_t RenderTarget::FrameBitsPerPixel(uint32_t psm) {
@@ -97,6 +92,15 @@ void RenderTarget::RefreshAlt16FromMain(render::Backend& be) {
     coherence.alt_author_seq++;
     const int s = identity.scale;
     render::Rect pr{r.x0 * s, r.y0 * s, (r.x1 - r.x0) * s, (r.y1 - r.y0) * s};
+    if (be.QueryCaps().copy_pack5551) {
+        // 5551 pack then unpack on the GPU (Backend::kCopyPack5551): the companion
+        // holds what a 16-bit read of the main buffer would see (5-bit channels
+        // replicated, alpha bit -> 0 / 255) -- the same bytes as the CPU route
+        // below, without the glReadPixels pipeline drain per refresh.
+        be.CopyRect(views.color, pr, views.alt16, pr, render::Backend::kCopyPack5551);
+        views.alt16_has_content = true;
+        return;
+    }
     std::vector<uint8_t> px(static_cast<size_t>(pr.w) * pr.h * 4);
     const size_t stride = static_cast<size_t>(pr.w) * 4;
     be.Readback(views.color, pr, px.data(), stride);
@@ -122,17 +126,28 @@ bool RenderTarget::WantsFrameClear(uint32_t ee_frame) const {
                                      : (coherence.last_clear_frame != ee_frame);
 }
 
+bool RenderTarget::FrameOpeningDraw(const DrawIr& ir, bool alt16_route) {
+    if (alt16_route) return false;
+    if (ir.tex_enabled && ir.tex.tbp == ir.raster.frame.fbp) return false;
+    return true;
+}
+
+bool RenderTarget::IsCompositeRead(uint8_t tex_psm, bool src_has_32bit_content) {
+    if (src_has_32bit_content) return Is32BitClass(tex_psm);
+    return Is16BitColor(tex_psm) || Is32BitClass(tex_psm);
+}
+
 void RenderTarget::MarkMaterialized(int x0, int y0, int x1, int y1, bool alt16,
                                     uint32_t frame_count, uint64_t gfx_epoch) {
     CoherenceState& c = coherence;
     if (alt16) {
         c.alt16_drawn.Union(x0, y0, x1, y1);
-        ExtendCdDirty(c.cd_copy, x0, y0, x1, y1);
+        ExtendCdDirty(c.cd_copy, x0, y0, x1, y1, /*wrote_alpha=*/true);
         views.alt16_has_content = true;
     } else {
         c.valid_rect.ExpandToInclude(x0, y0, x1, y1);
         c.drawn_since_sync.Union(x0, y0, x1, y1);
-        ExtendCdDirty(c.cd_copy, x0, y0, x1, y1);
+        ExtendCdDirty(c.cd_copy, x0, y0, x1, y1, /*wrote_alpha=*/true);
         if (views.alt16.id) c.alt16_stale.Union(x0, y0, x1, y1);
         c.has_content = true;
     }
@@ -166,7 +181,9 @@ void RenderTarget::PrepareDraw(render::Backend& be, const DrawIr& ir, uint32_t e
         out->alt16 = views.alt16;
         out->alt16_route = true;
     }
-    out->do_frame_clear = WantsFrameClear(ee_frame);
+    // E330: a due clear fires on the first frame-OPENING draw only (the keys are
+    // consumed then, not before).
+    out->do_frame_clear = WantsFrameClear(ee_frame) && FrameOpeningDraw(ir, out->alt16_route);
     out->clear_color = false;
     if (out->do_frame_clear) {
         coherence.last_clear_frame = ee_frame;
@@ -209,7 +226,7 @@ void RenderTarget::AfterDraw(const DrawIr& ir, const render::DrawResult& res,
         // tags and content flag describe the 32-bit image and stay untouched.
         if (drawn) {
             c.alt16_drawn.Union(dx0, dy0, dx1, dy1);
-            ExtendCdDirty(c.cd_copy, dx0, dy0, dx1, dy1);
+            ExtendCdDirty(c.cd_copy, dx0, dy0, dx1, dy1, res.wrote_alpha);
         }
         views.alt16_has_content = true;
     } else {
@@ -218,7 +235,8 @@ void RenderTarget::AfterDraw(const DrawIr& ir, const render::DrawResult& res,
         c.valid_rect.ExpandToInclude(bx0, by0, bx1, by1);
         if (drawn) {
             c.drawn_since_sync.Union(dx0, dy0, dx1, dy1);
-            ExtendCdDirty(c.cd_copy, dx0, dy0, dx1, dy1);
+            c.main_drawn_since_deposit.Union(dx0, dy0, dx1, dy1);
+            ExtendCdDirty(c.cd_copy, dx0, dy0, dx1, dy1, res.wrote_alpha);
             if (views.alt16.id) {
                 // The companion no longer mirrors rows the main route wrote; a
                 // write covering everything the companion drew drops its content
@@ -232,9 +250,13 @@ void RenderTarget::AfterDraw(const DrawIr& ir, const render::DrawResult& res,
             }
         }
         c.has_content = true;
-        identity.render_psm = fpsm;
-        identity.render_fbw = ir.raster.frame.fbw;
-        if (Is32BitClass(fpsm)) identity.has_32bit_content = true;
+        // The half-word copy wrote the 32-bit image through a 16-bit FRAME: the
+        // target's tags stay those of the 32-bit content it still holds.
+        if (!res.halfword_shuffle) {
+            identity.render_psm = fpsm;
+            identity.render_fbw = ir.raster.frame.fbw;
+            if (Is32BitClass(fpsm)) identity.has_32bit_content = true;
+        }
     }
     c.last_draw_frame = frame_count;
     c.last_draw_gfx_epoch = gfx_epoch;
@@ -251,12 +273,12 @@ void RenderTarget::AfterDraw(const DrawIr& ir, const render::DrawResult& res,
             if (wr.w > 0 && wr.h > 0) c.z_drawn_since_sync.Union(wr.x, wr.y, wr.x + wr.w, wr.y + wr.h);
         }
     }
-    const uint32_t bpp = FrameBitsPerPixel(fpsm);
+    const uint32_t bpp = res.halfword_shuffle ? 32u : FrameBitsPerPixel(fpsm);
     if (bpp >= 24) identity.was_32bit = true;
     if (bpp == 16) identity.was_16bit = true;
     // MASKED-SYNC: the 5551 bits the 16-bit draw left untouched; 0 for a full
-    // write or any other FRAME format.
-    c.sync_keep_mask16 = Is16BitColor(fpsm) ? uint16_t(res.fbmsk16) : uint16_t(0);
+    // write, the half-word copy (a 32-bit image write) or any other FRAME format.
+    c.sync_keep_mask16 = (Is16BitColor(fpsm) && !res.halfword_shuffle) ? uint16_t(res.fbmsk16) : uint16_t(0);
     // Per-view author counter: every committed draw authors exactly one view; a
     // 16-bit fog-lane draw (Z16 texture read, index-lane keep mask) records
     // itself as that view's lane author.

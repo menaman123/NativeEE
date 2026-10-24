@@ -23,20 +23,33 @@ bool AliasPageSet::PageWalk(uint32_t addr, uint32_t size, uint32_t* first, uint3
     return true;
 }
 
+// The bits of word `w` that fall inside [first, last] (inclusive page ordinals).
+static inline uint64_t WordMask(uint32_t w, uint32_t first, uint32_t last) {
+    const uint32_t lo = w * 64, hi = lo + 63;
+    uint64_t m = ~uint64_t(0);
+    if (first > lo) m &= ~uint64_t(0) << (first - lo);
+    if (last < hi) m &= ~uint64_t(0) >> (hi - last);
+    return m;
+}
+
+// Word-range masks: a span of up to 512 pages is at most 8 word operations
+// (the per-draw ClearCpuDirty over 56 pages was walked bit by bit before --
+// 2.5 % of the GS consumer thread in play).
 void AliasPageSet::Mark(std::vector<uint64_t>& set, uint32_t addr, uint32_t size, bool on) {
     uint32_t first, last;
     if (!PageWalk(addr, size, &first, &last)) return;
-    for (uint32_t p = first; p <= last; ++p) {
-        if (on) set[p / 64] |= uint64_t(1) << (p % 64);
-        else set[p / 64] &= ~(uint64_t(1) << (p % 64));
+    for (uint32_t w = first / 64; w <= last / 64; ++w) {
+        const uint64_t m = WordMask(w, first, last);
+        if (on) set[w] |= m;
+        else set[w] &= ~m;
     }
 }
 
 bool AliasPageSet::Any(const std::vector<uint64_t>& set, uint32_t addr, uint32_t size) {
     uint32_t first, last;
     if (!PageWalk(addr, size, &first, &last)) return false;
-    for (uint32_t p = first; p <= last; ++p)
-        if (set[p / 64] & (uint64_t(1) << (p % 64))) return true;
+    for (uint32_t w = first / 64; w <= last / 64; ++w)
+        if (set[w] & WordMask(w, first, last)) return true;
     return false;
 }
 

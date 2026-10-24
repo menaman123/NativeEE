@@ -7,11 +7,13 @@
 
 add_library(ps2r_gif STATIC
     gs_sink.cpp
+    null_gs_sink.cpp
     gif_tag.cpp
     gif_regs.cpp
     gif_register_dispatch.cpp
     gif_parser.cpp
     gif_arbiter.cpp
+    gif_finish_scan.cpp
     gif_drain_thread.cpp
     savestate/gifs_section.cpp)
 target_include_directories(ps2r_gif PUBLIC ${CMAKE_SOURCE_DIR})

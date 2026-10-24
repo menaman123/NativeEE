@@ -5,11 +5,15 @@
 // almost all of them; each setter records the last value sent per location and
 // skips the glUniform* call when unchanged. Uniform values are per-program state,
 // so the shadow is cleared on every relink. A negative location is a silent no-op,
-// as glUniform* defines it.
+// as glUniform* defines it. The shadow is a flat table indexed by location (the
+// linker hands out small dense integers; a location past the table grows it), so
+// the ~40 lookups per draw cost an index, not a hash.
 #pragma once
 
 #include <cstdint>
-#include <unordered_map>
+#include <vector>
+
+#include "engine/render/backend.h"
 
 namespace ps2r {
 namespace render {
@@ -24,6 +28,8 @@ public:
     void Set3f(int loc, float a, float b, float c);
     void Set4f(int loc, float a, float b, float c, float d);
     uint64_t Skips() const { return skips_; }
+    // The census the issued glUniform* calls are counted into (null = none).
+    void SetCensus(CallCensus* census) { census_ = census; }
 
 private:
     struct Shadow {
@@ -31,8 +37,10 @@ private:
         int i[2] = {0, 0};
         float f[4] = {0.f, 0.f, 0.f, 0.f};
     };
-    std::unordered_map<int, Shadow> shadow_;
+    Shadow& At(int loc);
+    std::vector<Shadow> shadow_;
     uint64_t skips_ = 0;
+    CallCensus* census_ = nullptr;
 };
 
 }  // namespace render

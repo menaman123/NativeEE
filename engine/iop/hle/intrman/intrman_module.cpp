@@ -19,4 +19,8 @@ void IntrmanModule::CpuResumeIntr(IopContext& ctx) {
     ctx.gpr[2] = 0;
 }
 
+void IntrmanModule::CpuDisableIntr(IopContext& ctx) { ctx.gpr[2] = 0; }
+
+void IntrmanModule::CpuEnableIntr(IopContext& ctx) { ctx.gpr[2] = 0; }
+
 }  // namespace ps2r::iop::hle

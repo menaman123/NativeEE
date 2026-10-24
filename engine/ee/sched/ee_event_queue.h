@@ -20,10 +20,29 @@
 //      an application can never re-route its own event back into the queue
 //      (the pre-fix unbounded spin).
 //
-// Enqueue also POKES every registered kernel-object park (empty-lock +
-// notify_all on the object's own cv) so a fully parked guest set wakes to
-// drain: the woken thread re-elects through the run token, drains, and
-// re-parks if its own condition is still unsatisfied.
+// Enqueue also POKES registered kernel-object parks (empty-lock + notify_all
+// on the object's own cv). WHICH parks: while a thread holds the token (a
+// running thread, the pre-dispatch's pipeline spinner, the idle runner) only
+// the HOLDER's own parks are poked -- it applies the event at its next
+// scheduling point, and waking the other blocked threads would make them
+// READY with their condition unsatisfied: the holder then defers the
+// interrupt to them and the handler runs on whichever woken thread wins the
+// election -- a host race in the guest's ISR context (a drain thread's FINISH
+// landed on four different thread stacks). With no holder (a fully parked
+// guest set) exactly ONE park is poked -- the LAST RUNNER's (the thread that
+// released the token last: inline, the one whose kernel wait would have run
+// the device pipeline and taken the interrupt), else the lowest guest tid
+// with a park -- so the thread that wakes to drain is a function of the
+// guest's schedule, not of which host thread the kernel scheduled first; it
+// re-elects through the run token, drains, and re-parks if its own condition
+// is still unsatisfied.
+//
+// kDeferredLatched: a device stage that latches a cause OUTSIDE the queue
+// (Intc::RaiseDeferred, collected only at the holder's observation points)
+// enqueues this no-op so the poke above reaches a fully parked guest set the
+// usual way -- the woken thread's post-acquire drain applies the no-op (the
+// queue runs empty, nothing spins on HasPending) and its re-park's idle grant
+// is the observation point that collects the cause.
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
@@ -42,6 +61,7 @@ public:
             kReleaseWaitThread,
             kResumeThread,
             kIntcRaise,
+            kDeferredLatched,   // no-op wake (header comment)
         };
         Kind kind = kSignalSema;
         int32_t a = 0;   // sid / eid / tid / intc cause
@@ -68,6 +88,20 @@ public:
 
     // One relaxed load; safe inside cv predicates.
     bool HasPending() const { return pending_.load(std::memory_order_acquire); }
+    // The park predicate's clause (every kernel-object wait, the boundary's
+    // field park): a parked thread wakes for the queue only when it is the
+    // thread that will apply it -- no thread holds the token (a fully parked
+    // guest set: the poke above named this park), or this thread IS the holder
+    // (its own field park). A blocked thread never wakes for an event a holder
+    // will apply: such a wake made it READY with its condition unsatisfied -- a
+    // phantom in the ready table that changed the holder's "another thread is
+    // READY" decisions (an interrupt deferred, an observation point missed)
+    // and so the guest's schedule, by the host moment the event arrived.
+    bool ParkWakeDue() const;
+    // A holder released the token without applying what was queued since its
+    // last drain (a thread exit): with no holder left the poke is repeated so
+    // one parked thread wakes to apply it. No-op with a holder or nothing pending.
+    void PokeIfOrphaned();
 
     // Caller must hold the run token (DrainIfPendingOnHolder enforces it).
     // FIFO-applies every queued event through the installed applier with
@@ -83,8 +117,15 @@ public:
     void SetApplier(Applier fn);
 
     // Kernel-object park registry (poke targets). Register BEFORE taking the
-    // object lock; unregister AFTER releasing it.
+    // object lock; unregister AFTER releasing it. The registering thread's
+    // guest tid is recorded (the holder-only poke above).
     int RegisterPark(std::mutex* m, std::condition_variable* cv);
+    // Census: pokes with no holder (one park: the last runner's) / to the holder's parks only.
+    uint64_t PokesAll() const { return pokes_all_.load(std::memory_order_relaxed); }
+    uint64_t PokesHolder() const { return pokes_holder_.load(std::memory_order_relaxed); }
+    // Which guest tid the last no-holder poke went to (kNone when no park was
+    // registered); tests / diagnostics.
+    int LastIdlePokeTid() const { return last_idle_poke_tid_.load(std::memory_order_relaxed); }
     void UnregisterPark(int slot);
 
     size_t Size();
@@ -119,10 +160,13 @@ private:
     struct ParkSlot {
         std::mutex* m = nullptr;
         std::condition_variable* cv = nullptr;
+        int tid = -1;
         bool active = false;
     };
     std::mutex park_mu_;
     ParkSlot parks_[kMaxParks];
+    std::atomic<uint64_t> pokes_all_{0}, pokes_holder_{0};
+    std::atomic<int> last_idle_poke_tid_{-1};
 
     void PokeParks();
 };

@@ -95,7 +95,9 @@ struct Walker {
         visited.assign(text.bytes.size() / 4 + 1, 0);
     }
 
-    bool in_text(uint32_t va) const { return va >= text.base_va && va + 4 <= text_end; }
+    // `va <= end - 4`, not `va + 4 <= end`: a data word such as 0xFFFFFFFC wraps the latter
+    // (functions.cpp:361 / jumptables.cpp:502 feed every word of .data through this).
+    bool in_text(uint32_t va) const { return va >= text.base_va && va <= text_end - 4; }
     // True when `va` is the delay slot of the transfer instruction at va-4.
     // Every R5900 branch/jump kind (conditional, likely, unconditional, j,
     // jal, jr, jalr) carries one delay slot; eret and ordinary instructions
@@ -226,6 +228,12 @@ struct Walker {
             }
             case Kind::Other:
             default:
+                // A no-return kernel syscall (Exit / ExitThread / ExitDeleteThread in the SDK's
+                // `addiu v1,zero,N ; syscall` stub shape) is a hard stop like `jr ra`: the next
+                // word may be another function's entry (rv2_decode.h is_noreturn_syscall_imm).
+                if (decode::is_syscall_word(ins.word) && pc >= text.base_va + 4 &&
+                    decode::is_noreturn_syscall_imm(text.read_u32(pc - 4)))
+                    break;
                 queue.push_back(pc + 4);
                 break;
         }
@@ -358,7 +366,7 @@ DiscoveryResult discover_program(const DiscoveryInputs& in,
             const uint32_t n = static_cast<uint32_t>(sec.bytes.size());
             for (uint32_t off = 0; off + 4 <= n; off += 4) {
                 const uint32_t v = sec.read_u32(sec.base_va + off);
-                if ((v & 3u) == 0 && v >= tbase && v + 4 <= tend)
+                if ((v & 3u) == 0 && v >= tbase && v <= tend - 4)   // no u32 wrap for v near 0xFFFFFFFF
                     weak_pointer[v].push_back(sec.base_va + off);
             }
         }

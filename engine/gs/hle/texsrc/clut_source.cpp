@@ -32,7 +32,9 @@ void ClutSource::Build(const uint8_t* clut, bool fold_single, uint8_t* out) {
         const uint8_t r = clut[off], gg = clut[off + 1], b = clut[off + 2], a = clut[off + 3];
         uint8_t* p0 = out + i * 4;
         uint8_t* p1 = out + 256 * 4 + i * 4;
-        p0[0] = r; p0[1] = gg; p0[2] = b; p0[3] = PrescaleAlpha(a);
+        // Both rows carry the CLUT's alpha byte as stored (row 0 used to
+        // be the x2 "GPU convention" copy).
+        p0[0] = r; p0[1] = gg; p0[2] = b; p0[3] = a;
         p1[0] = r; p1[1] = gg; p1[2] = b; p1[3] = a;
     }
 }

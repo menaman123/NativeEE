@@ -64,6 +64,8 @@ static void KeyTestTone(SpuCore& core, uint32_t tone_addr) {
     core.SetParam(0x400, 0x0000);      // instant release
     core.SetParam(0x980, 0x3FFF);      // MVOLL core 0
     core.SetParam(0xA80, 0x3FFF);      // MVOLR core 0
+    core.SetParam(0x981, 0x3FFF);      // MVOLL core 1 (core 0 reaches the output through core 1)
+    core.SetParam(0xA81, 0x3FFF);      // MVOLR core 1
     core.SetSwitch(0x1500, 0x1);       // KON voice 0
 }
 
@@ -155,22 +157,27 @@ static void TestFlush() {
 }
 
 static void TestGainRule() {
-    CHECK(Near(SpuCore::ExternalInputGain(0x7FFF), 1.0f));
-    CHECK(Near(SpuCore::ExternalInputGain(0x4000), 16384.0f / 32767.0f));
+    CHECK(Near(SpuCore::ExternalInputGain(0x7FFF), 32767.0f / 32768.0f));
+    CHECK(Near(SpuCore::ExternalInputGain(0x4000), 16384.0f / 32768.0f));
     CHECK(Near(SpuCore::ExternalInputGain(0), 0.0f));
-    CHECK(Near(SpuCore::ExternalInputGain(0x8000), 1.0f));   // sweep bit: unity
-    CHECK(Near(SpuCore::ExternalInputGain(0xFFFF), 1.0f));
+    CHECK(Near(SpuCore::ExternalInputGain(0x8000), -1.0f));   // the register is a signed 16-bit level
+    CHECK(Near(SpuCore::ExternalInputGain(0xFFFF), -1.0f / 32768.0f));
 
     SpuCore core;
     core.SdInit();
+    // The chain to the output: MVOL0 and MVOL1 at full scale (0x3FFF), AVOL1 full after SdInit.
+    core.SetParam(0x980, 0x3FFF); core.SetParam(0xA80, 0x3FFF);
+    core.SetParam(0x981, 0x3FFF); core.SetParam(0xA81, 0x3FFF);
+    const float kBv = SpuCore::ExternalInputGain(0x7FFF), kHalf = SpuCore::ExternalInputGain(0x4000);
+    const float kChain = SpuCore::MasterRegisterGain(0x3FFF) * SpuCore::ExternalInputGain(0x7FFF) * SpuCore::MasterRegisterGain(0x3FFF);
     FmvPcmInput in(4096);
     core.SetFmvInput(&in);
     CHECK(core.FmvInput() == &in);
     // BVOLL/BVOLR are core attributes (bit 7): entry 0xF80 / 0x1080 for core 0.
     core.SetParam(0xF80, 0x7FFF);
     core.SetParam(0x1080, 0x4000);
-    CHECK(Near(core.FmvGainL(), 1.0f));
-    CHECK(Near(core.FmvGainR(), 16384.0f / 32767.0f));
+    CHECK(Near(core.FmvGainL(), kBv));
+    CHECK(Near(core.FmvGainR(), kHalf));
     std::vector<int16_t> pcm(256 * 2);
     for (int i = 0; i < 256; i++) {
         pcm[static_cast<size_t>(i) * 2] = 8192;
@@ -186,14 +193,14 @@ static void TestGainRule() {
     core.MixInto(out.data(), 256);
     CHECK(core.FmvFramesMixed() == 256);
     CHECK(in.Queued() == 0);
-    CHECK(Near(out[0], 8192.0f / 32768.0f));
-    CHECK(Near(out[1], -16384.0f / 32768.0f * (16384.0f / 32767.0f)));
-    CHECK(Near(out[510], 8192.0f / 32768.0f));
+    CHECK(Near(out[0], 8192.0f / 32768.0f * kBv * kChain));
+    CHECK(Near(out[1], -16384.0f / 32768.0f * kHalf * kChain));
+    CHECK(Near(out[510], 8192.0f / 32768.0f * kBv * kChain));
     // The master gain applies to the external input too (it is before the master).
     in.Push(pcm.data(), 256);
     core.SetMasterVolume(0.5f);
     core.MixInto(out.data(), 256);
-    CHECK(Near(out[0], 0.5f * 8192.0f / 32768.0f));
+    CHECK(Near(out[0], 0.5f * 8192.0f / 32768.0f * kBv * kChain));
     core.SetMasterVolume(1.0f);
     // BVOL 0: silent output, but the frames are still consumed (the A/V clock runs).
     core.SetParam(0xF80, 0);
@@ -216,8 +223,8 @@ static void TestGainRule() {
     in.Push(pcm.data(), 256);
     core.SetMasterVolume(2.0f);
     core.MixInto(out.data(), 256);
-    CHECK(out[0] == -1.0f);
-    CHECK(Near(out[1], -1.0f));
+    CHECK(out[0] == -1.0f);                                   // -1 * bvol * chain * 2 saturates
+    CHECK(Near(out[1], -0.5f * kBv * kChain * 2.0f));         // -16384 at full BVOL, doubled
 }
 
 static void TestMixedAfterVoices() {
@@ -275,6 +282,9 @@ static void TestMixedAfterVoices() {
 // core-1 BVOL set (entry bit 0) is not core 0's.
 static void TestBvolCensusAndAudibleFrames() {
     SpuCore core;
+    core.SetParam(0x980, 0x3FFF); core.SetParam(0xA80, 0x3FFF);
+    core.SetParam(0x981, 0x3FFF); core.SetParam(0xA81, 0x3FFF);
+    const float kChain = SpuCore::MasterRegisterGain(0x3FFF) * SpuCore::ExternalInputGain(0x7FFF) * SpuCore::MasterRegisterGain(0x3FFF);
     core.SdInit();
     FmvPcmInput in(4096);
     core.SetFmvInput(&in);
@@ -295,7 +305,7 @@ static void TestBvolCensusAndAudibleFrames() {
     core.MixInto(out.data(), 128);
     CHECK(core.FmvFramesMixed() == 256);
     CHECK(core.FmvFramesMixedAudible() == 128);
-    CHECK(Near(out[0], 4096.0f / 32768.0f));
+    CHECK(Near(out[0], 4096.0f / 32768.0f * SpuCore::ExternalInputGain(0x7FFF) * kChain));
     // Movie end: back to 0 (counted, not non-zero, the peak stays).
     core.SetParam(0xF80, 0);
     core.SetParam(0x1080, 0);
@@ -310,12 +320,15 @@ static void TestBvolCensusAndAudibleFrames() {
     core.MixInto(out.data(), 128);
     CHECK(core.FmvFramesMixedAudible() == 256);
     CHECK(Near(out[1], 0.0f));   // R gain is 0
-    CHECK(Near(out[0], 4096.0f / 32768.0f * (4096.0f / 32767.0f)));
+    CHECK(Near(out[0], 4096.0f / 32768.0f * SpuCore::ExternalInputGain(0x1000) * kChain));
 }
 
 static void TestThroughMixerPump() {
     SpuCore core;
     core.SdInit();
+    core.SetParam(0x980, 0x3FFF); core.SetParam(0xA80, 0x3FFF);
+    core.SetParam(0x981, 0x3FFF); core.SetParam(0xA81, 0x3FFF);
+    const float kGain = SpuCore::ExternalInputGain(0x7FFF) * SpuCore::MasterRegisterGain(0x3FFF) * SpuCore::ExternalInputGain(0x7FFF) * SpuCore::MasterRegisterGain(0x3FFF);
     FmvPcmInput in(8192);
     core.SetFmvInput(&in);
     core.SetParam(0xF80, 0x7FFF);
@@ -329,12 +342,12 @@ static void TestThroughMixerPump() {
     CHECK(core.FmvFramesMixed() == 800);   // one boundary = 800 frames of the movie
     CHECK(in.Queued() == 200);
     const float* out = mixer.Output();
-    CHECK(Near(out[0], 4096.0f / 32768.0f));
-    CHECK(Near(out[799 * 2 + 1], 4096.0f / 32768.0f));
+    CHECK(Near(out[0], 4096.0f / 32768.0f * kGain));
+    CHECK(Near(out[799 * 2 + 1], 4096.0f / 32768.0f * kGain));
     mixer.Pump();
     CHECK(core.FmvFramesMixed() == 1000);   // the partial 200, then silence
     out = mixer.Output();
-    CHECK(Near(out[199 * 2], 4096.0f / 32768.0f));
+    CHECK(Near(out[199 * 2], 4096.0f / 32768.0f * kGain));
     CHECK(out[200 * 2] == 0.0f);
     CHECK(out[799 * 2 + 1] == 0.0f);
     CHECK(in.Consumed() == 1000);

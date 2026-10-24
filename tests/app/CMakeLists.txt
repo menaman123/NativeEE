@@ -58,6 +58,21 @@ target_link_libraries(test_controls_bindings PRIVATE ps2r_platform_sdl)
 target_compile_options(test_controls_bindings PRIVATE -Wall -Wextra -Werror)
 add_test(NAME ControlsBindingsPressToBind COMMAND test_controls_bindings "${CMAKE_BINARY_DIR}/test_scratch/controls_bindings")
 
+# ControlsPageLiveRebind (Bernoulli): the in-game Controls page's model (ControlsPageBinding over
+# ControlsBindings + the REAL PlatformInput) under synthetic key events, no window: a landed key
+# writes bindings.ini, points ps2r.ini's input.bindings_file at it and reloads the live mapper, so
+# the rebound key samples as that PS2 button on the same pad object; Escape cancels; a key moves
+# off the row that had it.
+add_executable(test_controls_page_binding test_controls_page_binding.cpp
+    "${CMAKE_SOURCE_DIR}/app/host/controls_bindings.cpp"
+    "${CMAKE_SOURCE_DIR}/app/host/controls_page_binding.cpp"
+    "${CMAKE_SOURCE_DIR}/app/host/platform_input.cpp")
+target_include_directories(test_controls_page_binding PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(test_controls_page_binding PRIVATE ps2r_platform_sdl ps2r_core)
+target_compile_options(test_controls_page_binding PRIVATE -Wall -Wextra -Werror)
+add_test(NAME ControlsPageLiveRebind COMMAND test_controls_page_binding "${CMAKE_BINARY_DIR}/test_scratch/controls_page_binding")
+set_tests_properties(ControlsPageLiveRebind PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
+
 # DisplaySequenceSchedule (Charter 3 item 4, Bernoulli): harness.display_sequence's pure
 # parser / schedule -- mode names to the Display page's requests, malformed items skipped
 # and counted, each step submitted once at the first boundary >= its frame, the first
@@ -67,6 +82,78 @@ add_executable(test_display_sequence test_display_sequence.cpp
 target_include_directories(test_display_sequence PRIVATE ${CMAKE_SOURCE_DIR})
 target_compile_options(test_display_sequence PRIVATE -Wall -Wextra -Werror)
 add_test(NAME DisplaySequenceSchedule COMMAND test_display_sequence)
+
+# FramePacerCadence: video.frame_cap's pure pacer -- Hz60 admits at every field edge, Hz30 at
+# every other edge (a steady 33.3 ms train; a faster game's extra pictures superseded, a slower
+# game's missing ones held without re-anchoring), a late pump re-anchors once, Off admits at the
+# pump; the census row.
+add_executable(test_frame_pacer test_frame_pacer.cpp
+    "${CMAKE_SOURCE_DIR}/app/host/frame_pacer.cpp")
+target_include_directories(test_frame_pacer PRIVATE ${CMAKE_SOURCE_DIR})
+target_compile_options(test_frame_pacer PRIVATE -Wall -Wextra -Werror)
+add_test(NAME FramePacerCadence COMMAND test_frame_pacer)
+
+# MtvuStackEarlyFinish (E425/E426): the stack over a real worker + drain thread -- a staged
+# DIRECT FINISH pre-raises once at the staging call (on the staging thread), the parser's
+# consumer takes the count on the drain thread and Quiesce drains pre_raised to 0; an
+# unconsumed pre-raise HOLDS the quiesce until ResyncEarlyFinish; off = inert; a deferred
+# FrameSync declares the frame and the boundary slot's delivery presents it. Threads: serial.
+add_executable(test_mtvu_stack_early_finish test_mtvu_stack_early_finish.cpp
+    "${CMAKE_SOURCE_DIR}/app/host/mtvu_stack.cpp" "${CMAKE_SOURCE_DIR}/tests/gif/counting_gs_sink.cpp")
+target_include_directories(test_mtvu_stack_early_finish PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/tests/gif)
+target_link_libraries(test_mtvu_stack_early_finish PRIVATE ps2r_vif ps2r_dmac ps2r_gif ps2r_gs_ir ps2r_platform)
+target_compile_options(test_mtvu_stack_early_finish PRIVATE -Wall -Wextra -Werror -O2)
+add_test(NAME MtvuStackEarlyFinish COMMAND test_mtvu_stack_early_finish)
+set_tests_properties(MtvuStackEarlyFinish PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
+
+# Vu1AotCacheManifest: the AOT tier's persistent side on a temp root -- the manifest row
+# grammar round-trips, the build-id directory name is sanitised, a corpus on disk is
+# verified by the thread and its verdict published to the tier and persisted, a second
+# cache on the same root is seeded from the manifest without re-verifying, another build
+# id re-verifies, and a kick of a new image is collected (quota 1), judged and runs native.
+add_executable(test_vu1_aot_cache test_vu1_aot_cache.cpp
+    "${CMAKE_SOURCE_DIR}/app/host/vu1_aot_cache.cpp"
+    "${CMAKE_SOURCE_DIR}/app/host/vu1_aot_builder.cpp"
+    "${CMAKE_SOURCE_DIR}/app/host/vu1_aot_pack.cpp")
+add_dependencies(test_vu1_aot_cache vu1_aot_prelude_stage)
+target_include_directories(test_vu1_aot_cache PRIVATE ${CMAKE_SOURCE_DIR} ${PS2R_GENERATED_DIR})
+target_compile_options(test_vu1_aot_cache PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(test_vu1_aot_cache PRIVATE ps2r_vu)
+add_test(NAME Vu1AotCacheManifest COMMAND test_vu1_aot_cache)
+set_tests_properties(Vu1AotCacheManifest PROPERTIES TIMEOUT 60)
+
+# Vu1AotNativeCorpus: the GENERATED code against the interpreter over a corpus. For every
+# image of the given case directories: Vu1AotBuilder emits the image's blocks as C++ (into
+# a temp root under the build dir), compiles them with the host toolchain, loads the
+# library and re-verifies every case native vs interpreter (Vu1AotVerifier with the
+# exports installed). The emitted text is also checked structurally (one function per
+# block, a constexpr slot per op, the exports table). SKIP 77 when no C++ compiler is
+# found on the host or no corpus directory is given, so CI without a toolchain stays
+# green; `--keep <dir>` leaves the libraries for the bench (test_vu1_capture_replay --native).
+add_executable(test_vu1_aot_native test_vu1_aot_native.cpp
+    "${CMAKE_SOURCE_DIR}/app/host/vu1_aot_builder.cpp"
+    "${CMAKE_SOURCE_DIR}/app/host/vu1_aot_pack.cpp")
+add_dependencies(test_vu1_aot_native vu1_aot_prelude_stage)
+target_include_directories(test_vu1_aot_native PRIVATE ${CMAKE_SOURCE_DIR} ${PS2R_GENERATED_DIR})
+target_compile_options(test_vu1_aot_native PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(test_vu1_aot_native PRIVATE ps2r_vu)
+add_test(NAME Vu1AotNativeCorpus COMMAND test_vu1_aot_native ${PS2R_OG_ROOT}/vutrace_cases2)
+set_tests_properties(Vu1AotNativeCorpus PROPERTIES TIMEOUT 1800 SKIP_RETURN_CODE 77)
+
+# The pre-built VU1 library pack (app/host/vu1_aot_pack.h, tools/vu1_aot_pack): the manifest
+# grammar, the generated ABI key == the C++ computation, and -- with a corpus and a compiler --
+# a pack built from one image served native by a builder WITHOUT a compiler (SKIP 77 otherwise).
+add_executable(test_vu1_aot_pack test_vu1_aot_pack.cpp
+    "${CMAKE_SOURCE_DIR}/app/host/vu1_aot_builder.cpp"
+    "${CMAKE_SOURCE_DIR}/app/host/vu1_aot_pack.cpp")
+add_dependencies(test_vu1_aot_pack vu1_aot_prelude_stage)
+target_include_directories(test_vu1_aot_pack PRIVATE ${CMAKE_SOURCE_DIR} ${PS2R_GENERATED_DIR})
+target_compile_options(test_vu1_aot_pack PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(test_vu1_aot_pack PRIVATE ps2r_vu)
+add_test(NAME Vu1AotPackManifest COMMAND test_vu1_aot_pack)
+set_tests_properties(Vu1AotPackManifest PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
+add_test(NAME Vu1AotPackRoundTrip COMMAND test_vu1_aot_pack ${PS2R_OG_ROOT}/vutrace_cases2)
+set_tests_properties(Vu1AotPackRoundTrip PROPERTIES TIMEOUT 600 SKIP_RETURN_CODE 77)
 set_tests_properties(ControlsBindingsPressToBind PROPERTIES TIMEOUT 60)
 
 # RootFirstRunExtract (CHARTER 2 C2, Bernoulli): the first-run extraction on the actual play binary

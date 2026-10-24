@@ -38,6 +38,8 @@ public:
     void EndDrawRun(GlStateCache& st);
     bool InDrawRun() const { return in_run_; }
     uint64_t Generation() const { return generation_; }
+    // Maps issued (one per Upload that mapped the ring), for the device census.
+    uint64_t Maps() const { return maps_; }
 
 private:
     uint32_t vao_ = 0;
@@ -47,6 +49,7 @@ private:
     void* fence_ = nullptr;      // GLsync of the previous wrap
     uint64_t generation_ = 1;    // bumped on every re-specification
     bool in_run_ = false;
+    uint64_t maps_ = 0;
 };
 
 }  // namespace render

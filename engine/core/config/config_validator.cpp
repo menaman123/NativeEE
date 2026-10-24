@@ -32,7 +32,8 @@ std::vector<std::string> ConfigValidator::DegradeDependents(Config& c, bool reta
         key = false;
         notes.push_back(std::string(name) + " disabled: requires " + prerequisite);
     };
-    const bool gl = c.video.backend == VideoBackend::Gl;
+    // GL and Metal host the live video scene the Graphics producers need; Soft hosts none.
+    const bool gl = c.video.backend != VideoBackend::Soft;   // gl / metal / auto (resolved to one of them at Create)
     if (!gl) {
         off(c.hle.graphics_shadows, "hle.graphics_shadows", "video.backend=gl");
         off(c.hle.graphics_distortion, "hle.graphics_distortion", "video.backend=gl");
@@ -112,8 +113,8 @@ bool ConfigValidator::Validate(const Config& c, bool harness_window_requested, s
     if ((c.hle.graphics_shadows || c.hle.graphics_distortion || c.hle.graphics_screen || c.hle.graphics_sprites || c.hle.graphics_text || c.hle.graphics_sky ||
          c.hle.graphics_movie || c.hle.graphics_frame || c.hle.graphics_textures || c.hle.graphics_meshes ||
          c.hle.graphics_strips == GraphicsStrips::All) &&
-        c.video.backend != VideoBackend::Gl)
-        return Refuse(err, "selected Graphics producers require video.backend=gl");
+        c.video.backend == VideoBackend::Soft)
+        return Refuse(err, "selected Graphics producers require a live video backend (video.backend=gl|metal)");
     if (c.hle.graphics_meshes && !c.hle.graphics_textures)
         return Refuse(err, "hle.graphics_meshes requires hle.graphics_textures=on");
     if (c.hle.audio_mix && (!c.hle.music || !c.hle.movie_lifecycle || c.iop.dispatch != IopDispatch::Frame))
@@ -128,6 +129,10 @@ bool ConfigValidator::Validate(const Config& c, bool harness_window_requested, s
                            "interleave a VU1 worker)");
     if (c.engine.mtvu_depth < 1)
         return Refuse(err, "engine.mtvu_depth must be >= 1");
+    if (c.video.capture_wait_ms < 0 || c.video.capture_wait_ms > 16)
+        return Refuse(err, "video.capture_wait_ms must be in 0..16 (0 = the picture is read back one present late)");
+    if (c.engine.mtvu_depth_hold < 0 || c.engine.mtvu_depth_hold > c.engine.mtvu_depth)
+        return Refuse(err, "engine.mtvu_depth_hold must be 0 (off) or 1..engine.mtvu_depth");
     if (!InRange(c.video.scale, 0, 4))
         return Refuse(err, "video.scale must be in 0..4 (0 = native window)");
     if (c.video.anisotropy != 1 && c.video.anisotropy != 2 && c.video.anisotropy != 4 &&
@@ -256,7 +261,10 @@ bool ConfigValidator::Validate(const Config& c, bool harness_window_requested, s
         // "<frame>:<mode>[,<frame>:<mode>...]", frame > 0, mode one of the Display
         // page's requests (the composition root's DisplaySequence names the same set).
         static const char* const kModes[] = {"windowed", "fullscreen", "borderless", "scale1", "scale2", "scale3", "scale4",
-                                             "vsync", "novsync"};
+                                             "vsync", "novsync", "aspect_auto", "aspect_4_3", "aspect_16_9", "aspect_16_10",
+                                             "aspect_21_9", "filter_title", "filter_point", "filter_bilinear", "filter_trilinear",
+                                             "aniso1", "aniso2", "aniso4", "aniso8", "aniso16", "overlay", "nooverlay", "rate60",
+                                             "ratedisplay", "capoff", "cap30", "cap60", "kbm", "nokbm"};
         std::string rest = c.harness.display_sequence;
         while (!rest.empty()) {
             const size_t comma = rest.find(',');
@@ -269,10 +277,19 @@ bool ConfigValidator::Validate(const Config& c, bool harness_window_requested, s
                 const std::string mode = item.substr(colon + 1);
                 ok = false;
                 for (const char* name : kModes) ok = ok || mode == name;
+                // volume0..volume100: the Sound page's slider.
+                if (!ok && mode.size() > 6 && mode.size() <= 9 && mode.compare(0, 6, "volume") == 0) {
+                    ok = true;
+                    int v = 0;
+                    for (size_t i = 6; i < mode.size() && ok; ++i) { ok = mode[i] >= '0' && mode[i] <= '9'; v = v * 10 + (mode[i] - '0'); }
+                    ok = ok && v <= 100;
+                }
             }
             if (!ok)
                 return Refuse(err, "harness.display_sequence must be <frame>:<mode>[,...] with frame > 0 and mode one of "
-                                   "windowed|fullscreen|borderless|scale1..scale4|vsync|novsync (e.g. 300:borderless,600:windowed)");
+                                   "windowed|fullscreen|borderless|scale1..scale4|vsync|novsync|aspect_<auto|4_3|16_9|16_10|21_9>|"
+                                   "filter_<title|point|bilinear|trilinear>|aniso<1|2|4|8|16>|overlay|nooverlay|rate60|ratedisplay|"
+                                   "capoff|cap30|cap60|kbm|nokbm|volume<0..100> (e.g. 300:borderless,600:windowed)");
         }
     }
     if (c.harness.live_pad_probe) {

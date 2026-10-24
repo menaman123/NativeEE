@@ -92,8 +92,8 @@ DiscVerify::Report DiscVerify::Verify(const std::string& image, const std::strin
         if (r.found_serial.empty()) {
             r.state = State::NoTitle;
             r.message = "No PlayStation 2 title found on this disc image (volume '" + r.volume_id +
-                        "'): the root carries no SLUS_123.45 and no other title identifier. This build runs Crash "
-                        "the title, SLUS-12345 (NTSC-U).";
+                        "'): the root carries no " + serial + " and no other title identifier. This build runs " +
+                        serial + " (" + RegionOf(serial) + ").";
             return r;
         }
         r.state = State::WrongRegion;
@@ -105,7 +105,7 @@ DiscVerify::Report DiscVerify::Verify(const std::string& image, const std::strin
                         " -- this binary recompiles " + serial + " (" + ours_region + "); another region's ELF cannot run on it.");
         else
             r.message = "Wrong disc: the image carries " + r.found_serial + " (" + r.region + "), not " + serial +
-                        " (the title, " + ours_region + ").";
+                        " (this build's title, " + ours_region + ").";
         return r;
     }
     r.found_serial = StripVersion(elf.name);
@@ -139,7 +139,7 @@ DiscVerify::Report DiscVerify::Verify(const std::string& image, const std::strin
         return r;
     }
     r.state = State::Ok;
-    r.message = "the title " + serial + " (" + r.region + ") verified: ELF SHA-256 matches this build (" +
+    r.message = "Disc " + serial + " (" + r.region + ") verified: ELF SHA-256 matches this build (" +
                 std::to_string(elf.size) + " bytes); volume '" + r.volume_id + "', " +
                 std::to_string(r.image_bytes >> 20) + " MB" + (r.raw_sectors ? ", raw 2352-byte sectors" : "") + ".";
     return r;

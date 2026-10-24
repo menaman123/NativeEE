@@ -19,6 +19,9 @@
 #include <cstdint>
 #include <vector>
 
+#include "engine/gs/hle/ir/alpha_fail_mask.h"
+#include "engine/gs/hle/ir/halfword_shuffle.h"
+#include "engine/gs/hle/ir/vertex_rec.h"
 #include "engine/render/backend.h"
 #include "engine/render/backends/gl/gpu_vertex.h"
 #include "engine/render/texture_filter_selection.h"
@@ -41,6 +44,9 @@ public:
     // Pure helpers (unit-testable without a context).
     static uint32_t Fbmsk16From32(uint32_t m);
     static bool Fbmsk16Exact(uint32_t fbmsk16);
+    // A 32-bit FRAME.FBMSK with a byte that is neither fully open nor fully masked:
+    // glColorMask cannot express it, the shader merges it against the Cd copy.
+    static bool Fbmsk32Partial(uint32_t fbmsk);
     static bool RouteRtBlend(const gs::DrawIr& ir, bool using_rt, bool fbmsk16_exact);
     static void SelectFilters(bool mag_linear, uint8_t mmin, uint8_t levels, uint32_t* mag,
                               uint32_t* min);
@@ -70,21 +76,31 @@ private:
         bool alpha_blend = false;
         uint32_t fbmsk16 = 0;
         bool fbmsk16_exact = false;
+        bool fbmsk32_exact = false;   // 32-bit frame, sub-byte mask: the shader merge
         bool route_rt_blend = false;
         bool idx_self_serve = false;
         bool wrap_route = false;
         bool needs_rt_copy = false;
-        bool sw_blend_active = false;
+        bool sw_blend_active = false;   // the destination copy is bound on unit 1
+        bool ff_with_copy = false;      // ... but the blend itself is fixed-function (DATE reads the copy)
+        bool reads_cd_rgb = true;       // the copy's RGB is consumed (false: alpha-only read = DATE)
+        bool wrote_alpha = true;        // the colour mask included A (conservative default)
         int copy_x = 0, copy_y = 0, copy_w = 0, copy_h = 0;
         bool cd_copied = false;
         Rect cd_rect;
         float bb_tri[4] = {0, 0, 0, 0};
         float bb_all[4] = {0, 0, 0, 0};
         bool bb_valid = false;
+        gs::AlphaFailMask::Result afail;   // the alpha test's static write mask for this draw
     };
 
     DrawResult DrawStripCount(const gs::DrawIr& ir, const gs::TextureSource& tex, const DrawParams& p);
     DrawResult DrawInvert(const gs::DrawIr& ir, const gs::TextureSource& tex, const DrawParams& p);
+    // The 16-bit column pass over a 32-bit image as one full-extent half-word copy
+    // (HalfwordShuffle::Detect accepted the draw); drew = false when the source or the
+    // destination copy is unavailable (the caller falls back to the companion route).
+    DrawResult DrawHalfwordShuffle(const gs::DrawIr& ir, const gs::TextureSource& tex, const DrawParams& p,
+                                   const gs::HalfwordShuffle::Op& op);
     bool BindTarget(const gs::DrawIr& ir, const DrawParams& p, Step& s);
     void FrameClear(const DrawParams& p);
     void BindTextures(const gs::TextureSource& tex, const DrawParams& p, Step& s);
@@ -95,15 +111,17 @@ private:
     void ClassifyRoutes(const gs::DrawIr& ir, const gs::TextureSource& tex, const DrawParams& p,
                         Step& s);
     void CdCopy(const DrawParams& p, Step& s);
-    void BlendAbcdUniforms(const gs::DrawIr& ir, const DrawParams& p);
+    void BlendAbcdUniforms(const gs::DrawIr& ir, const DrawParams& p, bool force = false);
     void BlendState(const gs::DrawIr& ir, const DrawParams& p, Step& s);
     void DepthState(const gs::DrawIr& ir, const DrawParams& p, const Step& s);
     void ScissorState(const gs::DrawIr& ir, const Step& s);
-    void ColorMaskState(const gs::DrawIr& ir, const Step& s);
+    // Returns whether the mask written includes ALPHA.
+    bool ColorMaskState(const gs::DrawIr& ir, const Step& s);
     DrawResult MakeResult(const gs::DrawIr& ir, const DrawParams& p, const Step& s) const;
 
     GlDevice& dev_;
     std::vector<GpuVertex> scratch_;
+    std::vector<gs::VertexRec> thin_scratch_;   // PrimExpand output for point / line draws
 };
 
 }  // namespace render

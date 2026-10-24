@@ -49,4 +49,12 @@ void SysmemModule::Kprintf(IopContext& ctx) {
     ctx.gpr[2] = 0;
 }
 
+void SysmemModule::QueryMemSize(IopContext& ctx) { ctx.gpr[2] = IopMemory::kSize; }
+
+void SysmemModule::QueryTotalFreeMemSize(IopContext& ctx) { ctx.gpr[2] = heap_.QueryMaxFree(); }
+
+void SysmemModule::QueryBlockTopAddress(IopContext& ctx) { ctx.gpr[2] = ctx.gpr[4]; }
+
+void SysmemModule::QueryBlockSize(IopContext& ctx) { ctx.gpr[2] = heap_.BlockSize(ctx.gpr[4]); }
+
 }  // namespace ps2r::iop::hle

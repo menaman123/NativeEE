@@ -97,7 +97,7 @@ public:
     void Write(std::FILE* f) const;
     // The retained window / CLUT bytes of the last frame's reads as
     // <dir>/<prefix><draw_seq>_win.bin and _clut.bin, and the bound texture's level 0
-    // as <prefix><draw_seq>_tex.ppm (P6, the GPU alpha dropped). Returns files written.
+    // as <prefix><draw_seq>_tex.ppm (P6) + _tex_alpha.pgm (P5, the stored alpha byte). Returns files written.
     uint32_t WriteBytes(const std::string& dir, const std::string& prefix) const;
     static const char* OutcomeName(Outcome o);
 

@@ -7,7 +7,11 @@
 //   RpcServiceLoop (sceSifRpcLoop). Under REALTIME the EE then waits on a
 //   condvar for the completion ticket while the IopHostThread runs the body;
 //   under FRAME the EE thread itself drives IopKernel::Dispatch() (with forced
-//   virtual-clock advances) until the ticket completes.
+//   virtual-clock advances) until the ticket completes. One queue PER
+//   RPC-dispatch thread (sceSifSetRpcQueue binds a queue to a thread; a module
+//   may serve several server ids from several threads): RunOnRpcThread(body,
+//   tid) targets that thread's queue, RpcServiceLoop drains the running
+//   thread's. The tid-less form uses the table's default RPC tid.
 //
 //   IOP -> EE: a guest worker marshalling to the EE's RPC server parks in
 //   Wait::Rpc with a deadline (WaitEeReplyUs); the EE services the request at
@@ -30,6 +34,7 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <map>
 #include <mutex>
 
 namespace ps2r::iop {
@@ -64,8 +69,10 @@ public:
     // EE side: enqueue `body` for the RPC thread, wake it, wait for completion.
     // False on a stall (bounded; the EE proceeds regardless) or shutdown.
     bool RunOnRpcThread(std::function<void()> body);
+    // The same for the RPC thread `tid` (its own queue).
+    bool RunOnRpcThread(std::function<void()> body, int tid);
 
-    // Kernel side: the sceSifRpcLoop body of the module's RPC thread.
+    // Kernel side: the sceSifRpcLoop body of the running RPC thread (drains that thread's queue).
     void RpcServiceLoop();
 
     // Kernel side: park the calling worker until the EE services its marshal
@@ -78,15 +85,25 @@ public:
 
     uint64_t Submitted() const;
     uint64_t Completed() const;
+    // Savestate restore: drops every queued body and the parked EE-wait tid (a
+    // restored image is taken with no round trip in flight). The totals stay.
+    void ResetQueues();
     uint64_t Stalls() const { return stalls_.load(std::memory_order_acquire); }
 
 private:
     bool DriveUntil(const std::function<bool()>& pred);
 
+    struct Queue {
+        std::deque<std::function<void()>> bodies;
+        uint64_t submitted = 0;
+        uint64_t completed = 0;
+    };
+    Queue& QueueFor(int tid);   // under m_
+
     IopKernel& kernel_;
     mutable std::mutex m_;
     std::condition_variable cv_;
-    std::deque<std::function<void()>> queue_;
+    std::map<int, Queue> queues_;   // keyed by RPC-dispatch tid
     uint64_t submitted_ = 0;
     uint64_t completed_ = 0;
     std::atomic<int> rpc_tid_{0};

@@ -17,9 +17,12 @@
 //   +0x08..0x13 pressure bytes (right left up down tri circ cross square
 //         l1 r1 l2 r2): 0xFF for a closed contact, 0 otherwise -- the title's
 //         per-control reader consumes face/d-pad state from THESE
+//   +0x30..0x37 the actuator table [actno][term-1] (scePadInfoAct: func,
+//         sub, size, curr): small motor 01 02 00 0A, big motor 01 01 01 14
+//   +0x50 u16 mode table (scePadInfoMode CURTABLE): 4 standard, 7 analog
 //   +0x58 u32 seq                +0x60 length 0x20 (scePadRead byte count)
 //   +0x64 modeConfig 2  +0x65 modeCurId 0x73  +0x66 model 2
-//   +0x68 nrOfModes 0x10  +0x6A nrOfActuators 0x10
+//   +0x68 nrOfModes 2  +0x69 modeCurOffs 1 (analog)  +0x6A nrOfActuators 2
 //   +0x70 state  +0x71 reqState  +0x72 currentTask  +0x76 0x10
 //   +0x79..0x7C button mask bytes FF FF 03 00 (scePadGetButtonMask = 0x3FFFF)
 //
@@ -60,6 +63,10 @@ public:
     static constexpr uint8_t kReqBusy = 0x02, kReqComplete = 0x00;
     static constexpr uint8_t kModeAnalog = 0x79, kModeCurIdAnalog = 0x73;
     static constexpr uint32_t kButtonMask = 0x3FFFF;
+    static constexpr uint32_t kActuators = 2, kModeCount = 2;
+    static constexpr uint8_t kModeCurOffset = 1;
+    static constexpr uint8_t kActuatorTable[kActuators][4] = {{0x01, 0x02, 0x00, 0x0A}, {0x01, 0x01, 0x01, 0x14}};
+    static constexpr uint16_t kModeTable[kModeCount] = {0x0004, 0x0007};
 
     enum class Stage : uint8_t { Disconn = 0, Config = 1, Ready = 2 };
 

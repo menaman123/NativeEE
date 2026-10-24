@@ -18,7 +18,11 @@ uint64_t SifRpcBridge::Completed() const {
     return completed_;
 }
 
-bool SifRpcBridge::RunOnRpcThread(std::function<void()> body) {
+SifRpcBridge::Queue& SifRpcBridge::QueueFor(int tid) { return queues_[tid]; }
+
+bool SifRpcBridge::RunOnRpcThread(std::function<void()> body) { return RunOnRpcThread(std::move(body), RpcTid()); }
+
+bool SifRpcBridge::RunOnRpcThread(std::function<void()> body, int tid) {
     if (kernel_.OnKernelThread()) {
         body();   // a kernel-context caller runs inline
         return true;
@@ -26,16 +30,17 @@ bool SifRpcBridge::RunOnRpcThread(std::function<void()> body) {
     uint64_t ticket = 0;
     {
         std::lock_guard<std::mutex> lk(m_);
-        queue_.push_back(std::move(body));
-        ticket = ++submitted_;
+        Queue& q = QueueFor(tid);
+        q.bodies.push_back(std::move(body));
+        ticket = ++q.submitted;
+        ++submitted_;
     }
-    const int tid = RpcTid();
     if (tid > 0) kernel_.iWakeupThread(tid);
     if (host_wake_) host_wake_();
 
     auto done = [&] {
         std::lock_guard<std::mutex> lk(m_);
-        return completed_ >= ticket;
+        return QueueFor(tid).completed >= ticket;
     };
     if (frame_drive_) {
         const bool completed = DriveUntil(done);
@@ -58,8 +63,8 @@ bool SifRpcBridge::RunOnRpcThread(std::function<void()> body) {
         {
             std::unique_lock<std::mutex> lk(m_);
             if (cv_.wait_for(lk, std::chrono::milliseconds(2),
-                             [&] { return completed_ >= ticket || kernel_.IsShutdown(); })) {
-                return completed_ >= ticket;   // false = shutdown
+                             [&] { return QueueFor(tid).completed >= ticket || kernel_.IsShutdown(); })) {
+                return QueueFor(tid).completed >= ticket;   // false = shutdown
             }
         }
         if (ee_service_poll_) ee_service_poll_();
@@ -95,20 +100,30 @@ bool SifRpcBridge::DriveUntil(const std::function<bool()>& pred) {
 void SifRpcBridge::RpcServiceLoop() {
     // Runs on the module's RPC-dispatch coroutine. Commands arrive as banked
     // wakeups, so a wake posted mid-body is consumed by the next SleepThread --
-    // no lost-command window.
+    // no lost-command window. The queue drained is the running thread's own;
+    // a body submitted to the default tid (0: no queue bound yet) is also
+    // served by whichever RPC thread wakes.
+    const int self = kernel_.CurrentTid();
     for (;;) {
         kernel_.SleepThread();
         for (;;) {
             std::function<void()> body;
+            int from = self;
             {
                 std::lock_guard<std::mutex> lk(m_);
-                if (queue_.empty()) break;
-                body = std::move(queue_.front());
-                queue_.pop_front();
+                Queue* q = &QueueFor(self);
+                if (q->bodies.empty() && self != RpcTid()) {
+                    q = &QueueFor(RpcTid());
+                    from = RpcTid();
+                }
+                if (q->bodies.empty()) break;
+                body = std::move(q->bodies.front());
+                q->bodies.pop_front();
             }
             if (body) body();
             {
                 std::lock_guard<std::mutex> lk(m_);
+                QueueFor(from).completed++;
                 completed_++;
             }
             cv_.notify_all();
@@ -130,6 +145,13 @@ void SifRpcBridge::NotifyEeReply() {
         kernel_.iWakeupIfRpcWait(tid);   // a parkee past its deadline is no longer in Wait::Rpc: dropped
         if (host_wake_) host_wake_();
     }
+}
+
+void SifRpcBridge::ResetQueues() {
+    std::lock_guard<std::mutex> lk(m_);
+    for (auto& kv : queues_) kv.second.bodies.clear();
+    ee_wait_tid_.store(0, std::memory_order_release);
+    cv_.notify_all();
 }
 
 }  // namespace ps2r::iop

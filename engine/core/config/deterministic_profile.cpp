@@ -31,17 +31,25 @@
 namespace ps2r {
 
 void DeterministicProfile::Apply(Config& c) {
+    c.video.backend = VideoBackend::Gl;   // the lanes' arm: auto never picks per host here
     c.video.scale = 1;
     c.video.texture_filter = TextureFilterSel::Title;   // the title's own sampler choice: lanes identical
     c.video.anisotropy = 1;
     c.video.interp = false;
     c.video.fps_cap = 0;
     c.video.vsync = false;
+    c.video.capture_wait_ms = 0;          // the deferred present capture (round 5: no window in the oracle lanes anyway)
+    c.video.present_relax = false;        // the round-3 presenter train (round 5)
     c.cdvd.latency_model = CdvdLatencyModel::Instant;
     c.cdvd.latency_scale = 0.0;
     c.cdvd.mc_latency_polls = 0;
     c.cdvd.load_turbo = false;
     c.engine.mtvu = false;
+    c.engine.mtvu_depth_hold = 0;         // no hold cap: the oracle lanes run no worker (round 5)
+    c.engine.mtvu_early_finish = false;   // the parser-raised FINISH: the oracle lanes' schedule (inert without a worker anyway)
+    c.engine.mtvu_wait_probe = false;     // the observation point idles on the worker unconditionally (inert without a worker)
+    c.engine.ee_yield_spin_gate = false;   // every trip a field: the frozen oracles' field schedule (E432 pinned off)
+    c.engine.cop0_count = true;            // the COP0 Count register advances as on the console: the oracle bases are frozen with it (gsc_h600_cop0, finalize5)
     c.engine.pacing = Pacing::Freerun;
     c.engine.time_regime_pin = 1;
     c.time.tick_sync = true;
@@ -49,6 +57,7 @@ void DeterministicProfile::Apply(Config& c) {
     c.time.t0_tickpaced = true;
     c.time.maint_eepaced = true;
     c.iop.dispatch = IopDispatch::Frame;
+    c.audio.interpolation = AudioInterpolation::Linear;   // the audio lane's hashes are cut with the 2-tap resampler
     c.hle.startup = StartupMode::Retained;   // the IOP oracle arm: lanes identical, STREAM.IRX booted
     c.game.rtc_fixed = true;
     c.ui.gui_open = false;

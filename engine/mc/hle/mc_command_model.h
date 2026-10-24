@@ -55,6 +55,7 @@ public:
         kCmdGetDir = 0xD,
         kCmdDelete = 0xF,
         kCmdFormat = 0x10,
+        kCmdGetEntSpace = 0x12,
     };
     static constexpr int32_t kErrNotReady = -100;   // subsystem not bound
     static constexpr int32_t kResChangedFormatted = -1;
@@ -62,6 +63,10 @@ public:
     static constexpr int32_t kCardTypePs2 = 2;
     static constexpr int32_t kCardFormatted = 1;
     static constexpr int32_t kFreeClusters = 0x1F00;
+    // A 1 KiB cluster holds two 512-byte directory entries: what sceMcGetEntSpace
+    // reports for a directory of the fresh card (free clusters x entries per cluster).
+    static constexpr int32_t kDirEntriesPerCluster = 2;
+    static constexpr int32_t kFreeDirEntries = kFreeClusters * kDirEntriesPerCluster;
     static constexpr int kPorts = 2, kSlots = 2;
 
     struct GetInfoResult {

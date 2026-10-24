@@ -25,8 +25,9 @@ public:
         // video.fullscreen (0 windowed, 1 fullscreen, 2 borderless), video.scale
         // (0 = native window, 1..4), video.vsync (0/1), video.aspect (the
         // AspectSel order: 0 auto, 1 4:3, 2 16:9, 3 16:10, 4 21:9) and
-        // video.render_rate (0 = 60, 1 = display).
-        SetDisplayMode, SetScale, SetVSync, SetAspect, SetRenderRate,
+        // video.render_rate (0 = 60, 1 = display) and video.frame_cap (the presented-
+        // frame cadence: 0 off, 1 30, 2 60 -- FramePacer).
+        SetDisplayMode, SetScale, SetVSync, SetAspect, SetRenderRate, SetFrameCap,
         // The Display page's texture filtering rows (video.texture_filter: the
         // mode's index title|point|bilinear|trilinear; video.anisotropy: 1|2|4|8|16):
         // applied to the owned textures' samplers from the next draw, persisted.
@@ -52,6 +53,9 @@ public:
         // second (60 when the game keeps wall speed) and frames presented per second.
         uint32_t game_hz = 0;
         uint32_t render_fps = 0;
+        // The presenter's doubled frames so far (FramePacer census: a shown picture > 1.2
+        // fields after the previous) -- the F1 menu's live pacing readout.
+        uint64_t doubled_frames = 0;
         bool paused = false;
         int volume_percent = 100;
         bool fullscreen = false;
@@ -72,10 +76,12 @@ public:
         int scale = 1;
         int aspect = 0;
         int render_rate = 0;
+        int frame_cap = 2;   // video.frame_cap's index (0 off, 1 30, 2 60)
         // video.texture_filter (the mode index) and video.anisotropy in force.
         int texture_filter = 0;
         int anisotropy = 1;
         std::string input_name;
+        std::string renderer;   // the video backend in force ("metal (auto): Apple M4"), from the title's leg
         std::string recording_path;
         std::string restore_path;
         std::string reproductions_path;   // the folder F5 writes into and the browser lists
@@ -98,6 +104,11 @@ public:
         RuntimeState runtime;
         bool menu_open = false;
         bool closing = false;
+        // The pause-menu shape (SetPauseMenu): Escape opens the menu and pauses
+        // the game instead of closing the window; `menu_paused` = the menu holds
+        // a pause it will release on Resume.
+        bool pause_menu = false;
+        bool menu_paused = false;
         std::string restore_path;
         std::vector<Result> pending;
         std::vector<Result> recent;
@@ -144,6 +155,14 @@ public:
     bool SelectRestorePath(std::string path);
     Snapshot Read() const;
     bool MenuOpen() const;
+    // The pause-menu shape (the composition's choice, main thread before the
+    // pump): Escape = open the menu + pause (SessionGui), the panel offers Resume
+    // / Quit. Off (the default) keeps Escape = the window close. `MenuPaused` is
+    // the GUI's note that the menu issued the pause it must release on Resume.
+    void SetPauseMenu(bool on);
+    bool PauseMenu() const;
+    void SetMenuPaused(bool paused);
+    bool MenuPaused() const;
     static const char* ActionLabel(Action action);
     static const char* PhaseLabel(Phase phase);
 
@@ -166,6 +185,8 @@ private:
     uint64_t next_id_ = 1;
     bool menu_open_ = false;
     bool closing_ = false;
+    bool pause_menu_ = false;
+    bool menu_paused_ = false;
 };
 
 }  // namespace ps2r::app

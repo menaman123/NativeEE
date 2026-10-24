@@ -1,7 +1,10 @@
 // gs/hle/classrdr/draw_pipeline.cpp -- the per-draw order and the job entry points.
 #include "engine/gs/hle/classrdr/draw_pipeline.h"
 
+#include <chrono>
+
 #include "engine/gs/hle/classrdr/texture_shuffle_snap.h"
+#include "engine/gs/hle/ir/prim_expand.h"
 #include "engine/gs/hle/targets/target_dims.h"
 
 namespace ps2r {
@@ -62,9 +65,12 @@ bool DrawPipeline::ArmZsrc(const DrawIr& ir, render::DrawParams* params) {
 
 bool DrawPipeline::Draw(const DrawIr& ir, const char* name_override) {
     bool native = false;
+    const bool dump = target_dump_.Armed();
+    if (dump) target_dump_.OnPreDraw(ir, *d_.cache, *d_.be, draw_seq_);
     if (d_.registry) native = d_.registry->Dispatch(*this, ir, name_override);
     if (!native) DrawGeneric(ir);
     if (d_.registry) d_.registry->ClearCurrentClass();
+    if (dump) target_dump_.OnPostDraw(ir, *d_.cache, *d_.be, draw_seq_);
     return native;
 }
 
@@ -81,25 +87,48 @@ void DrawPipeline::SameBufferPreDrawFlush(const DrawIr& ir) {
     same_buffer_flushes_++;
 }
 
-// A draw into the scanout target that samples a DIFFERENT live target marks that
-// source as composite-consumed: its per-frame clear is keyed on the consumption.
-void DrawPipeline::MarkCompositeConsumption(const DrawIr& ir) {
-    if (!ir.tex_enabled) return;
+// A draw into the scanout target that samples a DIFFERENT live target's COLOUR in
+// its own class marks that source as composite-consumed: its per-frame clear is
+// keyed on the consumption. E330: a 16-bit or indexed VIEW of 32-bit content, or a
+// 16-bit FRAME over the scanout's 32-bit content (the companion route), is a channel
+// shuffle, not a composite -- a double-buffered title writes the DISPLAYED buffer
+// that way mid-frame (RenderTarget::IsCompositeRead).
+void DrawPipeline::MarkCompositeConsumption(const DrawIr& ir, bool alt16_route) {
+    if (!ir.tex_enabled || alt16_route) return;
     if (ir.raster.frame.fbp != d_.scanout->ScanoutFbp()) return;
     if (ir.tex.tbp == ir.raster.frame.fbp) return;
-    if (RenderTarget* src = d_.cache->Find(ir.tex.tbp)) src->MarkCompositeConsumed();
+    RenderTarget* src = d_.cache->Find(ir.tex.tbp);
+    if (!src) return;
+    if (!RenderTarget::IsCompositeRead(static_cast<uint8_t>(ir.tex.psm), src->identity.has_32bit_content)) return;
+    src->MarkCompositeConsumed();
 }
 
 render::DrawResult DrawPipeline::DrawGeneric(const DrawIr& ir) { return DrawGeneric(ir, PrepareOptions()); }
 
+uint64_t DrawPipeline::NowNs() {
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+            .count());
+}
+
 render::DrawResult DrawPipeline::DrawGeneric(const DrawIr& ir, const PrepareOptions& opt) {
     render::DrawResult res;
     Prepared pr;
+    // The draw's cost bracket (the route trace's attribution): the census is a
+    // snapshot by value (the backend's own counters move under the bracket).
+    const bool traced = route_trace_.Armed();
+    const uint64_t t0 = traced ? NowNs() : 0;
+    const render::CallCensus* census = traced ? d_.be->Census() : nullptr;
+    const render::CallCensus c0 = census ? *census : render::CallCensus{};
     if (!Prepare(ir, &pr, opt)) return res;
     // 6. draw.
     res = d_.be->Draw(ir, pr.src, pr.params);
     Finish(ir, pr, res);
-    route_trace_.Note(ir, pr.src, res, static_cast<uint32_t>(draw_seq_));
+    if (traced) {
+        const DrawRouteTrace::Cost cost =
+            DrawRouteTrace::Cost::Delta(census ? &c0 : nullptr, census, NowNs() - t0);
+        route_trace_.Note(ir, pr.src, res, static_cast<uint32_t>(draw_seq_), cost);
+    }
     return res;
 }
 
@@ -107,7 +136,9 @@ bool DrawPipeline::Prepare(const DrawIr& ir, Prepared* pr, const PrepareOptions&
     // The sequence hook precedes the guards (a 2-vertex or FBW-0 draw into the
     // armed accumulator still materialises it) -- after the reference's vCount < 2.
     if (opt.run_hook && ir.verts.size() >= 2) SequencePreDraw(ir);
-    if (ir.verts.size() < 3 || ir.raster.frame.fbw == 0) return false;
+    // A point draws from 1 vertex, a line from 2 (PrimExpand widens them in the
+    // backend); the triangle / sprite types still need 3.
+    if (ir.verts.size() < PrimExpand::MinVerts(ir.prim_type) || ir.raster.frame.fbw == 0) return false;
     // 1. render size.
     TargetDims::Display disp;
     disp.scanout_fbp = d_.scanout->ScanoutFbp();
@@ -135,7 +166,7 @@ bool DrawPipeline::Prepare(const DrawIr& ir, Prepared* pr, const PrepareOptions&
     params.render_h = render_h;
     params.inherited_uniforms = opt.inherited_uniforms;
     ArmZsrc(ir, &params);
-    MarkCompositeConsumption(ir);
+    MarkCompositeConsumption(ir, params.alt16_route);
     // 5. texture (the caller's own source when it bypasses the resolver).
     TextureSource src;
     if (opt.resolve_texture) {
@@ -210,11 +241,84 @@ void DrawPipeline::OnSyncAll() {
     d_.cache->SyncAll();
 }
 
+void DrawPipeline::ClearFrame(Frame* out) {
+    out->rgba.clear();
+    out->w = out->h = 0;
+    out->grabbed = false;
+    out->source = ScanoutComposer::Source::None;
+    out->source_fbp = kNoFbp;
+    out->source_fallback = false;
+}
+
+bool DrawPipeline::CompletePendingGrab(Frame* out) {
+    if (!pending_grab_.valid) return false;
+    const PendingGrab pg = pending_grab_;
+    pending_grab_ = PendingGrab{};
+    ClearFrame(out);
+    out->rgba.assign(static_cast<size_t>(pg.w) * pg.h * 4, 0);
+    if (!d_.be->PollReadback(pg.fence, out->rgba.data(), static_cast<size_t>(pg.w) * 4)) {
+        out->rgba.clear();
+        return true;   // the fence was unknown (a device reset): no grab for that frame
+    }
+    out->w = pg.w;
+    out->h = pg.h;
+    out->grabbed = true;
+    out->source = pg.source;
+    out->source_fbp = pg.source_fbp;
+    out->source_fallback = pg.source_fallback;
+    return true;
+}
+
+void DrawPipeline::DropPendingGrab() {
+    if (!pending_grab_.valid) return;
+    d_.be->PollReadback(pending_grab_.fence, nullptr, 0);   // releases the staging buffer
+    pending_grab_ = PendingGrab{};
+}
+
 void DrawPipeline::FrameEndGrab(bool ee_frame_end, Frame* out) {
-    route_trace_.OnFrameEnd();
-    if (d_.resolver) d_.resolver->Trace().OnFrameEnd();
+    frame_end_t0_ = NowNs();
+    const render::CallCensus* census = d_.be->Census();
+    frame_end_census_ = census ? *census : render::CallCensus{};
+    // The previous present's deferred scanout deposit lands first (one frame late at
+    // most): the GPU had the whole frame to finish its read.
+    d_.cache->FlushDeferred();
+    target_dump_.OnFrameEnd();
+    if (d_.resolver) {
+        d_.resolver->Trace().OnFrameEnd();
+        d_.resolver->RollWarmWindow(frame_end_t0_);
+    }
+    RollWarmWindow(frame_end_t0_);
     if (ee_frame_end) d_.presenter->MarkEeFrameEnd();
     d_.cache->FlushPending(PendingRtSyncLedger::Reason::Present, 0, 0, /*reader_pages_only=*/true);
+    if (out && deferred_grab_) {
+        // A grab still pending here was never completed by the caller: drop it (the
+        // caller completes before it asks for the next one).
+        DropPendingGrab();
+        ClearFrame(out);
+        render::FenceId fence{};
+        int w = 0, h = 0;
+        const bool ok = d_.presenter->BeginGrab(&fence, &out->rgba, &w, &h, d_.vram);
+        if (!ok || w <= 0 || h <= 0) {
+            ClearFrame(out);
+        } else if (fence.id) {
+            out->rgba.clear();
+            pending_grab_.valid = true;
+            pending_grab_.fence = fence;
+            pending_grab_.w = w;
+            pending_grab_.h = h;
+            pending_grab_.source = d_.scanout->LastGrabSource();
+            pending_grab_.source_fbp = d_.scanout->LastGrabFbp();
+            pending_grab_.source_fallback = d_.scanout->LastGrabFallback();
+        } else {
+            out->w = w;
+            out->h = h;
+            out->grabbed = true;
+            out->source = d_.scanout->LastGrabSource();
+            out->source_fbp = d_.scanout->LastGrabFbp();
+            out->source_fallback = d_.scanout->LastGrabFallback();
+        }
+        return;
+    }
     if (out) {
         out->rgba.clear();
         out->w = out->h = 0;
@@ -229,23 +333,103 @@ void DrawPipeline::FrameEndGrab(bool ee_frame_end, Frame* out) {
             out->source = ScanoutComposer::Source::None;
             out->source_fbp = kNoFbp;
             out->source_fallback = false;
+        } else if (out->source == ScanoutComposer::Source::Target) {
+            // The grab just read the whole attachment: the scanout deposit that
+            // follows (DrawScanout -> SyncDrawn) takes its rows from it instead of a
+            // second GPU read; revoked after the present (OnFrameEnd).
+            if (const RenderTarget* t = d_.cache->Find(out->source_fbp))
+                d_.cache->Readback().OfferPixels(t->views.color, out->w, out->h, &out->rgba);
         }
     }
+}
+
+// One frame end on the consumer thread: the backend census and the draw ordinal
+// since the previous frame end land in the current 1 s window; every whole
+// second since the first call closes a window.
+void DrawPipeline::RollWarmWindow(uint64_t now_ns) {
+    constexpr uint64_t kSecond = 1000000000ull;
+    if (warm_window_start_ns_ == 0) {
+        warm_window_start_ns_ = now_ns;
+    } else {
+        while (now_ns - warm_window_start_ns_ >= kSecond && warm_done_.size() < kWarmWindowsMax) {
+            warm_done_.push_back(warm_cur_);
+            warm_cur_ = WarmWindow{};
+            warm_window_start_ns_ += kSecond;
+        }
+    }
+    warm_cur_.frames++;
+    warm_cur_.draws += static_cast<uint32_t>(draw_seq_ - warm_last_draw_seq_);
+    warm_last_draw_seq_ = draw_seq_;
+    const render::CallCensus* census = d_.be->Census();
+    if (census) {
+        if (warm_have_census_) {
+            const render::CallCensus& a = warm_last_census_;
+            const render::CallCensus& b = *census;
+            auto d32 = [](uint64_t x, uint64_t y) { return static_cast<uint32_t>(y >= x ? y - x : 0); };
+            warm_cur_.draw_calls += d32(a.draw_calls, b.draw_calls);
+            warm_cur_.uploads += d32(a.uploads, b.uploads);
+            warm_cur_.upload_kb += d32(a.upload_bytes, b.upload_bytes) / 1024u;
+            warm_cur_.readbacks += d32(a.readbacks, b.readbacks);
+            warm_cur_.readback_kb += d32(a.readback_bytes, b.readback_bytes) / 1024u;
+            warm_cur_.copies += d32(a.copies, b.copies);
+            warm_cur_.program_binds += d32(a.program_binds, b.program_binds);
+            warm_cur_.framebuffer_binds += d32(a.framebuffer_binds, b.framebuffer_binds);
+            warm_cur_.texture_binds += d32(a.texture_binds, b.texture_binds);
+        }
+        warm_last_census_ = *census;
+        warm_have_census_ = true;
+    }
+}
+
+std::string DrawPipeline::WarmSeries() const {
+    std::string s;
+    for (const WarmWindow& w : warm_done_) {
+        if (!s.empty()) s += ',';
+        s += std::to_string(w.frames) + '/' + std::to_string(w.draws) + '/' + std::to_string(w.draw_calls) + '/' +
+             std::to_string(w.uploads) + '/' + std::to_string(w.upload_kb) + '/' + std::to_string(w.readbacks) + '/' +
+             std::to_string(w.readback_kb) + '/' + std::to_string(w.copies) + '/' + std::to_string(w.program_binds) + '/' +
+             std::to_string(w.framebuffer_binds) + '/' + std::to_string(w.texture_binds);
+    }
+    return s;
+}
+
+// The frame end's cost closes the route trace's frame (the grab, the reader-band
+// flush, the display deposit and the present all land in cost_frame_end).
+void DrawPipeline::CloseFrameTrace() {
+    const render::CallCensus* census = d_.be->Census();
+    const uint64_t now = NowNs();
+    route_trace_.NotePresent(d_.presenter->LastPresent(), d_.cache->Ledger());
+    route_trace_.OnFrameEnd(
+        DrawRouteTrace::Cost::Delta(census ? &frame_end_census_ : nullptr, census, now - frame_end_t0_),
+        DrawRouteTrace::Cost::Delta(census ? &frame_start_census_ : nullptr, census, now - frame_start_t0_));
+    frame_start_t0_ = now;
+    if (census) frame_start_census_ = *census;
 }
 
 void DrawPipeline::OnFrameEnd(bool ee_frame_end, const CrtcClassifier::Snapshot& crtc, Frame* out) {
     FrameEndGrab(ee_frame_end, out);
     d_.presenter->Present(*d_.vram, *d_.layout, crtc, gfx_epoch_, window_w_, window_h_);
+    d_.cache->Readback().RevokeOffer();
+    CloseFrameTrace();
 }
 
 void DrawPipeline::OnFrameEndGrabOnly(bool ee_frame_end, Frame* out) {
     FrameEndGrab(ee_frame_end, out);
     d_.presenter->PresentBlank(window_w_, window_h_);
+    d_.cache->Readback().RevokeOffer();
+    CloseFrameTrace();
 }
 
 void DrawPipeline::OnOwnedFrameEnd(bool ee_frame_end, uint32_t source_key) {
+    d_.cache->FlushDeferred();
     route_trace_.OnFrameEnd();
-    if (d_.resolver) d_.resolver->Trace().OnFrameEnd();
+    target_dump_.OnFrameEnd();
+    const uint64_t now = NowNs();
+    if (d_.resolver) {
+        d_.resolver->Trace().OnFrameEnd();
+        d_.resolver->RollWarmWindow(now);
+    }
+    RollWarmWindow(now);
     if (ee_frame_end) d_.presenter->MarkEeFrameEnd();
     d_.presenter->RecordOwnedPresent(source_key);
 }
@@ -253,10 +437,17 @@ void DrawPipeline::OnOwnedFrameEnd(bool ee_frame_end, uint32_t source_key) {
 void DrawPipeline::EmitCounters(std::FILE* f) const {
     if (!f) return;
     std::fprintf(f, "[GS-PIPELINE] draws=%llu same_buffer_flushes=%llu shuffle_snaps=%llu zsrc_arms=%llu"
-                    " dropped_materializes=%llu\n",
+                    " dropped_materializes=%llu alpha_merges_gpu=%llu alpha_merges_cpu=%llu alpha_lane_uploads_skipped=%llu\n",
                  (unsigned long long)draw_seq_, (unsigned long long)same_buffer_flushes_,
                  (unsigned long long)snapped_draws_, (unsigned long long)zsrc_arms_,
-                 (unsigned long long)dropped_materializes_);
+                 (unsigned long long)dropped_materializes_,
+                 (unsigned long long)(d_.refresher ? d_.refresher->AlphaMergesGpu() : 0),
+                 (unsigned long long)(d_.refresher ? d_.refresher->AlphaMergesCpu() : 0),
+                 (unsigned long long)(d_.refresher ? d_.refresher->AlphaLaneUploadsSkipped() : 0));
+    const RenderTargetCache::DeferredCensus& dc = d_.cache->Deferred();
+    std::fprintf(f, "[GS-PIPELINE] deferred_deposit=%s begun=%llu gated=%llu frame_end=%llu offered=%llu sync=%llu\n",
+                 d_.cache->DeferredDeposit() ? "on" : "off", (unsigned long long)dc.begun, (unsigned long long)dc.gated,
+                 (unsigned long long)dc.frame_end, (unsigned long long)dc.offered, (unsigned long long)dc.sync);
 }
 
 }  // namespace gs

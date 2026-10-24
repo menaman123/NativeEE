@@ -97,8 +97,10 @@ int main() {
     const render::SurfaceId depth = dev.CreateSurface(dd);
     CHECK(color.id != 0 && depth.id != 0, "surfaces");
 
-    // A 16x16 texture: constant texel (0x60,0x80,0xA0) with PS2 alpha 0x80 (GPU 0xFF)
-    // and a second texel alpha variant 0x40 (GPU 0x80) in the right half.
+    // A 16x16 texture: constant texel (0x60,0x80,0xA0) with GS alpha 0x80 in the left
+    // half and 0x40 in the right. The stored-alpha convention (test_gl_alpha_convention):
+    // a texel carries the GS alpha BYTE as the GS stores it; 0x80 = 1.0 is applied by
+    // the blend's As factor, not by a rescale at upload.
     render::SurfaceDesc td; td.width = kW; td.height = kH; td.format = render::SurfaceFormat::Rgba8;
     const render::SurfaceId tex = dev.CreateSurface(td);
     std::vector<uint8_t> tp(kW * kH * 4);
@@ -106,7 +108,7 @@ int main() {
         for (int x = 0; x < kW; x++) {
             uint8_t* p = &tp[(static_cast<size_t>(y) * kW + x) * 4];
             p[0] = 0x60; p[1] = 0x80; p[2] = 0xA0;
-            p[3] = x < kW / 2 ? 0xFF : 0x80;   // PS2 0x80 -> GPU 0xFF; PS2 0x40 -> GPU 0x80
+            p[3] = x < kW / 2 ? 0x80 : 0x40;   // the stored GS alpha byte
         }
     dev.Upload(tex, render::Rect{0, 0, kW, kH}, tp.data(), kW * 4);
 
@@ -169,8 +171,10 @@ int main() {
     }
 
     // Textured MODULATE through the alpha chain: vertex (0xff,0xff,0xff,0x7f) over a
-    // texel (0x60,0x80,0xA0) with PS2 alpha 0x80 (left) / 0x40 (right), additive 0201
-    // over black: Cs = Ct * 0xff >> 7 (0xBF,0xFF,0xFF), As = 0x7f * At >> 7.
+    // texel (0x60,0x80,0xA0) with stored alpha 0x80 (left) / 0x40 (right), additive 0201
+    // over black. GS User's Manual 3.4.4 (MODULATE, TCC=1): Cv = Ct * Cf >> 7, Av = At * Af >> 7;
+    // 3.6: Cv = (Cs - 0) * As >> 7 + Cd with As = Av (0x80 = 1.0). Left: Cs = (0xBF,0xFF,0xFF),
+    // Av = 0x7f*0x80>>7 = 127 -> (189,253,253). Right: Av = 0x7f*0x40>>7 = 63 -> (94,125,125).
     {
         dev.Clear(color, depth, 0x80000000u, 0.0f, render::kClearColor | render::kClearDepth);
         gs::DrawIr ir = Quad(0xff, 0xff, 0xff, 0x7f, true);

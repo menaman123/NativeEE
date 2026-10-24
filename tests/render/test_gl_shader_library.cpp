@@ -22,22 +22,59 @@ static int g_checks = 0, g_fail = 0;
 #define CHECK(c, msg) do { g_checks++; if (!(c)) { g_fail++; std::printf("FAIL %s:%d %s\n", __FILE__, __LINE__, msg); } } while (0)
 
 // FNV-1a64 of the exact texts (/tmp/p6/gen_shader_sources.py over the OLD captures).
-static const uint64_t kVertHash = 0x4fd2767450e43bb7ull;
+// The vertex text is the OLD baseline (0x4fd2767450e43bb7) plus the `v_z` output
+// (the PS2 z, screen-linear) the fragment program turns into gl_FragDepth =
+// z * 2^-32: the clip-space z keeps the OLD mapping (clipping only), the window
+// depth is exact for small z (GS Z tests of z < 64 against a 0-cleared Z buffer);
+// then (0xa12a8c2a25c17ff7) the GS coverage rule: the primitive translated by
+// +0.5 - 1/256 px so the GS integer sample point (i, j) meets the GL sample point
+// (i + 0.5, j + 0.5) with the inclusive-low / exclusive-high edge rule (a sprite
+// -0.5..223.5 covers rows 0..223; pinned by test_gl_raster_rule).
+static const uint64_t kVertHash = 0x36951d472cb1a88cull;
 // The fragment text is the OLD baseline arm (0x3ffd78421c147ece) plus TWO
 // additive branches: the u_idx_fmt == 7 serve (the depth-byte palette lookup the
 // owned colour filter asks for: clut[(Z >> u_idx_self) & 0xFF] of the bound
 // Depth32f texel under this fragment; screen_renderer.cpp; 0xb5b8e150faca35c5)
 // and the A2 texture-filtering enhancement's `u_tex_lod_hw` (the mip arm samples
 // with texture()'s hardware LOD instead of textureLod's retail formula when the
-// executor set it -- 0 on every draw under the title's own choice). Every other
-// arm's text is unchanged; re-pin only together with a reviewed shader change.
-static const uint64_t kFragHash = 0x3d5f929280797bd3ull;
+// executor set it -- 0 on every draw under the title's own choice); then
+// (0x3d5f929280797bd3) the exact window depth: `gl_FragDepth = v_z * 2^-32` written
+// first in main (before any discard) and the colour-authored Z compare reading that
+// value instead of gl_FragCoord.z; then (0x1c4e1e3d11fc8ad9) the exact 32-bit FBMSK
+// merge (`u_fbmsk32_en` / `u_fbmsk32`: a sub-byte channel mask on a 32-bit frame merged
+// per bit against the Cd copy, after the fbmsk16 merge); then (0x9aa9c998af376fe4)
+// the ONE stored-alpha convention: the stored alpha is the GS byte everywhere
+// (the sampled-texel inverse halving, the PSMT8H index halving and the final x2
+// "GL convention" rescale are gone; the Z32N serve passes the byte), and the fixed-
+// function blend factor min(2 As, 255) / 255 travels on the dual-source output
+// `frag_factor` (index 1; pinned by test_gl_alpha_convention); then
+// (0xf2f8f81b48c9a6f8) E191, the sw-blend block as the GS INTEGER equation
+// Cv = ((A - B) * C >> 7) + D (GS User's Manual 3.6.2): the operands are taken as
+// their integer bytes (floor(x * 255 + 0.5)), C is the alpha byte (As / Ad
+// saturating at 0x80, FIX as the byte), `blended = floor((A - B) * C / 128) + D`
+// (the shift FLOORS the signed product -- PCSX2's SW modulate16 / pmulhw and its
+// HW trunc agree), and the wrap arm is `mod(blended, 256)` instead of a rounded
+// float product (pinned exactly by test_sw_blend_integer); then
+// (0xbf9fc06acc084cf5) E270, the alpha test's two populations: `u_afail_pass`
+// (0 every fragment / 1 the passing pixels / 2 the failing pixels) selects the
+// population of a pass, the test block only discards (KEEP's failing pixels and the
+// other population of a split pass) and no longer alters result.a -- AFAIL's
+// FB_ONLY / ZB_ONLY / RGB_ONLY are the executor's second-pass write masks (pinned by
+// test_gl_alpha_fail_split); then (0x6ed601652a887ca9) the unified fixed-function
+// blend state: `u_ff_unified` (0 = the per-tuple GL state, frag_factor = vec4(As) as
+// before; 1 = func(SRC1_COLOR, ONE_MINUS_SRC1_ALPHA) is bound and frag_factor =
+// (sf, sf, sf, x) carries the draw's own factors from u_blend_a..d -- sums of 0, +-1
+// and +-As, bit-exactly the per-tuple values; render::BlendFfMap::Unified). Every
+// other arm's text is unchanged; re-pin only together with a reviewed shader change.
+static const uint64_t kFragHash = 0x6ed601652a887ca9ull;
 static const uint64_t kScanoutVertHash = 0x8823cded4f383d15ull;
 static const uint64_t kScanoutFragHash = 0x5d955137d32b0c78ull;
 // The stencil-composite sources (OLD s9_composite_native.inc:53-215 k_s9_* texts).
 static const uint64_t kStencilClearHash = 0xaf25eec16f07cca3ull;
 static const uint64_t kStencilStripHash = 0x8fcb62c7a48824b9ull;
-static const uint64_t kStencilInvertHash = 0xda3087d8b47270ccull;
+// The invert text (0xda3087d8b47270cc) with its fmt=4 index = the stored alpha byte
+// (the stored-alpha convention; the x2 inverse is gone).
+static const uint64_t kStencilInvertHash = 0x1896ffdf42544bccull;
 static const uint64_t kConstVertHash = 0xa8293c48adbb37b0ull;
 static const uint64_t kConstFragHash = 0xb5e42c4bdc02e060ull;
 
@@ -90,7 +127,7 @@ int main() {
         {"u_blend_a", L.blend_a}, {"u_blend_b", L.blend_b}, {"u_blend_c", L.blend_c}, {"u_blend_d", L.blend_d},
         {"u_fix_alpha", L.fix_alpha}, {"u_blend_enabled", L.blend_enabled}, {"u_tfx", L.tfx}, {"u_tcc", L.tcc},
         {"u_fba", L.fba}, {"u_colclamp", L.colclamp}, {"u_scanmsk", L.scanmsk}, {"u_ate", L.ate},
-        {"u_atst", L.atst}, {"u_aref", L.aref}, {"u_afail", L.afail}, {"u_date", L.date}, {"u_datm", L.datm},
+        {"u_atst", L.atst}, {"u_aref", L.aref}, {"u_afail", L.afail}, {"u_afail_pass", L.afail_pass}, {"u_date", L.date}, {"u_datm", L.datm},
         {"u_fog_enabled", L.fog_enabled}, {"u_fogcol", L.fogcol}, {"u_tex_size", L.tex_size},
         {"u_uv_scale", L.uv_scale}, {"u_uv_mode", L.uv_mode}, {"u_sw_blend", L.sw_blend},
         {"u_rt_texture", L.rt_sampler}, {"u_flip_v", L.flip_v}, {"u_fbmsk16_en", L.fbmsk16_en},

@@ -12,6 +12,7 @@ DrawIrQueueConsumer::DrawIrQueueConsumer(DrawPipeline& pipe, Hooks hooks) : pipe
 
 bool DrawIrQueueConsumer::RunOrdered(const std::function<bool()>& work) {
     if (!work) return false;
+    FlushCoalesced();
     Enter();
     return work();
 }
@@ -40,7 +41,7 @@ void DrawIrQueueConsumer::DrainPendingUpload() {
     n_.uploads++;
 }
 
-void DrawIrQueueConsumer::OnDraw(const DrawIr& ir) {
+void DrawIrQueueConsumer::Deliver(const DrawIr& ir) {
     Enter();
     Stamp(ir.src_frame, ir.vram_epoch);
     const char* name = nullptr;
@@ -49,7 +50,51 @@ void DrawIrQueueConsumer::OnDraw(const DrawIr& ir) {
     n_.draws++;
 }
 
+void DrawIrQueueConsumer::FlushCoalesced() {
+    if (!coalescer_.Pending()) return;
+    coalescer_.Flush(&coalesced_);
+    for (const DrawIr& d : coalesced_) Deliver(d);
+    coalesced_.clear();
+}
+
+void DrawIrQueueConsumer::SetCoalesce(bool on) {
+    if (!on) FlushCoalesced();
+    coalesce_ = on;
+}
+
+void DrawIrQueueConsumer::OnDraw(const DrawIr& ir) {
+    if (!coalesce_) {
+        Deliver(ir);
+        return;
+    }
+    // The held copy is a 2-vertex record (InkCandidate); anything else passes through.
+    if (!DrawCoalescer::InkCandidate(ir)) {
+        FlushCoalesced();
+        Deliver(ir);
+        return;
+    }
+    OnDrawOwned(DrawIr(ir));
+}
+
+void DrawIrQueueConsumer::OnDrawOwned(DrawIr&& ir) {
+    if (!coalesce_) {
+        Deliver(ir);
+        return;
+    }
+    // Push either keeps the draw or hands back the run before it (coalesced_), to be
+    // delivered ahead of this one.
+    if (coalescer_.Push(std::move(ir), &coalesced_)) {
+        for (const DrawIr& d : coalesced_) Deliver(d);
+        coalesced_.clear();
+        return;
+    }
+    for (const DrawIr& d : coalesced_) Deliver(d);
+    coalesced_.clear();
+    Deliver(ir);
+}
+
 void DrawIrQueueConsumer::OnJob(const JobRec& j) {
+    FlushCoalesced();
     Enter();
     Stamp(j.src_frame, j.vram_epoch);
     n_.jobs++;
@@ -89,7 +134,29 @@ void DrawIrQueueConsumer::OnJob(const JobRec& j) {
     }
 }
 
+void DrawIrQueueConsumer::HashAndPublish(DrawPipeline::Frame* grab) {
+    // The lane hash on the grab's thread: the same function the boundary
+    // applies to the reference frame (HashNativeScale; 0 for no grab).
+    grab->hashed = hash_scale_ > 0;
+    grab->hash = grab->hashed && grab->grabbed
+                     ? verify::FrameHasher::HashNativeScale(grab->rgba.data(), grab->w, grab->h, hash_scale_)
+                     : 0;
+    std::lock_guard<std::mutex> lk(frame_mu_);
+    std::swap(frame_, *grab);
+}
+
+bool DrawIrQueueConsumer::FlushPendingGrab() {
+    FlushCoalesced();
+    if (!pipe_.GrabPending()) return false;
+    Enter();
+    if (!pipe_.CompletePendingGrab(&scratch_)) return false;
+    HashAndPublish(&scratch_);
+    n_.grabs_completed++;
+    return true;
+}
+
 void DrawIrQueueConsumer::OnFrame(const JobRec& vsync) {
+    FlushCoalesced();
     Enter();
     Stamp(vsync.src_frame + 1, vsync.vram_epoch);
     bool presentable = pipe_.Scanout().ScanoutFbp() != DrawPipeline::kNoFbp;
@@ -99,26 +166,38 @@ void DrawIrQueueConsumer::OnFrame(const JobRec& vsync) {
     // the last boundary's frame stays LastFrame().
     // The grab lands in the consumer-owned scratch and is published under the
     // lock (a concurrent LastFrameCopy reader never sees a vector mid-write).
-    auto* grab = vsync.arg1 == 2 ? nullptr : &scratch_;
+    const bool wanted = !hooks_.grab_wanted || hooks_.grab_wanted();
+    auto* grab = (vsync.arg1 == 2 || !wanted) ? nullptr : &scratch_;
+    if (!wanted) n_.grabs_skipped++;
+    // Deferred grabs: the previous boundary's queued read lands and is published
+    // first (one frame late; see DrawPipeline::SetDeferredGrab).
+    if (grab && pipe_.GrabPending()) {
+        if (pipe_.CompletePendingGrab(&scratch_)) {
+            HashAndPublish(&scratch_);
+            n_.grabs_completed++;
+        }
+    }
     if (hooks_.owned_frame && hooks_.owned_frame(vsync.arg1 == 1, grab)) {
         presentable = true;
     } else {
         const CrtcClassifier::Snapshot crtc = hooks_.crtc ? hooks_.crtc() : CrtcClassifier::Snapshot{};
         pipe_.OnFrameEnd(vsync.arg1 == 1, crtc, grab);
     }
-    if (grab) {
-        // The lane hash on the grab's thread: the same function the boundary
-        // applies to the reference frame (HashNativeScale; 0 for no grab).
-        grab->hashed = hash_scale_ > 0;
-        grab->hash = grab->hashed && grab->grabbed
-                         ? verify::FrameHasher::HashNativeScale(grab->rgba.data(), grab->w, grab->h, hash_scale_)
-                         : 0;
+    if (grab && pipe_.GrabPending()) {
+        // Queued: nothing to publish for this boundary -- the lane reads the
+        // previous completed picture until the next boundary lands this one.
+        n_.grabs_deferred++;
+    } else if (grab) {
+        HashAndPublish(grab);
+    } else if (!wanted) {
+        // No grab this boundary: the published frame says so (a reader that
+        // wants pixels asked for none).
         std::lock_guard<std::mutex> lk(frame_mu_);
-        std::swap(frame_, scratch_);
+        frame_ = DrawPipeline::Frame{};
     }
     n_.frames++;
     if (presentable) n_.presents++;
-    if (!frame_.grabbed) n_.grab_empty++;
+    if (wanted && !frame_.grabbed && !pipe_.GrabPending()) n_.grab_empty++;
 }
 
 DrawPipeline::Frame DrawIrQueueConsumer::LastFrameCopy() const {
@@ -127,6 +206,7 @@ DrawPipeline::Frame DrawIrQueueConsumer::LastFrameCopy() const {
 }
 
 void DrawIrQueueConsumer::ForgetLastFrame() {
+    pipe_.DropPendingGrab();   // a queued read of the previous session's picture
     std::lock_guard<std::mutex> lk(frame_mu_);
     frame_ = DrawPipeline::Frame{};
     scratch_ = DrawPipeline::Frame{};

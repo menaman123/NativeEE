@@ -3,6 +3,7 @@
 // green run on the dev host plus a green CI run on Windows is the identity of the two.
 #include "engine/platform/host/platform.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstring>
@@ -86,6 +87,7 @@ void FileDescriptors(const std::string& scratch) {
     CHECK(std::memcmp(buf, "0123", 4) == 0);
     CHECK(FdRead(fd, buf, 4) == 4);       // sequential position is the arm's own business
     CHECK(FdPread(fd, buf, 8, 16) == 0);  // at EOF: 0, not an error
+    CHECK(FdSize(fd) == 16);              // fstat / _filelengthi64: the 16 bytes written above
     CHECK(FdClose(fd) == 0);
 
     fd = FdOpen(path.c_str(), kOpenWrite | kOpenAppend);
@@ -141,6 +143,65 @@ void Clocks() {
     const uint64_t b = MonotonicNowNs();
     CHECK(b >= a);
     CHECK(b - a < 10ull * 1000 * 1000 * 1000);   // under ten seconds for a short spin
+    // The pacers' sleep (Windows release blocker: the 15.6 ms quantum cannot pace 16.67 ms
+    // fields): RaiseTimerResolution is idempotent; SleepForNs never returns early and, with
+    // the finest timer armed, a 2 ms sleep lands well inside one field period (the bound
+    // is loose -- a loaded host is not a failure -- but a 15.6 ms quantum would miss it).
+    RaiseTimerResolution();
+    RaiseTimerResolution();
+    for (int i = 0; i < 8; ++i) {
+        const uint64_t t0 = MonotonicNowNs();
+        SleepForNs(2'000'000);
+        const uint64_t dt = MonotonicNowNs() - t0;
+        CHECK(dt >= 2'000'000);
+    }
+    {
+        // The best of several 2 ms sleeps: a quantum-rounded Sleep(2) under the default 15.6 ms
+        // period would read >= 15 ms on every try.
+        uint64_t best = ~0ull;
+        for (int i = 0; i < 16; ++i) {
+            const uint64_t t0 = MonotonicNowNs();
+            SleepForNs(2'000'000);
+            best = std::min(best, MonotonicNowNs() - t0);
+        }
+        CHECK(best < 12'000'000);
+        std::printf("host_platform: best 2 ms sleep = %llu us\n", static_cast<unsigned long long>(best / 1000));
+    }
+    SleepForNs(0);   // a zero span returns at once
+    // The SIMD tiers: a known arch, NEON on arm64, and AVX2 implies the OS saved YMM state.
+    bool sse4_2 = false, avx2 = false, fma3 = false, neon = false;
+    const char* arch = "";
+    CpuDetect(&sse4_2, &avx2, &fma3, &neon, &arch);
+    CHECK(arch && *arch);
+    CHECK(std::string(arch) == "x86_64" || std::string(arch) == "arm64" || std::string(arch) == "other");
+    if (std::string(arch) == "arm64") CHECK(neon && !avx2 && !sse4_2);
+    if (fma3) CHECK(avx2);
+    std::printf("host_platform: cpu arch=%s sse4_2=%d avx2=%d fma3=%d neon=%d\n", arch, sse4_2, avx2, fma3, neon);
+    // The roles are accepted by every arm (ranks on Win32; the interactive class elsewhere).
+    PinCurrentThreadInteractive(ThreadRole::Pacer);
+    PinCurrentThreadInteractive(ThreadRole::Game);
+    // PreciseSleepUntilNs: never early; a passed deadline returns at once; a 2 ms deadline
+    // lands within the host's timer slop (the pin is loose -- 3 ms -- so a loaded CI box
+    // passes; the precision claim is measured by the pacing judge, not here). Twenty
+    // 500 us sleeps in a row keep the deadline chain: >= 10 ms total, no sleep early.
+    {
+        const uint64_t t0 = MonotonicNowNs();
+        PreciseSleepUntilNs(t0 - 1);   // already passed
+        CHECK(MonotonicNowNs() - t0 < 1000ull * 1000);
+        const uint64_t deadline = MonotonicNowNs() + 2000ull * 1000;
+        PreciseSleepUntilNs(deadline);
+        const uint64_t woke = MonotonicNowNs();
+        CHECK(woke >= deadline);
+        CHECK(woke - deadline < 3000ull * 1000);
+        uint64_t chain = MonotonicNowNs();
+        const uint64_t chain0 = chain;
+        for (int i = 0; i < 20; ++i) {
+            chain += 500ull * 1000;
+            PreciseSleepUntilNs(chain);
+            CHECK(MonotonicNowNs() >= chain);
+        }
+        CHECK(MonotonicNowNs() - chain0 >= 10000ull * 1000);
+    }
 }
 
 void Process(const std::string& scratch) {

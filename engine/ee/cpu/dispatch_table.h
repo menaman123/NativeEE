@@ -22,6 +22,14 @@ public:
     // surface's INDIRECT_JUMP diagnostics gate (crashring_enabled) to RingLog.
     static void Initialize();
     static bool IsInitialized();
+    // The generated raw fast path (engine.ee_fast_dispatch): calls to ids whose
+    // table entry still holds the init-time body skip the observer chain. Must
+    // precede Initialize (the generated init tail latches it); a no-op after.
+    static void SetFastDispatch(bool on);
+    static bool FastDispatch();
+    // Successful Install calls so far (the census cross-checks hooked ids
+    // against installs: every install marks its id hooked, nothing else does).
+    static uint64_t InstallCount();
 
     // Number of generated entry points (the dense id table's count).
     static uint32_t FunctionCount();

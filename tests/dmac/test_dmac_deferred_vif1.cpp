@@ -2,8 +2,9 @@
 // kick -- park, the game appending to the live chain before the flush, the
 // observation-point matrix (and the non-points), kick order under a re-kick,
 // the kick-time snapshot, the END-slot tail chase (resume / reject table,
-// batch consumption, dedup, termination on a self-loop) and the frame-sync
-// flush inside ChaseVif1Tail.
+// batch consumption, dedup, termination on a self-loop), the frame-sync
+// flush inside ChaseVif1Tail, and the blocking kernel wait that ends the
+// append race (no tail recorded, earlier records dropped).
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -155,6 +156,7 @@ void TestObservationPoints() {
          }},
         {"FlushDeferredVif1()", true, [](Rig& r) { r.dmac.FlushDeferredVif1(); }},
         {"ChaseVif1Tail()", true, [](Rig& r) { r.dmac.ChaseVif1Tail(); }},
+        {"ObserveAtKernelWait()", true, [](Rig& r) { r.dmac.ObserveAtKernelWait(); }},
         {"d_stat read", false, [](Rig& r) { r.dmac.Read(DmacAddr::kStat, 4); }},
         {"d_ctrl read", false, [](Rig& r) { r.dmac.Read(DmacAddr::kCtrl, 4); }},
         {"pcr without CPC(VIF1)", false, [](Rig& r) { r.dmac.Write(DmacAddr::kPcr, 4, 0xFFFDu); }},
@@ -202,6 +204,39 @@ void TestObservationPoints() {
     KickVif1(c, 0x4000);
     c.dmac.Write(DmacAddr::kVif1, 4, kChain);
     CHECK(!c.dmac.HasDeferredVif1() && QwIs(c.vu1, 1, 0x1100) && c.dmac.channel(1).chcr == kChain);
+}
+
+// A blocking kernel wait (WaitSema for the FINISH handler's semaphore) is an
+// observation point: the parked VIF1 chain is walked and the PATH3 the game
+// kicked AFTER it is delivered behind it, in one call; nothing pending = no-op.
+void TestKernelWaitObservation() {
+    Rig rig;
+    PutSimpleChain(rig, 0x4000, 1, 0x1100);
+    KickVif1(rig, 0x4000);
+    // A one-tag PATH3 chain (END, 1 qword GIFtag with NLOOP 0, EOP) kicked while VIF1 is parked.
+    PutTag(rig, 0x6000, 1, DmacTagId::kEnd);
+    Put64(At(rig, 0x6010), 0x8000ull);   // GIFtag: NLOOP 0, EOP
+    Put64(At(rig, 0x6018), 0);
+    rig.dmac.channel(2).tadr = 0x6000;
+    // The GIF kick itself is an observation point (PATH2 before PATH3); park a
+    // fresh VIF1 kick behind it so the kernel wait has both to deliver.
+    rig.dmac.Write(DmacAddr::kGif, 4, kChainKick);
+    CHECK(!rig.dmac.HasDeferredVif1() && QwIs(rig.vu1, 1, 0x1100));
+    const uint64_t drained_before = rig.arbiter.DrainedPackets();
+    PutSimpleChain(rig, 0x5000, 2, 0x2200);
+    KickVif1(rig, 0x5000);
+    CHECK(rig.dmac.HasDeferredVif1() && !QwIs(rig.vu1, 2, 0x2200));
+    rig.dmac.ObserveAtKernelWait();
+    CHECK(!rig.dmac.HasDeferredVif1());
+    CHECK(QwIs(rig.vu1, 2, 0x2200));
+    CHECK((rig.dmac.channel(1).chcr & DmacChcr::kStr) == 0);
+    CHECK((rig.dmac.globals().stat & DmacStat::Cis(1)) != 0);
+    CHECK(!rig.arbiter.hasPending());
+    CHECK(rig.arbiter.DrainedPackets() >= drained_before);
+    // Nothing parked, nothing queued: a no-op (the hot path of every WaitSema).
+    const uint64_t drained = rig.arbiter.DrainedPackets();
+    rig.dmac.ObserveAtKernelWait();
+    CHECK(rig.arbiter.DrainedPackets() == drained && !rig.dmac.HasDeferredVif1());
 }
 
 void TestReKickOrder() {
@@ -441,14 +476,68 @@ void TestFrameSyncFlush() {
 
 }  // namespace
 
+// The blocking kernel wait completes the chain for good: the EE slept while the
+// DMA ran to END, so the END slot the game rewrites afterwards is a NEW list
+// (a second title's rebuilds its double-buffered display list in place once its FINISH
+// arrived; the old chase resumed into that half-built list and misparsed the
+// next kick). A KernelWait flush records no tail; records of earlier walks go.
+void TestKernelWaitEndsAppendRace() {
+    // Kicked, flushed at the kernel wait: no record, and a sane rewrite + chase does not resume.
+    Rig rig;
+    const uint32_t slot = PutSimpleChain(rig, 0x4000, 1, 0x1100);
+    KickVif1(rig, 0x4000);
+    rig.dmac.ObserveAtKernelWait();
+    CHECK(QwIs(rig.vu1, 1, 0x1100) && !rig.dmac.HasDeferredVif1());
+    CHECK(rig.dmac.deferred().TailCount() == 0);
+    PutTag(rig, slot, 2, DmacTagId::kCnt);
+    PutUnpack(rig, slot + 0x10, 2, 0x2200);
+    PutTag(rig, slot + 0x30, 0, DmacTagId::kEnd);
+    const uint32_t tadr = rig.dmac.channel(1).tadr;
+    rig.dmac.ChaseVif1Tail();
+    CHECK(QwZero(rig.vu1, 2) && rig.dmac.channel(1).tadr == tadr);
+    // The game's next kick of the rebuilt list walks it from ITS start, cleanly.
+    KickVif1(rig, 0x4000);
+    rig.dmac.ObserveAtKernelWait();
+    CHECK(QwIs(rig.vu1, 2, 0x2200) && rig.dmac.channel(1).tadr == slot + 0x40);
+
+    // A record made by a register-read flush is dropped by a later kernel wait
+    // (nothing parked): the rewrite after the wait is not an append either.
+    Rig b;
+    const uint32_t slot_b = PutSimpleChain(b, 0x4000, 1, 0x1100);
+    KickVif1(b, 0x4000);
+    b.dmac.Read(DmacAddr::kVif1, 4);
+    CHECK(b.dmac.deferred().TailCount() == 1);
+    b.dmac.ObserveAtKernelWait();
+    CHECK(b.dmac.deferred().TailCount() == 0);
+    PutTag(b, slot_b, 2, DmacTagId::kCnt);
+    PutUnpack(b, slot_b + 0x10, 2, 0x2200);
+    PutTag(b, slot_b + 0x30, 0, DmacTagId::kEnd);
+    b.dmac.ChaseVif1Tail();
+    CHECK(QwZero(b.vu1, 2));
+
+    // The other observation points keep the chase (the pinned Crash model): a
+    // CHCR-read flush followed by a frame-sync chase of the rewritten slot resumes.
+    Rig c;
+    const uint32_t slot_c = PutSimpleChain(c, 0x4000, 1, 0x1100);
+    KickVif1(c, 0x4000);
+    c.dmac.Read(DmacAddr::kVif1, 4);
+    PutTag(c, slot_c, 2, DmacTagId::kCnt);
+    PutUnpack(c, slot_c + 0x10, 2, 0x2200);
+    PutTag(c, slot_c + 0x30, 0, DmacTagId::kEnd);
+    c.dmac.ChaseVif1Tail();
+    CHECK(QwIs(c.vu1, 2, 0x2200));
+}
+
 int main() {
     TestParkAndAppend();
     TestObservationPoints();
+    TestKernelWaitObservation();
     TestReKickOrder();
     TestSnapshot();
     TestTailChase();
     TestChaseTerminates();
     TestFrameSyncFlush();
+    TestKernelWaitEndsAppendRace();
     if (g_fail) {
         std::printf("DmacDeferredVif1: FAIL (%d)\n", g_fail);
         return 1;

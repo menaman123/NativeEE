@@ -2,6 +2,7 @@
 #include "engine/pad/hle/libpad_bindings.h"
 
 #include "engine/ee/hle/sdk_binding_manifest.h"
+#include "engine/ee/mem/main_memory.h"
 #include "engine/ee/recomp_abi/host_app/memory.h"
 #include "engine/pad/hle/pad_protocol.h"
 
@@ -31,16 +32,10 @@ const Row kRows[] = {
 constexpr size_t kRowCount = sizeof(kRows) / sizeof(kRows[0]);
 const char* g_row_names[kRowCount];
 
-// The DualShock 2 actuator descriptors, [actno][term-1] = {func, sub, size, curr}.
-constexpr uint8_t kActuatorTable[LibpadBindings::kActuators][4] = {
-    {0x00, 0x01, 0x01, 0xFF},   // small motor
-    {0x01, 0x01, 0x01, 0xFF},   // big motor
-};
-
 uint32_t A(const CpuContext& ctx, int i) { return ctx.cpuRegs.GPR.r[4 + i].UL[0]; }
 void Ret(CpuContext& ctx, int32_t v) { ctx.cpuRegs.GPR.r[2].SD[0] = v; }
 void RetU(CpuContext& ctx, uint32_t v) { ctx.cpuRegs.GPR.r[2].SD[0] = static_cast<int32_t>(v); }
-bool ValidEeAddress(uint32_t a) { return a != 0 && (a & 0x1FFFFFFFu) < 0x02000000u; }
+bool ValidEeAddress(uint32_t a) { return a != 0 && MainMemory::Phys(a) < MainMemory::kSize; }
 bool InRange(uint32_t port, uint32_t slot) { return port <= LibpadBindings::kMaxPort && slot <= LibpadBindings::kMaxSlot; }
 
 uint32_t PortEntry(uint32_t port, uint32_t slot) { return g_statics.port_table + port * 0x70 + slot * 0x1c; }
@@ -175,7 +170,7 @@ void LibpadBindings::InfoAct(CpuContext& ctx) {
     if (!Opened(port, slot)) { Ret(ctx, 0); return; }
     if (actno == -1) { Ret(ctx, kActuators); return; }
     if (actno < 0 || actno >= kActuators || term < 1 || term > 4) { Ret(ctx, 0); return; }
-    Ret(ctx, kActuatorTable[actno][term - 1]);
+    Ret(ctx, PadProtocol::kActuatorTable[actno][term - 1]);   // the DualShock 2 descriptors the slot carries
 }
 
 void LibpadBindings::InfoMode(CpuContext& ctx) {

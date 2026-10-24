@@ -61,6 +61,10 @@ public:
     void sceCdDiskReady(IopContext& ctx);    // (mode) -> 2
     void sceCdCallback(IopContext& ctx);     // (fn) -> previous fn
     void sceCdMmode(IopContext& ctx);        // (mode) -> 1
+    void sceCdTrayReq(IopContext& ctx);      // (mode, *traycnt) -> 1 (idle: no tray event, count 0)
+    void sceCdStop(IopContext& ctx);         // () -> 1 (the idle drive stops at once)
+    void sceCdApplySCmd(IopContext& ctx);    // (cmd, in, in_size, out) -> 1 (no S-command model: reply bytes untouched)
+    void sceCdBreak(IopContext& ctx);        // () -> 1 (nothing in flight to break)
 
     uint32_t CallbackAddr() const { return callback_addr_; }
     void SetCallbackAddr(uint32_t addr) { callback_addr_ = addr; }   // savestate restore

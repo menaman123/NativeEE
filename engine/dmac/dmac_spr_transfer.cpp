@@ -23,6 +23,14 @@ bool EndsPacket(uint32_t tag, uint32_t chcr) {
     return id == DmacTagId::kRefe || id == DmacTagId::kEnd || ((tag & kIrq) && (chcr & DmacChcr::kTie));
 }
 
+// Destination chain tag ids (manual 5.6, table 5-?): CNTS 0, CNT 1, END 7.
+bool SupportedDestTag(uint32_t id) { return id == 0u || id == DmacTagId::kCnt || id == DmacTagId::kEnd; }
+
+bool EndsDestPacket(uint32_t tag, uint32_t chcr) {
+    const uint32_t id = (tag >> 28) & 7u;
+    return id == DmacTagId::kEnd || ((tag & kIrq) && (chcr & DmacChcr::kTie));
+}
+
 bool VuMemory(uint32_t addr) {
     // Normal-mode transfers to VU memory are legal hardware requests, but this
     // RAM-only implementation cannot service them. Do not report a bus error.
@@ -59,6 +67,8 @@ DmacSprResult DmacSprTransfer::Run(bool to_spr, DmacChannelRegs& regs, uint32_t 
         result = Copy(to_spr, regs, count);
     } else if (to_spr && mode == DmacChcr::kModChain) {
         result = SourceChain(regs, count);
+    } else if (!to_spr && mode == DmacChcr::kModChain) {
+        result = DestinationChain(regs, count);
     }
     if (result == DmacSprResult::Complete) {
         ++count.completed;
@@ -168,5 +178,41 @@ DmacSprResult DmacSprTransfer::SourceChain(DmacChannelRegs& regs, DmacTransferCo
     }
     // A malformed/cyclic chain must not monopolize the host. This is a runtime
     // limit, not a hardware completion; STR remains set and census records it.
+    return Reject(DmacSprResult::Unsupported, RejectReason::WalkLimit);
+}
+
+DmacSprResult DmacSprTransfer::DestinationChain(DmacChannelRegs& regs, DmacTransferCount& count) {
+    // fromSPR destination chain: the tag is the next quadword of the SOURCE
+    // stream (the scratchpad at SADR), its ADDR the RAM destination, its QWC
+    // the quadwords that follow it in the scratchpad. The tag itself is never
+    // transferred (TTE is a source-chain feature). A resumed packet drains its
+    // remaining data first, as in the source chain.
+    if ((regs.qwc & 0xFFFFu) != 0) {
+        if (!SupportedDestTag((regs.chcr >> 28) & 7u)) return Reject(DmacSprResult::InvalidTag, RejectReason::InvalidTag);
+        const auto result = Copy(false, regs, count);
+        if (result != DmacSprResult::Complete) return result;
+        if (EndsDestPacket(regs.chcr, regs.chcr)) return DmacSprResult::Complete;
+    }
+    for (uint32_t tags = 0; tags < kMaxTags; ++tags) {
+        regs.sadr &= kSadrMask;
+        const uint8_t* tag = spad_.Pointer(regs.sadr, 16);
+        uint32_t word = 0, address = 0;
+        std::memcpy(&word, tag, 4);
+        std::memcpy(&address, tag + 4, 4);
+        const uint32_t id = (word >> 28) & 7u;
+        regs.chcr = (regs.chcr & ~DmacChcr::kTagMask) | (word & DmacChcr::kTagMask);
+        if (!SupportedDestTag(id)) return Reject(DmacSprResult::InvalidTag, RejectReason::InvalidTag);
+        if (word & kPceMask) return Reject(DmacSprResult::Unsupported, RejectReason::PriorityControl);
+        regs.sadr = (regs.sadr + 16u) & kSadrMask;  // the tag quadword is consumed from the stream
+        regs.madr = address & kMadrMask;
+        regs.qwc = word & 0xFFFFu;
+        PS2R_LOG(DMAC, Narrate, "dmac-sprfrom: tag@spr0x%04x id=%u qwc=%u -> 0x%08x", (regs.sadr - 16u) & kSadrMask, id,
+                 regs.qwc, regs.madr);
+        // CNTS (id 0) also latches D_STADR for stall control; the register's
+        // writes are dropped in this DMAC, so the copy is the whole effect.
+        const auto result = Copy(false, regs, count);
+        if (result != DmacSprResult::Complete) return result;
+        if (EndsDestPacket(word, regs.chcr)) return DmacSprResult::Complete;
+    }
     return Reject(DmacSprResult::Unsupported, RejectReason::WalkLimit);
 }

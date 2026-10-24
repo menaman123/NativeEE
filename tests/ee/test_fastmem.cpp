@@ -1,7 +1,8 @@
 // FastMemDiff: the inline fast path and the slow path agree on every access
 // (port of the original tests/fastmem_diff grid: RAM low/mid/end straddle,
 // extra-region boundaries, scratchpad + its high-bit pattern, HW window
-// boundaries, KSEG0/KSEG1 mirrors, the 0x2xxxxxxx mirror, unmapped ranges),
+// boundaries, KSEG0/KSEG1 mirrors, the 0x2xxxxxxx and 0x3xxxxxxx (UCAB) mirrors,
+// unmapped ranges),
 // plus the LQ/SQ quad mask and direct spot checks of where writes land.
 #include <cstdio>
 #include <cstring>
@@ -45,7 +46,9 @@ struct Pool {
 // (here a 2 MB test buffer). IOP RAM (0x1C000000, 2 MB) has no backing in
 // Phase 3 (no IOP), so both paths must agree on "unmapped" there; the KSEG1
 // BIOS mirror and the 0xE0000000 segment exercise the physical mask
-// (& 0x1FFFFFFF) landing in the BIOS window and in low RAM respectively.
+// (& 0x1FFFFFFF) landing in the BIOS window and in low RAM respectively; the
+// 0x3 pools are the kernel's uncached-accelerated window (TLB-mapped onto RAM,
+// MainMemory::Phys masks it with 0x0FFFFFFF) and its end past 32 MB.
 const Pool kPools[] = {
     {0x00000000u, 0x00010000u, "ram_low"},
     {0x00100000u, 0x01E00000u, "ram_mid"},
@@ -67,7 +70,10 @@ const Pool kPools[] = {
     {0x1FFFFFF0u, 0x00000010u, "bios_end"},
     {0x20000000u, 0x00000100u, "mirror_0x2_ram"},
     {0x20100000u, 0x00100000u, "mirror_0x2_ram_mid"},
-    {0x30000000u, 0x01000000u, "unmapped_0x3"},
+    {0x30000000u, 0x01000000u, "ucab_ram"},
+    {0x31FFFFF0u, 0x00000020u, "ucab_ram_end_straddle"},
+    {0x32000000u, 0x00000100u, "ucab_arena_alias"},
+    {0x3A000000u, 0x00000100u, "ucab_past_ram_unmapped"},
     {0x80000000u, 0x02000020u, "kseg0_ram"},
     {0xA0000000u, 0x02000020u, "kseg1_ram"},
     {0x90000000u, 0x00100000u, "kseg0_hw_alias"},
@@ -75,7 +81,7 @@ const Pool kPools[] = {
     {0xBFC00000u, 0x00000100u, "kseg1_bios_mirror"},
     {0xE0000000u, 0x00000100u, "high_seg_ram_wrap"},
 };
-static_assert(sizeof(kPools) / sizeof(kPools[0]) == 27, "port the original's 27 pools, no fewer");
+static_assert(sizeof(kPools) / sizeof(kPools[0]) == 30, "port the original's 27 pools + the three UCAB pools, no fewer");
 
 }  // namespace
 
@@ -157,9 +163,35 @@ int main() {
     CHECK(spad.Data()[0x3FFF] == 0x5A);
     fm.Write<uint32_t>(0x02000010u, 0xC0FFEE00u);  // registered extra region
     CHECK(std::memcmp(arena.data() + 0x10, "\x00\xEE\xFF\xC0", 4) == 0);
-    CHECK(fm.Read<uint32_t>(0x30000000u) == 0);  // unmapped reads 0
-    fm.Write<uint32_t>(0x30000000u, 0xDEADBEEFu);  // unmapped writes drop
-    CHECK(fm.Read<uint32_t>(0x30000000u) == 0);
+    // The UCAB window (0x3...): the kernel's TLB maps it onto RAM, so a display
+    // list built through it (sq via 0x30322340) is what the DMAC later reads at
+    // physical 0x322340 -- and what a KUSEG/KSEG0 load of the same byte sees.
+    fm.Write<uint64_t>(0x30322340u, 0x0000000010000000ull);
+    CHECK(fm.Read<uint64_t>(0x00322340u) == 0x0000000010000000ull);
+    CHECK(fm.Read<uint64_t>(0x80322340u) == 0x0000000010000000ull);
+    CHECK(fm.Read<uint64_t>(0x30322340u) == 0x0000000010000000ull);
+    CHECK(FastMem::FastPath(0x30322340u, 8));
+    CHECK(MainMemory::Phys(0x30322340u) == 0x00322340u);
+    CHECK(MainMemory::Phys(0x31FFFFF0u) == 0x01FFFFF0u);
+    CHECK(map.Translate(0x30322340u, 8) == ram.Data() + 0x322340u);
+    QuadWord uq{};
+    uq.u64[0] = 0x0032234050000000ull;  // a CALL tag, stored through the window
+    uq.u64[1] = 0;
+    fm.WriteQuad(0x30330A20u, uq);
+    QuadWord ur{};
+    fm.ReadQuad(0x00330A20u, ur);
+    CHECK(std::memcmp(&uq, &ur, 16) == 0);
+    // Past the 32 MB of RAM the window keeps mirroring the physical space (the
+    // registered extra region at 0x02000000, like the 0x2 mirror does) and is
+    // unmapped beyond it.
+    CHECK(!FastMem::FastPath(0x32000000u, 4));
+    CHECK(map.Translate(0x32000010u, 4) == arena.data() + 0x10);
+    CHECK(fm.Read<uint32_t>(0x3A000000u) == 0);  // unmapped reads 0
+    fm.Write<uint32_t>(0x3A000000u, 0xDEADBEEFu);  // ... and writes drop
+    CHECK(fm.Read<uint32_t>(0x3A000000u) == 0);
+    CHECK(map.Translate(0x3A000000u, 4) == nullptr);
+    CHECK(!FastMem::FastPath(0x31FFFFFEu, 4));  // straddles the RAM end through the window
+    CHECK(fm.Read<uint32_t>(0x31FFFFFEu) == 0);
     CHECK(fm.Read<uint32_t>(0x11000000u) == 0);  // no VU window registered yet -> unmapped
     // The three pools the first port dropped, pinned directly:
     fm.Write<uint32_t>(0xE0001000u, 0x0E0E0E0Eu);  // high segment: phys = addr & 0x1FFFFFFF -> low RAM

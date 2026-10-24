@@ -50,11 +50,12 @@ bool ThreadCapture::ReadLocalChain(Chain& out, std::string& error) const {
         // saturated/rejected push -- so the refusal is attributable.
         ShadowCallStack::Frame top{};
         const bool has_top = ShadowCallStack::Depth() > 0 && ShadowCallStack::Top(0, top);
-        char detail[224];
+        char detail[256];
         std::snprintf(detail, sizeof(detail),
-            "The owning thread's logical stack may contain omitted frames (depth=%u%s%08x; an opaque installed "
-            "body without continuation entries is live, or the shadow stack saturated).",
-            ShadowCallStack::Depth(), has_top ? ", innermost frame fn=0x" : ", no frame 0x", has_top ? top.func_addr : 0u);
+            "The owning thread's logical stack may contain omitted frames (depth=%u%s%08x; opaque installed "
+            "bodies live=%u, overflow latched=%d).",
+            ShadowCallStack::Depth(), has_top ? ", innermost frame fn=0x" : ", no frame 0x", has_top ? top.func_addr : 0u,
+            ShadowCallStack::OmittedScopes(), ShadowCallStack::PushRejected() ? 1 : 0);
         error = detail;
         return false;
     }

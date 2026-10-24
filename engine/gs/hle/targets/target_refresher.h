@@ -25,9 +25,14 @@
 //     nothing in this class refreshes a live target from an upload).
 //   * RefreshFromVram: import a row band of the target's buffer from the COMMITTED
 //     mirror, per render PSM. CT32 / CT24: an ALPHA-ONLY merge -- RGB stays what
-//     the attachment holds, the alpha byte comes from the mirror scaled to the GPU
-//     domain (x2 capped 255), addressed at the target width (the PSMT8H index lane
-//     lives in that byte). CT16: the full 5551 image decoded from the mirror at the
+//     the attachment holds, the alpha byte comes from the mirror VERBATIM (the
+//     stored-alpha convention; the PSMT8H index lane lives in that byte), addressed
+//     at the target width; pixels the main route drew since the target's bytes last
+//     reached the mirror (CoherenceState::main_drawn_since_deposit) keep the
+//     attachment's alpha -- local memory is older there. Two routes, one result:
+//     with Caps::alpha_lane_write the band's alpha bytes go up as an R8 lane and a
+//     colour-masked pass writes them (no readback, no RGBA re-upload: the GPU route);
+//     else the attachment is read back, merged on the CPU and re-uploaded. CT16: the full 5551 image decoded from the mirror at the
 //     render FBW, except rows whose pages carry an EE upload newer than the job's
 //     epoch, which keep the attachment bytes. CT16S: no 16S writeback exists, so
 //     the mirror is never authoritative -- bookkeeping only. The tail authors the
@@ -44,6 +49,7 @@
 #include "engine/gs/hle/ir/draw_ir.h"
 #include "engine/gs/hle/targets/render_target.h"
 #include "engine/gs/hle/targets/render_target_cache.h"
+#include "engine/gs/vram/page_occupancy.h"
 #include "engine/gs/vram/vram_image.h"
 #include "engine/render/backend.h"
 
@@ -103,6 +109,11 @@ public:
     // The alias-refresh region of a frame draw (0 = none: not a colour frame, no
     // write enabled, or no width).
     static uint32_t AliasRegionBytes(const DrawIr& ir, int render_h);
+    // Census: alpha merges taken on the GPU route / on the CPU route.
+    uint64_t AlphaMergesGpu() const { return alpha_merges_gpu_; }
+    uint64_t AlphaMergesCpu() const { return alpha_merges_cpu_; }
+    // Census: GPU merges whose lane bytes were already in the lane surface (upload skipped).
+    uint64_t AlphaLaneUploadsSkipped() const { return alpha_lane_uploads_skipped_; }
 
 private:
     void EnforceUploadedBudget();
@@ -114,6 +125,12 @@ private:
     // at stride `bw` addresses, read into `mirror_` at their own offsets.
     void ReadMirrorBand(uint32_t fbp, Psm mode, uint32_t bw, uint32_t w, int y0, int y1);
     void RefreshAlphaMerge(RenderTarget& t, int y0, int y1, uint32_t bw);
+    // The GPU route of the merge: the band's alpha bytes (`linear_`'s alpha lane,
+    // w x h logical) through the R8 lane surface and the backend's alpha-lane write;
+    // false when the backend has no pass (the caller takes the CPU route).
+    bool AlphaMergeOnGpu(RenderTarget& t, int y0, int y1);
+    bool EnsureLane(int w, int h);
+    static uint64_t LaneKey(const uint8_t* bytes, size_t n, int w, int h);
     void RefreshCt16(RenderTarget& t, int y0, int y1, uint32_t bw, uint64_t job_epoch, bool* absorbed);
     void UploadRows(RenderTarget& t, int y0, int y1, const uint8_t* rgba);
 
@@ -121,11 +138,19 @@ private:
     VramImage& vram_;
     RenderTargetCache& targets_;
     std::unordered_map<uint32_t, Uploaded> uploaded_;
+    PageOccupancy uploaded_pages_;      // every uploaded record's footprint, by page
     uint64_t tick_ = 0;
     std::vector<uint8_t> mirror_;       // 4 MiB committed-mirror scratch
     std::vector<uint8_t> pixels_;       // attachment rows (RGBA8)
     std::vector<uint8_t> scaled_;
     std::vector<uint8_t> linear_;       // the band's mirror rows, de-swizzled (CT16 halfwords / CT32 words)
+    std::vector<uint8_t> lane_;         // the band's alpha bytes (R8, logical)
+    render::SurfaceId lane_tex_;        // the R8 lane surface (grown to the largest band; 0 = none yet)
+    int lane_w_ = 0, lane_h_ = 0;
+    uint64_t alpha_merges_gpu_ = 0, alpha_merges_cpu_ = 0, alpha_lane_uploads_skipped_ = 0;
+    // The content key (FNV-1a over w, h, the bytes) of the lane surface's current contents.
+    uint64_t lane_key_ = 0;
+    uint32_t lane_key_tex_ = 0;   // the lane surface it was uploaded into (0 = none yet)
 };
 
 }  // namespace gs

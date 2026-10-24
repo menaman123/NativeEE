@@ -64,7 +64,11 @@ bool MtvuBackpressure::Engage() {
     uint64_t total = pipeline_->PipelineBytes();
     const bool bytes_over = total > kPipelineHighBytes;
     const bool frames_over = guard_.Over(Declared(), Presented());
-    if (!bytes_over && !frames_over) return false;
+    // The HOLD arm (round 5): the worker's lag in frames above the hold -- more
+    // than `hold` complete frames queued ahead of the worker. Independent of the
+    // presenter's depth; the park ends when the worker passes a mark.
+    const bool hold_over = guard_.HoldOver(pipeline_->FrameLag());
+    if (!bytes_over && !frames_over && !hold_over) return false;
 
     // The park is the game thread waiting on the worker: booked to the tick
     // census as `vu1wait` (the boss stall of 2026-10-13 read as 560 ms of
@@ -74,13 +78,28 @@ bool MtvuBackpressure::Engage() {
     int stalled = 0;
     bool bytes_need = bytes_over;
     bool frame_valve_hit = false;
+    bool hold_valve_hit = false;
     ++engagements_;
+    if (hold_over) ++hold_parks_;
     pipeline_->EnterSyncWait();
     for (;;) {
         if (running_ != nullptr && !running_->load(std::memory_order_acquire)) break;
         const uint64_t before = total;
         const uint64_t seen = pipeline_->SealCount();
         pipeline_->EagerDrain();
+        // E431: a worker parked on a VIFcode i-bit stall is quiescent -- no seal,
+        // no shrink, no present can come until the EE serves the VIF1 interrupt
+        // (FBRST.STC), and the EE is THIS thread, inside a chain walk: its next
+        // dispatch point is after the walk. Waiting here waits for ourselves
+        // (every span of the walk then rode the 100 ms frame valve: 25 s of
+        // Engage per watchdog on the title->attract load with the kernel-wait
+        // probe on). The park ends; the bound is exceeded by the rest of this
+        // walk, no more. The hold arm ends on it too (a stalled worker passes no
+        // mark until this thread serves it).
+        if (pipeline_->IrqStalled()) {
+            ++irq_stall_breaks_;
+            break;
+        }
         total = pipeline_->PipelineBytes();
         if (bytes_need) {
             if (total <= kLowWaterBytes) {
@@ -97,15 +116,21 @@ bool MtvuBackpressure::Engage() {
         }
         const RunaheadFramePark fp = guard_.FramePark(Declared(), Presented(), t0);
         if (fp.valve_hit) frame_valve_hit = true;
-        if (!bytes_need && !fp.park) break;
+        const RunaheadFramePark hp = guard_.HoldPark(pipeline_->FrameLag(), t0);
+        if (hp.valve_hit) hold_valve_hit = true;
+        if (!bytes_need && !fp.park && !hp.park) break;
         if (bytes_need) {
             pipeline_->WaitIdleOrSeal(kPollNs, seen);
+        } else if (hp.park) {
+            pipeline_->WaitHoldProgress(kPollNs);
         } else {
             pipeline_->WaitFrameProgress(kPollNs);
         }
     }
     pipeline_->LeaveSyncWait();
+    park_ns_ += clock_.NowNs() - t0;
     if (frame_valve_hit) ++frame_valve_hits_;
+    if (hold_valve_hit) ++hold_valve_hits_;
     return false;
 }
 

@@ -71,13 +71,15 @@ bool EnumParse(const EnumTable& t, const std::string& v, int* out) {
     return false;
 }
 
-const char* const kBackendNames[]   = {"gl", "soft"};
+const char* const kBackendNames[]   = {"gl", "soft", "metal", "auto"};
 const char* const kFitNames[]       = {"stretch", "fit", "fill", "integer", "custom"};
 const char* const kAspectNames[]    = {"auto", "4:3", "16:9", "16:10", "21:9"};
 const char* const kTextureFilterNames[] = {"title", "point", "bilinear", "trilinear"};
 const char* const kLatencyNames[]   = {"instant", "modelled"};
+const char* const kInterpNames[]    = {"linear", "gaussian"};
 const char* const kVisibilityNames[] = {"boundary", "poll"};
-const char* const kVu1Names[]       = {"hle", "cached", "interp"};
+const char* const kVu1Names[]       = {"hle", "cached", "interp", "block", "aot"};
+const char* const kVu1AotFbNames[]  = {"block", "interp"};
 const char* const kPacingNames[]    = {"realtime", "freerun"};
 const char* const kIopNames[]       = {"realtime", "frame"};
 const char* const kTimerDueNames[]  = {"one_period", "at_restore"};
@@ -88,14 +90,17 @@ const char* const kStartupNames[] = {"retained", "native"};
 const char* const kRestoreModeNames[] = {"live", "relaunch"};
 const char* const kFullscreenNames[] = {"windowed", "fullscreen", "borderless"};
 const char* const kRenderRateNames[] = {"60", "display"};
+const char* const kFrameCapNames[] = {"off", "30", "60"};
 
-const EnumTable kBackend{kBackendNames, 2};
+const EnumTable kBackend{kBackendNames, 4};
 const EnumTable kFit{kFitNames, 5};
 const EnumTable kAspect{kAspectNames, 5};
 const EnumTable kTextureFilter{kTextureFilterNames, 4};
 const EnumTable kLatency{kLatencyNames, 2};
+const EnumTable kInterp{kInterpNames, 2};
 const EnumTable kVisibility{kVisibilityNames, 2};
-const EnumTable kVu1{kVu1Names, 3};
+const EnumTable kVu1{kVu1Names, 5};
+const EnumTable kVu1AotFb{kVu1AotFbNames, 2};
 const EnumTable kPacing{kPacingNames, 2};
 const EnumTable kIop{kIopNames, 2};
 const EnumTable kTimerDue{kTimerDueNames, 2};
@@ -106,6 +111,7 @@ const EnumTable kStartup{kStartupNames, 2};
 const EnumTable kRestoreMode{kRestoreModeNames, 2};
 const EnumTable kFullscreen{kFullscreenNames, 3};
 const EnumTable kRenderRate{kRenderRateNames, 2};
+const EnumTable kFrameCap{kFrameCapNames, 3};
 
 bool Fail(std::string* err, const char* key, const std::string& v, const char* what) {
     if (err) *err = std::string(key) + ": bad " + what + " value '" + v + "'";
@@ -155,8 +161,9 @@ bool Fail(std::string* err, const char* key, const std::string& v, const char* w
 const std::vector<Field>& Fields() {
     static const std::vector<Field> f = {
         BOOL_FIELD("audio.enabled", audio.enabled),
-        INT_FIELD("audio.volume", audio.volume),
+        ENUM_FIELD("audio.interpolation", audio.interpolation, kInterp),
         INT_FIELD("audio.sdr_block_ms", audio.sdr_block_ms),
+        INT_FIELD("audio.volume", audio.volume),
         ENUM_FIELD("cdvd.delivery_visibility", cdvd.delivery_visibility, kVisibility),
         ENUM_FIELD("cdvd.latency_model", cdvd.latency_model, kLatency),
         DOUBLE_FIELD("cdvd.latency_scale", cdvd.latency_scale),
@@ -166,14 +173,35 @@ const std::vector<Field>& Fields() {
         ENUM_FIELD("dev.log_level", dev.log_level, kLevel),
         BOOL_FIELD("diag.perf", diag.perf),
         BOOL_FIELD("diag.tick_census", diag.tick_census),
+        BOOL_FIELD("diag.vu1_lockstep", diag.vu1_lockstep),
+        BOOL_FIELD("engine.ee_fast_dispatch", engine.ee_fast_dispatch),
+        BOOL_FIELD("engine.cop0_count", engine.cop0_count),
         INT_FIELD("engine.ee_runahead", engine.ee_runahead),
         BOOL_FIELD("engine.mtvu", engine.mtvu),
         INT_FIELD("engine.mtvu_depth", engine.mtvu_depth),
+        INT_FIELD("engine.mtvu_depth_hold", engine.mtvu_depth_hold),
         BOOL_FIELD("engine.mtvu_kick_drop", engine.mtvu_kick_drop),
+        BOOL_FIELD("engine.mtvu_early_finish", engine.mtvu_early_finish),
+        BOOL_FIELD("engine.mtvu_wait_probe", engine.mtvu_wait_probe),
+        BOOL_FIELD("engine.ee_yield_spin_gate", engine.ee_yield_spin_gate),
         ENUM_FIELD("engine.pacing", engine.pacing, kPacing),
         INT_FIELD("engine.shutdown_wait_s", engine.shutdown_wait_s),
         INT_FIELD("engine.time_regime_pin", engine.time_regime_pin),
         INT_FIELD("engine.turbo", engine.turbo),
+        BOOL_FIELD("engine.vu1_aot_codegen", engine.vu1_aot_codegen),
+        STR_FIELD("engine.vu1_aot_compiler", engine.vu1_aot_compiler),
+        STR_FIELD("engine.vu1_aot_sysroot", engine.vu1_aot_sysroot),
+        STR_FIELD("engine.vu1_aot_corpus", engine.vu1_aot_corpus),
+        ENUM_FIELD("engine.vu1_aot_fallback", engine.vu1_aot_fallback, kVu1AotFb),
+        INT_FIELD("engine.vu1_aot_opt", engine.vu1_aot_opt),
+        STR_FIELD("engine.vu1_aot_pack", engine.vu1_aot_pack),
+        BOOL_FIELD("engine.vu1_aot_chain", engine.vu1_aot_chain),
+        BOOL_FIELD("engine.vu1_aot_mac_acc", engine.vu1_aot_mac_acc),
+        INT_FIELD("engine.vu1_aot_region_blocks", engine.vu1_aot_region_blocks),
+        INT_FIELD("engine.vu1_aot_region_ops", engine.vu1_aot_region_ops),
+        BOOL_FIELD("engine.vu1_aot_region_taken", engine.vu1_aot_region_taken),
+        STR_FIELD("engine.vu1_aot_prelude", engine.vu1_aot_prelude),
+        BOOL_FIELD("engine.vu1_aot_verify", engine.vu1_aot_verify),
         ENUM_FIELD("engine.vu1_mode", engine.vu1_mode, kVu1),
         BOOL_FIELD("game.rtc_fixed", game.rtc_fixed),
         ENUM_FIELD("gs.queue", gs.queue, kGsQueue),
@@ -277,6 +305,9 @@ const std::vector<Field>& Fields() {
         INT_FIELD("video.custom_scale_pct", video.custom_scale_pct),
         ENUM_FIELD("video.fit_mode", video.fit_mode, kFit),
         INT_FIELD("video.fps_cap", video.fps_cap),
+        INT_FIELD("video.capture_wait_ms", video.capture_wait_ms),
+        BOOL_FIELD("video.present_relax", video.present_relax),
+        ENUM_FIELD("video.frame_cap", video.frame_cap, kFrameCap),
         ENUM_FIELD("video.fullscreen", video.fullscreen, kFullscreen),
         BOOL_FIELD("video.interp", video.interp),
         ENUM_FIELD("video.render_rate", video.render_rate, kRenderRate),
@@ -311,9 +342,40 @@ bool ExcludedFromFingerprint(const std::string& key) {
     // resume leg attributes its stall with diag.tick_census=on).
     // engine.mtvu_kick_drop is the host's scheduling of the worker (park vs
     // drop): nothing the title executes or an image carries changes with it.
+    // engine.mtvu_depth_hold is the hold on the worker's lag (round 5): where the
+    // EE parks on the worker, a wall matter; nothing in an image.
+    // video.capture_wait_ms is when the window's picture is read back (round 5):
+    // the same picture, posted earlier; nothing the title executes or an image carries.
+    // video.present_relax is WHEN the presenter shows a posted picture (round 5):
+    // the same pictures in the same order; nothing the title executes or an image carries.
+    // engine.mtvu_early_finish is the host's scheduling of the GS FINISH raise
+    // and the boundary under MTVU (E425/E426): images are captured quiesced
+    // (nothing pre-raised in flight), so a slot restores under either setting.
+    // engine.mtvu_wait_probe is the host's scheduling of the kernel-wait
+    // observation point under MTVU (E430): whether the EE idles on the worker
+    // before a wait that would not park; the wait's body runs the same.
+    // engine.ee_yield_spin_gate (E432) is whether a yield trip of scheduling code
+    // passes a field of its own: the yield budget is host state, not in any image.
+    // engine.ee_fast_dispatch is the host's dispatch mechanics of a guest call
+    // (raw body call vs the observer chain): the same body runs either way.
+    // engine.cop0_count is whether the COP0 Count register advances with the
+    // emu tick: no image carries it (a restore reseats the register from the
+    // tick), so a slot restores under either setting. (Guest-observable --
+    // the deterministic profile pins it on and the oracle bases are frozen
+    // with it -- but not an image property.)
+    // engine.vu1_aot_corpus is a path to oracle data (where the AOT tier's
+    // verifier reads its cases): the tiers are the identity on what executes.
+    // engine.vu1_aot_codegen / _compiler / _prelude / _opt / _pack choose the
+    // host toolchain (or the shipped pack) of the generated code, and
+    // _region_blocks / _region_ops / _region_taken / _chain / _mac_acc its region shape;
+    // the code is verified the identity before it runs: nothing the title
+    // executes changes with them.
     return key.compare(0, 8, "harness.") == 0 || key.compare(0, 6, "paths.") == 0 || key.compare(0, 5, "diag.") == 0 ||
            key == "meta.profile" || key == "meta.source_fingerprint" || key == "save.restore_mode" ||
-           key == "engine.mtvu_kick_drop";
+           key == "engine.mtvu_kick_drop" || key == "engine.mtvu_early_finish" || key == "engine.mtvu_wait_probe" || key == "engine.ee_yield_spin_gate" || key == "engine.ee_fast_dispatch" || key == "engine.cop0_count" || key == "engine.vu1_aot_corpus" || key == "engine.vu1_aot_codegen" || key == "engine.mtvu_depth_hold" || key == "video.capture_wait_ms" || key == "video.present_relax" ||
+           key == "engine.vu1_aot_compiler" || key == "engine.vu1_aot_sysroot" || key == "engine.vu1_aot_prelude" || key == "engine.vu1_aot_opt" ||
+           key == "engine.vu1_aot_pack" || key == "engine.vu1_aot_region_blocks" || key == "engine.vu1_aot_region_ops" ||
+           key == "engine.vu1_aot_region_taken" || key == "engine.vu1_aot_chain" || key == "engine.vu1_aot_mac_acc";
 }
 
 }  // namespace
@@ -345,6 +407,8 @@ bool Config::Set(const std::string& key, const std::string& value, std::string* 
     }
     return f->set(*this, value, err);
 }
+
+bool Config::FingerprintExcludes(const std::string& key) { return ExcludedFromFingerprint(key); }
 
 std::string Config::Fingerprint() const {
     static const Config defaults;

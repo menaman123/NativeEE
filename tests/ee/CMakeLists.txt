@@ -19,6 +19,9 @@ ps2r_ee_test(test_ps2_float Ps2FloatSemantics)
 # The guest thread rounding mode (FE_TOWARDZERO per thread; div/sqrt/rsqrt nearest).
 ps2r_ee_test(test_float_rounding Ps2FloatRounding)
 set_tests_properties(Ps2FloatRounding PROPERTIES TIMEOUT 60)
+# E3: the arithmetic to-nearest div/sqrt/rsqrt forms bit-equal to the mode-switching bodies (all four modes).
+ps2r_ee_test(test_ps2_float_rn Ps2FloatNearestForms)
+set_tests_properties(Ps2FloatNearestForms PROPERTIES TIMEOUT 120)
 ps2r_ee_test(test_fastmem FastMemDiff)
 ps2r_ee_test(test_address_map AddressMapAndMmioSinkIdleValues)
 # The fatal_no_jump park record: jump-source candidates + shadow chain + GPRs
@@ -29,7 +32,7 @@ set_tests_properties(EeParkSiteDump PROPERTIES TIMEOUT 60)
 # The RAM-image probe needs the frozen ELF (PS2R_OG_ROOT) and the title's .data word dump, a
 # PRIVATE fixture ({PRIVATE_FIXTURES} = $NATIVEEE_PRIVATE_FIXTURES; cmake/Ps2rPrivateFixtures.cmake):
 # SKIP 77 without either. The three post-load patch words stay in the tree.
-set(PS2R_TITLE_DATA "${CMAKE_SOURCE_DIR}/games/${PS2R_TITLE}/data")
+set(PS2R_TITLE_DATA "${PS2R_GAMES_DIR}/${PS2R_TITLE}/data")
 add_executable(test_elf_loader test_elf_loader.cpp)
 target_link_libraries(test_elf_loader PRIVATE ps2r_ee)
 target_compile_options(test_elf_loader PRIVATE -Wall -Wextra -Werror)
@@ -77,13 +80,30 @@ ps2r_ee_test(test_thread_manager ThreadManagerThbase)
 ps2r_ee_test(test_ee_sched EeRunTokenAndEventQueue)
 ps2r_ee_test(test_relaunch_order RelaunchOrder)
 set_tests_properties(ThreadManagerThbase EeRunTokenAndEventQueue RelaunchOrder PROPERTIES TIMEOUT 120)
+# The back-edge yield seam (--yield-backedges generated code -> EeYieldPoint): a call-free
+# spin trips every budget back-edges; the trip advances a field, runs the pending ISRs on the
+# spinner, and hands the CPU to an ISR-readied HIGHER-priority thread (thbase R2), never to an
+# equal one (R1); nested / in-dispatch / non-holder trips are refused; unbound = reload only.
+ps2r_ee_test(test_ee_yield_point EeYieldPointBackedge)
+set_tests_properties(EeYieldPointBackedge PROPERTIES TIMEOUT 120)
+# The kernel's idle (EeYieldPoint::IdleWhileBlocked over EeRunToken's idle grant): two guest
+# threads blocked on ISR-signalled semaphores; the last blocker advances fields under the grant
+# until the handler readies it; a READY thread / a holder refuses the grant; PreemptPoint is a
+# no-op under it; unbound idles nothing.
+ps2r_ee_test(test_ee_idle_wait EeIdleWait)
+set_tests_properties(EeIdleWait PROPERTIES TIMEOUT 120)
+# Intc refusal / edge census: a cause raised inside a handler is refused at every dispatch
+# point reached from the handler (keyed site/in-cause>refused), stays pending and is serviced
+# at the next point; raised == dispatched + guest-acked + pending per cause.
+ps2r_ee_test(test_intc_census EeIntcCensus)
+set_tests_properties(EeIntcCensus PROPERTIES TIMEOUT 60)
 
 # Stage 3C2: syscall table + boot env + libc + SDK binding manifest + kernl parks (one binary,
 # section per ctest name; the manifest section reads the title's sdk_bindings.tsv).
 add_executable(test_syscall_table test_syscall_table.cpp)
 target_link_libraries(test_syscall_table PRIVATE ps2r_title_api ps2r_title_hle ps2r_sif ps2r_ee)
 target_compile_options(test_syscall_table PRIVATE -Wall -Wextra -Werror)
-set(PS2R_TITLE_HLE "${CMAKE_SOURCE_DIR}/games/${PS2R_TITLE}/hle")
+set(PS2R_TITLE_HLE "${PS2R_GAMES_DIR}/${PS2R_TITLE}/hle")
 add_test(NAME SyscallTableCoverage COMMAND test_syscall_table coverage)
 add_test(NAME BootEnvRetailArgv COMMAND test_syscall_table bootenv)
 add_test(NAME LibcHleDiff COMMAND test_syscall_table libc)

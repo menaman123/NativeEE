@@ -34,6 +34,21 @@ RunaheadFramePark RunaheadGuard::FramePark(uint64_t declared, uint64_t presented
     return r;
 }
 
+bool RunaheadGuard::HoldOver(uint64_t worker_lag_frames) const {
+    return hold_frames_ != 0 && worker_lag_frames > hold_frames_;
+}
+
+RunaheadFramePark RunaheadGuard::HoldPark(uint64_t worker_lag_frames, uint64_t engaged_at_ns) const {
+    RunaheadFramePark r;
+    if (!HoldOver(worker_lag_frames)) return r;
+    if (clock_.NowNs() >= engaged_at_ns + kFrameValveNs) {
+        r.valve_hit = true;
+        return r;
+    }
+    r.park = true;
+    return r;
+}
+
 uint64_t RunaheadGuard::NowNs() const { return clock_.NowNs(); }
 
 RunaheadGuard::Tripwire::Result RunaheadGuard::Tripwire::Feed(uint64_t depth_frames, uint64_t cap_frames) {

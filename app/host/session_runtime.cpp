@@ -6,10 +6,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
-#include <pthread.h>
 #include <utility>
 
 #include "app/host/platform_input.h"
+#include "app/host/settings_resync.h"
 #include "engine/platform/host/platform.h"
 
 namespace ps2r::app {
@@ -70,10 +70,11 @@ void SessionRuntime::ConfigureReproductions(std::string directory) {
     Publish();
 }
 
-void SessionRuntime::ConfigureSettings(bool perf_overlay, Persist persist) {
+void SessionRuntime::ConfigureSettings(bool perf_overlay, Persist persist, Reread reread) {
     if (std::this_thread::get_id() != main_thread_) return;
     perf_overlay_.store(perf_overlay);
     persist_ = std::move(persist);
+    reread_ = std::move(reread);
     capabilities_.perf_overlay = true;
     Publish();
 }
@@ -85,6 +86,9 @@ void SessionRuntime::ConfigureDisplayRows(const DisplaySettings& seed) {
     effective_scale_.store(std::clamp(seed.scale, 1, 4));   // 0 (native) resolves on the first Publish
     aspect_setting_.store(std::clamp(seed.aspect, 0, 4));
     render_rate_.store(seed.render_rate != 0 ? 1 : 0);
+    FramePacer::Cap cap = FramePacer::Cap::Hz60;
+    if (FramePacer::CapOf(seed.frame_cap, cap)) { pacer_.SetCap(cap); frame_cap_.store(seed.frame_cap); }
+    pacer_.SetRelax(seed.present_relax);
     display_hz_ = std::clamp(seed.display_hz, 0, 1000);
     display_mode_.store(std::clamp(seed.display_mode, 0, 2));
     if (display_mode_.load() != window_.DisplayMode()) {
@@ -96,15 +100,31 @@ void SessionRuntime::ConfigureDisplayRows(const DisplaySettings& seed) {
     Publish();
 }
 
+void SessionRuntime::ConfigurePauseMenu(bool on) {
+    if (std::this_thread::get_id() != main_thread_) return;
+    controls_.SetPauseMenu(on);
+    Publish();
+}
+
+void SessionRuntime::ConfigureControlsPage(ControlsSection::Model model) {
+    if (std::this_thread::get_id() != main_thread_) return;
+    window_.Gui().SetControlsModel(std::move(model));
+}
+
 int SessionRuntime::PresentHz() const {
     if (display_hz_ > 0) return display_hz_;
     const int display = window_.DisplayRefreshHz();
     return display > 0 ? display : 60;
 }
 
-void SessionRuntime::SetPresentObserver(std::function<void(std::chrono::steady_clock::time_point)> observer) {
+void SessionRuntime::SetPresentObserver(std::function<void(std::chrono::steady_clock::time_point, bool, uint64_t, uint64_t)> observer) {
     if (std::this_thread::get_id() != main_thread_) return;
     present_observer_ = std::move(observer);
+}
+
+void SessionRuntime::SetRenderer(std::string renderer) {
+    if (std::this_thread::get_id() != main_thread_) return;
+    renderer_ = std::move(renderer);
 }
 
 void SessionRuntime::ConfigureWindowDump(std::string dir) {
@@ -137,6 +157,7 @@ void SessionRuntime::Publish() {
     status_.frame = frame_.load();
     status_.game_hz = game_hz_.load();
     status_.render_fps = render_fps_.load();
+    status_.doubled_frames = doubled_frames_.load(std::memory_order_relaxed);
     status_.paused = paused_.load();
     status_.volume_percent = volume_.load();
     status_.fullscreen = window_.Fullscreen();
@@ -161,12 +182,14 @@ void SessionRuntime::Publish() {
     status_.scale = effective_scale_.load();
     status_.aspect = aspect_setting_.load();
     status_.render_rate = render_rate_.load();
+    status_.frame_cap = frame_cap_.load();
     if (aspect_) {
         aspect_->SetWindow(status_.window_width, status_.window_height);
         window_.SetPictureAspect(aspect_->Ratio());
     }
     status_.keyboard_input = input_ && input_->KeyboardEnabled();
     keyboard_state_.store(status_.keyboard_input);
+    status_.renderer = renderer_;
     status_.input_name = !input_ ? "No live input" : input_->GamepadActive() ? "Controller" :
         status_.keyboard_input ? "Keyboard and mouse" : "No enabled input device";
     status_.status = closing_ ? "Closing session..." : (restore_started_ ? "Restoring reproduction..." : "");
@@ -203,12 +226,12 @@ bool SessionRuntime::PostMain(std::function<void()> operation) {
     return true;
 }
 
-void SessionRuntime::PostFrame(std::vector<uint8_t> rgba, int width, int height) {
+void SessionRuntime::PostFrame(std::vector<uint8_t> rgba, int width, int height, uint64_t tag) {
     if (width <= 0 || height <= 0 || width > 8192 || height > 8192 ||
         rgba.size() != static_cast<size_t>(width) * height * 4 || rgba.size() > (64u << 20)) return;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        incoming_frame_ = {std::move(rgba), width, height};
+        incoming_frame_ = {std::move(rgba), width, height, ps2r::Park::NowNs(), tag};
     }
     wake_main_.Notify();
 }
@@ -295,8 +318,9 @@ void SessionRuntime::ProcessCommands() {
                 detail = "Shutdown requested.";
                 break;
             case Action::SetVolume:
-                volume_.store(request.value);
+                volume_.store(std::clamp(request.value, 0, 100));
                 detail = "Output volume applied.";
+                if (persist_) persist_("audio.volume", std::to_string(volume_.load()));
                 break;
             case Action::SetFullscreen:
                 ok = TimedDisplaySwap([&] { return window_.SetFullscreen(request.value != 0, detail); });
@@ -345,6 +369,17 @@ void SessionRuntime::ProcessCommands() {
                 if (aspect_) aspect_->SetSelection(static_cast<gs::AspectSelection::Shape>(request.value));
                 detail = "Aspect ratio applied.";
                 if (persist_) persist_("video.aspect", kAspects[request.value]);
+                break;
+            }
+            case Action::SetFrameCap: {
+                FramePacer::Cap cap = FramePacer::Cap::Hz60;
+                ok = FramePacer::CapOf(request.value, cap);
+                if (ok) {
+                    pacer_.SetCap(cap);
+                    frame_cap_.store(request.value);
+                    detail = std::string("Frame cap applied: ") + FramePacer::CapName(cap) + ".";
+                    if (persist_) persist_("video.frame_cap", FramePacer::CapName(cap));
+                } else detail = "Not a frame cap.";
                 break;
             }
             case Action::SetRenderRate:
@@ -428,6 +463,17 @@ void SessionRuntime::PumpMain() {
         }
     }
     ProcessCommands();
+    // The menu just opened: re-read the settings file and apply what another
+    // writer changed (SettingsResync), through the rows' own requests.
+    // (The first pump only records the state: a menu that starts open is not a re-open, and
+    // the command line's --set pins must stand for the session until the user opens the menu.)
+    if (controls_.MenuOpen() && !menu_was_open_ && reread_ && !first_pump_) {
+        const auto plan = SettingsResync::Plan(reread_(), controls_.Read().runtime, controls_.Read().capabilities);
+        for (const auto& request : plan) controls_.Submit(request.first, request.second);
+        if (!plan.empty()) ++settings_resyncs_;
+    }
+    menu_was_open_ = controls_.MenuOpen();
+    first_pump_ = false;
     if (input_) {
         input_->SetUiCapture(controls_.MenuOpen());
         input_->ServicePending();
@@ -444,7 +490,21 @@ void SessionRuntime::PumpMain() {
         request->done.store(true, std::memory_order_release);
         request->wake.Notify();
     }
-    if (!frame.rgba.empty()) window_.Upload(frame.rgba, frame.width, frame.height);
+    if (!frame.rgba.empty()) {
+        // The posted picture joins the two-deep queue the pacer admits from (Run) in order:
+        // two pictures inside one period are shown at consecutive edges, not the newer over
+        // the older. A third arrival drops the oldest unshown (the game's tick ran; only its
+        // picture is not shown).
+        if (pending_frame_.rgba.empty()) {
+            pending_frame_ = std::move(frame);
+        } else {
+            if (!queued_frame_.rgba.empty()) {
+                pacer_.Supersede();
+                pending_frame_ = std::move(queued_frame_);
+            }
+            queued_frame_ = std::move(frame);
+        }
+    }
     PollCapture();
     PollRestore();
     Publish();
@@ -583,11 +643,11 @@ int SessionRuntime::Run(std::function<int()> game, unsigned shutdown_seconds) {
         int result = 2;
         std::exception_ptr failure{};
     } worker{std::move(game), this};
-    pthread_attr_t attributes;
-    pthread_attr_init(&attributes);
-    pthread_attr_setstacksize(&attributes, size_t{1024} * 1024 * 1024);
-    pthread_t thread;
-    const int created = pthread_create(&thread, &attributes, [](void* argument) -> void* {
+    // The game thread carries a 1 GiB stack (the recompiled EE's frames): host::ThreadCreate
+    // is the one native-thread entry with an explicit stack size (pthread_attr_setstacksize /
+    // _beginthreadex with STACK_SIZE_PARAM_IS_A_RESERVATION -- reserved, committed lazily).
+    ps2r::host::NativeThread thread;
+    const bool created = ps2r::host::ThreadCreate(&thread, [](void* argument) {
         auto& job = *static_cast<Worker*>(argument);
         // The game thread (the EE) runs at the interactive class the pacer, the GS
         // consumer, the MTVU worker and main already hold (platform::host: the
@@ -596,7 +656,7 @@ int SessionRuntime::Run(std::function<int()> game, unsigned shutdown_seconds) {
         // cores first when the machine is loaded -- the level route's EE read ~40 CPU
         // ms per frame on a shared machine with every other thread of the process
         // pinned above it (track 1d). Scheduling only; the game's work is unchanged.
-        ps2r::platform::host::PinCurrentThreadInteractive("ps2r-game");
+        ps2r::platform::host::PinCurrentThreadInteractive("ps2r-game", ps2r::host::ThreadRole::Game);
         job.session->shutdown_.Enter("game_unwind");   // the game's own return / unwind to here
         try { job.result = job.session->Supervise(job.game()); } catch (...) { job.failure = std::current_exception(); }
         // Service joins belong under the same main-owned shutdown deadline as
@@ -611,10 +671,8 @@ int SessionRuntime::Run(std::function<int()> game, unsigned shutdown_seconds) {
         }
         job.done.store(true, std::memory_order_release);
         job.session->wake_main_.Notify();
-        return nullptr;
-    }, &worker);
-    pthread_attr_destroy(&attributes);
-    if (created != 0) {
+    }, &worker, size_t{1024} * 1024 * 1024);
+    if (!created) {
         RequestClose();
         if (input_) input_->StopService();
         if (hooks_.stop) hooks_.stop();
@@ -623,7 +681,7 @@ int SessionRuntime::Run(std::function<int()> game, unsigned shutdown_seconds) {
         PollRestore();
         Publish();
         controls_.CancelPending("The game thread could not be started.");
-        std::fprintf(stderr, "Session game thread creation failed (%d).\n", created);
+        std::fprintf(stderr, "Session game thread creation failed (1 GiB stack).\n");
         return 2;
     }
     uint64_t close_started = 0, next_present = 0;
@@ -637,13 +695,28 @@ int SessionRuntime::Run(std::function<int()> game, unsigned shutdown_seconds) {
             std::fprintf(stderr, "Session restore exceeded %u seconds; terminating process.\n", shutdown_seconds);
             std::_Exit(2);
         }
+        // The presented-frame cadence (video.frame_cap; FramePacer): the oldest waiting picture
+        // is uploaded and drawn at the pacer's edge (at once when it was posted after an open
+        // edge: the train slips to it); the fps_cap train below keeps re-drawing the shown
+        // picture (the menu, the overlays) between edges.
+        if (pacer_.Admit(now, pending_frame_.posted_ns)) {
+            window_.Upload(pending_frame_.rgba, pending_frame_.width, pending_frame_.height);
+            shown_tag_ = pending_frame_.tag;
+            shown_posted_ns_ = pending_frame_.posted_ns;
+            doubled_frames_.store(pacer_.Count().doubled, std::memory_order_relaxed);
+            pending_frame_ = std::move(queued_frame_);
+            queued_frame_ = {};
+            picture_fresh_ = true;
+            next_present = now;
+        }
         if (now >= next_present) {
             // Not marked main_busy_: a present is a few ms (a vsync'd swap at most a
             // period) -- the pad's bounded wait covers it; marking it made a third of
             // the boundaries' reads late (fix2: late=633 of 1800).
             window_.Draw();
             presents_.fetch_add(1, std::memory_order_relaxed);
-            if (present_observer_) present_observer_(std::chrono::steady_clock::now());
+            if (present_observer_) present_observer_(std::chrono::steady_clock::now(), picture_fresh_, shown_tag_, shown_posted_ns_);
+            picture_fresh_ = false;
             // video.fps_cap paces the presenter (0 presents on every pump); under
             // video.render_rate=display the period is the display's (A3), the
             // edges a fixed train (re-anchored when the pump fell a frame behind).
@@ -678,12 +751,15 @@ int SessionRuntime::Run(std::function<int()> game, unsigned shutdown_seconds) {
                 std::_Exit(2);
             }
         }
-        // Sleep to the next present edge, at most 4 ms (the command / frame pump).
+        // Sleep to the next present edge (the re-draw train or the pacer's admission edge,
+        // whichever is first), at most 4 ms (the command / frame pump); a posted picture
+        // wakes the pump (PostFrame notifies).
         const uint64_t until = ps2r::Park::NowNs();
-        const uint64_t to_edge = next_present > until ? next_present - until : 0;
+        uint64_t to_edge = next_present > until ? next_present - until : 0;
+        if (!pending_frame_.rgba.empty()) to_edge = std::min(to_edge, pacer_.ToNextEdge(until));
         wake_main_.WaitFor(std::min<uint64_t>(4000000, std::max<uint64_t>(to_edge, 200000)), generation);
     }
-    pthread_join(thread, nullptr);
+    ps2r::host::ThreadJoin(thread);
     shutdown_.End();
     std::fprintf(stderr, "nativeee: session shutdown %s\n", shutdown_.Render().c_str());
     // The presented frame's record (ConfigureWindowDump): one last draw of the

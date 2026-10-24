@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <memory>
 #include <unordered_map>
 
 #include "engine/gs/hle/ir/draw_ir.h"
@@ -81,6 +82,31 @@ public:
     uint32_t SyncDrawn(RenderTarget& t, uint64_t batch_epoch,
                        uint32_t enc_psm = ReadbackEngine::kNoPsmOverride,
                        uint32_t dest_fbp = ReadbackEngine::kSameFbp);
+    // The DEFERRED scanout deposit (perf: the display deposit's GPU read was a
+    // pipeline drain every frame). SyncDrawnDeferred is SyncDrawn with the GPU read
+    // queued (Backend::BeginReadback) and the encode run later -- at the image's
+    // gate (any reader / writer of the owed span, see VramImage) or at FlushDeferred
+    // (the next frame end), whichever comes first; the image evolves exactly as if
+    // the deposit had landed at once. Falls back to SyncDrawn when deferral is off,
+    // the backend's readbacks are synchronous, or the grab's offer covers the rows.
+    // Only for a cache whose image is read on the backend's thread alone (the
+    // pipelined split image, or inline): the gate completes the read on the caller.
+    void SetDeferredDeposit(bool on) { deferred_on_ = on; }
+    bool DeferredDeposit() const { return deferred_on_; }
+    uint32_t SyncDrawnDeferred(RenderTarget& t, uint64_t batch_epoch,
+                               uint32_t enc_psm = ReadbackEngine::kNoPsmOverride,
+                               uint32_t dest_fbp = ReadbackEngine::kSameFbp);
+    // Completes every deferred deposit (waits for the GPU only if it has not
+    // finished the read). Returns the number completed.
+    uint32_t FlushDeferred();
+    struct DeferredCensus {
+        uint64_t begun = 0;        // deposits queued
+        uint64_t gated = 0;        // completed by the image's gate (a reader / writer of the span)
+        uint64_t frame_end = 0;    // completed at FlushDeferred (the frame end)
+        uint64_t offered = 0;      // not deferred: the grab's offer covered the rows
+        uint64_t sync = 0;         // not deferred: off / no staging / nothing to queue
+    };
+    const DeferredCensus& Deferred() const { return deferred_n_; }
     // The SyncAllRTsToVRAM job (save-time quiescence): colour writeback of every
     // target with valid + drawn content at batch epoch 0; leaves the ledger empty.
     void SyncAll();
@@ -116,6 +142,13 @@ private:
     PendingRtSyncLedger ledger_;
     std::unordered_map<uint32_t, std::unique_ptr<RenderTarget>> targets_;
     uint32_t most_recent_drawn_fbp_ = kNoFbp;
+    bool deferred_on_ = false;
+    bool deferred_flushing_ = false;
+    std::vector<ReadbackEngine::Deferred> deferred_;
+    DeferredCensus deferred_n_;
+    uint32_t CompleteDeferred(bool gated);
+    void DropTargets();   // the surfaces go (no writeback, no image access)
+    std::shared_ptr<RenderTargetCache*> self_token_ = std::make_shared<RenderTargetCache*>(this);
 };
 
 }  // namespace gs

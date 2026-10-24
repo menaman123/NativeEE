@@ -139,9 +139,76 @@ def elf_md5(data):
     return hashlib.md5(data).hexdigest()
 
 
+def _public_constant_tables():
+    """Byte images (both endiannesses) of constant tables every C library, zlib, libpng, a hash or a cipher
+    carries: a game's ELF holds them (its libc, zlib) and so does any host binary (the engine's sha256.cpp,
+    png.cpp). A 64-byte window that is a slice of one of these is NOT evidence of game data -- the engine's
+    own libps2r_core.a matched the ELF's CRC-32 table (ELF+0x1a2ef0) on the first release dry run."""
+    tables = []
+    # CRC-32 (IEEE 802.3, reflected, poly 0xEDB88320): the zlib / libpng / PS2 SDK table
+    crc = []
+    for n in range(256):
+        c = n
+        for _ in range(8):
+            c = (c >> 1) ^ 0xEDB88320 if c & 1 else c >> 1
+        crc.append(c)
+    tables.append(crc)
+    # SHA-256 round constants K
+    tables.append([
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2])
+    # MD5 T (sine table)
+    import math
+    tables.append([int(abs(math.sin(i + 1)) * 2 ** 32) & 0xffffffff for i in range(64)])
+    images = []
+    for t in tables:
+        images.append(b"".join(struct.pack("<I", v) for v in t))
+        images.append(b"".join(struct.pack(">I", v) for v in t))
+    # AES S-box and inverse S-box (byte tables)
+    sbox = [0] * 256; p = q = 1
+    while True:
+        p = p ^ ((p << 1) & 0xff) ^ (0x1b if p & 0x80 else 0)
+        q ^= q << 1; q ^= q << 2; q ^= q << 4; q &= 0xff
+        if q & 0x80: q ^= 0x09
+        x = q ^ (q << 1) ^ (q << 2) ^ (q << 3) ^ (q << 4)
+        sbox[p] = (x ^ (x >> 8) ^ 0x63) & 0xff
+        if p == 1: break
+    sbox[0] = 0x63
+    inv = [0] * 256
+    for i, v in enumerate(sbox): inv[v] = i
+    images.append(bytes(sbox)); images.append(bytes(inv))
+    return images
+
+
+_PUBLIC_TABLES = None
+
+
+def is_public_constant_window(w):
+    """True when `w` (>= 16 bytes) is a slice of a well-known public constant table."""
+    global _PUBLIC_TABLES
+    if _PUBLIC_TABLES is None:
+        _PUBLIC_TABLES = _public_constant_tables()
+    probe = w[:16]
+    for img in _PUBLIC_TABLES:
+        at = img.find(probe)
+        while at >= 0:
+            if img[at:at + len(w)] == w:
+                return True
+            at = img.find(probe, at + 1)
+    return False
+
+
 def choose_windows(elf, count, size, seed_stride=None):
     """`count` windows of `size` bytes spread over the ELF, each with enough byte diversity
-    that an accidental 8-byte anchor match in an unrelated binary is implausible."""
+    that an accidental 8-byte anchor match in an unrelated binary is implausible, and none
+    a slice of a public constant table (CRC-32, SHA-256 K, MD5 T, AES S-boxes) that any host
+    binary may carry too."""
     windows = []
     if len(elf) < size:
         return windows
@@ -150,7 +217,7 @@ def choose_windows(elf, count, size, seed_stride=None):
     while at + size <= len(elf) and len(windows) < count:
         w = elf[at:at + size]
         anchor = w[:8]
-        if len(set(w)) >= 28 and len(set(anchor)) >= 6 and anchor != b"\0" * 8:
+        if len(set(w)) >= 28 and len(set(anchor)) >= 6 and anchor != b"\0" * 8 and not is_public_constant_window(w):
             windows.append({"offset": at, "anchor": anchor.hex(),
                             "sha256": hashlib.sha256(w).hexdigest(), "size": size})
             at += stride
@@ -202,6 +269,8 @@ def window_findings(data, windows, live_elf=None):
             start = hit + 1
         if live_elf is not None:
             w = live_elf[offset:offset + size]
+            if is_public_constant_window(w):
+                continue   # a CRC / hash / cipher table, not the game's bytes
             hit = data.find(w)
             if hit >= 0 and not any(f[1].startswith("ELF window @ELF+0x%x " % offset) for f in out):
                 out.append(("windows", "ELF window @ELF+0x%x (%d bytes, live) found at file offset 0x%x"
@@ -443,6 +512,17 @@ def selftest():
     carrier = b"host code " * 50 + fake_elf[ws[1]["offset"]:ws[1]["offset"] + 64] + b" more host"
     expect(window_findings(carrier, table), "embedded window found")
     expect(not window_findings(b"host code only " * 100, table), "clean carrier")
+    # a window that is a slice of a public constant table is never chosen and never a live finding
+    crc_img = _public_constant_tables()[0]
+    expect(is_public_constant_window(crc_img[100:164]), "CRC-32 table slice recognised")
+    expect(not is_public_constant_window(fake_elf[64:128]), "an ordinary window is not a public table")
+    elf_with_crc = fake_elf[:2048] + crc_img + fake_elf[2048:]
+    ws2 = choose_windows(elf_with_crc, 64, 64, seed_stride=64)
+    expect(all(not is_public_constant_window(elf_with_crc[w["offset"]:w["offset"] + 64]) for w in ws2),
+           "no chosen window lies in the CRC table")
+    live_table = [(crc_img[:8], hashlib.sha256(b"not it").hexdigest(), 64, 2048)]
+    expect(not window_findings(b"host " * 20 + crc_img[:64] + b" host", live_table, live_elf=elf_with_crc),
+           "a live window inside the CRC table is not a finding")
     # the anchor alone (first 8 bytes) without the rest of the window is NOT a finding
     expect(not window_findings(b"x" * 10 + fake_elf[ws[0]["offset"]:ws[0]["offset"] + 8] + b"y" * 100, table),
            "anchor without window is not a finding")

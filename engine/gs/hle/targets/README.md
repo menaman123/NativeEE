@@ -5,7 +5,7 @@
 
 ## Belongs here
 
-- `VramLayout` (the title's VRAM map as an engine-side struct; every query false when empty), `TargetIdentity`, `SurfaceViews`, `CoherenceState` (+ `LogicalRect`), `RenderTarget` (PrepareDraw / AfterDraw by route incl. the Z-write ordinal `last_z_seq` / alt16 companion), `ReadbackEngine` (colour + Z writeback into the VramImage shadow: linear-span touched pages, per-page EE-newer / rescue-authorship / uploaded-range vetoes, Z saturation, an optional encode-PSM override for reader-driven deposits), `RenderTargetCache` (grow-only, tag carry, rescue deposit with page-aligned stride, colour-only SyncAll at epoch 0, most-recent-drawn), `TargetRefresher` (Uploaded(addr) textures with the 512 / 64 MiB budget, EvictUnderDraw, CPU-dirty pages, UploadRowBand fold helper, RefreshFromVram), `ScalePolicy` (+ `ScaleSettings`)
+- `VramLayout` (the title's VRAM map as an engine-side struct; every query false when empty), `TargetIdentity`, `SurfaceViews`, `CoherenceState` (+ `LogicalRect`), `RenderTarget` (PrepareDraw / AfterDraw by route incl. the Z-write ordinal `last_z_seq` / alt16 companion -- refreshed main -> companion through `Backend::CopyRect(kCopyPack5551)` on the GPU when `Caps::copy_pack5551`, else the CPU Readback / TexaExpand / Upload route; same bytes, pinned by Inv12), `ReadbackEngine` (colour + Z writeback into the VramImage shadow: linear-span touched pages, per-page EE-newer / rescue-authorship / uploaded-range vetoes, Z saturation, an optional encode-PSM override for reader-driven deposits), `RenderTargetCache` (grow-only, tag carry, rescue deposit with page-aligned stride, colour-only SyncAll at epoch 0, most-recent-drawn), `TargetRefresher` (Uploaded(addr) textures with the 512 / 64 MiB budget, EvictUnderDraw behind a `PageOccupancy` page filter, CPU-dirty pages, UploadRowBand fold helper, RefreshFromVram), `ScalePolicy` (+ `ScaleSettings`)
 
 ## Does not belong here
 
@@ -34,3 +34,12 @@ Added in the 6D″ fix round / 6D‴: `target_dims.h/.cpp` (`TargetDims::Compute
 `SyncRTToVRAM` tail that removes the deferred entry, `:17092-17095`; `SyncAll` routes through it), the
 `AliasPageSet` walks CLAMP at page 511 (OLD `markDirtyRange :3407-3416`), `ReadbackEngine::SyncRtToVram` takes a
 deposit-base override (`dest_fbp`) for the display path's stand-in deposit (OLD's `SyncRTToVRAM(fbp, target)` pair).
+
+## Grab -> deposit pixel sharing (consumer_b, round P phase B)
+
+`ReadbackEngine::OfferPixels(color, pw, ph, rgba)` / `RevokeOffer()`: the frame end's display grab just read the
+whole colour attachment; until the revoke a colour writeback of that attachment (`SyncRtToVram`, the scanout deposit
+of `DrawScanout -> SyncDrawn`) takes its rows from the offered buffer instead of a second GPU read (same bytes: the
+caller guarantees nothing draws into the attachment in between -- the frame-end sequence). `OfferedReads()` counts;
+`SetOfferEnabled(false)` is the A/B switch. Pinned by `Targets_OfferedPixels`.
+

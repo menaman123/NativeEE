@@ -124,6 +124,36 @@ static void TestPreemption() {
     CHECK(hi_before.load(), "preempt_point_hands_over_to_higher_priority");
 }
 
+// Inside an interrupt handler (IsrBegin .. IsrEnd) a PreemptPoint only records:
+// the lower-priority holder keeps running through the handler's remaining work
+// (the dispatcher's acknowledgement) and hands over exactly at IsrEnd.
+static void TestPreemptionDeferredInIsr() {
+    std::atomic<bool> hi_ran{false}, hi_during{false}, hi_after{false}, lo_holds{false};
+    std::thread lo([&] {
+        TOK().GuestEnter(45, 60);
+        lo_holds = true;
+        TOK().IsrBegin();
+        CHECK(TOK().InIsr(), "isr_scope_in_isr");
+        TOK().MakeReady(46, 10);
+        TOK().PreemptPoint();            // recorded, not taken
+        hi_during = hi_ran.load();       // still us: the higher thread has not run
+        TOK().IsrEnd();                  // the hand-over
+        hi_after = hi_ran.load();
+        CHECK(!TOK().InIsr(), "isr_scope_left");
+        TOK().GuestExit(45);
+    });
+    WaitUntil(lo_holds);
+    std::thread hi([&] { TOK().GuestEnter(46, 10); hi_ran = true; TOK().GuestExit(46); });
+    lo.join(); hi.join();
+    CHECK(!hi_during.load(), "preempt_point_inside_isr_is_deferred");
+    CHECK(hi_after.load(), "isr_end_hands_over_to_the_readied_higher_priority");
+    // No deferred record leaks: a scope without a PreemptPoint hands nothing over.
+    std::atomic<bool> lo2_holds{false}, ran_other{false};
+    std::thread lo2([&] { TOK().GuestEnter(47, 60); lo2_holds = true; TOK().IsrBegin(); TOK().IsrEnd(); ran_other = false; TOK().GuestExit(47); });
+    lo2.join();
+    CHECK(lo2_holds.load() && !ran_other.load(), "isr_scope_without_preempt_is_inert");
+}
+
 static void TestChangePriorityTail() {
     std::vector<int> order; std::mutex om; std::atomic<int> entered{0}; std::atomic<bool> boss_holds{false};
     std::thread boss([&] {
@@ -190,6 +220,122 @@ static void TestEventQueuePoke() {
     parker.join();
     CHECK(woke.load(), "enqueue_pokes_registered_park");
     Q().DrainOnToken();
+    ClearLog();
+}
+
+// While a thread holds the run token, an enqueue pokes only THAT thread's
+// parks: a blocked guest thread's park stays asleep (the holder applies the
+// event at its next scheduling point). With no holder every park is poked.
+static void TestEventQueuePokeHolderOnly() {
+    std::mutex m; std::condition_variable cv; std::atomic<bool> woke{false};
+    std::mutex hm; std::condition_variable hcv; bool release_holder = false; std::atomic<bool> holding{false};
+    std::thread holder([&] {
+        TOK().GuestEnter(62, 10);
+        holding = true;
+        std::unique_lock<std::mutex> lk(hm);
+        hcv.wait(lk, [&] { return release_holder; });
+        lk.unlock();
+        TOK().GuestExit(62);
+    });
+    while (!holding.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    CHECK(TOK().OwnerTid() == 62, "holder_only_owner_is_the_holder");
+    // The parker registers from a non-guest thread (tid kNone): not the holder's park.
+    std::thread parker([&] { EeEventQueue::ParkReg reg(&m, &cv); std::unique_lock<std::mutex> lk(m); cv.wait(lk, [&] { return Q().HasPending(); }); woke = true; });
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const uint64_t pokes_holder0 = Q().PokesHolder(), pokes_all0 = Q().PokesAll();
+    Q().Enqueue({Event::kWakeupThread, 8, 0});
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    CHECK(!woke.load(), "holder_only_blocked_park_not_poked_while_a_holder_exists");
+    CHECK(Q().PokesHolder() == pokes_holder0 + 1 && Q().PokesAll() == pokes_all0, "holder_only_poke_counted_as_holder");
+    { std::lock_guard<std::mutex> lk(hm); release_holder = true; }
+    hcv.notify_all();
+    holder.join();
+    CHECK(TOK().OwnerTid() == EeRunToken::kNone, "holder_only_no_owner_after_exit");
+    // The parker's predicate already sees pending_; a second enqueue with no holder pokes every park.
+    Q().Enqueue({Event::kWakeupThread, 9, 0});
+    parker.join();
+    CHECK(woke.load(), "holder_only_all_parks_poked_without_a_holder");
+    CHECK(Q().PokesAll() == pokes_all0 + 1, "holder_only_poke_counted_as_all");
+    std::thread drainer([&] { TOK().GuestEnter(63, 10); Q().DrainIfPendingOnHolder(); TOK().GuestExit(63); });
+    drainer.join();
+    ClearLog();
+}
+
+// Two guest threads parked in kernel waits (the real waits' predicate clause,
+// ParkWakeDue), nobody holding the token, a foreign-thread event: exactly ONE
+// wakes -- the LAST RUNNER (the thread that released the token last), by the
+// queue's rule, not by which host thread the kernel scheduled first; the other
+// stays parked. While a thread holds the token, neither parked thread wakes for
+// the queue (the holder applies the event at its next scheduling point).
+static void TestEventQueueNoHolderWakesLastRunner() {
+    ClearLog();
+    struct Parker {
+        int tid = 0;
+        std::mutex m;
+        std::condition_variable cv;
+        bool release = false;
+        std::atomic<bool> parked{false}, woke_for_queue{false}, done{false};
+        std::thread th;
+    };
+    Parker a, b;
+    a.tid = 72;
+    b.tid = 73;
+    std::atomic<int> entered{0};
+    std::mutex gate_m; std::condition_variable gate_cv; bool gate_open = false;
+    const auto body = [&](Parker& p, Parker* after) {
+        TOK().GuestEnter(p.tid, 10);
+        // Serialise the two releases: `after` (if any) has parked before this thread blocks,
+        // so this thread's release is the LAST one -- the guest schedule names the last runner.
+        if (after) while (!after->parked.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        ++entered;
+        TOK().BlockBegin(p.tid);
+        {
+            EeEventQueue::ParkReg reg(&p.m, &p.cv);
+            std::unique_lock<std::mutex> lk(p.m);
+            p.parked = true;
+            p.cv.wait(lk, [&] { return p.release || Q().ParkWakeDue(); });
+            if (!p.release) p.woke_for_queue = true;
+        }
+        TOK().BlockEnd(p.tid);   // the post-acquire hook drains the queue on this thread
+        {   // hold the token until the test lets go (the "a holder exists" half)
+            std::unique_lock<std::mutex> lk(gate_m);
+            gate_cv.wait(lk, [&] { return gate_open; });
+        }
+        TOK().GuestExit(p.tid);
+        p.done = true;
+    };
+    // a enters first and blocks first; b blocks after a has parked: b is the last runner.
+    a.th = std::thread([&] { body(a, nullptr); });
+    while (!a.parked.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    b.th = std::thread([&] { body(b, &a); });
+    while (!b.parked.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    CHECK(TOK().OwnerTid() == EeRunToken::kNone, "no_holder_both_parked_no_owner");
+    CHECK(TOK().LastOwnerTid() == b.tid, "no_holder_last_runner_is_the_second_blocker");
+    const uint64_t pokes_all0 = Q().PokesAll();
+    Q().Enqueue({Event::kWakeupThread, 11, 0});   // a foreign thread's event, nobody holds
+    for (int i = 0; i < 200 && !b.woke_for_queue.load(); i++) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    CHECK(b.woke_for_queue.load(), "no_holder_last_runner_woke");
+    CHECK(!a.woke_for_queue.load() && a.parked.load(), "no_holder_other_thread_stayed_parked");
+    CHECK(Q().LastIdlePokeTid() == b.tid && Q().PokesAll() == pokes_all0 + 1, "no_holder_poke_named_the_last_runner");
+    // b now holds the token (BlockEnd re-acquired it; the gate holds it there) and drained.
+    CHECK(TOK().OwnerTid() == b.tid, "no_holder_waker_holds_after_drain");
+    CHECK(!Q().HasPending(), "no_holder_waker_drained_the_queue");
+    // A holder exists: a second event wakes nobody parked; the holder applies it.
+    Q().Enqueue({Event::kWakeupThread, 12, 0});
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    CHECK(!a.woke_for_queue.load() && a.parked.load(), "holder_exists_parked_thread_not_woken");
+    CHECK(Q().HasPending(), "holder_exists_event_waits_for_the_holder");
+    { std::lock_guard<std::mutex> lk(gate_m); gate_open = true; }
+    gate_cv.notify_all();
+    b.th.join();   // b exits: the token is free, a is still parked (its release flag ends the park)
+    std::thread drainer([&] { TOK().GuestEnter(74, 10); Q().DrainIfPendingOnHolder(); TOK().GuestExit(74); });
+    drainer.join();
+    { std::lock_guard<std::mutex> lk(a.m); a.release = true; }
+    a.cv.notify_all();
+    a.th.join();
+    CHECK(!a.woke_for_queue.load(), "holder_exists_other_thread_never_woke_for_the_queue");
     ClearLog();
 }
 
@@ -314,10 +460,13 @@ int main() {
     TestNoAsyncDescheduling();
     TestPriorityElection();
     TestPreemption();
+    TestPreemptionDeferredInIsr();
     TestChangePriorityTail();
     TestRetiredTidCannotWedge();
     TestEventQueueFifo();
     TestEventQueuePoke();
+    TestEventQueuePokeHolderOnly();
+    TestEventQueueNoHolderWakesLastRunner();
     TestNonHolderDrainCountedNoop();
     TestApplyingNeverReenqueues();
     TestHolderAppliesExactlyOnce();

@@ -1,8 +1,9 @@
 #pragma once
 // UserData -- the user data layout (CHARTER 2 C4): the ONE root under which the
-// settings file (ps2r.ini), memory cards, savestates, texture packs and the
-// extracted game files live -- never beside the binary, so an updated binary
-// keeps the user's data.
+// memory cards, savestates, texture packs and the extracted game files live --
+// never beside the binary, so an updated binary keeps the user's data. The
+// settings file (nativeee.ini) is ConfigStore's: beside the executable in a
+// game folder the launcher prepared, else under this root.
 //
 //   macOS    ~/Library/Application Support/NativeEE
 //   Windows  %APPDATA%/NativeEE
@@ -64,7 +65,8 @@ public:
     // absent) are returned with copied=false so the caller can log the layout.
     static std::vector<Migration> Migrate(const Config& cfg, const std::string& cwd);
 
-    // The settings file every in-game option persists to.
+    // The settings file every option persists to: the store ConfigLoader resolved
+    // (ConfigStore::ActivePath()); with no store resolved (a test), <root>/nativeee.ini.
     static std::string SettingsFile(const Config& cfg);
 
     // One line per migration for the log / stderr.

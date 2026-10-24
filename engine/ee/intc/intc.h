@@ -18,6 +18,22 @@
 // event kIntcRaise, applied by ThreadManager's applier at the holder's next
 // scheduling point -- the boundary's drain step).
 //
+// The DEFERRED stage (RaiseDeferred / CollectDeferred) is for a cause an
+// asynchronous device pipeline produces -- the GS's SIGNAL / FINISH, reached
+// by a parser that runs behind a VU1 worker and a drain thread, on a host
+// thread that is not the guest's. Such a cause is latched in `deferred_` (any
+// thread) and enters STAT only when the HOLDER collects it at a scheduling
+// point of its own (a syscall entry, a yield trip, the frame boundary, the
+// kernel idle, a completed GS sync): the handler then runs on the running
+// thread's context, as an in-place raise's would -- never on a parked thread
+// the latch happened to wake (the pre-fix drain thread: a FINISH applied on
+// four different threads' stacks). Where the collect point is an OBSERVATION
+// point (a blocking wait with no other READY thread, the kernel idle -- the
+// console's idle loop, where the guest can make no progress on its own) the
+// caller first waits for the pipeline to owe nothing, so the set collected
+// there is what the guest's submissions produce and no cause is left for an
+// idle grant on another thread.
+//
 // Handlers run through the installed GuestCall (the composition root binds
 // DispatchTable::Invoke; tests bind a model): $a0 = handler arg, $gp = its
 // gp, $ra = the kernel return stub; the caller's PC and GPR file are saved
@@ -26,6 +42,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <string>
 
 #include "engine/ee/cpu/cpu_state.h"
 #include "engine/ee/mem/mmio_handler.h"
@@ -58,6 +75,17 @@ public:
     void Raise(int cause);
     // Holder only (the queue applier / tests): the in-place half of Raise.
     void RaiseInPlace(int cause);
+    // Deferred stage (header comment). Any thread: latches the cause and
+    // enqueues the queue's kDeferredLatched no-op, whose poke wakes one thread
+    // of a fully parked guest set (the queue's deterministic rule) to collect
+    // it at its idle grant; with a holder nobody wakes, the holder collects.
+    void RaiseDeferred(int cause);
+    // Holder only: moves the latched causes into STAT (one edge each) and
+    // returns them; 0 when nothing was latched or the caller is not the holder.
+    uint32_t CollectDeferred();
+    bool DeferredPending() const { return deferred_.load(std::memory_order_acquire) != 0; }
+    uint64_t DeferredRaiseCount() const { return deferred_raises_.load(std::memory_order_relaxed); }
+    uint64_t DeferredCollectCount() const { return deferred_collects_.load(std::memory_order_relaxed); }
     bool Pending() const { return (Stat() & Mask()) != 0; }
     bool Pending(int cause) const { return ((Stat() & Mask()) >> cause) & 1u; }
     uint32_t Stat() const { return stat_.load(std::memory_order_acquire); }
@@ -65,10 +93,40 @@ public:
     uint32_t* MaskWord() { return &mask_; }
 
     // Runs the active handlers of `cause` iff STAT & MASK has its bit, then
-    // acknowledges that bit only. Returns true when a handler ran.
-    bool Dispatch(CpuContext& ctx, int cause);
+    // acknowledges that bit only. Returns true when a handler ran. `site` names
+    // the dispatch point for the refusal census (see Site).
+    bool Dispatch(CpuContext& ctx, int cause, int site = kSiteOther);
     // Every pending, enabled cause in ascending order.
-    int DispatchPending(CpuContext& ctx);
+    int DispatchPending(CpuContext& ctx, int site = kSiteOther);
+    // True while a handler runs on this controller. Dispatch / DispatchPending
+    // refuse (return false / 0) while set: an ISR's own kernel calls (iSignalSema,
+    // the syscall-entry delivery, a yield inside the handler) must not re-enter the
+    // dispatch with the cause still pending -- the hardware's "interrupts are
+    // masked while the handler runs" (EXL), counted in NestedRefusals().
+    bool InDispatch() const { return in_dispatch_; }
+    uint64_t NestedRefusals() const { return nested_refusals_; }
+
+    // The dispatch points a composition calls from (the census key; the EE kernel's
+    // own dispatch points are the exception vector and the handler's exit -- here
+    // the exit is the NEXT of these the running thread reaches).
+    enum Site : int { kSiteOther = 0, kSiteBoundary, kSiteYield, kSiteSyscallEntry, kSiteTimerPump, kSiteCount };
+    static const char* CauseName(int cause);
+    static const char* SiteName(int site);
+    // Per-cause edge accounting: Raise edges that set a STAT bit (raised), handler
+    // runs (dispatched), the guest's own W1C acks of a set bit (acked), and the
+    // bits still set (Stat()). A cause is lost iff raised > dispatched + acked +
+    // pending(cause): nothing else clears a STAT bit.
+    uint64_t RaisedCount(int cause) const { return raised_[cause]; }
+    uint64_t DispatchedCount(int cause) const { return dispatched_[cause]; }
+    uint64_t GuestAckedCount(int cause) const { return guest_acked_[cause]; }
+    // Refusals keyed by (site, cause in dispatch, cause refused).
+    uint64_t RefusalCount(int site, int in_cause, int refused_cause) const {
+        return refusals_[site][in_cause][refused_cause];
+    }
+    // "site/in-cause>refused=count" rows, comma-joined, descending count; empty when none.
+    std::string RefusalCensus() const;
+    // "cause:raised/dispatched/acked/pending" per cause with any raise, comma-joined.
+    std::string EdgeCensus() const;
 
     uint64_t RaiseCount() const { return raises_; }
     uint64_t DispatchCount() const { return dispatches_; }
@@ -80,9 +138,18 @@ public:
 
 private:
     std::atomic<uint32_t> stat_{0};
+    std::atomic<uint32_t> deferred_{0};
     uint32_t mask_ = 0;
     GuestCall guest_call_;
     uint64_t raises_ = 0;
     uint64_t dispatches_ = 0;
     std::atomic<uint64_t> queued_raises_{0};
+    std::atomic<uint64_t> deferred_raises_{0}, deferred_collects_{0};
+    bool in_dispatch_ = false;
+    int in_dispatch_cause_ = -1;
+    uint64_t nested_refusals_ = 0;
+    uint64_t raised_[kCount] = {};
+    uint64_t dispatched_[kCount] = {};
+    uint64_t guest_acked_[kCount] = {};
+    uint64_t refusals_[kSiteCount][kCount][kCount] = {};
 };

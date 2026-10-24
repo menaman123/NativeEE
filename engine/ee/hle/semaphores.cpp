@@ -125,13 +125,14 @@ int Semaphores::Wait(int sid) {
         if (consumed) break;
         tm.NotePark(tid, true);
         EeRunToken::Instance().BlockBegin(tid);
+        tm.IdleWhileBlocked(info);   // the kernel's idle: the last runner advances time
         {
             EeEventQueue::ParkReg reg(&sema->m, &sema->cv);  // registered before the object lock
             std::unique_lock<std::mutex> lk(sema->m);
             sema->cv.wait(lk, [&] {
                 return (info && (info->released.load(std::memory_order_acquire) || info->force_release.load() ||
                                  info->terminated.load())) ||
-                       sema->deleted || sema->count > 0 || EeEventQueue::Instance().HasPending() || !tm.Running();
+                       sema->deleted || sema->count > 0 || EeEventQueue::Instance().ParkWakeDue() || !tm.Running();
             });
             for (auto it = sema->waitq.begin(); it != sema->waitq.end(); ++it)
                 if (it->tid == tid) {

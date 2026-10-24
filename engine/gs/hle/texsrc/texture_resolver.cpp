@@ -3,6 +3,7 @@
 #include "engine/gs/hle/texsrc/texture_resolver.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 
@@ -229,8 +230,9 @@ void TextureResolver::ServeColor(const DrawIr& ir, const Context& ctx, const Ren
 }
 
 // A served read (target / depth / self) leaves one trace line naming the tier.
-static void TraceServe(TexresTrace& tr, const DrawIr& ir, const TextureResolver::Context& ctx,
+static void TraceServe(TexresTrace& tr, TextureDumpSink& sink, const DrawIr& ir, const TextureResolver::Context& ctx,
                        TexresTrace::Outcome o) {
+    if (sink.Armed()) sink.NoteServe(ir.tex, TexresTrace::OutcomeName(o), ctx.frame_count, ctx.draw_seq);
     if (!tr.Wants(ir.tex)) return;
     TexresTrace::Line l;
     l.draw_seq = ctx.draw_seq;
@@ -255,7 +257,7 @@ TextureSource TextureResolver::ResolveRead(const DrawIr& ir, const Context& ctx)
     out.transform.uv_pre_h = out.transform.uv_tex_h;
     if (RenderTarget* t = targets_.Find(ir.tex.tbp)) {
         if (MatchTarget(ir, ctx, *t, &out)) {
-            TraceServe(trace_, ir, ctx, (out.owner.fmt_case == 0 && ir.tex.tbp == ctx.active_fbp)
+            TraceServe(trace_, dump_sink_, ir, ctx, (out.owner.fmt_case == 0 && ir.tex.tbp == ctx.active_fbp)
                                             ? TexresTrace::Outcome::SelfRead
                                             : TexresTrace::Outcome::TargetServe);
             // A colour-class serve of the draw's own target binds nothing: the read
@@ -279,7 +281,7 @@ TextureSource TextureResolver::ResolveRead(const DrawIr& ir, const Context& ctx)
         return out;
     }
     if (MatchDepth(ir, ctx, &out)) {
-        TraceServe(trace_, ir, ctx, TexresTrace::Outcome::DepthServe);
+        TraceServe(trace_, dump_sink_, ir, ctx, TexresTrace::Outcome::DepthServe);
         out.enabled = true;
         return out;
     }
@@ -321,10 +323,14 @@ bool TextureResolver::MatchTarget(const DrawIr& ir, const Context& ctx, RenderTa
             t.EnsureAlt16(be_);
             t.RefreshAlt16FromMain(be_);
             ServeColor(ir, ctx, t, t.views.alt16, true, out);
+            out->owner.alt16_serve = true;
+            out->owner.alt16_main = t.views.color;
             return true;
         }
         if (t.views.alt16_has_content && t.views.HasAlt16()) {
             ServeColor(ir, ctx, t, t.views.alt16, true, out);
+            out->owner.alt16_serve = true;
+            out->owner.alt16_main = t.views.HasColor() ? t.views.color : render::SurfaceId{};
             return true;
         }
     }
@@ -606,8 +612,8 @@ uint8_t* TextureResolver::Scratch(std::vector<uint8_t>& buf, size_t n) {
     return buf.data();
 }
 
-render::SurfaceId TextureResolver::DecodeAndUpload(const DrawIr& ir, const ContentKey::Rect& rgn, bool sub,
-                                                   int dw, int dh, const MipSampler::Chain& mips,
+render::SurfaceId TextureResolver::DecodeAndUpload(const DrawIr& ir, const Context& ctx, const ContentKey::Rect& rgn,
+                                                   bool sub, int dw, int dh, const MipSampler::Chain& mips,
                                                    uint8_t* levels) {
     const TexReadView& v = ir.tex;
     // The decoder addresses texels through the composed 4 MiB view (pending-shadow
@@ -634,18 +640,46 @@ render::SurfaceId TextureResolver::DecodeAndUpload(const DrawIr& ir, const Conte
     if (IsIndexedPsm(v.psm)) read_span(v.cbp, VramImage::kPageBytes);
     for (uint8_t i = 0; i < mips.levels && !sub; ++i) read_span(mips.level[i].fp_start, mips.level[i].fp_size);
     census_.decodes++;
+    warm_cur_.decodes++;
+    auto now_ns = [] {
+        return static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+    };
+    const uint64_t t_decode0 = now_ns();
     if (sub) TextureDecoder::DecodeRect(view_.data(), v, rgn.x0, rgn.y0, dw, dh, &heal_, &layout_, &texels_);
     else TextureDecoder::Decode(view_.data(), v, &heal_, &layout_, &texels_);
+    uint64_t decode_ns = now_ns() - t_decode0;
+    if (dump_sink_.Armed()) {
+        // The texture oracle sees the decode as the GPU will sample it (before the FMV
+        // edge clamp, which is a sampling workaround, not a decode rule).
+        TextureDumpSink::Decode rec;
+        rec.tex = &v;
+        rec.view = view_.data();
+        rec.texels = texels_.data();
+        rec.dw = dw;
+        rec.dh = dh;
+        rec.sub = sub;
+        rec.x0 = rgn.x0;
+        rec.y0 = rgn.y0;
+        rec.fp_start = fp_start;
+        rec.fp_size = fp_size;
+        rec.frame_count = ctx.frame_count;
+        rec.draw_seq = ctx.draw_seq;
+        dump_sink_.OnDecode(rec);
+    }
     if (sub) ApplyFmvEdgeClamp(ir, rgn, dw, dh);
     render::SurfaceDesc d;
     d.width = static_cast<uint32_t>(dw);
     d.height = static_cast<uint32_t>(dh);
     d.format = render::SurfaceFormat::Rgba8;
+    uint64_t t_up0 = now_ns();
     const render::SurfaceId tex = be_.CreateSurface(d);
     render::Rect r;
     r.w = dw;
     r.h = dh;
     be_.Upload(tex, r, texels_.data(), static_cast<size_t>(dw) * 4);
+    uint64_t upload_ns = now_ns() - t_up0;
     // Authored mip levels: each decoded from its own (TBP, TBW) window at the
     // halved size; the backend synthesizes the tail past the chain.
     *levels = 0;
@@ -653,14 +687,51 @@ render::SurfaceId TextureResolver::DecodeAndUpload(const DrawIr& ir, const Conte
         std::vector<uint32_t> lv;
         for (uint8_t i = 0; i < mips.levels; ++i) {
             const MipSampler::Level& L = mips.level[i];
+            const uint64_t t0 = now_ns();
             TextureDecoder::DecodeLevel(view_.data(), v, L.tbp_bytes, L.tbw_px, L.w, L.h, &heal_, &layout_, &lv);
+            const uint64_t t1 = now_ns();
+            decode_ns += t1 - t0;
             if (lv.size() < size_t(L.w) * L.h) break;
             be_.UploadLevel(tex, i + 1, int(L.w), int(L.h), lv.data());
+            upload_ns += now_ns() - t1;
             ++*levels;
         }
-        if (*levels > 0) be_.FinishMipChain(tex, *levels, true);
+        if (*levels > 0) {
+            t_up0 = now_ns();
+            be_.FinishMipChain(tex, *levels, true);
+            upload_ns += now_ns() - t_up0;
+        }
     }
+    census_.decode_ns += decode_ns;
+    census_.upload_ns += upload_ns;
+    warm_cur_.decode_us += static_cast<uint32_t>(decode_ns / 1000u);
+    warm_cur_.upload_us += static_cast<uint32_t>(upload_ns / 1000u);
     return tex;
+}
+
+void TextureResolver::RollWarmWindow(uint64_t now_ns) {
+    if (warm_window_start_ns_ == 0) {
+        warm_window_start_ns_ = now_ns;
+        warm_cur_.frames++;
+        return;
+    }
+    constexpr uint64_t kSecond = 1000000000ull;
+    while (now_ns - warm_window_start_ns_ >= kSecond && warm_done_.size() < kWarmWindowsMax) {
+        warm_done_.push_back(warm_cur_);
+        warm_cur_ = WarmWindow{};
+        warm_window_start_ns_ += kSecond;
+    }
+    warm_cur_.frames++;
+}
+
+std::string TextureResolver::WarmSeries() const {
+    std::string s;
+    for (const WarmWindow& w : warm_done_) {
+        if (!s.empty()) s += ',';
+        s += std::to_string(w.frames) + '/' + std::to_string(w.lookups) + '/' + std::to_string(w.decodes) + '/' + std::to_string(w.decode_us) + '/' +
+             std::to_string(w.upload_us);
+    }
+    return s;
 }
 
 // The trace's first half: the draw identity and the deferred entries the flush
@@ -704,7 +775,7 @@ void TextureResolver::DecodeFallback(const DrawIr& ir, const Context& ctx, Textu
     if (owned_.BoundCount()) {
         if (owned_.Serve(v, out)) {
             census_.owned_serves++;
-            TraceServe(trace_, ir, ctx, TexresTrace::Outcome::OwnedServe);
+            TraceServe(trace_, dump_sink_, ir, ctx, TexresTrace::Outcome::OwnedServe);
             return;
         }
         if (owned_.LastMiss() != OwnedTextureSlots::Miss::NoBind) census_.owned_misses++;
@@ -712,7 +783,7 @@ void TextureResolver::DecodeFallback(const DrawIr& ir, const Context& ctx, Textu
     if (!ctx.has_snapshot) {
         // No texel source at all: the draw keeps its textured UV conversion over
         // the TEX0 window and samples nothing.
-        TraceServe(trace_, ir, ctx, TexresTrace::Outcome::NoSnapshot);
+        TraceServe(trace_, dump_sink_, ir, ctx, TexresTrace::Outcome::NoSnapshot);
         out->declined = TextureSource::Declined::NoSnapshot;
         out->enabled = true;
         return;
@@ -794,6 +865,7 @@ void TextureResolver::DecodeFallback(const DrawIr& ir, const Context& ctx, Textu
                                   nlv ? mip_in_.data() : nullptr, nlv, ctx.fast_hash);
     }
     census_.lookups++;
+    warm_cur_.lookups++;
     if (traced) {
         tl.key = key;
         tl.sub = sub;
@@ -823,7 +895,7 @@ void TextureResolver::DecodeFallback(const DrawIr& ir, const Context& ctx, Textu
             cache_.L2MarkProbation(prev->second.key);
         }
         uint8_t levels = 0;
-        tex = DecodeAndUpload(ir, rgn, sub, dw, dh, mips, &levels);
+        tex = DecodeAndUpload(ir, ctx, rgn, sub, dw, dh, mips, &levels);
         cache_.L1Insert(key, tex, dw, dh, fp_start, fp_size);
         cache_.L2Insert(key, tex, dw, dh, suspect);
         if (tex_levels_.size() >= 65536) tex_levels_.clear();

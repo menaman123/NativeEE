@@ -1,9 +1,10 @@
 #include "engine/ee/timing/boundary_protocol.h"
 
-#include "engine/ee/timing/tick_profile.h"
-
 #include <chrono>
 #include <string>
+
+#include "engine/ee/sched/ee_event_queue.h"
+#include "engine/ee/timing/tick_profile.h"
 
 BoundaryProtocol::BoundaryProtocol(TickSource& source, TickSync& ticks) : source_(source), ticks_(ticks) {}
 
@@ -15,7 +16,10 @@ void BoundaryProtocol::SetRunahead(uint32_t lag) {
 
 void BoundaryProtocol::Wait(uint64_t) {
     ++waits_;
-    if (source_.policy() == TickSource::Policy::Deterministic) {
+    // Freerun (the headless harness: no pacer ever notes a tick) waits the way the
+    // deterministic policy does -- the field is demanded in-line -- else a timer wait
+    // or a yield point would park for a period and wake to no tick, forever.
+    if (source_.policy() == TickSource::Policy::Deterministic || source_.mode() == TickSource::Mode::Freerun) {
         if (is_guest_ && !is_guest_()) {
             ticks_.NotePending(TickSync::Cause::Demand);  // fired at the next boundary
             ++deferred_;
@@ -28,13 +32,38 @@ void BoundaryProtocol::Wait(uint64_t) {
     // (an absolute deadline, never a poll quantum). The pacer is a non-guest
     // thread and only NOTES its ticks; the waiter is the guest fixed point
     // that fires them, so the clock it re-reads has advanced (a non-guest
-    // waiter leaves them for the next boundary).
-    std::unique_lock<std::mutex> lk(mu_);
-    const uint64_t seen = tick_generation_;
-    const uint32_t period_us = source_.PeriodUs() ? source_.PeriodUs() : TickSource::kBasePeriodUs;
-    cv_.wait_for(lk, std::chrono::microseconds(period_us), [&] { return tick_generation_ != seen; });
-    lk.unlock();
+    // waiter leaves them for the next boundary). A queued foreign wake ends
+    // the park too (the park is registered with the event queue, whose
+    // Enqueue pokes it); the holder applies it here, and no tick is fired for
+    // it unless the pacer noted one meanwhile.
+    EeEventQueue& queue = EeEventQueue::Instance();
+    {
+        EeEventQueue::ParkReg reg(&mu_, &cv_);
+        std::unique_lock<std::mutex> lk(mu_);
+        const uint64_t seen = tick_generation_;
+        const uint32_t period_us = source_.PeriodUs() ? source_.PeriodUs() : TickSource::kBasePeriodUs;
+        cv_.wait_for(lk, std::chrono::microseconds(period_us),
+                     [&] { return tick_generation_ != seen || queue.ParkWakeDue(); });
+    }
     if (!is_guest_ || is_guest_()) ticks_.FirePending();
+    queue.DrainIfPendingOnHolder();
+}
+
+void BoundaryProtocol::FireDueFields() {
+    if (!WallFieldDue()) return;
+    if (is_guest_ && !is_guest_()) return;
+    ++due_field_fires_;
+    ticks_.FirePending();
+    EeEventQueue::Instance().DrainIfPendingOnHolder();
+}
+
+std::function<void()> BoundaryProtocol::FireDueFieldsHook() {
+    return [this] { FireDueFields(); };
+}
+
+bool BoundaryProtocol::WallFieldDue() const {
+    if (source_.policy() != TickSource::Policy::Play || source_.Bypass()) return false;
+    return ticks_.Pending() != 0;
 }
 
 void BoundaryProtocol::MarkWorkWindow() {
@@ -102,7 +131,7 @@ std::string BoundaryProtocol::LoadWindows() const {
     return out.empty() ? "none" : out;
 }
 
-bool BoundaryProtocol::ParkForPacerTick() {
+bool BoundaryProtocol::ParkForPacerTick(const std::function<void()>& on_wake) {
     const auto t0 = std::chrono::steady_clock::now();
     const uint32_t period_us = source_.PeriodUs() ? source_.PeriodUs() : TickSource::kBasePeriodUs;
     // The frame's own work: from the previous boundary's release to here.
@@ -130,11 +159,26 @@ bool BoundaryProtocol::ParkForPacerTick() {
         return false;
     }
     ++pace_parks_;
-    std::unique_lock<std::mutex> lk(mu_);
-    const uint64_t seen = tick_generation_;
-    const bool ticked = cv_.wait_for(lk, std::chrono::microseconds(period_us) * kBoundaryParkPeriods,
-                                     [&] { return tick_generation_ != seen || ticks_.Pending() != 0; });
-    lk.unlock();
+    EeEventQueue& queue = EeEventQueue::Instance();
+    const auto deadline = t0 + std::chrono::microseconds(period_us) * kBoundaryParkPeriods;
+    bool ticked = false;
+    {
+        EeEventQueue::ParkReg reg(&mu_, &cv_);
+        std::unique_lock<std::mutex> lk(mu_);
+        const uint64_t seen = tick_generation_;
+        for (;;) {
+            const bool woke = cv_.wait_until(lk, deadline, [&] {
+                return tick_generation_ != seen || ticks_.Pending() != 0 || (on_wake && queue.ParkWakeDue());
+            });
+            ticked = tick_generation_ != seen || ticks_.Pending() != 0;
+            if (ticked || !woke) break;
+            // E433: a foreign wake, no tick -- serve it on this thread and park on.
+            ++pace_wakes_;
+            lk.unlock();
+            on_wake();
+            lk.lock();
+        }
+    }
     const auto t1 = std::chrono::steady_clock::now();
     pace_slept_us_ += static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
     if (!ticked) ++pace_timeouts_;

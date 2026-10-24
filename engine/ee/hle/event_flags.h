@@ -34,6 +34,15 @@ struct EventFlagParam {
     uint32_t init_bits = 0;
 };
 
+// ReferEventFlagStatus's view (the SDK EventFlagParam as the kernel fills it).
+struct EventFlagStatus {
+    uint32_t attr = 0;
+    uint32_t option = 0;
+    uint32_t init_bits = 0;
+    uint32_t bits = 0;
+    int wait_threads = 0;
+};
+
 struct EventFlagInfo {
     uint32_t attr = 0;
     uint32_t option = 0;
@@ -64,6 +73,7 @@ public:
     // `result` (optional) receives the pattern at release, before the clear.
     int Wait(int eid, uint32_t wait_bits, uint32_t mode, uint32_t* result);
     int Poll(int eid, uint32_t wait_bits, uint32_t mode, uint32_t* result);
+    int ReferStatus(int eid, EventFlagStatus& out);
 
     std::shared_ptr<EventFlagInfo> Lookup(int eid);
     void RemoveWaiter(int eid, int tid);

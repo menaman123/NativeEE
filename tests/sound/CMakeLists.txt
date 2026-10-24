@@ -60,3 +60,13 @@ target_link_libraries(test_fmv_pcm_input PRIVATE ps2r_sound)
 target_compile_options(test_fmv_pcm_input PRIVATE -Wall -Wextra -Werror)
 add_test(NAME FmvPcmInput COMMAND test_fmv_pcm_input)
 set_tests_properties(FmvPcmInput PROPERTIES TIMEOUT 60)
+
+# The SPU2 register semantics of the voice model (the envelope rate engine, signed
+# volume registers, MVOL << 1, the core 0 -> AVOL1 -> core 1 routing, switch readback
+# and the VMIX dry gates, the VoiceTrace record), vectors from the hardware's rules
+# with PCSX2's SPU2 as the behavioural oracle.
+add_executable(test_spu_register_rules test_spu_register_rules.cpp)
+target_link_libraries(test_spu_register_rules PRIVATE ps2r_sound)
+target_compile_options(test_spu_register_rules PRIVATE -Wall -Wextra -Werror)
+add_test(NAME SpuRegisterRules COMMAND test_spu_register_rules)
+set_tests_properties(SpuRegisterRules PROPERTIES TIMEOUT 60)

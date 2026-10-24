@@ -15,6 +15,7 @@ add_library(ps2r_core STATIC
     config/config.cpp
     config/config_loader.cpp
     config/settings_file.cpp
+    config/config_store.cpp
     config/config_validator.cpp
     config/deterministic_profile.cpp
     savestate/savestate_format.cpp

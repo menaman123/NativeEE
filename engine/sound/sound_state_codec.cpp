@@ -119,6 +119,16 @@ bool SoundStateCodec::RestoreSndc(const std::vector<uint8_t>& payload, std::stri
             if (!r.Get(&u32)) return false;
             core_.SetParamShadow(vi, fn, u32);
         }
+    // The voices' registers are the shadows (a file written before the VoiceState carried
+    // the registers holds derived floats in those bytes): re-latch VOLL/VOLR/PITCH/ADSR1/ADSR2.
+    for (int vi = 0; vi < SpuCore::kVoices; vi++) {
+        Voice& v = core_.VoiceAt(vi);
+        v.SetVolL(static_cast<uint16_t>(core_.ParamShadow(vi, 0)));
+        v.SetVolR(static_cast<uint16_t>(core_.ParamShadow(vi, 1)));
+        v.SetPitch(static_cast<uint16_t>(core_.ParamShadow(vi, 2)));
+        v.SetAdsr1(static_cast<uint16_t>(core_.ParamShadow(vi, 3)));
+        v.SetAdsr2(static_cast<uint16_t>(core_.ParamShadow(vi, 4)));
+    }
     for (int vi = 0; vi < SpuCore::kVoices; vi++)
         for (int k = 0; k < 2; k++) {
             if (!r.Get(&u32)) return false;
@@ -137,6 +147,12 @@ bool SoundStateCodec::RestoreSndc(const std::vector<uint8_t>& payload, std::stri
             if (!r.Get(&u32)) return false;
             core_.SetCoreAttrShadow(c, fn, u32);
         }
+    // The MVOL gains follow the restored registers (the file's floats were derived by the
+    // model that wrote it; a register the title programmed is the truth, a never-written
+    // register keeps the file's gain).
+    for (int c = 0; c < SpuCore::kCores; c++)
+        for (int fn : {SpuCore::kMvoll, SpuCore::kMvolr})
+            if (const uint32_t reg = core_.CoreAttr(c, fn)) core_.SetCoreParamShadow(c, fn, reg);
     uint32_t haddr[SpuCore::kCores] = {}, harg[SpuCore::kCores] = {};
     for (int c = 0; c < SpuCore::kCores; c++)
         if (!r.Get(&haddr[c])) return false;

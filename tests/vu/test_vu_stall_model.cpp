@@ -1,9 +1,10 @@
-// VuStallModel: the FMAC / IALU writeback rings and the read stalls --
+// VuStallModel: the FMAC / IALU writeback lanes and the read stalls --
 // read-after-write stalls to +4, lane-disjoint reads do not stall, VF0 never
-// enters a ring, ILW -> branch stalls, a second FDIV op waits and commits Q,
-// a second EFU op releases P one cycle early, ring overflow drops the
-// soonest-retiring entry, flushes advance the clock, and the classed / spec
-// entry points agree with the dynamic body.
+// enters the model, ILW -> branch stalls, a second FDIV op waits and commits Q,
+// a second EFU op releases P one cycle early, a later write to a lane owns it,
+// flushes advance the clock and forget the writebacks, Reset forgets them
+// without touching the clock, and the classed / spec entry points agree with
+// the dynamic body.
 #include <cstdio>
 #include <cstring>
 
@@ -59,29 +60,35 @@ static void TestFmacReadStall() {
     fp.SetCycle(10);
     // Bundle A: ADD.xyzw vf1, vf2, vf3  -> vf1 retires at 14
     sm.Apply(VuDecoder::DecodeVuSlot(kLNop, EncAdd(1, 2, 3, 0xF)), r, fp);
-    CHECK(sm.fmac_depth() == 1);
-    CHECK(sm.fmac(0).reg == 1 && sm.fmac(0).mask == 0xF && sm.fmac(0).retire == 14);
-    CHECK(sm.fmac_regs() == (1u << 1));
-    CHECK(sm.fmac_min_retire() == 14);
+    for (int k = 0; k < 4; ++k) CHECK(sm.FmacRetire(1, k) == 14);
+    CHECK(sm.FmacRetire(2, 0) == 0 && sm.FmacRetire(3, 0) == 0);
+    CHECK(sm.fmac_newest_retire() == 14);
     CHECK(fp.cycle() == 10);
     // Bundle B at 11: ADD.xyzw vf4, vf1, vf0 reads vf1 -> stall to 14
     fp.SetCycle(11);
     sm.Apply(VuDecoder::DecodeVuSlot(kLNop, EncAdd(4, 1, 0, 0xF)), r, fp);
     CHECK(fp.cycle() == 14);
-    CHECK(sm.fmac_depth() == 2);
-    CHECK(sm.fmac(1).reg == 4 && sm.fmac(1).retire == 18);
+    CHECK(sm.FmacRetire(4, 0) == 18 && sm.FmacRetire(4, 3) == 18 && sm.fmac_newest_retire() == 18);
     // Bundle C at 15: reads vf4.w only while vf4's write is xyzw -> stall to 18
     fp.SetCycle(15);
     sm.Apply(VuDecoder::DecodeVuSlot(kLNop, EncAdd(5, 4, 0, vu_dest::W)), r, fp);
     CHECK(fp.cycle() == 18);
-    // The prune ran at the bundle's issue cycle (15): vf1 (14) went, vf4 (18) stayed; vf5 retires at 22.
-    CHECK(sm.fmac_depth() == 2);
-    CHECK(sm.fmac(0).reg == 4 && sm.fmac(0).retire == 18);
-    CHECK(sm.fmac(1).reg == 5 && sm.fmac(1).retire == 22);
-    // At 22 everything is retired; the next bundle prunes the ring empty.
+    // vf1's writeback (14) is behind the clock -- inert; vf4 (18) and vf5 (22) ahead.
+    CHECK(sm.FmacRetire(1, 0) == 14 && sm.FmacRetire(4, 0) == 18 && sm.FmacRetire(5, 3) == 22 && sm.FmacRetire(5, 0) == 0);
+    // At 22 everything has retired: a reader of vf5 at 22 does not stall.
     fp.SetCycle(22);
-    sm.Apply(VuDecoder::DecodeVuSlot(kLNop, kUNop), r, fp);
-    CHECK(sm.fmac_depth() == 0);
+    sm.Apply(VuDecoder::DecodeVuSlot(kLNop, EncAdd(6, 5, 0, 0xF)), r, fp);
+    CHECK(fp.cycle() == 22);
+    // A later write to the same lanes owns them: vf6.x rewritten at 30 retires at 34; a reader of
+    // vf6.x at 31 waits to 34, a reader of vf6.w (written at 22, retired 26) does not.
+    fp.SetCycle(30);
+    sm.Apply(VuDecoder::DecodeVuSlot(kLNop, EncAdd(6, 0, 0, vu_dest::X)), r, fp);
+    CHECK(sm.FmacRetire(6, 0) == 34 && sm.FmacRetire(6, 3) == 26);
+    fp.SetCycle(31);
+    sm.Apply(VuDecoder::DecodeVuSlot(kLNop, EncAdd(7, 6, 0, vu_dest::W)), r, fp);
+    CHECK(fp.cycle() == 31);
+    sm.Apply(VuDecoder::DecodeVuSlot(kLNop, EncAdd(8, 6, 0, vu_dest::X)), r, fp);
+    CHECK(fp.cycle() == 34);
 }
 
 static void TestLaneDisjointAndVf0() {
@@ -94,10 +101,10 @@ static void TestLaneDisjointAndVf0() {
     fp.SetCycle(101);
     sm.Apply(VuDecoder::DecodeVuSlot(kLNop, EncAdd(4, 1, 0, vu_dest::Z | vu_dest::W)), r, fp);
     CHECK(fp.cycle() == 101);
-    // A write to vf0 never enters the ring; a read of vf0 never stalls.
+    // A write to vf0 never enters the model; a read of vf0 never stalls.
     fp.SetCycle(200);
     sm.Apply(VuDecoder::DecodeVuSlot(kLNop, EncAdd(0, 2, 3, 0xF)), r, fp);
-    CHECK(sm.fmac_depth() == 0);                     // vf1/vf4 retired and pruned; vf0 was never queued
+    CHECK(sm.FmacRetire(0, 0) == 0 && sm.fmac_newest_retire() == 105);   // vf0 was never queued
     fp.SetCycle(201);
     sm.Apply(VuDecoder::DecodeVuSlot(kLNop, EncAdd(6, 0, 0, 0xF)), r, fp);
     CHECK(fp.cycle() == 201);
@@ -110,8 +117,7 @@ static void TestIaluBranchStall() {
     fp.SetCycle(50);
     // ILW.x vi3, 0(vi1) -> vi3 retires at 54
     sm.Apply(VuDecoder::DecodeVuSlot(EncIlw(3, 1, vu_dest::X, 0), kUNop), r, fp);
-    CHECK(sm.ialu_depth() == 1);
-    CHECK(sm.ialu(0).vi == 3 && sm.ialu(0).retire == 54);
+    CHECK(sm.IaluRetire(3) == 54 && sm.ialu_newest_retire() == 54);
     // IADD-style consumer is not a branch: no stall (IADDIU vi4, vi3, 1)
     fp.SetCycle(51);
     sm.Apply(VuDecoder::DecodeVuSlot((0x08u << 25) | (4u << 16) | (3u << 11) | 1u, kUNop), r, fp);
@@ -126,13 +132,16 @@ static void TestIaluBranchStall() {
     fp.SetCycle(61);
     sm.Apply(VuDecoder::DecodeVuSlot(EncIbne(2, 0, 4), kUNop), r, fp);
     CHECK(fp.cycle() == 61);
-    // An I-bit bundle never prunes / looks at the IALU ring (its lower is an immediate).
-    fp.SetCycle(70);
+    // An I-bit bundle never looks at the IALU side (its lower is an immediate): no stall, no write.
+    fp.SetCycle(62);
     sm.Apply(VuDecoder::DecodeVuSlot(0x12345678u, kUNop | 0x80000000u), r, fp);
-    CHECK(sm.ialu_depth() == 1);                     // the stale vi5 entry is still there
-    fp.SetCycle(71);
-    sm.Apply(VuDecoder::DecodeVuSlot(kLNop, kUNop), r, fp);
-    CHECK(sm.ialu_depth() == 0);                     // a lower-bearing bundle prunes it
+    CHECK(fp.cycle() == 62 && sm.IaluRetire(5) == 64);
+    // A branch on vi5 at 63 waits for the load (64); at 64 it does not.
+    fp.SetCycle(63);
+    sm.Apply(VuDecoder::DecodeVuSlot(EncIbne(5, 0, 4), kUNop), r, fp);
+    CHECK(fp.cycle() == 64);
+    sm.Apply(VuDecoder::DecodeVuSlot(EncIbne(5, 0, 4), kUNop), r, fp);
+    CHECK(fp.cycle() == 64);
 }
 
 static void TestPipeWaits() {
@@ -173,47 +182,55 @@ static void TestPipeWaits() {
     CHECK(fp.cycle() == 517 && r.P == 1.0f);
 }
 
-static void TestOverflowAndFlush() {
+static void TestManyWritesAndFlush() {
     StallModel sm;
     FlagPipeline fp(false);
     VUregs r = FreshRegs();
-    // Nine writes inside one 4-cycle window (nothing retires); the ring keeps
-    // 8: the soonest retiring (vf1 @ 1004) is dropped and the last entry (vf8)
-    // moves into its slot; the stale min_retire stays a lower bound.
-    for (uint32_t i = 1; i <= 8; ++i) {
-        fp.SetCycle(1000 + (i - 1) / 2);
+    // Nine writes over nine bundles, one per cycle: every one is held (a reader of each lane
+    // stalls to its own retire; the OLD ring of 8 never saw more than 8 live entries because
+    // a bundle takes at least one cycle -- here the ninth bundle's reader of vf1 finds vf1 retired).
+    for (uint32_t i = 1; i <= 9; ++i) {
+        fp.SetCycle(1000 + (i - 1));
         sm.Apply(VuDecoder::DecodeVuSlot(kLNop, EncAdd(i, 0, 0, 0xF)), r, fp);
+        CHECK(sm.FmacRetire(static_cast<int>(i), 0) == 1000 + (i - 1) + 4);
     }
-    CHECK(sm.fmac_depth() == 8);
-    CHECK(sm.fmac(0).reg == 1 && sm.fmac(0).retire == 1004);
-    CHECK(sm.fmac(7).reg == 8 && sm.fmac(7).retire == 1007);
-    fp.SetCycle(1003);
-    sm.Apply(VuDecoder::DecodeVuSlot(kLNop, EncAdd(9, 0, 0, 0xF)), r, fp);
-    CHECK(sm.fmac_depth() == 8);
-    CHECK(sm.fmac(0).reg == 8 && sm.fmac(0).retire == 1007);   // vf8 moved into slot 0
-    CHECK(sm.fmac(7).reg == 9 && sm.fmac(7).retire == 1007);
-    CHECK(sm.fmac_min_retire() == 1004);
-    CHECK((sm.fmac_regs() & (1u << 1)) != 0);                  // the reg mask is a superset too
-    // Flush: the clock passes the latest writeback, the ring empties.
+    CHECK(sm.fmac_newest_retire() == 1012);
+    fp.SetCycle(1009);
+    sm.Apply(VuDecoder::DecodeVuSlot(kLNop, EncAdd(10, 1, 0, 0xF)), r, fp);   // vf1 retired at 1004
+    CHECK(fp.cycle() == 1009);
+    sm.Apply(VuDecoder::DecodeVuSlot(kLNop, EncAdd(11, 9, 0, 0xF)), r, fp);   // vf9 retires at 1012
+    CHECK(fp.cycle() == 1012);
+    // Flush: the clock passes the newest writeback (vf11 @ 1016) and the lanes are forgotten.
     sm.FlushFmacWb(fp);
-    CHECK(fp.cycle() == 1007);
-    CHECK(sm.fmac_depth() == 0);
-    // IALU ring of 4 (same window rule).
+    CHECK(fp.cycle() == 1016);
+    CHECK(sm.fmac_newest_retire() == 0 && sm.FmacRetire(11, 0) == 0 && sm.FmacRetire(1, 0) == 0);
+    // IALU: five loads, one per cycle; the branch on the last waits; the flush passes it.
     for (uint32_t i = 1; i <= 5; ++i) {
-        fp.SetCycle(2000 + (i - 1) / 2);
+        fp.SetCycle(2000 + (i - 1));
         sm.Apply(VuDecoder::DecodeVuSlot(EncIlw(i, 0, vu_dest::X, 0), kUNop), r, fp);
     }
-    CHECK(sm.ialu_depth() == 4);
-    CHECK(sm.ialu(0).vi == 4 && sm.ialu(0).retire == 2005);    // vi1 (soonest) dropped, vi4 moved into slot 0
-    CHECK(sm.ialu(3).vi == 5 && sm.ialu(3).retire == 2006);
+    CHECK(sm.IaluRetire(1) == 2004 && sm.IaluRetire(5) == 2008 && sm.ialu_newest_retire() == 2008);
+    fp.SetCycle(2005);
+    sm.Apply(VuDecoder::DecodeVuSlot(EncIbne(1, 0, 4), kUNop), r, fp);
+    CHECK(fp.cycle() == 2005);                                  // vi1 retired
+    sm.Apply(VuDecoder::DecodeVuSlot(EncIbne(5, 0, 4), kUNop), r, fp);
+    CHECK(fp.cycle() == 2008);
+    fp.SetCycle(2005);
     sm.FlushIaluWb(fp);
-    CHECK(fp.cycle() == 2006);
-    CHECK(sm.ialu_depth() == 0);
-    // Reset drops the rings without touching the clock.
+    CHECK(fp.cycle() == 2008 && sm.ialu_newest_retire() == 0 && sm.IaluRetire(5) == 0);
+    // Reset forgets the writebacks without touching the clock.
     fp.SetCycle(3000);
     sm.Apply(VuDecoder::DecodeVuSlot(EncIlw(1, 0, vu_dest::X, 0), EncAdd(1, 0, 0, 0xF)), r, fp);
+    CHECK(sm.FmacRetire(1, 0) == 3004 && sm.IaluRetire(1) == 3004);
     sm.Reset();
-    CHECK(sm.fmac_depth() == 0 && sm.ialu_depth() == 0 && fp.cycle() == 3000);
+    CHECK(sm.fmac_newest_retire() == 0 && sm.ialu_newest_retire() == 0 && sm.FmacRetire(1, 0) == 0 && fp.cycle() == 3000);
+    // MaterializeFmacIssued: the block tier's close rebuilds the lanes from recorded issue cycles.
+    const VuDecodedSlot w1 = VuDecoder::DecodeVuSlot(kLNop, EncAdd(2, 0, 0, vu_dest::X | vu_dest::Y));
+    const VuDecodedSlot w2 = VuDecoder::DecodeVuSlot(kLNop, EncAdd(2, 0, 0, vu_dest::Y));
+    const VuDecodedSlot* bundles[2] = {&w1, &w2};
+    const uint64_t issue[2] = {4000, 4002};
+    sm.MaterializeFmacIssued(bundles, issue, 2);
+    CHECK(sm.FmacRetire(2, 0) == 4004 && sm.FmacRetire(2, 1) == 4006 && sm.FmacRetire(2, 2) == 0 && sm.fmac_newest_retire() == 4006);
 }
 
 // The classed / spec entry points reproduce the dynamic body on a classified
@@ -247,12 +264,10 @@ static void TestClassedEqualsDynamic() {
         dyn.Apply(slots[i], rd, fd);
         cls.ApplyClassed(slots[i], rc, fc);
         CHECK(fd.cycle() == fc.cycle());
-        CHECK(dyn.fmac_depth() == cls.fmac_depth());
-        CHECK(dyn.ialu_depth() == cls.ialu_depth());
-        for (int k = 0; k < dyn.fmac_depth(); ++k) {
-            CHECK(dyn.fmac(k).reg == cls.fmac(k).reg && dyn.fmac(k).mask == cls.fmac(k).mask &&
-                  dyn.fmac(k).retire == cls.fmac(k).retire);
-        }
+        CHECK(dyn.fmac_newest_retire() == cls.fmac_newest_retire() && dyn.ialu_newest_retire() == cls.ialu_newest_retire());
+        for (int reg = 0; reg < 32; ++reg)
+            for (int k = 0; k < 4; ++k) CHECK(dyn.FmacRetire(reg, k) == cls.FmacRetire(reg, k));
+        for (int vi = 0; vi < 16; ++vi) CHECK(dyn.IaluRetire(vi) == cls.IaluRetire(vi));
     }
     // Spec<M> on a hand-picked slot: class 9 (WR1 only) equals the dynamic body.
     StallModel a, b;
@@ -262,7 +277,7 @@ static void TestClassedEqualsDynamic() {
     const VuDecodedSlot s = VuDecoder::DecodeVuSlot(kLNop, EncAdd(1, 0, 0, 0xF));
     a.Apply(s, rd, fa);
     b.ApplySpec<StallModel::kWr1>(s, rc, fb);
-    CHECK(a.fmac_depth() == 1 && b.fmac_depth() == 1 && a.fmac(0).retire == b.fmac(0).retire);
+    CHECK(a.FmacRetire(1, 0) == 11 && b.FmacRetire(1, 0) == 11 && a.fmac_newest_retire() == b.fmac_newest_retire());
 }
 
 int main() {
@@ -270,7 +285,7 @@ int main() {
     TestLaneDisjointAndVf0();
     TestIaluBranchStall();
     TestPipeWaits();
-    TestOverflowAndFlush();
+    TestManyWritesAndFlush();
     TestClassedEqualsDynamic();
     if (g_fail) {
         std::printf("VuStallModel: FAIL (%d)\n", g_fail);

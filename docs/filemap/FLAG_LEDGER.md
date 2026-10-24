@@ -331,7 +331,7 @@ shard flag tables joined against the A2 CSV; reconciliation decisions above are 
 | PS2_EEFEED | numeric-other | tuning-knob | delete-losing-arm-keep-winner | NORM | host_app/w10_eefeed.h:50 — ledgered P3, CONSUMED in Phase 5 (PHASE5_IMPL 5F/5G, checklist (h)4): B1 (dmac.cpp staged submit) → NORM, the staged Batch is the only DMAC→MTVU-worker feed shape (`ChainWalker::SetVif1StagedFeed` ← `DmacMtvuFeed`); B2 (gif.cpp:4147 `w10eefeed::On()`) → NORM, the rowable row loop is unconditional [IDOC-A 2026-10-01] |
 | PS2_EESTALL_CENSUS | OFF-unless-nonzero | diagnostic | move-to-diagnostics-build | DIAG | host_app/timeline.h:133 |
 | PS2_EE_PACE | numeric-other | tuning-knob | delete-losing-arm-keep-winner | NORM | host_app/ee_pace.h:169 |
-| PS2_EE_RAWDISP | — | NOT-IN-A2 | — | DIAG | recompiler_tool/recompiler.cpp |
+| PS2_EE_RAWDISP | — | NOT-IN-A2 | — | DIAG | recompiler_tool/recompiler.cpp — RETIRED 2026-10-22 (eecode round 4): the generated raw-dispatch gate reads the engine seam `recomp_fast_dispatch_enabled` (`engine.ee_fast_dispatch`, DispatchTable::SetFastDispatch); no getenv is emitted |
 | PS2_EE_RUNAHEAD | unresolved | tuning-knob | delete-losing-arm-keep-winner | SETTING | host_app/ee_pace.h:118 |
 | PS2_EE_TIM0 | unresolved | shipping-setting | keep-as-setting | NORM | host_app/ee_timers.h:46 |
 | PS2_EULERTRACE | unresolved | shipping-setting | keep-as-setting | DIAG | host_app/main.cpp:1050 |

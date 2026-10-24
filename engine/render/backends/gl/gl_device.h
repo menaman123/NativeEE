@@ -80,12 +80,30 @@ public:
                     const DrawParams& params) override;
     void CopyRect(SurfaceId src, const Rect& src_rect, SurfaceId dst, const Rect& dst_rect,
                   uint32_t transform) override;
+    void WriteAlphaLane(SurfaceId dst, const Rect& dst_rect, SurfaceId lane, const Rect& exclude) override;
     void Readback(SurfaceId id, const Rect& rect, void* out, size_t stride) override;
+    // Asynchronous: the rows go into a pixel-pack buffer behind a fence (no GPU
+    // drain at Begin); Poll waits on the fence only if the GPU has not finished.
     FenceId BeginReadback(SurfaceId id, const Rect& rect) override;
+    bool ReadbackReady(FenceId fence) override;
     bool PollReadback(FenceId fence, void* out, size_t stride) override;
+    uint64_t ReadbackWaits() const { return readback_waits_; }   // Polls that found the fence unsignalled
     void Present(const ScanoutDesc& desc) override;
     void ArmPresentCapture(bool armed) override;
     bool ReadPresented(std::vector<uint8_t>* rgba, int* w, int* h) override;
+    // The armed capture's read: synchronous (the default -- ReadPresented hands over
+    // THIS present's image; the frame dump's contract) or DEFERRED: Present reads
+    // its window image into a pixel-pack buffer behind a fence and ReadPresented
+    // hands over the PREVIOUS present's image (the fence of frame N-1 is long
+    // signalled when frame N presents: no GPU pipeline drain per present; the
+    // output lane is one present late). The play composition's choice; a reader
+    // that needs this present's image keeps the synchronous form.
+    void SetPresentCaptureDeferred(bool deferred) override;
+    bool PresentCaptureDeferred() const { return present_capture_deferred_; }
+    uint64_t PresentCaptureWaits() const { return present_capture_waits_; }   // fences found unsignalled at completion
+    void SetPresentCaptureWaitNs(uint64_t ns) override { present_capture_wait_ns_ = ns; }
+    void SetPresentCaptureGate(std::function<bool()> gate) override { present_capture_gate_ = std::move(gate); }
+    int PresentedLag() const override { return presented_lag_; }
     void ClearStencil(SurfaceId stencil, uint8_t value) override;
     void DrawConstQuad(SurfaceId color, SurfaceId stencil, const Rect& scissor, uint32_t rgba,
                        bool write_alpha, const StencilState& st) override;
@@ -119,7 +137,7 @@ public:
     // read per draw by the executor; null = the title's choice everywhere. Any
     // thread may change the selection's fields; this pointer is set once by the
     // context owner. MaxAnisotropy is the driver's limit (1 = no extension).
-    void SetTextureFilter(std::shared_ptr<const TextureFilterSelection> selection) {
+    void SetTextureFilter(std::shared_ptr<const TextureFilterSelection> selection) override {
         texture_filter_ = std::move(selection);
     }
     const TextureFilterSelection* TextureFilter() const { return texture_filter_.get(); }
@@ -134,8 +152,43 @@ public:
     const TextureFilterCensus& FilterCensus() const { return filter_census_; }
     TextureFilterCensus& FilterCensus() { return filter_census_; }
     const GlSurface* Surface(SurfaceId id) const;
+    const CallCensus* Census() const override;
+    CallCensus& CensusMut() { return census_; }
     // Default-framebuffer size Present falls back to when ScanoutDesc.dst is empty.
-    void SetWindowSize(int w, int h);
+    void SetWindowSize(int w, int h) override;
+    // The destination-read route of a shader-blended draw: the lazy Cd COPY of the
+    // attachment (glCopyTexSubImage2D before the draw -- ends the render pass each
+    // time) or, when the driver exposes NV_texture_barrier, the attachment itself
+    // sampled behind glTextureBarrierNV (Caps::texture_barrier). Resolved at Init
+    // (dlsym); the mode defaults to the COPY (the Apple barrier is not tile-coherent:
+    // gl_device.cpp Init); SetCdCopyByBarrier(true) opts in where the barrier is exact.
+    using TextureBarrierFn = void (*)();
+    TextureBarrierFn TextureBarrier() const { return texture_barrier_; }
+    void SetCdCopyByBarrier(bool on) { cd_copy_by_barrier_ = on && texture_barrier_ != nullptr; }
+    bool CdCopyByBarrier() const { return cd_copy_by_barrier_; }
+    // Every blended draw through the shader-side blend (the exact integer GS equation over
+    // the destination copy) instead of the fixed-function arm where one exists: the
+    // reference arm another backend's identity judge compares against. OFF by default.
+    void SetForceShaderBlend(bool on) { force_shader_blend_ = on; }
+    bool ForceShaderBlend() const { return force_shader_blend_; }
+    // The unified fixed-function blend state (render::BlendFfMap unified arms): ONE
+    // GL blend state -- func(SRC1_COLOR, ONE_MINUS_SRC1_ALPHA) -- for the As / ONE /
+    // ZERO FUNC_ADD tuples, the per-tuple factors written by the fragment program's second output
+    // (u_ff_unified), so consecutive blended draws with different ALPHA tuples no
+    // longer switch blend state (~1900 glBlendFuncSeparate / glBlendColor a frame,
+    // each a pipeline-state switch in the GL-on-Metal driver). Needs dual-source
+    // blending; off = the per-tuple states. OFF by default: the identity oracle
+    // (gs_replay hash equality on the captures) admits only the 0101 / 0202 / 0200 /
+    // 2101 / A=B arms, not 0201 -- the second half of the lit mesh's 0101 <-> 0201
+    // alternation -- so the exact form removes ~2 % of the switches and adds a
+    // uniform toggle per edge (BlendFfMap::Unified). Kept as an A/B lever.
+    void SetUnifiedBlend(bool on) { unified_blend_ = on; }
+    bool UnifiedBlend() const { return unified_blend_ && dual_source_; }
+    bool DualSource() const { return dual_source_; }
+    // glFlush: the host's swap callback for a window that is never shown (the
+    // hidden GL window of a captured present) -- the command stream reaches the
+    // GPU without the swap's drawable flush.
+    void FlushCommands() override;
 
 private:
     bool BuildRenderable(GlSurface& s);
@@ -171,19 +224,49 @@ private:
     uint32_t capture_tex_ = 0;
     int capture_w_ = 0, capture_h_ = 0;
     bool CaptureTarget(int w, int h);
+    // The deferred capture: the present's pixels are read into `pbo` behind `sync`;
+    // completed (mapped into presented_) at the NEXT present or at Shutdown.
+    struct DeferredCapture {
+        uint32_t pbo = 0;
+        void* sync = nullptr;   // GLsync
+        int w = 0, h = 0;
+        bool pending = false;
+        int serial_lag = 0;     // 0 = completed in its own present (the prompt capture), 1 = at the next
+    };
+    TextureBarrierFn texture_barrier_ = nullptr;
+    bool cd_copy_by_barrier_ = false;
+    bool force_shader_blend_ = false;
+    bool unified_blend_ = false;
+    bool dual_source_ = false;
+    bool present_capture_deferred_ = false;
+    DeferredCapture deferred_capture_;
+    uint64_t present_capture_waits_ = 0;
+    uint64_t present_capture_wait_ns_ = 0;   // the bounded wait for THIS present's capture (round 5; 0 = deferred only)
+    std::function<bool()> present_capture_gate_;   // false = no bounded wait at this present (backend.h)
+    int presented_lag_ = 0;                  // the lag of presented_ (0 = this present, 1 = the previous)
+    bool presented_fresh_ = false;           // presented_ not yet handed over by ReadPresented
+    void CompleteDeferredCapture(bool wait);
+    bool WaitDeferredCaptureBounded();
+    void ReleaseDeferredCapture();
     std::unordered_map<uint32_t, GlSurface> surfaces_;
     uint32_t next_surface_ = 1;
     struct PendingReadback {
-        std::vector<uint8_t> bytes;
-        size_t stride = 0;
+        uint32_t pbo = 0;       // GL_PIXEL_PACK_BUFFER holding the rows
+        void* sync = nullptr;   // GLsync after the glReadPixels into it
+        size_t stride = 0;      // packed row stride in the buffer
         int rows = 0;
     };
     std::unordered_map<uint64_t, PendingReadback> readbacks_;
+    std::vector<uint32_t> free_pbos_;   // pack buffers of completed readbacks, reused
     uint64_t next_fence_ = 1;
+    uint64_t readback_waits_ = 0;
+    void ReleaseReadbacks();
+    static bool ReadbackReadySync(void* sync);
     int max_texture_size_ = 0;
     int max_anisotropy_ = 1;
     std::shared_ptr<const TextureFilterSelection> texture_filter_;
     TextureFilterCensus filter_census_;
+    mutable CallCensus census_;
 };
 
 }  // namespace render

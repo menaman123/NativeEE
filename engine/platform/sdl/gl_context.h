@@ -7,6 +7,8 @@
 // frames itself).
 #pragma once
 
+#include <string>
+
 namespace ps2r {
 namespace platform {
 
@@ -21,6 +23,12 @@ public:
 
     // Sets the SDL_GL_* attributes (called by Window::Create after video init).
     static void RequestAttributes();
+    // Resolve the GL entry points on the CURRENT context (host::GlLoadEntryPoints over
+    // SDL_GL_GetProcAddress). A no-op that returns true where the names are linked directly
+    // (macOS, Linux); on Windows the first call after SDL_GL_CreateContext + MakeCurrent fills
+    // the loader table. Every context creator calls it (Create below, the session window, the
+    // launcher); false names the unresolved entry points in *error.
+    static bool LoadEntryPoints(std::string* error);
     bool Create(Window& window);
     void Destroy();
     bool MakeCurrent(Window& window);

@@ -34,7 +34,14 @@ public:
     bool Initialize(SDL_Window* window, void* gl_context, std::string& error);
     // Main thread only. Does not poll SDL; root forwards each event once.
     // Root must also suppress cached keyboard/mouse sampling while captured.
+    // The keys it takes: F1/F5/F8/F9/F10 (SessionControls::HandleFunctionKey),
+    // and Escape: with the menu closed = the Close request (the window close), or
+    // under SessionControls::PauseMenu = open the menu + pause the game; with the
+    // menu open under the pause menu = Resume. While the Controls page has a key
+    // row armed, the next key press is offered to its binding model instead.
     EventResult ProcessEvent(const SDL_Event& event);
+    // Main thread: the Controls page's binding model (ControlsSection::Model).
+    void SetControlsModel(ControlsSection::Model model);
     // Main thread, no GL calls. False means no overlay; game presentation
     // still runs. Closed menu with no pending/recent notice: no ImGui frame or
     // backend polling. Notices show requests without capturing game input.
@@ -58,6 +65,7 @@ public:
     bool Shutdown(std::string& error);
 
 private:
+    void OnEscape(const SessionControls::Snapshot& snapshot);
     bool OnMainThread() const;
     bool ContextCurrent() const;
     EventResult CaptureResult(bool consumed) const;

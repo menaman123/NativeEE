@@ -19,6 +19,7 @@ void DecodeCache::DropAll() {
         if (kv.second.tex.id && !shared) be_.DestroySurface(kv.second.tex);
     }
     l1_.clear();
+    l1_pages_.Clear();
     for (auto& kv : l2_)
         if (kv.second.tex.id) be_.DestroySurface(kv.second.tex);
     l2_.clear();
@@ -53,7 +54,11 @@ const DecodeCache::L1Entry* DecodeCache::L1Find(uint64_t key, int w, int h) {
 void DecodeCache::L1Insert(uint64_t key, render::SurfaceId tex, int w, int h, uint32_t fp_start,
                            uint32_t fp_size) {
     L1Entry& e = l1_[key];
-    if (e.tex.id && e.tex.id != tex.id) ReleaseFromL1(key, e.tex);
+    if (e.tex.id) {   // an existing entry: its footprint leaves the ledger first
+        l1_pages_.Remove(e.fp_start, e.fp_size);
+        if (e.tex.id != tex.id) ReleaseFromL1(key, e.tex);
+    }
+    l1_pages_.Add(fp_start, fp_size);
     e.tex = tex;
     e.w = w;
     e.h = h;
@@ -63,7 +68,7 @@ void DecodeCache::L1Insert(uint64_t key, render::SurfaceId tex, int w, int h, ui
 }
 
 void DecodeCache::EvictInRange(uint32_t start, uint32_t size) {
-    if (size == 0 || l1_.empty()) return;
+    if (size == 0 || l1_.empty() || !l1_pages_.AnyIn(start, size)) return;
     // Wrap-aware overlap of [start, start+size) with each entry's footprint on
     // the unwrapped [0, 8 MiB) line: a range crossing the 4 MiB boundary occupies
     // [x0, x1) with x1 > 4 MiB, so both images of each range are tested.
@@ -80,6 +85,7 @@ void DecodeCache::EvictInRange(uint32_t start, uint32_t size) {
     for (uint64_t k : gone) {
         auto it = l1_.find(k);
         const render::SurfaceId tex = it->second.tex;
+        l1_pages_.Remove(it->second.fp_start, it->second.fp_size);
         l1_.erase(it);                // unlink first: the L2 check must not see this view
         ReleaseFromL1(k, tex);
     }

@@ -6,6 +6,7 @@
 #include "engine/iop/iop_kernel.h"
 #include "engine/iop/iop_memory.h"
 #include "engine/iop/iop_module_table.h"
+#include "engine/iop/iop_relocator.h"
 
 namespace ps2r::iop {
 
@@ -52,7 +53,25 @@ std::string SectionName(const uint8_t* strtab, uint32_t strtab_size, uint32_t of
 
 }  // namespace
 
+IopLoader::SectionReport IopLoader::LoadSections(const uint8_t* irx, size_t size, uint32_t base) {
+    if (base == 0) return LoadSections(irx, size);
+    std::vector<uint8_t> image(irx, irx + size);
+    const IopRelocator::Report rel = IopRelocator::Relocate(image, base);
+    if (!rel.ok) {
+        SectionReport r;
+        r.error = "relocation: " + rel.error;
+        return r;
+    }
+    SectionReport r = LoadSectionsAt(image.data(), image.size(), base);
+    r.relocations = rel.r32 + rel.r26 + rel.hi16 + rel.lo16;
+    return r;
+}
+
 IopLoader::SectionReport IopLoader::LoadSections(const uint8_t* irx, size_t size) {
+    return LoadSectionsAt(irx, size, 0);
+}
+
+IopLoader::SectionReport IopLoader::LoadSectionsAt(const uint8_t* irx, size_t size, uint32_t base) {
     SectionReport r;
     if (!irx || size < sizeof(Elf32Ehdr)) {
         r.error = "too small for an ELF header";
@@ -97,11 +116,13 @@ IopLoader::SectionReport IopLoader::LoadSections(const uint8_t* irx, size_t size
         const bool is_rodata = name == ".rodata";
         const bool is_bss = name == ".bss";
         if (!is_text && !is_data && !is_rodata && !is_bss) continue;
-        uint8_t* dest = mem_.Pointer(s.sh_addr, s.sh_size);
+        const uint32_t addr = s.sh_addr + base;
+        uint8_t* dest = mem_.Pointer(addr, s.sh_size);
         if (!dest) {
             r.error = "section " + name + " does not fit IOP RAM";
             return r;
         }
+        if (addr + s.sh_size > r.load_end) r.load_end = addr + s.sh_size;
         if (is_bss) {
             std::memset(dest, 0, s.sh_size);
             r.bss_bytes += s.sh_size;
@@ -114,6 +135,7 @@ IopLoader::SectionReport IopLoader::LoadSections(const uint8_t* irx, size_t size
         std::memcpy(dest, irx + s.sh_offset, s.sh_size);
         if (is_text) {
             r.found_text = true;
+            r.text_addr = addr;
             r.text_bytes += s.sh_size;
         } else if (is_data) {
             r.data_bytes += s.sh_size;
@@ -130,16 +152,41 @@ IopLoader::SectionReport IopLoader::LoadSections(const uint8_t* irx, size_t size
 }
 
 bool IopLoader::RunEntry(const ModuleLayout& layout, const FunctionResolver& resolve, IopModuleTable& table) {
+    return RunEntry(layout, resolve, table, EntryArgs{}).ran;
+}
+
+IopLoader::EntryReport IopLoader::RunEntry(const ModuleLayout& layout, const FunctionResolver& resolve,
+                                           IopModuleTable& table, const EntryArgs& args) {
+    EntryReport rep;
     GuestFunction entry = resolve ? resolve(layout.entry) : GuestFunction{};
-    if (!entry) return false;
+    if (!entry) return rep;
     IopContext ctx = IopContext::ForEntry(layout.stack_top - 0x10, layout.gp);
     ctx.pc = layout.entry;
+    if (!args.argv.empty() && args.block) {
+        // argv[] pointer array first, then the NUL-terminated strings, all inside the block.
+        const uint32_t ptrs = args.block;
+        uint32_t cursor = ptrs + static_cast<uint32_t>(args.argv.size() + 1) * 4;
+        const uint32_t end = args.block + args.block_size;
+        for (size_t i = 0; i < args.argv.size(); ++i) {
+            const std::string& a = args.argv[i];
+            if (cursor + a.size() + 1 > end) break;
+            mem_.Write<uint32_t>(ptrs + static_cast<uint32_t>(i) * 4, cursor);
+            for (char c : a) mem_.Write<uint8_t>(cursor++, static_cast<uint8_t>(c));
+            mem_.Write<uint8_t>(cursor++, 0);
+        }
+        mem_.Write<uint32_t>(ptrs + static_cast<uint32_t>(args.argv.size()) * 4, 0);
+        ctx.gpr[4] = static_cast<uint32_t>(args.argv.size());
+        ctx.gpr[5] = ptrs;
+    }
     entry(ctx);
+    rep.ran = true;
+    rep.status = ctx.gpr[2];
     int rpc_tid = layout.rpc_tid_addr ? static_cast<int>(mem_.Read<uint32_t>(layout.rpc_tid_addr)) : 0;
     if (rpc_tid <= 0 || rpc_tid >= IopKernel::kMaxThreads) rpc_tid = 1;
     last_rpc_tid_ = rpc_tid;
+    rep.rpc_tid = rpc_tid;
     table.OnModuleLoaded(rpc_tid);
-    return true;
+    return rep;
 }
 
 IopLoader::RebootReport IopLoader::RebootHandshake(const std::string& iop_image_path) {

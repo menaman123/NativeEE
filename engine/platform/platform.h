@@ -24,6 +24,11 @@ struct AudioSink   { void* handle = nullptr; };
 struct File        { std::FILE* fp = nullptr; };
 enum class FileMode { Read, Write, Append };
 struct ThreadDesc  { const char* name = ""; bool interactive_qos = false; size_t stack = 0; };
+// What a pinned emulation thread is FOR, so a host with ranks (Win32 priorities) can rank it:
+// Pacer = the 60 Hz edge train (sleeps and notes; TIME_CRITICAL), Game = the EE thread
+// (HIGHEST), Graphics / Worker / Interactive = ABOVE_NORMAL. macOS: every role is the
+// USER_INTERACTIVE QoS class; Linux: nice -5 where permitted (host/platform.h, ThreadRole).
+enum class ThreadRole : uint8_t { Interactive = 0, Pacer, Game, Graphics, Worker };
 struct Thread      { void* handle = nullptr; };
 struct Fiber       { void* handle = nullptr; };
 struct Timer       { void* handle = nullptr; };

@@ -6,6 +6,7 @@
 #include "engine/gif/gif_arbiter.h"
 #include "engine/vu/tiers/mtvu_backpressure.h"
 #include "engine/vu/tiers/mtvu_vif_feed.h"
+#include "engine/vu/vu_chop_round_guard.h"
 #include "engine/vu/vu_unit.h"
 
 namespace {
@@ -70,6 +71,7 @@ void MtvuWorker::Stop() {
         stop_ = true;
     }
     cv_work_.notify_all();
+    cv_stall_.notify_all();   // a worker parked on an i-bit stall leaves it to join
     if (thread_started_) {
         ps2r::host::ThreadJoin(thread_);
         thread_started_ = false;
@@ -104,8 +106,15 @@ void MtvuWorker::Push(Segment&& seg) {
     if (wake) cv_work_.notify_one();
 }
 
+void MtvuWorker::SetStageObserver(StageObserver span, StageResetObserver reset, void* user) {
+    stage_observer_ = span;
+    stage_reset_observer_ = reset;
+    stage_observer_user_ = user;
+}
+
 void MtvuWorker::SubmitVif1(const uint8_t* data, size_t size, bool tte) {
     if (!IsRunning() || data == nullptr || size == 0) return;
+    if (stage_observer_) stage_observer_(stage_observer_user_, data, size, tte);
     const bool drop = backpressure_.Engage();
     Segment seg;
     seg.op = Segment::Op::Data;
@@ -121,6 +130,7 @@ void MtvuWorker::SubmitVif1(const uint8_t* data, size_t size, bool tte) {
 
 void MtvuWorker::SubmitResetLatch() {
     if (!IsRunning()) return;
+    if (stage_reset_observer_) stage_reset_observer_(stage_observer_user_);
     Segment seg;
     seg.op = Segment::Op::ResetLatch;
     Push(std::move(seg));
@@ -144,6 +154,7 @@ uint64_t MtvuWorker::DroppedKicks() const { return worker_vu1_.DroppedKicks(); }
 
 void MtvuWorker::SubmitVif1Staged(const uint8_t* data, size_t size, bool tte) {
     if (!IsRunning() || data == nullptr || size == 0) return;
+    if (stage_observer_) stage_observer_(stage_observer_user_, data, size, tte);
     // The verdict of the batch is the verdict at its FIRST record (a batch is
     // one walk's spans, flushed before the frame mark; a verdict flip inside a
     // frame -- the valve -- takes effect at the next record's batch).
@@ -206,6 +217,19 @@ uint64_t MtvuWorker::BatchSegmentsProcessed() const {
     return batch_segments_.load(std::memory_order_relaxed);
 }
 
+MtvuWorker::Ledger MtvuWorker::ledger() const {
+    Ledger l;
+    l.busy_ns = busy_ns_.load(std::memory_order_relaxed);
+    l.wait_ns = wait_ns_.load(std::memory_order_relaxed);
+    l.spin_ns = spin_ns_.load(std::memory_order_relaxed);
+    l.segments = segments_.load(std::memory_order_relaxed);
+    l.records = records_.load(std::memory_order_relaxed);
+    l.pops = pops_.load(std::memory_order_relaxed);
+    l.depth_max = depth_max_.load(std::memory_order_relaxed);
+    l.seal_wakes_skipped = seal_wakes_skipped_.load(std::memory_order_relaxed);
+    return l;
+}
+
 // ---- worker thread -----------------------------------------------------------
 
 void MtvuWorker::ReplaySpan(const uint8_t* data, size_t size, bool tte) {
@@ -218,11 +242,24 @@ void MtvuWorker::SealAndRetire(Segment& seg) {
     pending_bytes_.fetch_sub(seg.bytes.size(), std::memory_order_relaxed);
     pending_segs_.fetch_sub(1, std::memory_order_relaxed);
     if (seg.marker) {
-        arbiter_.sealMarker(seg.marker);
+        arbiter_.sealMarker(seg.marker);   // kicks the drain thread itself when one runs
         seal_count_.fetch_add(1, std::memory_order_seq_cst);
         if (sync_waiters_.load(std::memory_order_seq_cst) > 0) {
-            { std::lock_guard<std::mutex> lk(mtx_); }
-            cv_idle_.notify_all();
+            // A parked producer (Sync's eager loop, WaitProgress, the backpressure
+            // park) wants progress. With the drain thread running the seal's
+            // delivery does not depend on the EE's wake (sealMarker kicked the
+            // thread) and every one of those waits is a kPollNs poll: the futex
+            // wake is spent on the LAST in-flight segment only (its idle is what
+            // the EE's predicate waits for), not on the ~137 others of a Paris
+            // frame. Without a drain thread the EE's wake IS the delivery: every
+            // seal wakes it, as before.
+            const bool last_inflight = inflight_.load(std::memory_order_acquire) == 1;
+            if (last_inflight || !arbiter_.DrainThreadRunning()) {
+                { std::lock_guard<std::mutex> lk(mtx_); }
+                cv_idle_.notify_all();
+            } else {
+                seal_wakes_skipped_.fetch_add(1, std::memory_order_relaxed);
+            }
         }
     }
     // Completion is published LAST.
@@ -230,6 +267,13 @@ void MtvuWorker::SealAndRetire(Segment& seg) {
 }
 
 void MtvuWorker::ProcessSegment(Segment& seg) {
+    // The VU rounding mode for the whole segment: every kick's own guard
+    // (VuBlockTier::Run and the other tiers) then finds FE_TOWARDZERO set and
+    // writes nothing -- the two FPCR writes per kick (2790 a Paris frame) were
+    // the worker's per-kick fixed cost. Nothing else this thread runs between
+    // kicks computes in floating point (VIF decode and the GIF hand-off are
+    // integer; the GIF -> DrawIR parse runs on the EE or the drain thread).
+    VuChopRoundGuard round_guard;
     switch (seg.op) {
         case Segment::Op::ResetLatch:
             vif_.ResetVif1Latch();
@@ -238,12 +282,19 @@ void MtvuWorker::ProcessSegment(Segment& seg) {
         case Segment::Op::FrameMark:
             frame_marks_passed_.fetch_add(1, std::memory_order_relaxed);
             inflight_.fetch_sub(1, std::memory_order_release);
+            if (sync_waiters_.load(std::memory_order_seq_cst) > 0) {
+                // A producer parked on the hold arm (WaitHoldProgress) waits for
+                // exactly this: the lag dropped by one frame.
+                { std::lock_guard<std::mutex> lk(mtx_); }
+                cv_idle_.notify_all();
+            }
             return;
         case Segment::Op::Batch: {
             active_marker_ = seg.marker;
             worker_vu1_.SetKickDrop(seg.drop_kicks);
             const uint8_t* p = seg.bytes.data();
             const uint8_t* end = p + seg.bytes.size();
+            uint64_t records = 0;
             while (p + kBatchRecordHeader <= end) {
                 uint32_t len = 0;
                 std::memcpy(&len, p, sizeof(len));
@@ -252,10 +303,12 @@ void MtvuWorker::ProcessSegment(Segment& seg) {
                 if (p + len > end) break;
                 ReplaySpan(p, len, tte);
                 p += len;
+                ++records;
             }
             worker_vu1_.SetKickDrop(false);
             active_marker_.reset();
             batch_segments_.fetch_add(1, std::memory_order_relaxed);
+            records_.fetch_add(records, std::memory_order_relaxed);
             break;
         }
         case Segment::Op::Data:
@@ -264,6 +317,7 @@ void MtvuWorker::ProcessSegment(Segment& seg) {
             ReplaySpan(seg.bytes.data(), seg.bytes.size(), seg.tte);
             worker_vu1_.SetKickDrop(false);
             active_marker_.reset();
+            records_.fetch_add(1, std::memory_order_relaxed);
             break;
     }
     SealAndRetire(seg);
@@ -290,19 +344,30 @@ void MtvuWorker::WorkerLoop() {
                     MtvuBackpressure::CpuRelax();
                 }
             }
+            spin_ns_.fetch_add(ps2r::Park::NowNs() - t0, std::memory_order_relaxed);
         }
         {
             std::unique_lock<std::mutex> lk(mtx_);
-            cv_work_.wait(lk, [this] { return stop_ || !queue_.empty(); });
+            if (!stop_ && queue_.empty()) {
+                const uint64_t t0 = ps2r::Park::NowNs();
+                cv_work_.wait(lk, [this] { return stop_ || !queue_.empty(); });
+                wait_ns_.fetch_add(ps2r::Park::NowNs() - t0, std::memory_order_relaxed);
+            }
             if (stop_ && queue_.empty()) break;
             // Batched pop: the whole queue under one lock.
             local.swap(queue_);
             processing_ = true;
         }
+        const uint64_t busy_t0 = ps2r::Park::NowNs();
+        const uint64_t depth = local.size();
+        pops_.fetch_add(1, std::memory_order_relaxed);
+        if (depth > depth_max_.load(std::memory_order_relaxed)) depth_max_.store(depth, std::memory_order_relaxed);
         while (!local.empty()) {
             ProcessSegment(local.front());
             local.pop_front();
         }
+        segments_.fetch_add(depth, std::memory_order_relaxed);
+        busy_ns_.fetch_add(ps2r::Park::NowNs() - busy_t0, std::memory_order_relaxed);
         {
             std::lock_guard<std::mutex> lk(mtx_);
             processing_ = false;
@@ -349,6 +414,7 @@ void MtvuWorker::WaitIdleOrSeal(uint64_t timeout_ns, uint64_t seen_seal) {
     std::unique_lock<std::mutex> lk(mtx_);
     cv_idle_.wait_for(lk, std::chrono::nanoseconds(timeout_ns), [&] {
         return (queue_.empty() && !processing_ && inflight_.load(std::memory_order_acquire) == 0) ||
+               irq_stalled_.load(std::memory_order_acquire) ||
                seal_count_.load(std::memory_order_seq_cst) != seen_seal;
     });
 }
@@ -356,12 +422,57 @@ void MtvuWorker::WaitIdleOrSeal(uint64_t timeout_ns, uint64_t seen_seal) {
 void MtvuWorker::WaitIdle() {
     std::unique_lock<std::mutex> lk(mtx_);
     cv_idle_.wait(lk, [&] {
-        return queue_.empty() && !processing_ && inflight_.load(std::memory_order_acquire) == 0;
+        return (queue_.empty() && !processing_ && inflight_.load(std::memory_order_acquire) == 0) ||
+               irq_stalled_.load(std::memory_order_acquire);
     });
+}
+
+void MtvuWorker::EnterIrqStall(void (*raise)(void* user), void* user) {
+    if (!OnWorkerThread()) {
+        if (raise) raise(user);
+        return;
+    }
+    irq_stalls_.fetch_add(1, std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        irq_stalled_.store(true, std::memory_order_release);
+    }
+    cv_idle_.notify_all();   // the EE's waits end on a quiescent pipeline
+    if (raise) raise(user);  // the cause lands after the stall is visible (MtvuSync polls for it)
+    std::unique_lock<std::mutex> lk(mtx_);
+    const uint64_t t0 = ps2r::Park::NowNs();
+    cv_stall_.wait(lk, [this] { return stop_ || !irq_stalled_.load(std::memory_order_acquire); });
+    const uint64_t stalled_ns = ps2r::Park::NowNs() - t0;
+    wait_ns_.fetch_add(stalled_ns, std::memory_order_relaxed);
+    irq_stall_ns_.fetch_add(stalled_ns, std::memory_order_relaxed);
+    irq_stalled_.store(false, std::memory_order_release);
+}
+
+void MtvuWorker::ReleaseIrqStall() {
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        if (!irq_stalled_.load(std::memory_order_acquire)) return;
+        irq_stalled_.store(false, std::memory_order_release);
+    }
+    cv_stall_.notify_all();
 }
 
 void MtvuWorker::WaitFrameProgress(uint64_t timeout_ns) {
     frame_park_.WaitFor(timeout_ns, frame_park_.Generation());
+}
+
+void MtvuWorker::WaitHoldProgress(uint64_t timeout_ns) {
+    // The hold arm's wait: a passed frame mark (the lag dropped), an i-bit stall
+    // (the EE must serve it), an idle worker (nothing queued: the lag is stale),
+    // or the timeout. Marks passed are read before the wait so a mark that lands
+    // between the caller's lag read and this predicate wakes it at once.
+    const uint64_t seen = frame_marks_passed_.load(std::memory_order_relaxed);
+    std::unique_lock<std::mutex> lk(mtx_);
+    cv_idle_.wait_for(lk, std::chrono::nanoseconds(timeout_ns), [&] {
+        return frame_marks_passed_.load(std::memory_order_relaxed) != seen ||
+               (queue_.empty() && !processing_ && inflight_.load(std::memory_order_acquire) == 0) ||
+               irq_stalled_.load(std::memory_order_acquire);
+    });
 }
 
 void MtvuWorker::NotifyFrameProgress() { frame_park_.Notify(); }

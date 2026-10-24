@@ -1,10 +1,15 @@
 // core/config/config_loader.h -- builds the process Config from its sources, in
 // precedence order (later wins):
-//   defaults < ps2r.ini < --config <file> < --set key=value (repeatable)
+//   defaults < the settings store (nativeee.ini) < --set key=value (repeatable)
 //            < --profile <name> < PS2R_SET (dev builds only)
-// plus the display.ini [video] compatibility read (mode/aspect/custom_scale/
-// custom_offset_x/y written by the original in-app GUI) applied at the
-// ps2r.ini tier and never written back unless --save-display is given.
+// The store is ONE file, resolved by ConfigStore::Resolve: `--config <file>`
+// names it explicitly; else `<executable dir>/nativeee.ini` when present; else
+// `<user data root>/nativeee.ini` (the root = `--set paths.user_data=` when the
+// command line pins one, else the platform root the app hands in, else the
+// search dir). The same file is what every settings page writes (ConfigStore).
+// Legacy (one release): a root holding ps2r.ini / display.ini and no
+// nativeee.ini is migrated once at Load (ConfigStore::MigrateLegacy); `--display-ini
+// <path>` still reads an explicitly named display.ini as a compatibility tier.
 //
 // CLI grammar (everything the app shell accepts):
 //   --config <file>        --set k=v         --profile <name>
@@ -73,7 +78,10 @@ public:
         std::string launcher_page;         // --launcher-page <play|display|controls|saves|fixes|data>: the Ready page shown
         bool        harness_cli = false;
         std::string error;
-        std::string display_ini_path;             // resolved display.ini
+        std::string display_ini_path;             // --display-ini <path> (legacy compatibility read; "" = none)
+        std::string settings_file;                // the resolved store (ConfigStore::Active().path)
+        std::string settings_source;              // "--config" | "executable folder" | "user data"
+        bool        settings_migrated = false;    // legacy ps2r.ini / display.ini converted in this Load
         std::string bench_report_path;            // --bench-report
         std::vector<std::string> sources;         // what was applied, in order
         // ConfigValidator::DegradeDependents' notes ("hle.movie_step disabled:
@@ -117,9 +125,16 @@ public:
     static const HarnessRequest& Request() { return request_; }
     static void ResetRequestForTest() { request_ = HarnessRequest{}; }
 
-    // Directory searched for ps2r.ini / display.ini when no explicit path is
-    // given (default: the current working directory).
+    // Directory holding the settings store when no --config / executable-folder
+    // store applies (the tests' scratch dir; wins over the user data root).
     void SetSearchDir(const std::string& dir) { search_dir_ = dir; }
+    // The executable's folder: `<dir>/nativeee.ini`, when it exists, is the store
+    // (a game folder the launcher prepared). "" = unknown.
+    void SetExecutableDir(const std::string& dir) { exe_dir_ = dir; }
+    // Whether Load may convert legacy ps2r.ini / display.ini files it finds
+    // beside the chosen store (default on; the tests turn it off where they
+    // exercise the in-place read).
+    void SetMigrateLegacy(bool on) { migrate_legacy_ = on; }
     // The platform's user data root (CHARTER 2 C4; the app resolves it --
     // SDL_GetPrefPath -- the engine never reads the environment for it). Load
     // searches ps2r.ini there (unless SetSearchDir named another directory) and
@@ -170,6 +185,8 @@ private:
     static HarnessRequest request_;
     std::string search_dir_;
     std::string user_data_root_;
+    std::string exe_dir_;
+    bool migrate_legacy_ = true;
     bool retained_startup_available_ = true;
 };
 

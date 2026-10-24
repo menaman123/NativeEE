@@ -3,6 +3,7 @@
 #include <cstring>
 #include <utility>
 
+#include "engine/core/log/log.h"
 #include "engine/ee/mem/main_memory.h"
 #include "engine/ee/mem/scratchpad.h"
 #include "engine/gif/gif_arbiter.h"
@@ -55,8 +56,13 @@ const uint8_t* ChainWalker::VifSpan(uint32_t addr, bool from_spr, size_t bytes) 
     return ram_.Pointer(addr & kRamMask, bytes);
 }
 
+// A channel register address (Dn_MADR / Dn_TADR): bit 31 is the SPR flag -- the
+// address names the scratchpad, not main memory (EE User's Manual 5.4 "memory /
+// SPR selection"; libmpeg's fromIPU macroblock buffers live there); the EE's
+// 0x70000000 scratchpad window routes there too. Everything else is RAM through
+// the physical map (KSEG / uncached / UCAB prefixes stripped).
 uint8_t* ChainWalker::Translate(uint32_t addr, size_t bytes) const {
-    if (Scratchpad::Contains(addr)) return spad_.Pointer(Scratchpad::Offset(addr), bytes);
+    if ((addr & kRegSprFlag) != 0 || Scratchpad::Contains(addr)) return spad_.Pointer(Scratchpad::Offset(addr), bytes);
     return ram_.Pointer(MainMemory::Phys(addr), bytes);
 }
 
@@ -147,6 +153,8 @@ DmacVifWalkResult ChainWalker::WalkVifChain(int ch, DmacChannelRegs& regs) {
         const uint32_t addr = TagAddr(lo);
         const bool spr = TagSpr(lo);
         res.last_id = id;
+        PS2R_LOG(DMAC, Narrate, "dmac-vif%d: tag@0x%08x%s lo=0x%016llx id=%u qwc=%u addr=0x%08x spr=%d irq=%d", v, tadr,
+                 from_spr ? "(spr)" : "", (unsigned long long)lo, id, qwc, addr, spr ? 1 : 0, irq ? 1 : 0);
 
         // CHCR.TAG mirrors the tag's upper half.
         regs.chcr = (regs.chcr & 0xFFFFu) | (static_cast<uint32_t>(lo) & kTagMask);
@@ -288,6 +296,8 @@ bool ChainWalker::WalkGifChain(DmacChannelRegs& regs) {
         regs.chcr = (regs.chcr & 0xFFFFu) | (static_cast<uint32_t>(lo) & kTagMask);
         const uint32_t bytes = qwc * 16;
         uint32_t data_addr = 0;
+        PS2R_LOG(DMAC, Narrate, "dmac-gif: tag@0x%08x lo=0x%016llx id=%u qwc=%u addr=0x%08x irq=%d", cur,
+                 (unsigned long long)lo, id, qwc, addr, irq ? 1 : 0);
         switch (id) {
             case DmacTagId::kRefe:
                 data_addr = addr;

@@ -152,8 +152,7 @@ int main(int argc, char** argv) {
             std::printf("FAIL: %s det: table %s, preset %s\n", r.key.c_str(), want_det.c_str(), have_det.c_str());
             g_fail++;
         }
-        const bool excluded = r.key.compare(0, 8, "harness.") == 0 || r.key.compare(0, 6, "paths.") == 0 ||
-                              r.key.compare(0, 5, "meta.") == 0;
+        const bool excluded = Config::FingerprintExcludes(r.key);   // the one exclusion set (config.cpp)
         if (!excluded && want_det != r.peak) derived_fp += r.key + "=" + want_det + ";";
 
         Config probe;

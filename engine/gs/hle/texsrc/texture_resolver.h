@@ -60,6 +60,7 @@
 #include <cstdint>
 #include <functional>
 #include <set>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -74,6 +75,7 @@
 #include "engine/gs/hle/texsrc/mip_sampler.h"
 #include "engine/gs/hle/texsrc/owned_texture_slots.h"
 #include "engine/gs/hle/texsrc/texres_trace.h"
+#include "engine/gs/hle/texsrc/texture_dump_sink.h"
 #include "engine/gs/hle/texsrc/texture_source.h"
 #include "engine/gs/vram/vram_image.h"
 #include "engine/render/backend.h"
@@ -104,7 +106,21 @@ public:
         uint64_t sig_hits = 0;           // key reused: the hashed pages' view generations unchanged
         uint64_t owned_serves = 0;       // reads served from an owned slot bind (no VRAM read)
         uint64_t owned_misses = 0;       // reads over an owned slot the bind does not describe
+        uint64_t decode_ns = 0;          // CPU time inside the texel decode of the miss path (all levels)
+        uint64_t upload_ns = 0;          // time inside the backend calls of the miss path (create + uploads)
     };
+    // The warm-up census: the decode fallback's work per 1 s window of the
+    // consumer's clock, from the first frame end on (RollWarmWindow, called once
+    // per frame with the platform ns clock). A first-use cost reads as the first
+    // windows' decodes / ms standing above the steady state.
+    struct WarmWindow {
+        uint32_t frames = 0;     // frame ends (RollWarmWindow calls) inside the window
+        uint32_t lookups = 0;
+        uint32_t decodes = 0;
+        uint32_t decode_us = 0;
+        uint32_t upload_us = 0;
+    };
+    static constexpr size_t kWarmWindowsMax = 120;
     static constexpr uint32_t kRecentFrames = 2;
     // A register tuple that fragments into more distinct UV sub-rects than this
     // is forced back to full decodes for good.
@@ -131,9 +147,20 @@ public:
     ClutSource& Clut() { return clut_; }
     ClutHealCache& Heal() { return heal_; }
     const Census& Stats() const { return census_; }
+    // Frame end on the consumer thread (`now_ns` = the platform's monotonic ns):
+    // closes every whole second since the first call into the warm series.
+    void RollWarmWindow(uint64_t now_ns);
+    // The closed windows as "frames/lookups/decodes/decode_us/upload_us" per second,
+    // comma-separated (empty before the first closes).
+    std::string WarmSeries() const;
+    const std::vector<WarmWindow>& WarmWindows() const { return warm_done_; }
     // The source-composition trace (inert until a filter enables it).
     TexresTrace& Trace() { return trace_; }
     const TexresTrace& Trace() const { return trace_; }
+    // The texture-oracle observer (inert until armed): every fresh decode of the miss
+    // path and every read served without one.
+    TextureDumpSink& DumpSink() { return dump_sink_; }
+    const TextureDumpSink& DumpSink() const { return dump_sink_; }
 
     // Predicates (public for the unit tests).
     static bool Is16BitClass(uint32_t psm);
@@ -176,8 +203,8 @@ private:
     void TraceCompose(const TexReadView& v, uint32_t fp_start, uint32_t fp_size, uint32_t win_size,
                       TexresTrace::Line* line) const;
     bool DeriveRegion(const DrawIr& ir, int tex_w, int tex_h, ContentKey::Rect* rgn);
-    render::SurfaceId DecodeAndUpload(const DrawIr& ir, const ContentKey::Rect& rgn, bool sub, int dw,
-                                      int dh, const MipSampler::Chain& mips, uint8_t* levels);
+    render::SurfaceId DecodeAndUpload(const DrawIr& ir, const Context& ctx, const ContentKey::Rect& rgn, bool sub,
+                                      int dw, int dh, const MipSampler::Chain& mips, uint8_t* levels);
     void ApplyFmvEdgeClamp(const DrawIr& ir, const ContentKey::Rect& rgn, int dw, int dh);
     void FlushPendingUnderRead(const TexReadView& v, const RenderTarget& t);
     void RescueDeposit(const DrawIr& ir, RenderTarget& t);
@@ -211,7 +238,11 @@ private:
     std::vector<ContentKey::MipInput> mip_in_;
     std::vector<uint32_t> texels_;
     Census census_;
+    WarmWindow warm_cur_;
+    std::vector<WarmWindow> warm_done_;
+    uint64_t warm_window_start_ns_ = 0;   // 0 = no frame end seen yet
     TexresTrace trace_;
+    TextureDumpSink dump_sink_;
     // The scratch buffer's first `n` bytes, growing it once when it is shorter.
     static uint8_t* Scratch(std::vector<uint8_t>& buf, size_t n);
 };

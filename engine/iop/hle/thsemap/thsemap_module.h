@@ -1,6 +1,6 @@
 // engine/iop/hle/thsemap/thsemap_module.h -- ThsemapModule: the IOP kernel's
 // thsemap library routed to IopKernel: CreateSema (idx 4), DeleteSema (5),
-// SignalSema (6), iSignalSema (7), WaitSema (8). Sema ids are handed out
+// SignalSema (6), iSignalSema (7), WaitSema (8), PollSema (9). Sema ids are handed out
 // round-robin over the kernel's sid space; the counts live in the kernel.
 #pragma once
 
@@ -35,8 +35,11 @@ public:
     // int WaitSema(sid): cooperative park; deletion returns KE_WAIT_DELETE.
     // Host polling can consume an available token, otherwise KE_CAN_NOT_WAIT.
     void WaitSema(IopContext& ctx);
+    // int PollSema(sid) -> 0 when a token was taken, KE_SEMA_ZERO when none (never parks).
+    void PollSema(IopContext& ctx);
 
     int NextSid() const { return next_sid_; }
+    void SetNextSid(int sid) { next_sid_ = (sid >= 0 && sid < kMaxSemas) ? sid : 0; }   // savestate restore
     uint64_t HostWaitCount() const { return host_waits_.load(std::memory_order_relaxed); }
     uint64_t ErrorCount() const { return errors_.load(std::memory_order_relaxed); }
 

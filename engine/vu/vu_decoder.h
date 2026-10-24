@@ -67,6 +67,11 @@ enum : uint8_t {
     VUK_U_FTOI4,     // special2 op 0x05, bc 1
     VUK_U_CLIP,      // special2 op 0x07, bc 3
     VUK_U_ITOF0,     // special2 op 0x04, bc 0
+    VUK_U_MINI,      // 0x2F
+    VUK_U_ADDA_BC,   // special2 op 0x00
+    VUK_U_SUBA_BC,   // special2 op 0x01
+    VUK_U_ITOF_N,    // special2 op 0x04, bc 1..3 (ITOF4 / ITOF12 / ITOF15: u_bc selects the scale)
+    VUK_U_FTOI_N,    // special2 op 0x05, bc 2..3 (FTOI12 / FTOI15: u_bc selects the scale)
     VUK_U_COUNT
 };
 
@@ -102,6 +107,24 @@ enum : uint8_t {
     VUK_L_DIV,     // fn 0x3C funct2 0x0E
     VUK_L_FCGET,   // 0x1C
     VUK_L_WAITQ,   // fn 0x3F funct2 0x0E
+    VUK_L_FCEQ,    // 0x10 (imm24 = lower & 0xFFFFFF, read at execution)
+    VUK_L_FCSET,   // 0x11
+    VUK_L_FCAND,   // 0x12
+    VUK_L_FCOR,    // 0x13
+    VUK_L_FSEQ,    // 0x14 (imm12 = {bit 21, bits 0-10}, read at execution)
+    VUK_L_FSSET,   // 0x15
+    VUK_L_FSAND,   // 0x16
+    VUK_L_FSOR,    // 0x17
+    VUK_L_FMEQ,    // 0x18
+    VUK_L_FMAND,   // 0x1A
+    VUK_L_FMOR,    // 0x1B
+    VUK_L_IBLTZ,   // 0x2C
+    VUK_L_IBGTZ,   // 0x2D
+    VUK_L_IBLEZ,   // 0x2E
+    VUK_L_IBGEZ,   // 0x2F
+    VUK_L_XTOP,    // fn 0x3C funct2 0x1A
+    VUK_L_XITOP,   // fn 0x3D funct2 0x1A
+    VUK_L_XGKICK,  // fn 0x3C funct2 0x1B
     VUK_L_COUNT
 };
 
@@ -161,5 +184,10 @@ public:
     static bool VuLowerCanTouchHardwired(uint32_t l);
     static bool VuSlotCanTouchHardwired(const VuDecodedSlot& s);
 
+    // Every lower kind that takes a branch (B/BAL/JR/JALR and the six conditional forms).
     static bool IsBranchKind(uint8_t lower_kind);
+    // Lower kinds that end a cached-tier superblock run: the branches plus the
+    // run-state side effects the per-bundle path owns (XTOP/XITOP's yield
+    // rule, XGKICK). GENERIC is terminal by itself.
+    static bool IsRunTerminalLowerKind(uint8_t lower_kind);
 };

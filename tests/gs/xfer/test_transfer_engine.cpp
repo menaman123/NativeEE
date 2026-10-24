@@ -282,7 +282,8 @@ static void Inv21() {
 }
 
 // The HWREG cursor per PSM: exact VRAM bytes via PsmLayout, completion at
-// RRW*RRH, row wrap inside a word, CT24 byte-3 rule, T4 drop, DSAX/DSAY offset.
+// RRW*RRH, row wrap inside a word, CT24 byte-3 rule, T4 nibbles, T8H / T4HL / T4HH
+// index-in-word bytes, DSAX/DSAY offset.
 static void Cursor() {
     // CT32 3x2 at dsax=1, dsay=2 (row wrap inside the second word).
     {
@@ -343,28 +344,88 @@ static void Cursor() {
         CHECK(ok, "T8 bytes");
         CHECK(!r.xfer.State().active, "T8 completes at 8");
     }
-    // T4: cursor advances 16 per word and the transfer completes, but no nibble
-    // is stored (upload-drop compatibility with the original runtime); every
-    // pixel still counts as a written byte, so the completion settle bumps the
-    // upload epoch exactly as a storing PSM does.
+    // T4: 16 nibbles per word, each at PsmLayout's byte / nibble (section 8.3.4); the
+    // other nibble of a byte (row y+2 of the column) is kept when the stage flushes
+    // between the two rows; completion settles the upload epoch like any PSM.
     {
         std::unique_ptr<Rig> rig(NewRig());
     Rig& r = *rig;
-        Setup(r, 0x14, 16, 1, 2);
-        const uint64_t up0 = r.vram.UploadEpoch();  // 1: the TRXDIR stamp
-        const uint64_t settles0 = r.vram.Stats().settles;
+        Setup(r, 0x14, 16, 4, 2);   // 16x4 T4 = one column's left half
+        // Pre-existing bytes in the destination column: the nibbles the transfer does
+        // not cover (x 16..31) must survive.
+        const uint8_t pre[64] = {0xAA, 0xBB, 0xCC, 0xDD};
+        r.vram.WriteStream(kDstBlk * 256, pre, 64);
+        r.vram.SettleWrites();
+        const uint64_t up0 = r.vram.UploadEpoch();
+        const uint64_t row[4] = {0xFEDCBA9876543210ull, 0x0123456789ABCDEFull, 0x1111222233334444ull, 0x5555666677778888ull};
+        for (int y = 0; y < 4; ++y) r.xfer.WriteHwreg(row[y]);   // one row per word; the stage flushes per word
+        CHECK(!r.xfer.State().active && r.xfer.State().pixels_written == 64, "T4 completes at 64 pixels");
+        bool ok = true;
+        for (uint32_t y = 0; y < 4; ++y)
+            for (uint32_t x = 0; x < 16; ++x) {
+                const uint32_t want = static_cast<uint32_t>((row[y] >> (4 * x)) & 0xF);
+                const uint32_t byte = PsmLayout::PixelByteAddress(Psm::T4, x, y, kDstBlk, 2);
+                const uint32_t shift = PsmLayout::PixelBitInByte(Psm::T4, x, y, kDstBlk, 2);
+                ok &= ((r.vram.Bytes()[byte] >> shift) & 0xF) == want;
+            }
+        CHECK(ok, "T4 nibbles at PsmLayout's byte / nibble for every (x, y)");
+        // The uncovered half of the column (x 16..31) holds its previous bytes: the
+        // texels (16..31, 0..3) read back as the pre-existing nibbles.
+        bool kept = true;
+        for (uint32_t y = 0; y < 4; ++y)
+            for (uint32_t x = 16; x < 32; ++x) {
+                const uint32_t byte = PsmLayout::PixelByteAddress(Psm::T4, x, y, kDstBlk, 2);
+                const uint32_t shift = PsmLayout::PixelBitInByte(Psm::T4, x, y, kDstBlk, 2);
+                kept &= ((r.vram.Bytes()[byte] >> shift) & 0xF) == ((pre[byte - kDstBlk * 256] >> shift) & 0xF);
+            }
+        CHECK(kept, "the nibbles outside the transfer keep their bytes (read-modify-write)");
+        CHECK(r.vram.UploadEpoch() == up0 + 1, "T4 completion settles: upload epoch +1");
+        CHECK(Jobs(r, JobKind::UploadVRAMTexture) == 1 && r.sink.jobs.back().arg4 == 64,
+              "T4 upload job charged 1 byte/pixel (the original's charge, kept)");
+    }
+    // T8H: 8 index bytes per word into byte 3 of the CT32-layout word; the colour
+    // bytes 0..2 of the word are untouched.
+    {
+        std::unique_ptr<Rig> rig(NewRig());
+    Rig& r = *rig;
+        Setup(r, 0x1B, 8, 1);
+        uint8_t pre[512];
+        for (int i = 0; i < 512; ++i) pre[i] = static_cast<uint8_t>(0x40 + i);
+        r.vram.WriteStream(kDstBlk * 256, pre, 512);
+        r.vram.SettleWrites();
+        r.xfer.WriteHwreg(0x0807060504030201ull);
+        CHECK(!r.xfer.State().active && r.xfer.State().pixels_written == 8, "T8H completes at 8 pixels (8-bit data)");
+        bool ok = true;
+        for (uint32_t x = 0; x < 8; ++x) {
+            const uint8_t* w = r.vram.Bytes() + PsmLayout::PixelByteAddress(Psm::T8H, x, 0, kDstBlk, 1);
+            const uint32_t off = static_cast<uint32_t>(w - (r.vram.Bytes() + kDstBlk * 256));
+            ok &= w[3] == x + 1 && w[0] == pre[off] && w[1] == pre[off + 1] && w[2] == pre[off + 2];
+        }
+        CHECK(ok, "T8H index in byte 3, colour bytes kept");
+    }
+    // T4HL / T4HH: 16 nibbles per word into the low / high nibble of byte 3.
+    for (uint32_t psm : {0x24u, 0x2Cu}) {
+        std::unique_ptr<Rig> rig(NewRig());
+    Rig& r = *rig;
+        Setup(r, psm, 16, 1);   // x 0..15 = two 8-wide blocks
+        uint8_t pre[512];
+        for (int i = 0; i < 512; ++i) pre[i] = static_cast<uint8_t>(0x30 + i);
+        r.vram.WriteStream(kDstBlk * 256, pre, 512);
+        r.vram.SettleWrites();
         r.xfer.WriteHwreg(0xFEDCBA9876543210ull);
-        CHECK(!r.xfer.State().active && r.xfer.State().pixels_written == 16, "T4 completes at 16 pixels");
-        bool zero = true;
-        for (uint32_t i = 0; i < 8192; ++i) zero &= r.vram.Bytes()[kDstBlk * 256 + i] == 0;
-        CHECK(zero, "T4 host->local stores nothing (bug-compatible drop)");
-        CHECK(r.vram.UploadEpoch() == up0 + 1 && r.vram.Stats().settles == settles0 + 1,
-              "T4 completion settles the noted pixels: upload epoch +1");
-        CHECK(r.vram.Page(kDstBlk * 256 / 8192).upload_epoch == up0 + 1, "the destination page carries the settle epoch");
-        CHECK(r.vram.Page(kDstBlk * 256 / 8192).write_bits == 0 && r.vram.Stats().stream_writes == 0,
-              "settle consumed the marks; no byte stream was written");
-        CHECK(Jobs(r, JobKind::UploadVRAMTexture) == 1 && r.sink.jobs.back().arg4 == 16 && r.sink.jobs.back().vram_epoch == up0 + 1,
-              "T4 upload job charged 1 byte/pixel and stamped with the settled epoch");
+        CHECK(!r.xfer.State().active && r.xfer.State().pixels_written == 16, "T4HL/HH complete at 16 pixels (4-bit data)");
+        bool ok = true;
+        const uint32_t shift = psm == 0x24 ? 0 : 4;
+        for (uint32_t x = 0; x < 16; ++x) {
+            const uint8_t* w = r.vram.Bytes() + PsmLayout::PixelByteAddress(psm == 0x24 ? Psm::T4HL : Psm::T4HH, x, 0, kDstBlk, 1);
+            const uint32_t off = static_cast<uint32_t>(w - (r.vram.Bytes() + kDstBlk * 256));
+            const uint32_t want = static_cast<uint32_t>((0xFEDCBA9876543210ull >> (4 * x)) & 0xF);
+            const bool good = ((w[3] >> shift) & 0xF) == want && ((w[3] >> (4 - shift)) & 0xF) == ((pre[off + 3] >> (4 - shift)) & 0xF) &&
+                              w[0] == pre[off] && w[1] == pre[off + 1] && w[2] == pre[off + 2];
+            ok &= good;
+        }
+        CHECK(ok, psm == 0x24 ? "T4HL nibble in byte 3 low, the other nibble and the colour bytes kept"
+                              : "T4HH nibble in byte 3 high, the other nibble and the colour bytes kept");
     }
     // Pixel-size table.
     CHECK(TransferEngine::PixelSize(0x00) == 4 && TransferEngine::PixelSize(0x02) == 2 && TransferEngine::PixelSize(0x13) == 1 &&
@@ -372,13 +433,15 @@ static void Cursor() {
           "PixelSize table");
     CHECK(TransferEngine::PixelsPerWord(0x01) == 2 && TransferEngine::PixelsPerWord(0x0A) == 4 &&
               TransferEngine::PixelsPerWord(0x13) == 8 && TransferEngine::PixelsPerWord(0x14) == 16 &&
-              TransferEngine::PixelsPerWord(0x1B) == 2,
+              TransferEngine::PixelsPerWord(0x1B) == 8 && TransferEngine::PixelsPerWord(0x24) == 16 &&
+              TransferEngine::PixelsPerWord(0x2C) == 16,
           "PixelsPerWord table");
 }
 
 // The staged column store (WriteImage spans) against the per-pixel reference --
 // every pixel of the transfer stored at PsmLayout::PixelByteAddress with the
-// store rules (CT32 4 bytes, CT24 3 + 0x80, CT16 2, T8 1, T4 nothing) as its own
+// store rules (CT32 4 bytes, CT24 3 + 0x80, CT16 2, T8 1, T4 a nibble, T8H / T4HL /
+// T4HH byte 3 of the word) as its own
 // WriteStream -- over random geometry per PSM (base block, DBW, DSAX/DSAY off the
 // column grid, RRW/RRH spanning page columns), spans cut at random quadword
 // counts, and the word-at-a-time HWREG register path. Compared: every VRAM byte,
@@ -403,7 +466,9 @@ void ReferenceStore(VramImage& img, const Geom& g, const std::vector<uint32_t>& 
     for (uint32_t y = g.dsay; y < g.dsay + g.rrh; ++y) {
         for (uint32_t x = g.dsax; x < g.dsax + g.rrw; ++x, ++i) {
             if (i >= px.size()) return;
-            const uint32_t p = g.psm == 0x01 ? (px[i] & 0xFFFFFF) : px[i];
+            const uint32_t p = g.psm == 0x01 ? (px[i] & 0xFFFFFF)
+                               : (g.psm == 0x14 || g.psm == 0x24 || g.psm == 0x2C) ? (px[i] & 0xF)
+                               : (g.psm == 0x13 || g.psm == 0x1B) ? (px[i] & 0xFF) : px[i];
             const uint32_t addr = known ? PsmLayout::PixelByteAddress(mode, x, y, g.dbp_blk, g.dbw64)
                                         : (g.dbp_blk * 256 + (y * g.dbw64 * 64 + x) * RefPixelSize(g.psm)) % VramImage::kBytes;
             uint8_t b[4];
@@ -412,6 +477,15 @@ void ReferenceStore(VramImage& img, const Geom& g, const std::vector<uint32_t>& 
                 case 0x01: b[0] = p; b[1] = p >> 8; b[2] = p >> 16; b[3] = 0x80; img.WriteStream(addr, b, 4); break;
                 case 0x02: case 0x0A: b[0] = p; b[1] = p >> 8; img.WriteStream(addr, b, 2); break;
                 case 0x13: b[0] = p; img.WriteStream(addr, b, 1); break;
+                case 0x14: {
+                    const uint32_t sh = PsmLayout::PixelBitInByte(mode, x, y, g.dbp_blk, g.dbw64);
+                    b[0] = static_cast<uint8_t>((img.Bytes()[addr] & ~(0xFu << sh)) | ((p & 0xF) << sh));
+                    img.WriteStream(addr, b, 1);
+                    break;
+                }
+                case 0x1B: b[0] = p; img.WriteStream(addr + 3, b, 1); break;
+                case 0x24: b[0] = static_cast<uint8_t>((img.Bytes()[addr + 3] & 0xF0) | (p & 0xF)); img.WriteStream(addr + 3, b, 1); break;
+                case 0x2C: b[0] = static_cast<uint8_t>((img.Bytes()[addr + 3] & 0x0F) | ((p & 0xF) << 4)); img.WriteStream(addr + 3, b, 1); break;
                 default: img.NoteWriteNoBytes(addr, RefPixelSize(g.psm)); break;
             }
             uint8_t* l = lin->data() + i * 4;
@@ -457,7 +531,7 @@ bool SameImage(const VramImage& a, const VramImage& b, const char* what) {
 }  // namespace
 
 static void Staged() {
-    const uint32_t psms[] = {0x00, 0x01, 0x02, 0x0A, 0x13, 0x14};
+    const uint32_t psms[] = {0x00, 0x01, 0x02, 0x0A, 0x13, 0x14, 0x1B, 0x24, 0x2C};
     uint64_t rng = 0x5EEDC01Dull;
     int cases = 0;
     for (uint32_t psm : psms) {
@@ -508,7 +582,7 @@ static void Staged() {
             std::snprintf(what, sizeof(what), "psm %02x rep %d (%ux%u at %u,%u bw %u)", psm, rep, g.rrw, g.rrh, g.dsax, g.dsay, g.dbw64);
             CHECK(!r.xfer.State().active, "the transfer completed");
             CHECK(SameImage(r.vram, ref, what), "staged span store == per-pixel reference (bytes + marks)");
-            if (psm != 0x14) CHECK(r.xfer.LastUploadPixels() == ref_lin, "RGBA8 linear copy identical");
+            CHECK(r.xfer.LastUploadPixels() == ref_lin, "RGBA8 linear copy identical");
             // The op log replayed on a fresh image reproduces the staged image.
             VramImage replayed;
             log.Replay(replayed);
@@ -551,7 +625,7 @@ static void Staged() {
         CHECK(Jobs(r, JobKind::UploadVRAMTexture) == 1, "partial flush job for the half transfer");
         CHECK(std::memcmp(r.vram.Bytes(), ref.Bytes(), VramImage::kBytes) == 0, "the half's bytes survive the re-latch");
     }
-    std::printf("staged store: %d random transfers x 6 PSMs compared\n", cases);
+    std::printf("staged store: %d random transfers x 9 PSMs compared\n", cases);
 }
 
 int main(int argc, char** argv) {

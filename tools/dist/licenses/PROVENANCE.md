@@ -34,3 +34,12 @@ LGPL v2.1 §6 for the statically linked FFmpeg: the "work that uses the Library"
 complete source and the exact recipe that produces the shipped libavcodec/libavutil/libswscale
 (`tools/ci/ffmpeg_static.sh`, pinned tag, configure arguments above) are published with the artifact's
 BUILD-ID; a user can rebuild the artifact against a modified FFmpeg with `./build.sh` (`build.ps1`).
+
+## Qt-LICENSE.LGPL3.txt
+
+The GNU Lesser General Public License v3 text as shipped in the Qt 6 kits (`<kit>/Licenses/LICENSE.LGPL3`;
+identical to https://www.gnu.org/licenses/lgpl-3.0.txt). Copied from the TwinsanityEvolved engine's committed
+set (byte-identical, sha256 e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118). Used by
+tools/ci/release_launcher.sh / .ps1 for the LAUNCHER artefacts only (the launcher links Qt 6 dynamically under
+the LGPL v3; the game artefacts link no Qt). Shipped as licenses/Qt-LICENSE.LGPL3 beside the launcher when the
+Qt kit on the packaging host carries no copy of its own.

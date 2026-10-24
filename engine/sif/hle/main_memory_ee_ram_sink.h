@@ -4,6 +4,7 @@
 // addresses; the kernel-segment bits are masked as the DMAC does).
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 
 #include "engine/iop/hle/sifman/ee_ram_sink.h"
 
@@ -14,8 +15,12 @@ public:
     explicit MainMemoryEeRamSink(MainMemory& ram) : ram_(ram) {}
     bool WriteEeRam(uint32_t ee_addr, const uint8_t* src, size_t size) override;
     uint64_t Bytes() const { return bytes_; }
+    // Diagnostic tap (census-class): every accepted write (EE physical address, bytes).
+    using Tracer = std::function<void(uint32_t ee_addr, const uint8_t* src, size_t size)>;
+    void SetTracer(Tracer t) { tracer_ = std::move(t); }
 
 private:
     MainMemory& ram_;
     uint64_t bytes_ = 0;
+    Tracer tracer_;
 };

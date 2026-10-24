@@ -29,6 +29,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <cstdio>
 #include <vector>
 
@@ -36,6 +37,7 @@
 #include "engine/gs/hle/classrdr/draw_route_trace.h"
 #include "engine/gs/hle/classrdr/sequence_materializer.h"
 #include "engine/gs/hle/classrdr/sequence_recipe.h"
+#include "engine/gs/hle/classrdr/target_dump.h"
 #include "engine/gs/hle/ir/draw_ir.h"
 #include "engine/gs/hle/present/crtc_classifier.h"
 #include "engine/gs/hle/present/presenter.h"
@@ -157,6 +159,24 @@ public:
     void OnSyncAll();
     // Frame boundary: `ee_frame_end` marks an EE game frame; the grab lands in `out`.
     void OnFrameEnd(bool ee_frame_end, const CrtcClassifier::Snapshot& crtc, Frame* out);
+    // The DEFERRED grab (perf: the frame-end grab's synchronous readback drained the
+    // GPU pipeline every frame -- the consumer thread sat in glReadPixels for the
+    // whole frame's GPU work). On: OnFrameEnd QUEUES a Target grab (BeginReadback
+    // right after the frame's last draw, so the bytes are this frame's by command
+    // order) and leaves `out` with grabbed = false and GrabPending() true; the
+    // caller completes it with CompletePendingGrab at its next frame end (one frame
+    // late; the GPU has had the whole frame to finish the read, so the poll never
+    // waits in the steady state) or drops it (DropPendingGrab). A Mirror grab is a
+    // CPU read and lands in `out` at once as before. The grab no longer offers its
+    // pixels to the scanout deposit, which takes its own deferred read
+    // (RenderTargetCache::SetDeferredDeposit) -- enable both together.
+    void SetDeferredGrab(bool on) { deferred_grab_ = on; }
+    bool DeferredGrab() const { return deferred_grab_; }
+    bool GrabPending() const { return pending_grab_.valid; }
+    // Lands the pending grab in `out` (pixels, w, h, source, hash left to the
+    // caller); false when none was pending (`out` untouched).
+    bool CompletePendingGrab(Frame* out);
+    void DropPendingGrab();
     // The corpus replay's frame boundary: the same EE mark, reader-band present
     // flush and grab, then the swap alone (Presenter::PresentBlank) -- no display
     // quad, no scanout-side mirror maintenance (the reference replay tool's
@@ -189,6 +209,10 @@ public:
     void EmitCounters(std::FILE* f) const;
     // The per-draw lowering record of the last completed frame (diagnostics only).
     const DrawRouteTrace& RouteTrace() const { return route_trace_; }
+    DrawRouteTrace& RouteTrace() { return route_trace_; }
+    // The one-target colour-image readback around a frame's draws (diagnostics
+    // only; armed at a lockstep frame boundary, see target_dump.h).
+    TargetDump& Dump() { return target_dump_; }
     // An owned pass's publication (Finish called by its scene) recorded in the
     // same per-frame route sequence as the pipeline's own draws (owner none: its
     // texture is a private image, not a PS2 source) -- the draw's position
@@ -196,12 +220,49 @@ public:
     void NotePublished(const DrawIr& ir, const render::DrawResult& res) {
         route_trace_.Note(ir, TextureSource{}, res, static_cast<uint32_t>(draw_seq_));
     }
+    // The warm-up census: the consumer's work per 1 s window of its clock from
+    // the first frame end on -- frame ends, pipeline draws and the backend call
+    // census deltas (draw calls, uploads, readbacks, copies, binds). Read next to
+    // the per-second CPU series, it tells "more work per frame" from "slower per
+    // unit of work" in the first seconds after a load.
+    struct WarmWindow {
+        uint32_t frames = 0;
+        uint32_t draws = 0;          // pipeline draws (DrawSeq advance)
+        uint32_t draw_calls = 0;
+        uint32_t uploads = 0;
+        uint32_t upload_kb = 0;
+        uint32_t readbacks = 0;
+        uint32_t readback_kb = 0;
+        uint32_t copies = 0;
+        uint32_t program_binds = 0;
+        uint32_t framebuffer_binds = 0;
+        uint32_t texture_binds = 0;
+    };
+    static constexpr size_t kWarmWindowsMax = 120;
+    // "frames/draws/draw_calls/uploads/upload_kb/readbacks/readback_kb/copies/program_binds/framebuffer_binds/texture_binds"
+    // per closed second, comma-separated (empty before the first closes).
+    std::string WarmSeries() const;
+    const std::vector<WarmWindow>& WarmWindows() const { return warm_done_; }
 
 private:
+    void RollWarmWindow(uint64_t now_ns);
+    WarmWindow warm_cur_;
+    std::vector<WarmWindow> warm_done_;
+    uint64_t warm_window_start_ns_ = 0;   // 0 = no frame end seen yet
+    uint64_t warm_last_draw_seq_ = 0;
+    render::CallCensus warm_last_census_;
+    bool warm_have_census_ = false;
     DrawRouteTrace route_trace_;
+    TargetDump target_dump_;
+    static uint64_t NowNs();
     void FrameEndGrab(bool ee_frame_end, Frame* out);
+    void CloseFrameTrace();
+    uint64_t frame_end_t0_ = 0;                 // the frame end's cost bracket (route trace)
+    render::CallCensus frame_end_census_;
+    uint64_t frame_start_t0_ = 0;               // the whole frame's bracket (previous frame end -> this one)
+    render::CallCensus frame_start_census_;
     void SameBufferPreDrawFlush(const DrawIr& ir);
-    void MarkCompositeConsumption(const DrawIr& ir);
+    void MarkCompositeConsumption(const DrawIr& ir, bool alt16_route);
 
     Deps d_;
     int window_w_ = 640, window_h_ = 448;
@@ -215,6 +276,17 @@ private:
     uint64_t dropped_materializes_ = 0;
     uint32_t active_target_fbp_ = kNoFbp;
     bool live_snapshot_ = false;
+    bool deferred_grab_ = false;
+    struct PendingGrab {
+        bool valid = false;
+        render::FenceId fence{};
+        int w = 0, h = 0;
+        ScanoutComposer::Source source = ScanoutComposer::Source::None;
+        uint32_t source_fbp = kNoFbp;
+        bool source_fallback = false;
+    };
+    PendingGrab pending_grab_;
+    void ClearFrame(Frame* out);
     SequenceMaterializer* materializer_ = nullptr;
     TextureSource last_source_;
 };

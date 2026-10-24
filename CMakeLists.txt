@@ -1,5 +1,13 @@
 cmake_minimum_required(VERSION 3.21)
 project(nativeee LANGUAGES CXX)
+# The Metal adapter's Objective-C++ bodies (engine/render/backends/metal/*.mm) need OBJCXX. Enabled HERE, at the
+# root, not only in that directory: `enable_language` in a subdirectory sets the language's per-directory
+# variables for that scope alone, and a tree that also fetches SDL2 (the macos-dist preset: PS2R_FETCH_SDL2=ON,
+# SDL2's CMake enables OBJC in its own scope) then fails at generate time with "required internal CMake variable
+# not set: CMAKE_OBJCXX_COMPILE_OBJECT" for the .mm objects. CMake's documentation asks for the root as well.
+if(APPLE)
+    enable_language(OBJCXX)
+endif()
 # Static libraries reached both directly and through a PUBLIC dependency (ps2r_ee,
 # ps2r_sif through ps2r_pad / ps2r_title_hle) would otherwise be repeated on the
 # link line, which Apple's linker warns about: de-duplicate per the linker's rules.
@@ -29,39 +37,63 @@ if(WIN32)
     # defines neither the min/max macros nor the GDI/winsock surface.
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS _USE_MATH_DEFINES
                             NOMINMAX WIN32_LEAN_AND_MEAN)
+    # SDL_main.h renames every `main` to SDL_main on Windows and expects SDL2main.lib to supply
+    # the real entry; the tree's executables are console programs with their own main (nativeee,
+    # gs_replay, the tools, the tests) and call SDL_Init themselves, so the renaming is off.
+    add_compile_definitions(SDL_MAIN_HANDLED)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        # SDL2's SDL_endian.h (2.30 and 2.32) defines `_m_prefetch` itself under `_MSC_VER &&
+        # __clang__` as a pseudo-header guarded by clang's own __PRFCHWINTRIN_H; clang >= 20
+        # makes _m_prefetch a builtin and rejects the definition ("definition of builtin
+        # function", not a warning). Pre-defining the guard skips SDL's copy; nothing in the
+        # tree calls the prfchw intrinsics.
+        add_compile_definitions(__PRFCHWINTRIN_H)
+    endif()
 endif()
 
 option(PS2R_SIMD "BlockDecode: vectorized (NEON) inner loop, proven byte-identical to the scalar path by tests/gs/format/test_block_decode" OFF)
+if(PS2R_SIMD AND NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64|ARM64)$")
+    # The PS2R_SIMD bodies are <arm_neon.h> (gs/format, gif, vif); on x86-64 (the Windows
+    # target) the scalar twins are the build. Forced rather than fatal so one preset serves both.
+    message(STATUS "nativeee: PS2R_SIMD requested on ${CMAKE_SYSTEM_PROCESSOR} (NEON only) -- using the scalar paths")
+    set(PS2R_SIMD OFF)
+endif()
 option(PS2R_DIAGNOSTICS "Compile the core/diag mechanism in (harness/dev builds); OFF = Release contains no probes" OFF)
 set(PS2R_OG_ROOT "$ENV{PS2R_OLD_ROOT}" CACHE PATH
     "Frozen ORIGINAL tree (read-only oracle; default: $PS2R_OLD_ROOT, else empty). Used ONLY by tests/oracle differential tests; may be absent.")
 set(PS2R_TITLE "" CACHE STRING
     "Title module linked by app/host (a directory name under games/). Empty = auto-discover: the
      one title in games/ is taken; with none the title lanes are skipped; with several, name one.")
+# Where the title modules live. The default is this tree's games/; a port that keeps the engine
+# as a submodule points this at its own games/ directory (the title directory contract is the
+# same: games/<serial>_<slug>/hle/CMakeLists.txt marks a title).
+set(PS2R_GAMES_DIR "${CMAKE_SOURCE_DIR}/games" CACHE PATH
+    "Directory holding the title modules (<dir>/<serial>_<slug>/); default: this tree's games/")
+file(REAL_PATH "${PS2R_GAMES_DIR}" PS2R_GAMES_DIR EXPAND_TILDE)
 # --- title discovery -------------------------------------------------------------------------
 # No serial is hardcoded anywhere in the build. A title directory is one with hle/CMakeLists.txt.
 if(NOT PS2R_TITLE)
-    file(GLOB _ps2r_title_candidates RELATIVE "${CMAKE_SOURCE_DIR}/games" "${CMAKE_SOURCE_DIR}/games/*")
+    file(GLOB _ps2r_title_candidates RELATIVE "${PS2R_GAMES_DIR}" "${PS2R_GAMES_DIR}/*")
     set(_ps2r_titles "")
     foreach(_cand IN LISTS _ps2r_title_candidates)
-        if(EXISTS "${CMAKE_SOURCE_DIR}/games/${_cand}/hle/CMakeLists.txt")
+        if(EXISTS "${PS2R_GAMES_DIR}/${_cand}/hle/CMakeLists.txt")
             list(APPEND _ps2r_titles "${_cand}")
         endif()
     endforeach()
     list(LENGTH _ps2r_titles _ps2r_title_count)
     if(_ps2r_title_count EQUAL 1)
         set(PS2R_TITLE "${_ps2r_titles}")
-        message(STATUS "nativeee: title auto-discovered: ${PS2R_TITLE}")
+        message(STATUS "nativeee: title auto-discovered: ${PS2R_TITLE} (in ${PS2R_GAMES_DIR})")
     elseif(_ps2r_title_count EQUAL 0)
-        message(STATUS "nativeee: no title in games/ -- engine, tools and component tests only; "
+        message(STATUS "nativeee: no title in ${PS2R_GAMES_DIR} -- engine, tools and component tests only; "
                        "every title target and its tests are skipped")
     else()
-        message(FATAL_ERROR "nativeee: ${_ps2r_title_count} titles in games/ (${_ps2r_titles}); "
+        message(FATAL_ERROR "nativeee: ${_ps2r_title_count} titles in ${PS2R_GAMES_DIR} (${_ps2r_titles}); "
                             "name one with -DPS2R_TITLE=<directory>")
     endif()
-elseif(NOT EXISTS "${CMAKE_SOURCE_DIR}/games/${PS2R_TITLE}/hle/CMakeLists.txt")
+elseif(NOT EXISTS "${PS2R_GAMES_DIR}/${PS2R_TITLE}/hle/CMakeLists.txt")
     message(FATAL_ERROR "nativeee: -DPS2R_TITLE=${PS2R_TITLE} names no title: "
-                        "games/${PS2R_TITLE}/hle/CMakeLists.txt does not exist")
+                        "${PS2R_GAMES_DIR}/${PS2R_TITLE}/hle/CMakeLists.txt does not exist")
 endif()
 # The private game-derived fixture contract ($NATIVEEE_PRIVATE_FIXTURES; tests SKIP 77 without it).
 include(${CMAKE_SOURCE_DIR}/cmake/Ps2rPrivateFixtures.cmake)
@@ -71,6 +103,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 find_package(Python3 3.8 COMPONENTS Interpreter REQUIRED)
+enable_testing()   # before every add_subdirectory: an add_test in a title module (games/<title>/recomp) must be recorded too
 
 # --- strict float semantics: ONE rule for GNU ----------------------------------------
 # The tree's float results are step-exact by contract: ps2_float / vu_float emulate the PS2's
@@ -91,6 +124,31 @@ find_package(Python3 3.8 COMPONENTS Interpreter REQUIRED)
 # frozen references.
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     add_compile_options(-ffp-contract=off -frounding-math)
+endif()
+
+# --- release code generation: the Windows release blockers, spelled for every target ----------
+# Optimisation level: the build type's (Release = -O3 / clang-cl /O2 through
+# tools/build/clang_cl_shim.py); never a global instruction-set flag -- no -march=native, no
+# /arch:AVX2: the shipped x86-64 binary runs on the baseline ISA and a wider kernel is chosen at
+# RUN TIME per call site (ps2r::platform::host::Cpu(): cpuid + xgetbv; run.meta cpu_features=).
+# [TwinsanityEvolved's PS2R_SIMD_DISPATCH option -- the AVX2/FMA per-function kernel variants --
+# is NOT here: this tree's gs/gif/vif kernels have no such variants yet (PS2R_SIMD = the NEON
+# bodies on arm64, the scalar twins elsewhere); Cpu() is the hook a future variant dispatches on.]
+# Link-time optimisation: CMAKE_INTERPROCEDURAL_OPTIMIZATION for every target when the toolchain
+# supports it (CheckIPOSupported). OFF by default: the oracle lanes' hash identity is frozen
+# against the non-LTO build and the Windows job's default linker (link.exe) does not read
+# clang-cl's LTO objects -- the windows-release-lto preset sets lld-link and PS2R_LTO=ON and must
+# pass the component suite AND the identity lane before it becomes the shipped shape.
+option(PS2R_LTO "Link-time optimisation (CMAKE_INTERPROCEDURAL_OPTIMIZATION) for every target; needs a linker that reads the compiler's LTO objects (clang-cl: lld-link)" OFF)
+if(PS2R_LTO)
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT _ps2r_ipo_ok OUTPUT _ps2r_ipo_msg LANGUAGES CXX)
+    if(_ps2r_ipo_ok)
+        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+        message(STATUS "nativeee: PS2R_LTO: interprocedural optimisation ON for every target")
+    else()
+        message(FATAL_ERROR "nativeee: PS2R_LTO=ON but the toolchain refused IPO: ${_ps2r_ipo_msg}")
+    endif()
 endif()
 
 # --- build id: regenerated on EVERY build (custom target with no OUTPUT) ------
@@ -120,6 +178,8 @@ add_subdirectory(engine/mc)      # Phase 4E: the memory card -- McHostStore, McC
 add_subdirectory(engine/pad)     # Phase 4E/4E': the pad -- PadProtocol, libpad rows, PadmanModule, PadStampDuty (ps2r_pad)
 add_subdirectory(tools/vu1_replay)   # Phase 5: VU1 corpus replay tool
 add_subdirectory(tools/vif_replay)   # Phase 5: VIF chain replay + equivalence arms tool
+add_subdirectory(tools/vu1_aot_pack)  # the pre-built VU1 library pack builder / checker (perf60)
+add_subdirectory(tools/settings)      # nativeee_settings: the settings file (nativeee.ini) from the command line
 
 # --- the EE recompiler (DP-23: NEW owns it; P8.8-T transplanted OLD's recompiler_tool_v2
 # byte-identically and proved it regenerates games/<title>/recomp/ byte-for-byte). The
@@ -137,6 +197,8 @@ endif()
 # gated against games/<title>/TITLE_INPUTS.sha256. Without an input the title and its tests
 # are skipped (STATUS, not an error): PS2R_TITLE_RECOMP_AVAILABLE / PS2R_TITLE_IRX_AVAILABLE.
 add_subdirectory(tools/disc_extract)
+add_subdirectory(tools/elf_embedded)   # an IOP module embedded in the title ELF -> a build input (TitleInputs `<ELF>!<module>` rows)
+add_subdirectory(tools/prepare)        # ps2r_prepare + nativeee-prepare: the prepared-game pipeline (decision D-A), title-neutral
 # TitleInputs reads games/${PS2R_TITLE}/TITLE_INPUTS.sha256 and FATALs without it, so it is
 # only meaningful once a title is configured. With none, the generated-code variables stay
 # unset and every target that would consume them is skipped below.
@@ -148,12 +210,23 @@ endif()
 # user's ELF (PHASE3_PLAN 3.3; the directory returns early, with a STATUS line, without one) ---
 # Skipped entirely when no title is configured (PS2R_TITLE empty): the targets below never
 # exist, and every consumer already gates on if(TARGET ps2r_title_*).
+# The binary-dir argument is required when PS2R_GAMES_DIR is outside this tree; it keeps the
+# in-tree layout (<build>/games/<title>/...) in both cases.
 if(PS2R_TITLE)
-    add_subdirectory(games/${PS2R_TITLE}/recomp)
-    add_subdirectory(games/${PS2R_TITLE}/hle)     # Phase 3C2: the TitleProfile definition + sdk_bindings.tsv
-    add_subdirectory(games/${PS2R_TITLE}/iop/stream_irx)   # Phase 4B': the recompiled IOP module + its stub surface
-    add_subdirectory(games/${PS2R_TITLE}/vu1_library)   # Phase 5: the VU1 HLE program library (title data)
-    add_subdirectory(games/${PS2R_TITLE}/renderer_profile)  # Phase 6
+    set(_ps2r_title_src "${PS2R_GAMES_DIR}/${PS2R_TITLE}")
+    set(_ps2r_title_bin "${CMAKE_BINARY_DIR}/games/${PS2R_TITLE}")
+    add_subdirectory(${_ps2r_title_src}/recomp ${_ps2r_title_bin}/recomp)
+    # Phase 4B': the recompiled IOP module(s), BEFORE hle/ (a play composition may link them). A
+    # title with ONE disc-side module keeps the iop/stream_irx layout; a title hosting several
+    # (embedded) modules owns iop/CMakeLists.txt and adds its per-module directories itself.
+    if(EXISTS "${_ps2r_title_src}/iop/CMakeLists.txt")
+        add_subdirectory(${_ps2r_title_src}/iop ${_ps2r_title_bin}/iop)
+    else()
+        add_subdirectory(${_ps2r_title_src}/iop/stream_irx ${_ps2r_title_bin}/iop/stream_irx)
+    endif()
+    add_subdirectory(${_ps2r_title_src}/hle ${_ps2r_title_bin}/hle)     # Phase 3C2: the TitleProfile definition + sdk_bindings.tsv
+    add_subdirectory(${_ps2r_title_src}/vu1_library ${_ps2r_title_bin}/vu1_library)   # Phase 5: the VU1 HLE program library (title data)
+    add_subdirectory(${_ps2r_title_src}/renderer_profile ${_ps2r_title_bin}/renderer_profile)  # Phase 6
 endif()
 
 # --- the host binary -----------------------------------------------------------
@@ -168,7 +241,7 @@ add_subdirectory(tools/drawlist_tool)  # Phase 6
 add_subdirectory(tools/gs_replay)  # Phase 6
 
 # --- tests: lints are ctest targets from the first commit (ARCH section 13) -----
-enable_testing()
+# (enable_testing() itself runs before the title directories above, so a title's add_test is recorded.)
 add_subdirectory(app/gui)
 if(NOT TARGET ps2r_session_runtime)
     message(FATAL_ERROR "The game application requires PS2R_PRODUCT_GUI=ON for its session runtime")
@@ -180,6 +253,25 @@ if(TARGET nativeee)
         ps2r_session_restart ps2r_session_clock)
 endif()
 add_subdirectory(tests)
+
+# --- the launcher (app/launcher: Qt 6 Widgets; a title ships it with its manifest) ------------------
+# Title-neutral: everything about a game comes from the title's launcher/title.json at run time. Built by default
+# when a Qt 6 is on CMAKE_PREFIX_PATH (brew: /opt/homebrew/opt/qt6); without one the option turns itself off with a
+# status line so a bare engine build is unchanged. -DPS2R_PRODUCT_LAUNCHER=OFF skips it even with Qt present.
+find_package(Qt6 6.5 QUIET COMPONENTS Core Gui Widgets Network Concurrent Test)
+if(Qt6_FOUND)
+    set(_ps2r_launcher_default ON)
+else()
+    set(_ps2r_launcher_default OFF)
+endif()
+option(PS2R_PRODUCT_LAUNCHER "Build the launcher (app/launcher; needs Qt 6 -- CMAKE_PREFIX_PATH at a Qt prefix)" ${_ps2r_launcher_default})
+if(PS2R_PRODUCT_LAUNCHER AND NOT Qt6_FOUND)
+    message(STATUS "nativeee: PS2R_PRODUCT_LAUNCHER requested but Qt 6 was not found -- the launcher is skipped")
+    set(PS2R_PRODUCT_LAUNCHER OFF)
+endif()
+if(PS2R_PRODUCT_LAUNCHER)
+    add_subdirectory(app/launcher)
+endif()
 
 message(STATUS "nativeee: build type ${CMAKE_BUILD_TYPE}, PS2R_DIAGNOSTICS=${PS2R_DIAGNOSTICS}, PS2R_SIMD=${PS2R_SIMD}, title ${PS2R_TITLE}")
 if(EXISTS "${PS2R_OG_ROOT}/host_app")
@@ -197,3 +289,7 @@ add_subdirectory(engine/ipu)
 # tools/fmv_layout_ppm -- the FMV plane check's layout helper (verify/fmv_plane_check.py):
 # a decoded picture through the real FrameWriter strip layout.
 add_subdirectory(tools/fmv_layout_ppm)
+
+# --- the redistributable engine bundle (decision D-A: the player's disc is recompiled on the player's
+# machine against this bundle + a pinned compiler; tools/prepare drives it). `--target engine_bundle`.
+include(${CMAKE_SOURCE_DIR}/cmake/EngineBundle.cmake)

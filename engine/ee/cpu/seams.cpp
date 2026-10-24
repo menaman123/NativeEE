@@ -26,6 +26,7 @@
 #include "engine/ee/recomp_abi/host_app/syscalls.h"
 #include "engine/ee/recomp_abi/host_app/timer_hle.h"
 #include "engine/ee/recomp_abi/host_app/vu.h"
+#include "engine/ee/sched/ee_yield_point.h"
 
 // ---- row 26: crash ring (REAL: forwards to core's RingLog; fatal = report + PARK)
 // The ONLY definitions of this extern "C" trio in the tree (ring_log owns the
@@ -33,6 +34,16 @@
 // bool the 2,619 indirect-call guards test; DispatchTable::Initialize binds it to
 // RingLog, which keeps it equal to "EE channel in the verbose tier".
 extern "C" { bool crashring_enabled = false; }   // the brace form: a definition, not an initialised `extern` (GCC -Wall)
+
+// ---- the generated dispatch's raw fast path gate (eecode round 4) ----------
+// Read ONCE by the generated initialize_recompiled_functions tail
+// (recomp_apply_gen_hook_list): true = every id whose table entry holds its
+// init-time body is marked un-hooked, so recomp_call / the JR+JALR sites run
+// recomp_raw_dispatch (frame push, body, pop) instead of the ObservedBody /
+// std::function chain; false (the default) = hooked[] stays all-true = the
+// chain for every call. DispatchTable::SetFastDispatch writes it before
+// Initialize (engine.ee_fast_dispatch); a later write changes nothing.
+extern "C" { bool recomp_fast_dispatch_enabled = false; }
 extern "C" void crashring_record_indirect(uint32_t target, uint32_t ra) {
     ps2r::ringlog::RingLog::EmitV(ps2r::ringlog::CH_EE, ps2r::ringlog::TAG_INDIRECT_JUMP, target, ra);
 }
@@ -79,6 +90,12 @@ void hle_sceCdDiskReady2(CpuContext& ctx) { GuestPark::Forever("iop_dependent", 
 // ---- rows 6, 18, 20 (REAL): SyscallTable, KernlTimer, KernlBoot -------------
 void runtime_syscall_dispatcher(uint32_t v1, CpuContext& ctx) { SyscallTable::Instance().Dispatch(v1, ctx); }
 void handle_mtc0_write(CpuContext& ctx, uint8_t rd, uint32_t value) { SyscallTable::Instance().HandleMtc0(ctx, rd, value); }
+// ---- row 6b (REAL): the back-edge yield of --yield-backedges generated code. The
+// budget counter g_ee_backedge_budget is defined beside its owner (ee/sched/
+// ee_yield_point.cpp, which reloads it on every trip): the kernel's idle path
+// reaches EeYieldPoint from ThreadManager, and a kernel-only link (the thbase
+// tests) must not drag this seam TU's shadow-stack imports in with it.
+void ps2r_ee_yield_point(CpuContext& ctx) { EeYieldPoint::Instance().Trip(ctx); }
 void hle_TimerWaitMicroseconds(CpuContext& ctx) { KernlTimer::TimerWaitMicroseconds(ctx); }
 void hle_InitTLB(CpuContext& ctx) { KernlBoot::InitTLB(ctx); }
 void hle_ContextRestore(CpuContext& ctx) { KernlBoot::ContextRestore(ctx); }

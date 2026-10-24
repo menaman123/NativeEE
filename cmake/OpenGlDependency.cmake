@@ -2,6 +2,13 @@
 # context and the GUI name as OpenGL::GL, ONE way for every host.
 #
 #   macOS   the OpenGL.framework (<OpenGL/gl3.h>, GL 4.1 core)
+#   Windows opengl32.lib (FindOpenGL) exports GL 1.1 only: the engine's GL TUs include
+#           the generated loader engine/platform/windows/gl_loader.h (PS2R_GL_HEADER
+#           there), whose pointers engine/platform/windows/gl_loader.cpp (part of
+#           ps2r_host on Windows) fills through SDL_GL_GetProcAddress. The header
+#           needs Khronos' <GL/glcorearb.h> + <KHR/khrplatform.h>: the vcpkg port
+#           `opengl-registry` (vcpkg.json), found below and put on OpenGL::GL's
+#           include path so every GL TU sees it.
 #   Linux   Mesa / libglvnd through FindOpenGL's GLVND preference (CMP0072 NEW):
 #           OpenGL::GL -> libOpenGL.so + libGLX.so, which export every core GL
 #           entry point, so the backend calls them directly with
@@ -19,3 +26,13 @@ if(POLICY CMP0072)
     cmake_policy(SET CMP0072 NEW)
 endif()
 find_package(OpenGL REQUIRED)
+if(WIN32)
+    find_path(PS2R_GLCOREARB_INCLUDE_DIR NAMES GL/glcorearb.h
+              DOC "directory holding GL/glcorearb.h and KHR/khrplatform.h (vcpkg port opengl-registry)")
+    if(NOT PS2R_GLCOREARB_INCLUDE_DIR)
+        message(FATAL_ERROR "nativeee: GL/glcorearb.h not found -- the Windows GL loader needs the Khronos registry headers: "
+                            "configure through the vcpkg toolchain with vcpkg.json's `opengl-registry` port installed, "
+                            "or point PS2R_GLCOREARB_INCLUDE_DIR at a directory with GL/glcorearb.h + KHR/khrplatform.h")
+    endif()
+    set_property(TARGET OpenGL::GL APPEND PROPERTY INTERFACE_INCLUDE_DIRECTORIES "${PS2R_GLCOREARB_INCLUDE_DIR}")
+endif()

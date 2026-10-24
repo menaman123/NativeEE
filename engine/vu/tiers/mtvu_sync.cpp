@@ -1,5 +1,8 @@
 #include "engine/vu/tiers/mtvu_sync.h"
 
+#include <thread>
+
+#include "engine/core/threads/park.h"
 #include "engine/ee/timing/tick_profile.h"
 #include "engine/gif/gif_arbiter.h"
 #include "engine/vu/tiers/mtvu_worker.h"
@@ -12,24 +15,83 @@ size_t Idx(SyncSite site) {
     if (i >= static_cast<size_t>(SyncSite::Count)) i = static_cast<size_t>(SyncSite::Other);
     return i;
 }
+size_t WIdx(WaitCause cause) {
+    size_t i = static_cast<size_t>(cause);
+    if (i >= static_cast<size_t>(WaitCause::Count)) i = static_cast<size_t>(WaitCause::IdleWaitOther);
+    return i;
+}
+// A Sync(site) books under the WaitCause of the same index (the first twelve mirror SyncSite).
+WaitCause CauseOf(SyncSite site) { return static_cast<WaitCause>(Idx(site)); }
+const char* const kWaitCauseNames[static_cast<size_t>(WaitCause::Count)] = {
+    "vif1_reg_read", "vif1_reg_write", "vu1_mem", "gs_syncv", "gs_syncpath", "gs_resetpath", "dma_sync",
+    "gif_syncdma", "wait_vblank", "vu1_ee_kick", "quiesce_other", "priv_push", "vif1_stat_poll",
+    "idle_blocking", "idle_nonblocking", "idle_vblank_waiter", "idle_field", "idle_other", "backpressure",
+    "gif_fence", "vsync_fence"};
 }  // namespace
 
 MtvuSync::MtvuSync(MtvuWorker& worker, GifArbiter& arbiter) : worker_(worker), arbiter_(arbiter) {
     for (auto& c : sync_count_) c.store(0, std::memory_order_relaxed);
     for (auto& c : skipped_count_) c.store(0, std::memory_order_relaxed);
+    for (auto& c : wait_count_) c.store(0, std::memory_order_relaxed);
+    for (auto& c : wait_ns_) c.store(0, std::memory_order_relaxed);
+}
+
+void MtvuSync::NoteWait(WaitCause cause, uint64_t ns) {
+    wait_count_[WIdx(cause)].fetch_add(1, std::memory_order_relaxed);
+    wait_ns_[WIdx(cause)].fetch_add(ns, std::memory_order_relaxed);
+}
+
+uint64_t MtvuSync::WaitCount(WaitCause cause) const { return wait_count_[WIdx(cause)].load(std::memory_order_relaxed); }
+uint64_t MtvuSync::WaitNs(WaitCause cause) const { return wait_ns_[WIdx(cause)].load(std::memory_order_relaxed); }
+const char* MtvuSync::WaitCauseName(WaitCause cause) { return kWaitCauseNames[WIdx(cause)]; }
+
+std::string MtvuSync::WaitCensus() const {
+    std::string s;
+    for (size_t i = 0; i < static_cast<size_t>(WaitCause::Count); ++i) {
+        const uint64_t n = wait_count_[i].load(std::memory_order_relaxed);
+        if (n == 0) continue;
+        if (!s.empty()) s += ",";
+        s += std::string(kWaitCauseNames[i]) + ":" + std::to_string(n) + "/" + std::to_string(wait_ns_[i].load(std::memory_order_relaxed));
+    }
+    return s.empty() ? std::string("none") : s;
+}
+
+MtvuSync::WaitScope::WaitScope(MtvuSync& sync, WaitCause cause) : sync_(sync), cause_(cause), t0_(ps2r::Park::NowNs()) {}
+MtvuSync::WaitScope::~WaitScope() { sync_.NoteWait(cause_, ps2r::Park::NowNs() - t0_); }
+
+bool MtvuSync::ServiceIrqStall() {
+    if (!worker_.IrqStalled() || !irq_service_) return false;
+    const uint64_t t0 = ps2r::Park::NowNs();
+    for (;;) {
+        const int r = irq_service_(irq_service_user_);
+        if (r > 0) {
+            irq_services_.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        }
+        if (r < 0 || !worker_.IrqStalled() || ps2r::Park::NowNs() - t0 > kIrqPendingWaitNs) break;
+        std::this_thread::yield();
+    }
+    irq_service_refusals_.fetch_add(1, std::memory_order_relaxed);
+    return false;
 }
 
 void MtvuSync::Sync(SyncSite site) {
     if (!worker_.IsRunning() || worker_.OnWorkerThread()) return;
     sync_count_[Idx(site)].fetch_add(1, std::memory_order_relaxed);
+    // A worker parked on an i-bit stall at entry: serve the interrupt first (the loop
+    // below then waits for the resumed span), else the wait below ends at once.
+    if (worker_.IrqStalled() && !ServiceIrqStall()) return;
     if (worker_.WorkerIdle()) {
         // Lock-free idle fast path: every worker write is visible already.
         if (arbiter_.DrainThreadRunning() && !worker_.InEagerDrain() && arbiter_.hasPending())
             arbiter_.DrainFence();
+        if (after_sync_ && !worker_.InEagerDrain()) after_sync_(after_sync_user_);
         return;
     }
-    // The wait is the game thread parked on the worker: booked as `vu1wait`.
+    // The wait is the game thread parked on the worker: booked as `vu1wait` and
+    // in the wait ledger under the site's cause.
     ps2r::ee::TickProfile::Scope scope(ps2r::ee::TickProfile::Vu1Wait);
+    WaitScope wait_scope(*this, CauseOf(site));
     if (!worker_.InEagerDrain()) {
         // Eager loop: drain the sealed prefix between waits so the parked EE
         // keeps delivering boundaries while the worker finishes.
@@ -38,15 +100,29 @@ void MtvuSync::Sync(SyncSite site) {
             const uint64_t seen = worker_.SealCount();
             worker_.TryDrainGuarded();
             if (worker_.WorkerIdle()) break;
+            // Stalled on an i-bit: the handler runs here (its STC resumes the worker) and
+            // the wait goes on; a handler that cannot run here ends the wait -- the pipeline
+            // is quiescent until the EE's own dispatch point serves it.
+            if (worker_.IrqStalled()) {
+                if (ServiceIrqStall()) continue;
+                break;
+            }
             worker_.WaitIdleOrSeal(kPollNs, seen);
         }
         worker_.LeaveSyncWait();
+        // The worker seals its last marker BEFORE it publishes idle (inflight_
+        // released after the seal): a drain that ran between the two saw the
+        // marker unsealed and the idle check then ended the loop with that
+        // marker still in the inbox. Idle observed = the seal is visible; what
+        // the arbiter still holds is ready and goes now, on this thread.
+        if (arbiter_.hasPending()) worker_.TryDrainGuarded();
     } else {
         // Nested inside a drain: a plain wait, no second drain.
         worker_.WaitIdle();
     }
     if (arbiter_.DrainThreadRunning() && !worker_.InEagerDrain() && arbiter_.hasPending())
         arbiter_.DrainFence();
+    if (after_sync_ && !worker_.InEagerDrain()) after_sync_(after_sync_user_);
 }
 
 void MtvuSync::NoteSiteSkipped(SyncSite site) {
@@ -56,9 +132,22 @@ void MtvuSync::NoteSiteSkipped(SyncSite site) {
 
 bool MtvuSync::TryVif1StatBusyView(uint32_t* stat) const {
     if (!worker_.IsRunning() || worker_.OnWorkerThread()) return false;
-    if (worker_.WorkerIdle()) return false;
+    if (worker_.Quiescent()) return false;   // stalled: the real STAT (VIS | INT) is the view
     *stat = kVif1StatBusyView;
     return true;
+}
+
+void MtvuSync::ParkVif1StatPoll(bool park) {
+    vif1_stat_polls_.fetch_add(1, std::memory_order_relaxed);
+    if (!park || !worker_.IsRunning() || worker_.OnWorkerThread() || worker_.InEagerDrain()) return;
+    if (worker_.WorkerIdle()) return;
+    vif1_stat_parks_.fetch_add(1, std::memory_order_relaxed);
+    ps2r::ee::TickProfile::Scope scope(ps2r::ee::TickProfile::Vu1Wait);
+    WaitScope wait_scope(*this, WaitCause::Vif1StatPoll);
+    const uint64_t seen = worker_.SealCount();
+    worker_.EnterSyncWait();
+    worker_.WaitIdleOrSeal(kPollNs, seen);
+    worker_.LeaveSyncWait();
 }
 
 void MtvuSync::TryEagerDrain() {
@@ -67,9 +156,50 @@ void MtvuSync::TryEagerDrain() {
     worker_.TryDrainGuarded();
 }
 
+void MtvuSync::TryDrainPending() {
+    if (!worker_.IsRunning() || worker_.OnWorkerThread() || worker_.InEagerDrain()) return;
+    if (!arbiter_.hasPending()) return;
+    worker_.TryDrainGuarded();
+}
+
 void MtvuSync::TryParkDrain() {
     if (!DeferOn()) return;
     TryEagerDrain();
+}
+
+bool MtvuSync::WaitProgress(WaitCause cause) {
+    if (!worker_.IsRunning() || worker_.OnWorkerThread()) return true;
+    if (worker_.InEagerDrain()) return worker_.WorkerIdle();
+    // Whatever is sealed goes first; an idle worker after that owes nothing.
+    // Idle is published AFTER the last seal (see Sync): an idle worker observed
+    // after a drain may have sealed since -- drain once more before answering
+    // "nothing more will arrive", or that marker's packets wait for ever.
+    const auto drained_idle = [this] {
+        if (!worker_.Quiescent()) return false;   // stalled = owes nothing until the EE's handler runs
+        if (arbiter_.hasPending()) worker_.TryDrainGuarded();   // inline: delivered here; thread: kicked
+        if (arbiter_.DrainInFlight()) return false;             // the drain thread still owes deliveries
+        progress_idle_.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    };
+    const uint64_t seen = worker_.SealCount();
+    const uint64_t seen_pass = arbiter_.DrainPassGeneration();
+    worker_.TryDrainGuarded();
+    if (drained_idle()) return true;
+    progress_waits_.fetch_add(1, std::memory_order_relaxed);
+    {
+        ps2r::ee::TickProfile::Scope scope(ps2r::ee::TickProfile::Vu1Wait);
+        WaitScope wait_scope(*this, cause);
+        if (!worker_.Quiescent()) {
+            worker_.EnterSyncWait();
+            worker_.WaitIdleOrSeal(kPollNs, seen);
+            worker_.LeaveSyncWait();
+        } else {
+            // The worker owes nothing; the drain thread does.
+            arbiter_.WaitDrainPassAfter(seen_pass, kPollNs);
+        }
+    }
+    worker_.TryDrainGuarded();
+    return drained_idle();
 }
 
 bool MtvuSync::DeferOn() const { return worker_.IsRunning(); }

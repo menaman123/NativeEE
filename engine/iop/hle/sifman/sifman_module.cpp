@@ -1,6 +1,8 @@
 // engine/iop/hle/sifman/sifman_module.cpp -- SifmanModule: sifman's synchronous SIF DMA.
 #include "engine/iop/hle/sifman/sifman_module.h"
 
+#include "engine/iop/iop_kernel.h"
+
 namespace ps2r::iop::hle {
 
 void SifmanModule::sceSifInit(IopContext& ctx) { ctx.gpr[2] = 0; }
@@ -26,5 +28,24 @@ void SifmanModule::sceSifDmaStat(IopContext& ctx) {
 }
 
 void SifmanModule::sceSifCheckInit(IopContext& ctx) { ctx.gpr[2] = 1; }
+
+void SifmanModule::SetCompletion(IopKernel* kernel, HandlerRunner run) {
+    kernel_ = kernel;
+    run_handler_ = std::move(run);
+}
+
+void SifmanModule::sceSifSetDmaIntr(IopContext& ctx) {
+    sceSifSetDma(ctx);
+    const uint32_t func = ctx.gpr[6];
+    const uint32_t data = ctx.gpr[7];
+    if (func && kernel_ && run_handler_) {
+        HandlerRunner run = run_handler_;
+        kernel_->ScheduleEventUs(kernel_->Clock().NowUs() + kIntrCompletionUs, [run, func, data] {
+            IopContext cb = IopContext::ForEntry(0, 0);
+            cb.gpr[4] = data;
+            run(func, cb);
+        });
+    }
+}
 
 }  // namespace ps2r::iop::hle

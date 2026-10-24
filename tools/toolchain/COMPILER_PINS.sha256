@@ -1,0 +1,24 @@
+# tools/toolchain/COMPILER_PINS.sha256 -- the portable compiler+linker a release ships per platform (D-A: the
+# player's own game program is compiled ON THEIR MACHINE by this compiler; the release carries the compiler,
+# never anything compiled from a disc).
+#
+# One row per kit, `shasum -a 256` format: <sha256>  <file name>. The file is an OFFICIAL LLVM release asset
+# (https://github.com/llvm/llvm-project/releases/tag/llvmorg-<version>); fetch_compiler.sh downloads it,
+# REFUSES a mismatching hash, and cuts the slim subset the release ships (clang, lld, the resource headers).
+#
+# Provenance of the hashes: the GitHub Releases API publishes `assets[].digest` ("sha256:...") for every
+# asset of llvmorg-20.1.7 (read 2026-10-24). 20.1.7 is the newest release that has ALL FOUR kits below
+# (20.1.8 and 21.x carry no macOS-X64 kit; <= 20.1.6 have no API digest). The first fetch on every platform
+# re-verifies the download against these rows, so a wrong row fails closed, never open.
+#
+# platform key (the release-index / BUNDLE.json name) -> kit:
+#   macos-arm64    LLVM-20.1.7-macOS-ARM64.tar.xz
+#   macos-x86_64   LLVM-20.1.7-macOS-X64.tar.xz
+#   linux-x86_64   LLVM-20.1.7-Linux-X64.tar.xz
+#   windows-x86_64 clang+llvm-20.1.7-x86_64-pc-windows-msvc.tar.xz   (the kit; LLVM-20.1.7-win64.exe is the
+#                  same bits as an NSIS installer -- pinned too for a hand install, not fetched)
+6aa75de00575ad0663183b00f00f39992ded611b5136e57649ace1e6a53c0d16  LLVM-20.1.7-macOS-ARM64.tar.xz
+ccf82ffe7e136ee49659cb57157856a7963d0950fac3d05aabba0db75bfba26f  LLVM-20.1.7-macOS-X64.tar.xz
+8494c98a774051a40bfe1187a2d6442f4bc107598998bbe1673d9bb1572cfd6f  LLVM-20.1.7-Linux-X64.tar.xz
+34a66bb4891584b32d32bbe5f129e345899b255593dab2c359b730b92e304b3e  clang+llvm-20.1.7-x86_64-pc-windows-msvc.tar.xz
+486e49650d8fe74987c82d3918e4f4b657e7c634fe1710817dc665cfbcb0fa52  LLVM-20.1.7-win64.exe

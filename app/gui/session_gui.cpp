@@ -109,12 +109,53 @@ SessionGui::EventResult SessionGui::ProcessEvent(const SDL_Event& event) {
         // A press for another window of ours (the renderer's hidden one) is not
         // menu text; the pad mapper still sees it.
         if (event.key.windowID != window_id_ && event.key.windowID != 0) return CaptureResult(false);
+        // The Controls page's press-to-bind: an armed key row takes the next press
+        // (its model binds / unbinds on Backspace / cancels on Escape and persists).
+        if (event.type == SDL_KEYDOWN && event.key.repeat == 0 && controls_.MenuOpen() && panel_.Controls().Armed()) {
+            panel_.Controls().OfferKey(SDL_GetScancodeName(event.key.keysym.scancode));
+            return CaptureResult(true);
+        }
+        if (key == SDLK_ESCAPE && event.type == SDL_KEYDOWN && event.key.repeat == 0) {
+            const auto snapshot = controls_.Read();
+            // Escape with the menu CLOSED is the window close (the same Close request the
+            // window manager's close button submits): a clean shutdown from the keyboard --
+            // or, under the pause menu, the menu + the pause. With the menu open it stays
+            // ImGui's (closes a popup / cancels an edit), except the pause menu's Resume.
+            if (!snapshot.menu_open || (snapshot.pause_menu && !text_input)) {
+                OnEscape(snapshot);
+                return CaptureResult(true);
+            }
+        }
     }
     // Closed menus do not accumulate an unbounded backend input queue. On
     // reopening, the main thread provides fresh events and a fresh UI frame.
     if (!controls_.MenuOpen()) return CaptureResult(false);
     const bool processed = ImGui_ImplSDL2_ProcessEvent(&event);
     return CaptureResult(processed);
+}
+
+void SessionGui::OnEscape(const SessionControls::Snapshot& snapshot) {
+    if (!snapshot.pause_menu) {
+        controls_.Submit(SessionControls::Action::Close);
+        return;
+    }
+    if (snapshot.menu_open) {
+        SessionPanel::Resume(controls_, snapshot);
+        return;
+    }
+    // Open + pause: the pause is the menu's to release on Resume; a game already
+    // paused (F9) is left as it is and stays paused after Resume.
+    controls_.Submit(SessionControls::Action::ToggleMenu);
+    if (snapshot.capabilities.pause && !snapshot.runtime.paused) {
+        controls_.SetMenuPaused(true);
+        controls_.Submit(SessionControls::Action::TogglePause);
+    }
+}
+
+void SessionGui::SetControlsModel(ControlsSection::Model model) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!OnMainThread()) return;
+    panel_.Controls().SetModel(std::move(model));
 }
 
 bool SessionGui::BuildFrame() {

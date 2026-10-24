@@ -12,14 +12,18 @@
 #include <filesystem>
 #include <fcntl.h>
 #include <pthread.h>
+#include <spawn.h>
 #include <strings.h>
 #include <sys/stat.h>
+#include <sys/resource.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
 #include <mach/mach.h>
+#include <mach/mach_time.h>
 #include <sys/qos.h>
 #include <pthread/qos.h>
 #endif
@@ -32,6 +36,8 @@
 #endif
 
 #include "engine/platform/posix/fiber_posix.h"
+
+extern char** environ;
 
 namespace ps2r::host {
 
@@ -72,6 +78,10 @@ SSize FdPread(int fd, void* buf, size_t n, uint64_t offset) {
     return ::pread(fd, buf, n, static_cast<off_t>(offset));
 }
 int FdSync(int fd) { return ::fsync(fd); }
+int64_t FdSize(int fd) {
+    struct stat st{};
+    return ::fstat(fd, &st) == 0 ? static_cast<int64_t>(st.st_size) : -1;
+}
 int FdClose(int fd) { return ::close(fd); }
 int FdOfStream(std::FILE* f) { return ::fileno(f); }
 int DirectorySync(const char* directory) {
@@ -89,6 +99,17 @@ bool MakeDirectory(const char* path) {
     if (::mkdir(path, 0755) == 0) return true;
     return errno == EEXIST && IsDirectory(path);
 }
+std::string MakeTempDirectory(const char* prefix, std::string* err) {
+    std::error_code ec;
+    std::filesystem::path root = std::filesystem::temp_directory_path(ec);
+    if (ec) root = "/tmp";
+    std::string templ = (root / (std::string(prefix ? prefix : "ps2r_") + "XXXXXX")).string();
+    if (::mkdtemp(templ.data()) == nullptr) {
+        if (err) *err = templ + ": " + std::strerror(errno);
+        return std::string();
+    }
+    return templ;
+}
 bool IsDirectory(const char* path) {
     struct stat st{};
     return ::stat(path, &st) == 0 && S_ISDIR(st.st_mode);
@@ -100,6 +121,69 @@ int ProcessId() { return static_cast<int>(::getpid()); }
 int ExecReplaceProcess(const char* image, char* const argv[]) {
     if (image && *image) ::execv(image, argv);
     return ::execvp(argv[0], argv);
+}
+
+int ProcessRun(const char* image, char* const argv[], bool search_path, std::string* output) {
+    int pipefd[2] = {-1, -1};
+    if (output != nullptr && ::pipe(pipefd) != 0) return -1;
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    if (output != nullptr) {
+        posix_spawn_file_actions_adddup2(&actions, pipefd[1], STDOUT_FILENO);
+        posix_spawn_file_actions_adddup2(&actions, pipefd[1], STDERR_FILENO);
+        posix_spawn_file_actions_addclose(&actions, pipefd[0]);
+        posix_spawn_file_actions_addclose(&actions, pipefd[1]);
+    }
+    pid_t pid = 0;
+    const char* exe = (image && *image) ? image : argv[0];
+    const int rc = search_path ? ::posix_spawnp(&pid, exe, &actions, nullptr, argv, environ)
+                               : ::posix_spawn(&pid, exe, &actions, nullptr, argv, environ);
+    posix_spawn_file_actions_destroy(&actions);
+    if (output != nullptr) ::close(pipefd[1]);
+    if (rc != 0) {
+        if (output != nullptr) ::close(pipefd[0]);
+        errno = rc;
+        return -1;
+    }
+    if (output != nullptr) {
+        char buf[4096];
+        for (;;) {
+            const ssize_t n = ::read(pipefd[0], buf, sizeof buf);
+            if (n > 0) output->append(buf, static_cast<size_t>(n));
+            else if (n == 0 || errno != EINTR) break;
+        }
+        ::close(pipefd[0]);
+    }
+    int status = 0;
+    while (::waitpid(pid, &status, 0) < 0) {
+        if (errno != EINTR) return -1;
+    }
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    return -2;
+}
+
+bool DynamicLibraryOpen(DynamicLibrary* out, const char* path, std::string* err) {
+    void* h = ::dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    if (h == nullptr) {
+        if (err) {
+            const char* e = ::dlerror();
+            *err = e ? e : "dlopen failed";
+        }
+        return false;
+    }
+    out->handle = h;
+    return true;
+}
+void* DynamicLibrarySymbol(DynamicLibrary lib, const char* name) { return lib.handle ? ::dlsym(lib.handle, name) : nullptr; }
+void DynamicLibraryClose(DynamicLibrary lib) {
+    if (lib.handle) ::dlclose(lib.handle);
+}
+const char* DynamicLibraryExtension() {
+#if defined(__APPLE__)
+    return "dylib";
+#else
+    return "so";
+#endif
 }
 
 uint64_t ProcessFootprintBytes() {
@@ -118,6 +202,11 @@ uint64_t ProcessFootprintBytes() {
     if (got != 2) return 0;
     return static_cast<uint64_t>(resident) * static_cast<uint64_t>(::sysconf(_SC_PAGESIZE));
 #endif
+}
+uint64_t ProcessPageFaults() {
+    rusage ru{};
+    if (::getrusage(RUSAGE_SELF, &ru) != 0) return 0;
+    return static_cast<uint64_t>(ru.ru_minflt) + static_cast<uint64_t>(ru.ru_majflt);
 }
 uint64_t ProcessPeakFootprintBytes() {
 #if defined(__APPLE__)
@@ -201,7 +290,8 @@ void SetCurrentThreadName(const char* name) {
     pthread_setname_np(pthread_self(), buf);
 #endif
 }
-void PinCurrentThreadInteractive() {
+void PinCurrentThreadInteractive(ThreadRole role) {
+    (void)role;   // the roles rank threads on Win32; here every role is the interactive class
 #if defined(__APPLE__)
     pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
 #else
@@ -219,9 +309,124 @@ uint64_t MonotonicNowNs() {
         std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
+uint64_t FastNowNs() {
+#if defined(__APPLE__)
+    static const mach_timebase_info_data_t tb = [] {
+        mach_timebase_info_data_t t{};
+        mach_timebase_info(&t);
+        if (t.denom == 0) { t.numer = 1; t.denom = 1; }
+        return t;
+    }();
+    const uint64_t t = mach_absolute_time();
+    if (tb.numer == tb.denom) return t;
+    // Split to keep the product in 64 bits for long uptimes.
+    return (t / tb.denom) * tb.numer + ((t % tb.denom) * tb.numer) / tb.denom;
+#else
+    return MonotonicNowNs();
+#endif
+}
+
+void PreciseSleepUntilNs(uint64_t deadline_ns) {
+    // Loop on the steady clock: the kernel wait is the fine-grained part, the re-check the
+    // "never early" guarantee (an EINTR or a timebase rounding can return a hair short).
+    for (;;) {
+        const uint64_t now = MonotonicNowNs();
+        if (now >= deadline_ns) return;
+        const uint64_t remaining = deadline_ns - now;
+#if defined(__APPLE__)
+        // mach_wait_until takes an absolute mach time; the remaining nanoseconds are converted
+        // with the timebase (Apple silicon: 125/3 -> 41.67 ns ticks) and added to a fresh read.
+        static const mach_timebase_info_data_t tb = [] {
+            mach_timebase_info_data_t t{};
+            mach_timebase_info(&t);
+            if (t.denom == 0 || t.numer == 0) { t.numer = 1; t.denom = 1; }
+            return t;
+        }();
+        const uint64_t ticks = (remaining / tb.numer) * tb.denom + ((remaining % tb.numer) * tb.denom) / tb.numer;
+        mach_wait_until(mach_absolute_time() + ticks);
+#else
+        // An absolute deadline on CLOCK_MONOTONIC (steady_clock's clock on glibc/musl): a
+        // preemption between the clock read and the call cannot stretch the wait.
+        struct timespec now_ts{};
+        clock_gettime(CLOCK_MONOTONIC, &now_ts);
+        uint64_t ns = static_cast<uint64_t>(now_ts.tv_nsec) + remaining;
+        struct timespec until{};
+        until.tv_sec = now_ts.tv_sec + static_cast<time_t>(ns / 1000000000ull);
+        until.tv_nsec = static_cast<long>(ns % 1000000000ull);
+        while (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &until, nullptr) == EINTR) {
+        }
+#endif
+    }
+}
+
+void RequestFineTimerResolution() {}   // nothing to ask for on Darwin / Linux
+
+void RaiseTimerResolution() {
+    // Nothing to raise: the POSIX kernels sleep to the microsecond (hrtimers / mach).
+}
+
+void SleepForNs(uint64_t ns) {
+    timespec req{};
+    req.tv_sec = static_cast<time_t>(ns / 1000000000ull);
+    req.tv_nsec = static_cast<long>(ns % 1000000000ull);
+    // nanosleep returns the remainder on EINTR: resume it so the span is never cut short.
+    while (nanosleep(&req, &req) == -1 && errno == EINTR) {
+    }
+}
+
+bool CpuDetect(bool* sse4_2, bool* avx2, bool* fma3, bool* neon, const char** arch) {
+    *sse4_2 = *avx2 = *fma3 = *neon = false;
+#if defined(__aarch64__) || defined(__arm64__)
+    *neon = true;
+    *arch = "arm64";
+    return true;
+#elif defined(__x86_64__)
+    *arch = "x86_64";
+    unsigned eax, ebx, ecx, edx;
+    // Leaf 1: SSE4.2 (ECX bit 20), FMA (ECX bit 12), OSXSAVE (ECX bit 27), AVX (ECX bit 28).
+    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(1), "c"(0));
+    *sse4_2 = (ecx & (1u << 20)) != 0;
+    const bool fma = (ecx & (1u << 12)) != 0;
+    const bool osxsave = (ecx & (1u << 27)) != 0;
+    const bool avx = (ecx & (1u << 28)) != 0;
+    bool ymm_enabled = false;
+    if (osxsave) {
+        unsigned xcr0_lo, xcr0_hi;
+        __asm__ volatile("xgetbv" : "=a"(xcr0_lo), "=d"(xcr0_hi) : "c"(0));
+        ymm_enabled = (xcr0_lo & 0x6u) == 0x6u;   // XMM + YMM state saved by the OS
+    }
+    // Leaf 7 sub-leaf 0: AVX2 (EBX bit 5).
+    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
+    const bool avx2_bit = (ebx & (1u << 5)) != 0;
+    *avx2 = avx && avx2_bit && ymm_enabled;
+    *fma3 = fma && *avx2;
+    return true;
+#else
+    *arch = "other";
+    return false;
+#endif
+}
+
+uint64_t ThreadCpuTimeNs() {
+    timespec ts{};
+    if (::clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) != 0) return 0;
+    return static_cast<uint64_t>(ts.tv_sec) * 1000000000ull + static_cast<uint64_t>(ts.tv_nsec);
+}
+
 bool GmTimeUtc(int64_t unix_seconds, struct tm* out) {
     const time_t t = static_cast<time_t>(unix_seconds);
     return ::gmtime_r(&t, out) != nullptr;
+}
+
+bool GlLoadEntryPoints(void* (*)(const char*), std::string* missing) {
+    // The GL entry points are linked directly on macOS (OpenGL.framework) and Linux
+    // (libOpenGL / libGL export the core set): nothing to load.
+    if (missing) missing->clear();
+    return true;
+}
+
+void* GlGetProcAddress(const char* name) {
+    return name ? ::dlsym(RTLD_DEFAULT, name) : nullptr;
 }
 
 int Backtrace(void** frames, int max_frames) {

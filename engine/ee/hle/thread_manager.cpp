@@ -1,5 +1,8 @@
 // ThreadManager implementation; the thbase rules R1..R10 are in the header.
 #include "engine/ee/hle/thread_manager.h"
+
+#include <cstdio>
+#include <string>
 #include "engine/ee/timing/tick_profile.h"
 
 #include <algorithm>
@@ -12,8 +15,10 @@
 #include "engine/ee/cpu/ps2_float.h"
 #include "engine/ee/hle/event_flags.h"
 #include "engine/ee/hle/semaphores.h"
+#include "engine/ee/hle/syscall_table.h"
 #include "engine/ee/sched/ee_event_queue.h"
 #include "engine/ee/sched/ee_run_token.h"
+#include "engine/ee/sched/ee_yield_point.h"
 
 namespace {
 thread_local int t_current_tid = 1;  // id 1 = the main thread (R10)
@@ -61,6 +66,7 @@ void ThreadManager::InstallEventApplier() {
             case E::kIntcRaise:
                 if (auto* fn = intc_raise_.load(std::memory_order_acquire)) fn(ev.a);
                 break;
+            case E::kDeferredLatched: break;   // the wake was the point (Intc collects at an observation point)
         }
     });
 }
@@ -212,6 +218,13 @@ void ThreadManager::RunGuestThread(WorkerArgs& wa) {
         ctx.cpuRegs.GPR.r[31].UL[0] = 0;
         ctx.cpuRegs.pc = info->entry;
     }
+    // The COP0 Count register of a context entering the machine is the live
+    // clock's (engine.cop0_count): a relaunched thread's image carries the value
+    // of the captured session (a frozen 0 in images cut before the clock
+    // existed), and a new thread's is unset -- either would be read as a stale
+    // Count until the thread's first syscall return reseats it. No clock
+    // installed = no-op.
+    SyscallTable::Instance().SeatCop0Count(ctx);
     int prio;
     {
         std::lock_guard<std::mutex> lk(info->m);
@@ -275,6 +288,9 @@ bool ThreadManager::FinishCurrentThread(int tid, const std::shared_ptr<ThreadInf
     if (auto* fn = park_observer_.load(std::memory_order_acquire)) fn(tid, false);
     info->cv.notify_all();
     EeRunToken::Instance().GuestExit(tid);
+    // The exit released the token; an event queued since this thread's last drain, with
+    // every other thread parked, has no holder left to apply it: the queue re-pokes.
+    EeEventQueue::Instance().PokeIfOrphaned();
     t_incarnation = 0;
     return true;
 }
@@ -456,12 +472,13 @@ int ThreadManager::SleepThread() {
         }
         NotePark(tid, true);
         EeRunToken::Instance().BlockBegin(tid);
+        IdleWhileBlocked(info);
         {
             EeEventQueue::ParkReg reg(&info->m, &info->cv);
             std::unique_lock<std::mutex> lk(info->m);
             info->cv.wait(lk, [&] {
                 return info->wakeup_count > 0 || info->force_release.load() || info->terminated.load() ||
-                       EeEventQueue::Instance().HasPending() || !Running();
+                       EeEventQueue::Instance().ParkWakeDue() || !Running();
             });
         }
         NotePark(tid, false);
@@ -674,7 +691,7 @@ void ThreadManager::WaitWhileSuspended(const std::shared_ptr<ThreadInfo>& info) 
             EeEventQueue::ParkReg reg(&info->m, &info->cv);
             std::unique_lock<std::mutex> lk(info->m);
             info->cv.wait(lk, [&] {
-                return info->suspend_count == 0 || info->terminated.load() || EeEventQueue::Instance().HasPending() ||
+                return info->suspend_count == 0 || info->terminated.load() || EeEventQueue::Instance().ParkWakeDue() ||
                        !Running();
             });
         }
@@ -693,6 +710,11 @@ void ThreadManager::WaitWhileSuspended(const std::shared_ptr<ThreadInfo>& info) 
 void ThreadManager::NotePark(int tid, bool parked) {
     NoteCapturePark(tid, parked, false);
     if (auto* fn = park_observer_.load(std::memory_order_acquire)) fn(tid, parked);
+}
+
+void ThreadManager::IdleWhileBlocked(const std::shared_ptr<ThreadInfo>& info) {
+    if (!info || !info->ctx || !Running()) return;
+    EeYieldPoint::Instance().IdleWhileBlocked(*info->ctx);
 }
 
 void ThreadManager::NoteCapturePark(int tid, bool parked, bool suspended) {

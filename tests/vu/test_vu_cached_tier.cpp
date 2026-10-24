@@ -292,7 +292,9 @@ void TestStallclassMatrix() {
     for (const VuDecodedSlot& s : d.slots) {
         const bool lower = !s.i_bit, rd = s.n_rd != 0, ialu = s.ialu_wr_vi >= 0;
         uint8_t cls = 0;
-        if (s.ialu_branch_rd == 0 && !s.efu_pipe_op && !s.fdiv_pipe_op) {
+        if (s.ialu_branch_rd != 0 && lower && !ialu && !s.efu_pipe_op && !s.fdiv_pipe_op && s.n_wr <= 1) {
+            cls = static_cast<uint8_t>(15 + (rd ? 1 : 0) + (s.n_wr == 1 ? 2 : 0));
+        } else if (s.ialu_branch_rd == 0 && !s.efu_pipe_op && !s.fdiv_pipe_op) {
             if (lower && !ialu) cls = rd ? (s.n_wr == 1 ? 1 : s.n_wr == 2 ? 2 : 3) : (s.n_wr == 1 ? 4 : s.n_wr == 2 ? 5 : 6);
             else if (!lower) cls = rd ? (s.n_wr == 1 ? 7 : s.n_wr == 0 ? 8 : 0) : (s.n_wr == 1 ? 9 : s.n_wr == 0 ? 10 : 0);
             else cls = rd ? (s.n_wr == 1 ? 11 : s.n_wr == 0 ? 12 : 0) : (s.n_wr == 1 ? 13 : s.n_wr == 0 ? 14 : 0);

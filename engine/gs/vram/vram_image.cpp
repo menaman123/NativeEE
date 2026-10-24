@@ -1,6 +1,8 @@
 // gs/vram/vram_image.cpp -- VramImage (see vram_image.h).
 #include "engine/gs/vram/vram_image.h"
 
+#include <algorithm>
+#include <cstdio>
 #include <cstring>
 
 namespace ps2r {
@@ -38,6 +40,7 @@ void VramImage::StampPages(Span span, uint64_t epoch) {
 }
 
 uint64_t VramImage::ViewSignature(Span span) const {
+    Gate(span, "ViewSignature");
     uint32_t first, count;
     PagesOf(span, &first, &count);
     // FNV-1a over (page index, view generation) pairs: a span whose pages all kept
@@ -50,6 +53,72 @@ uint64_t VramImage::ViewSignature(Span span) const {
         for (size_t k = 0; k < sizeof(v); ++k) h = (h ^ b[k]) * 1099511628211ull;
     }
     return h;
+}
+
+// ---- deferred-deposit gate ------------------------------------------------------------
+
+void VramImage::NoteDeferred(Span span) {
+    if (span.size == 0) return;
+    const uint64_t lo = span.start % kBytes;
+    const uint64_t hi = std::min<uint64_t>(lo + span.size, kBytes);
+    deferred_.push_back(Owed{static_cast<uint32_t>(lo), static_cast<uint32_t>(hi)});
+}
+
+void VramImage::ClearDeferred() {
+    deferred_.clear();
+    deferred_commit_owed_ = false;
+}
+
+// The gate over `span`: when an owed range overlaps it, the owner completes every
+// deferred writeback (its completion clears the registration first, so the
+// staging it performs passes through here unhindered).
+void VramImage::Gate(Span span, const char* what) const {
+    if (deferred_.empty() || span.size == 0 || !gate_) return;
+    const uint64_t lo = span.start % kBytes;
+    uint64_t hi = lo + span.size;
+    const bool wraps = hi > kBytes;
+    if (wraps) hi = kBytes;
+    for (const Owed& o : deferred_) {
+        if ((lo < o.hi && o.lo < hi) || (wraps && o.lo < (span.start + span.size) % kBytes)) {
+            if (gate_trace_ && gate_traced_ < 40) {
+                ++gate_traced_;
+                std::fprintf(stderr, "[vram-gate] %s span=%x+%x owed=%x..%x\n", what, span.start, span.size, o.lo, o.hi);
+            }
+            counters_.deferred_gates++;
+            gate_();
+            return;
+        }
+    }
+}
+
+bool VramImage::GateAll() const {
+    if (deferred_.empty() || !gate_) return false;
+    counters_.deferred_gates++;
+    gate_();
+    return true;
+}
+
+void VramImage::CommitDepositsIn(Span span) {
+    if (pending_ == 0 || !shadow_) return;
+    uint32_t first, count;
+    PagesOf(span, &first, &count);
+    for (uint32_t i = 0; i < count; ++i) {
+        const uint32_t pg = (first + i) % kPageCount;
+        PageRecord& p = pages_[pg];
+        if (p.state != PageRecord::State::Pending) continue;
+        p.state = PageRecord::State::Applying;
+        if (p.upload_epoch <= p.shadow_epoch) {
+            std::memcpy(bytes_.data() + pg * kPageBytes, shadow_.get() + pg * kPageBytes, kPageBytes);
+            p.deposit_epoch = ++deposit_seq_;
+            counters_.deposits_committed++;
+        } else {
+            counters_.deposits_dropped_newer++;
+        }
+        p.shadow_epoch = 0;
+        p.state = PageRecord::State::Clean;
+        ++p.view_gen;
+        pending_--;
+    }
 }
 
 // ---- EE side ----------------------------------------------------------------------
@@ -65,6 +134,7 @@ void VramImage::MarkWrittenByte(uint32_t a) {
 
 void VramImage::WriteStream(uint32_t byte_off, const uint8_t* src, size_t len) {
     if (len == 0) return;
+    Gate(Span{byte_off, static_cast<uint32_t>(std::min<size_t>(len, kBytes))}, "WriteStream");
     if (mirror_) mirror_->OnWriteStream(byte_off, src, len);
     counters_.stream_writes++;
     // Per page run: copy the bytes, set the 128 B write bits the run covers, mark
@@ -98,6 +168,7 @@ void VramImage::WriteStream(uint32_t byte_off, const uint8_t* src, size_t len) {
 
 void VramImage::NoteWriteNoBytes(uint32_t byte_off, size_t len) {
     if (len == 0) return;
+    Gate(Span{byte_off, static_cast<uint32_t>(std::min<size_t>(len, kBytes))}, "NoteWriteNoBytes");
     if (mirror_) mirror_->OnNoteWriteNoBytes(byte_off, len);
     // Per page run, the same marks the per-byte walk (MarkWrittenByte) sets --
     // the 128 B write bits the run covers, the CPU author, the settle set, the
@@ -128,6 +199,7 @@ void VramImage::NoteWriteNoBytes(uint32_t byte_off, size_t len) {
 
 uint64_t VramImage::NoteStreamWrite(Span dest) {
     if (dest.size == 0) return upload_seq_;
+    Gate(dest, "NoteStreamWrite");
     if (mirror_) mirror_->OnNoteStreamWrite(dest.start, dest.size);
     const uint64_t epoch = ++upload_seq_;
     StampPages(dest, epoch);
@@ -136,6 +208,7 @@ uint64_t VramImage::NoteStreamWrite(Span dest) {
 
 void VramImage::NoteCpuWrite(Span span) {
     if (span.size == 0) return;
+    Gate(span, "NoteCpuWrite");
     if (mirror_) mirror_->OnNoteCpuWrite(span.start, span.size);
     uint32_t first, count;
     PagesOf(span, &first, &count);
@@ -173,6 +246,7 @@ void VramImage::SettleWrites() {
 
 void VramImage::StageDeposit(uint32_t byte_off, const uint8_t* src, size_t len, uint64_t batch_epoch) {
     if (len == 0) return;
+    Gate(Span{byte_off, static_cast<uint32_t>(std::min<size_t>(len, kBytes))}, "StageDeposit");
     EnsureShadow();
     counters_.deposits_staged++;
     uint32_t first, count;
@@ -198,6 +272,9 @@ void VramImage::StageDeposit(uint32_t byte_off, const uint8_t* src, size_t len, 
 }
 
 void VramImage::CommitDeposits() {
+    // A deferred writeback is not staged yet: the commit it would have joined is
+    // owed to it (its completion commits its own pages); the rest commits now.
+    if (!deferred_.empty()) deferred_commit_owed_ = true;
     if (pending_ == 0 || !shadow_) return;
     for (uint32_t pg = 0; pg < kPageCount; ++pg) {
         PageRecord& p = pages_[pg];
@@ -242,6 +319,7 @@ void VramImage::NoteGpuElided(Span span, uint32_t fbp, int32_t y0, int32_t y1) {
 // ---- readers --------------------------------------------------------------------------
 
 void VramImage::ReadMirror(uint32_t byte_off, size_t len, uint8_t* out) const {
+    Gate(Span{byte_off, static_cast<uint32_t>(std::min<size_t>(len, kBytes))}, "ReadMirror");
     const uint32_t start = byte_off % kBytes;
     for (size_t done = 0; done < len;) {
         const uint32_t a = (start + static_cast<uint32_t>(done)) % kBytes;
@@ -253,6 +331,7 @@ void VramImage::ReadMirror(uint32_t byte_off, size_t len, uint8_t* out) const {
 }
 
 void VramImage::ReadView(uint32_t byte_off, size_t len, uint8_t* out) const {
+    Gate(Span{byte_off, static_cast<uint32_t>(std::min<size_t>(len, kBytes))}, "ReadView");
     const uint32_t start = byte_off % kBytes;
     for (size_t done = 0; done < len;) {
         const uint32_t a = (start + static_cast<uint32_t>(done)) % kBytes;
@@ -288,6 +367,7 @@ void VramImage::MaterializePages(Span span, Reason reason) {
 }
 
 uint32_t VramImage::AssertNoStaleAtSave() {
+    GateAll();
     uint32_t stale = 0;
     for (PageRecord& p : pages_)
         if (p.stale) stale++;

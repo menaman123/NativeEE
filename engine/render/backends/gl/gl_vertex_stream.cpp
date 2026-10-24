@@ -85,6 +85,7 @@ int GlVertexStream::Upload(const GpuVertex* verts, size_t n) {
                                GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT |
                                    GL_MAP_FLUSH_EXPLICIT_BIT);
     if (p) {
+        maps_++;
         std::memcpy(p, verts, bytes);
         glFlushMappedBufferRange(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(bytes));
         glUnmapBuffer(GL_ARRAY_BUFFER);

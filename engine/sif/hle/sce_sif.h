@@ -7,7 +7,13 @@
 // SifState flag words and an injected IOP-heap allocator:
 //
 //   sceSifInitRpc      -> SMFLAG |= CMDINIT|BOOTEND (the IOP's handshake reply), 1
-//   sceSifInitCmd      -> 0                       sceSifAddCmdHandler -> 0
+//   sceSifInitCmd      -> 0                       sceSifAddCmdHandler -> the (cid -> handler, arg)
+//                         record; a command a hosted IOP module sends (sceSifSendCmd ->
+//                         QueueCommand) is copied into the title's SIF command buffer
+//                         (SetCmdBuffer: the libkernl static, title data) and its handler
+//                         runs as a guest call at DeliverPendingCommands -- after the EE's
+//                         own sceSifCallRpc round trip (the SIF interrupt the console would
+//                         have taken while waiting) and at the composition's boundary step
 //   sceSifBindRpc      -> client record filled, router Bind, 0
 //   sceSifCallRpc      -> router Call (unbound server = the leg's park
 //                         `sif_server_unbound`), client record completed,
@@ -17,6 +23,10 @@
 //   sceSifSetRpcQueue  -> 0   sceSifGetNextRequest -> 0   sceSifRpcLoop -> SleepThread
 //   sceSifLoadModule / _sceSifLoadModule -> 0 (module id; the IOP modules are
 //                         booted by the composition root), _lf_bind -> 1
+//   sceSifLoadModuleBuffer(iop_addr, arg_len, args) -> the same loader, told
+//                         "buffer@<iop addr>" (+ the args bytes): a module image
+//                         the title pushed into IOP RAM itself (an IRX embedded
+//                         in the ELF), registered as a new row
 //   sceSifInitIopHeap  -> 0   sceSifAllocIopHeap -> allocator(size)
 //   sceSifFreeIopHeap / sceSifFreeSysMemory -> allocator free, 0
 //   sceSifWriteBackDCache -> 0 (no cache to write back)
@@ -99,6 +109,26 @@ public:
     struct HeapCensus { uint64_t allocs = 0, frees = 0, refused = 0, bytes = 0; };
     static HeapCensus Heap();
 
+    // The SIF command path (IOP -> EE): the EE's command buffer (libkernl's sceSifInitCmd
+    // static, title data: `slots` packets of `slot_bytes`), the handler table sceSifAddCmdHandler
+    // fills, and the delivery of queued packets as guest calls `handler(packet, arg)`.
+    struct CmdBuffer {
+        uint32_t addr = 0;
+        uint32_t slots = 32;
+        uint32_t slot_bytes = 128;
+    };
+    using GuestCall = std::function<void(uint32_t addr, CpuContext& ctx)>;
+    static void SetCmdBuffer(CmdBuffer buffer);
+    static void SetGuestCall(GuestCall call);
+    // Queues a packet the IOP sent; false when no command buffer is bound (the packet is dropped).
+    static bool QueueCommand(uint32_t cid, const uint8_t* packet, uint32_t size);
+    // Runs every queued packet's handler on `ctx` (a0 = packet address, a1 = the registered arg;
+    // a0/a1/v0/v1/ra/gp/pc saved and restored). Returns the count delivered.
+    static int DeliverPendingCommands(CpuContext& ctx);
+    static size_t PendingCommands();
+    static uint64_t CommandsDelivered();
+    static uint64_t CommandsDropped();
+
     // The row bodies (public so tests can call them with a prepared context).
     static void InitRpc(CpuContext& ctx);
     static void InitCmd(CpuContext& ctx);
@@ -111,6 +141,7 @@ public:
     static void RpcLoop(CpuContext& ctx);
     static void AddCmdHandler(CpuContext& ctx);
     static void LoadModule(CpuContext& ctx);
+    static void LoadModuleBuffer(CpuContext& ctx);
     static void LfBind(CpuContext& ctx);
     static void InitIopHeap(CpuContext& ctx);
     static void AllocIopHeap(CpuContext& ctx);

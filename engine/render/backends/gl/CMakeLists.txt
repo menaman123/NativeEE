@@ -21,4 +21,4 @@ target_include_directories(ps2r_render_gl PUBLIC ${CMAKE_SOURCE_DIR})
 # definition stays PUBLIC for a dependent that includes the header before ours.
 target_compile_definitions(ps2r_render_gl PUBLIC GL_SILENCE_DEPRECATION)
 target_compile_options(ps2r_render_gl PRIVATE -Wall -Wextra -Werror)
-target_link_libraries(ps2r_render_gl PUBLIC ps2r_render ps2r_platform OpenGL::GL)
+target_link_libraries(ps2r_render_gl PUBLIC ps2r_render ps2r_platform ps2r_gs_ir OpenGL::GL)

@@ -57,6 +57,26 @@ ps2r_gs_ir_test(test_gsdl_format)
 ps2r_gs_ir_test(test_gsdl_reader)
 ps2r_gs_ir_test(test_draw_ir)
 
+# AlphaFailMask: the TEST register's static alpha-test arm as a whole-draw write mask
+# (ATST NEVER + AFAIL ZB_ONLY = the Z-clear idiom leaves the frame buffer untouched).
+ps2r_gs_ir_test(test_alpha_fail_mask)
+add_test(NAME GsAlphaFailMask COMMAND test_alpha_fail_mask)
+set_tests_properties(GsAlphaFailMask PROPERTIES TIMEOUT 60)
+
+# HalfwordShuffle: Detect accepts exactly the 16-bit sprite column pass over a 32-bit
+# buffer (both parities, self / sibling source, DECAL / identity MODULATE, the uniform
+# alpha-test arms) and rejects every gate alone (blend term, shape, DATE, per-pixel Z,
+# scissor, FBA, TCC = 0, DTHE); Fbmsk16From32 folds RGBA8 onto 5551.
+ps2r_gs_ir_test(test_halfword_shuffle)
+add_test(NAME GsHalfwordShuffle COMMAND test_halfword_shuffle)
+ps2r_gs_ir_test(test_prim_expand)
+add_test(NAME GsPrimExpand COMMAND test_prim_expand)
+# DrawCoalescer: the ink line-pair fold (A lane then B lane), its boundaries (any register
+# but AFAIL, target, colour, frame / epoch, a non-candidate, Flush) and the orphan-B rule.
+ps2r_gs_ir_test(test_draw_coalescer)
+add_test(NAME GsDrawCoalescer COMMAND test_draw_coalescer)
+set_tests_properties(GsHalfwordShuffle PROPERTIES TIMEOUT 60)
+
 # G1: every .gsdl struct size / field offset (compile-time and run-time), the hash
 # primitives, and the FileHeader decode of a real capture's first 4 KiB.
 add_test(NAME GsdlFormatOffsets COMMAND test_gsdl_format ${PS2R_GS_CORPUS}/boot_menu.gsdl)
@@ -103,9 +123,11 @@ ps2r_gs_state_test(state test_gs_mmio_handler)
 # G3: GsState units (register decode vectors, kick sequences, flush, façade, priv regs).
 foreach(pair
         "Gs_Inv01_FirstKickTmeSnapshot;inv01" "Gs_Inv02_SetterFlushesPending;inv02"
+        "Gs_Inv02b_PrimAttributeFlush;inv02b"
         "Gs_Inv28_IdentityStamp;inv28" "Gs_Inv32_DitherInMergeKey;inv32"
         "Gs_Inv38_RoundSpriteNormalise;inv38" "Gs_Inv40_Tex1KSignExtended;inv40" "GsRegistersDecodeVectors;decode"
-        "GsVertexKickSequences;kick" "GsStateFacadeEmitsDrawIr;facade" "GsPrivRegsJobsAndReset;priv")
+        "GsVertexKickSequences;kick" "GsVertexKickFlatShading;flat" "GsStateFacadeEmitsDrawIr;facade"
+        "GsPrivRegsJobsAndReset;priv")
     list(GET pair 0 tname)
     list(GET pair 1 arg)
     add_test(NAME ${tname} COMMAND test_gs_state ${arg})
@@ -116,7 +138,10 @@ endforeach()
 # over GsState (64-bit CSR RESET -> kCsrAfterReset readable, FINISH + 32-bit W1C;
 # 32-bit halves merge either order; DISPFB/DISPLAY/BGCOLOR through the handler
 # emit the presenter jobs once per changed value; 16/8-bit lanes widen).
-foreach(pair "GsMmioHandlerCsr;csr" "GsMmioHandlerHalves;halves" "GsMmioHandlerJobs;jobs" "GsMmioHandlerWiden;widen")
+# GsMmioHandlerEarlyFinish (E425): FinishNow raises once + sets CSR.FINISH; a consumed Finish()
+# neither re-sets the bit after the guest's W1C nor raises again; the EE read census.
+foreach(pair "GsMmioHandlerCsr;csr" "GsMmioHandlerHalves;halves" "GsMmioHandlerJobs;jobs" "GsMmioHandlerWiden;widen"
+             "GsMmioHandlerEarlyFinish;early_finish")
     list(GET pair 0 tname)
     list(GET pair 1 arg)
     add_test(NAME ${tname} COMMAND test_gs_mmio_handler ${arg})
@@ -140,12 +165,21 @@ foreach(pair
         "Gs_Inv08_SingleWriterMirror;inv08" "Gs_Inv16_ReadFootprintPreciseBits;inv16"
         "Gs_Inv22_ZeroStaleAtSave;inv22" "Gs_Inv36_AliasRefreshPageClear;inv36"
         "Gs_Inv39_ViewHonoursNewerWriter;inv39" "Gs_VramViewSignature;viewsig"
-        "Gs_VramOpLogReplay;oplog")
+        "Gs_VramOpLogReplay;oplog" "Gs_VramPageOccupancy;pageocc"
+        "Gs_VramDeferredGate;deferredgate")
     list(GET pair 0 tname)
     list(GET pair 1 arg)
     add_test(NAME ${tname} COMMAND test_vram_image ${arg})
     set_tests_properties(${tname} PROPERTIES TIMEOUT 120)
 endforeach()
+
+# The .gsstream consumer-stream capture (engine/gs/hle/capture): recorder -> reader round
+# trip, CPU-only (the throughput harness's input format).
+add_executable(test_gs_stream_capture capture/test_gs_stream_capture.cpp)
+target_link_libraries(test_gs_stream_capture PRIVATE ps2r_gs_hle_capture)
+target_compile_options(test_gs_stream_capture PRIVATE -Wall -Wextra -Werror -O2)
+add_test(NAME GsStreamCaptureRoundTrip COMMAND test_gs_stream_capture ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(GsStreamCaptureRoundTrip PROPERTIES TIMEOUT 120)
 
 # ---------------------------------------------------------------------------
 # Phase 6 (stage 6D): gs/hle/targets + gs/hle/present suites over the CPU FakeBackend
@@ -164,14 +198,16 @@ foreach(pair
         "Gs_Inv13_GrowOnlyRetagKeepsContent;inv13" "Gs_Inv14_ClassTagsSurviveGrow;inv14"
         "Gs_Inv20_ZAddressingUsesZLayout;inv20" "Gs_Inv23_ScaleOneIdentity;inv23"
         "Gs_Inv24_NativePins;inv24" "Gs_Inv35_MaskedWritebackKeepsBits;inv35"
-        "Gs_Inv37_ClearKeyedOnComposite;inv37" "Targets_DrawnRectsByRoute;rects"
+        "Gs_Inv37_ClearKeyedOnComposite;inv37" "Gs_Inv38_ClearOnlyOnFrameOpeningDraw;inv38"
+        "Targets_DrawnRectsByRoute;rects"
         "Targets_PerViewAuthorSeqs;authors" "Targets_ZSaturate;zsat"
         "Targets_SyncAllJob;syncall" "Targets_EncodeVetoes;vetoes"
         "Targets_DepositSpan;span" "Targets_UploadedTextureMap;uploaded"
         "Targets_EvictUnderDraw;evict"
         "Targets_RefreshFromVram;refresh" "Targets_VramLayoutQueries;layout"
         "Targets_RefreshArms;arms" "Targets_RefreshBandStride;stride" "Targets_AliasPreDraw;alias" "Targets_PendingLedger;ledger"
-        "Targets_TargetDims;dims")
+        "Targets_AlphaMergeRoutes;alphamerge"
+        "Targets_TargetDims;dims" "Targets_OfferedPixels;offer")
     list(GET pair 0 tname)
     list(GET pair 1 arg)
     add_test(NAME ${tname} COMMAND test_targets ${arg})
@@ -183,9 +219,10 @@ add_test(NAME Present_ViewportMath COMMAND test_present viewport)
 add_test(NAME Present_CrtcClassifier COMMAND test_present crtc)
 add_test(NAME Present_GrabDisplayFallback COMMAND test_present grab)
 add_test(NAME Present_GrabLocalMemory COMMAND test_present grab_local)
+add_test(NAME Present_BeginGrabDisplay COMMAND test_present begin_grab)
 add_test(NAME Present_DrawScanoutSource COMMAND test_present drawscanout)
 set_tests_properties(Present_ViewportMath Present_CrtcClassifier Present_GrabDisplayFallback
-                     Present_GrabLocalMemory Present_DrawScanoutSource PROPERTIES TIMEOUT 120)
+                     Present_GrabLocalMemory Present_BeginGrabDisplay Present_DrawScanoutSource PROPERTIES TIMEOUT 120)
 
 # The title profile fills the layout; an empty layout is false everywhere.
 
@@ -225,6 +262,20 @@ foreach(pair "Texsrc_OwnedSlotsServe;serve" "Texsrc_OwnedSlotsTier;tier" "Texsrc
     set_tests_properties(${tname} PROPERTIES TIMEOUT 120)
 endforeach()
 
+# The texture-oracle observer (TextureDumpSink): Oracle B -- the fast tier == the per-pixel
+# reference over every PSM x CLUT (CPSM / CSM / CSA) x TBW != TW/8 x block-granular bases x
+# TEXA x sub-rects, the corrupted-texel control; and the file contract (one write per distinct
+# texture, dedup, serves.tsv).
+add_executable(test_texture_dump_sink texsrc/test_texture_dump_sink.cpp)
+target_link_libraries(test_texture_dump_sink PRIVATE ps2r_gs_hle_texsrc)
+target_compile_options(test_texture_dump_sink PRIVATE -Wall -Wextra -Werror -O2)
+foreach(pair "Texsrc_DumpSinkOracleB;oracle_b" "Texsrc_DumpSinkFiles;files")
+    list(GET pair 0 tname)
+    list(GET pair 1 arg)
+    add_test(NAME ${tname} COMMAND test_texture_dump_sink ${arg})
+    set_tests_properties(${tname} PROPERTIES TIMEOUT 120)
+endforeach()
+
 # Phase 8 (P8.21-A): the title logo atlas from the PCSX2 dump through TransferEngine + TextureDecoder.
 add_executable(test_title_atlas_decode texsrc/test_title_atlas_decode.cpp)
 target_link_libraries(test_title_atlas_decode PRIVATE ps2r_gs_hle_texsrc ps2r_gs_xfer)
@@ -252,6 +303,9 @@ set_tests_properties(Texsrc_TitleAtlasDecode PROPERTIES TIMEOUT 120)
 # CPU-only census / classdiff gates and the bounded GL replay legs (SKIP 77 when the
 # corpus or a GL context is absent).
 set(PS2R_REPLAY_WORK ${CMAKE_CURRENT_BINARY_DIR}/replay_work)
+# The replay tool is optional in this tree (tools/gs_replay defines no executable when its
+# driver sources are absent): the rows that run it are registered only when it exists.
+if(TARGET gs_replay)
 add_test(NAME GsReplayCensus
     COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/replay/gs_replay_census.sh $<TARGET_FILE:gs_replay>
             ${PS2R_GS_CORPUS} load_transition ${PS2R_REPLAY_WORK})
@@ -292,6 +346,7 @@ foreach(cap ${PS2R_GS_CORPUS_CAPS})
         set_tests_properties(GsCorpus_${cap} PROPERTIES DISABLED TRUE)
     endif()
 endforeach()
+endif()   # TARGET gs_replay
 
 # ---------------------------------------------------------------------------
 # Phase 6 (stage 6F"): G10 size budgets + the G11 SKIP stubs for the three invariants whose
@@ -333,12 +388,16 @@ add_test(NAME DrawIrThreadQueueConsumerFault COMMAND test_draw_ir_thread_queue f
 add_test(NAME DrawIrThreadQueueSplitImage COMMAND test_draw_ir_thread_queue splitimage)
 # The clock contract, rule 2: one pending frame, the older dropped; pushes never wait.
 add_test(NAME DrawIrThreadQueueFrameSkip COMMAND test_draw_ir_thread_queue frameskip)
+# pipeline2: the producer stages its pipelined records; a pass end / frame / wait flushes them.
+add_test(NAME DrawIrThreadQueueStaged COMMAND test_draw_ir_thread_queue staged)
 # Rule 2, review loop 1: the play-mode local->local source served from the EE image /
 # the completed-frame snapshot, never a wait.
 add_test(NAME DrawIrThreadQueueLocalToLocalSource COMMAND test_draw_ir_thread_queue l2lsource)
+# Batched pops: order and counters exact over a deep backlog; Sync/WaitFrame waiters served.
+add_test(NAME DrawIrThreadQueueBatched COMMAND test_draw_ir_thread_queue batched)
 set_tests_properties(DrawIrThreadQueueLockstep DrawIrThreadQueuePipelined DrawIrThreadQueueNoPayload
     DrawIrThreadQueueConsumerFault DrawIrThreadQueueSplitImage DrawIrThreadQueueFrameSkip
-    DrawIrThreadQueueLocalToLocalSource PROPERTIES TIMEOUT 60)
+    DrawIrThreadQueueLocalToLocalSource DrawIrThreadQueueBatched DrawIrThreadQueueStaged PROPERTIES TIMEOUT 60)
 
 # P8.13-A: GsSections -- the VRAM + GSPR + GSST savestate sections over GsState
 # (round trip byte-equal, restore emits the presenter jobs, wrong lengths /

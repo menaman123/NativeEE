@@ -24,6 +24,8 @@
 | `<execinfo.h>` backtrace | `WriteBacktrace(fd, skip)` | the same (glibc) |
 | `<OpenGL/gl3.h>` (+ `GL_SILENCE_DEPRECATION`) | `#include PS2R_GL_HEADER` | `<GL/glcorearb.h>` + `GL_GLEXT_PROTOTYPES`; Mesa/libglvnd export the core entry points, no loader library |
 | `ucontext` fibers (`FiberMacos`) | `Platform::fiber_*` | the same TU, `posix/fiber_posix.cpp` (`MAP_ANONYMOUS`, clang-only pragma) |
+| `posix_spawn[p]` + pipe + `waitpid` | `host::ProcessRun(image, argv, search_path, &output)` (the VU1 AOT builder's compiler runs; PATH search inside libc, no environment read by the engine) | the same; Win32 arm: `_spawnv[p](_P_WAIT)` with the output through a temp file |
+| `dlopen(RTLD_NOW\|RTLD_LOCAL)` / `dlsym` / `dlclose` | `host::DynamicLibraryOpen / DynamicLibrarySymbol / DynamicLibraryClose / DynamicLibraryExtension` (the generated VU1 image libraries) | the same (`so`); Win32 arm: `LoadLibraryA` / `GetProcAddress` / `FreeLibrary` (`dll`) |
 
 Nothing here feeds the game's time domain or arithmetic: the deterministic lanes are platform-neutral by construction; the per-OS behaviour is scheduling (QoS) and diagnostics.
 

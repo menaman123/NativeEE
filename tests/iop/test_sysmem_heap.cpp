@@ -63,7 +63,7 @@ int main() {
         const uint32_t boot_sizes[] = {1440, 4096, 131072, 65536, 2048};
         for (uint32_t sz : boot_sizes) {
             uint32_t a = h.Alloc(sz);
-            CHECK(block_ok(a, (sz + 15) & ~15u));
+            CHECK(block_ok(a, (sz + 0xFF) & ~0xFFu));
             live.push_back(a);
         }
         // Transient header ring: alloc + free (cmd13/cmd15 class).
@@ -166,6 +166,22 @@ int main() {
         CHECK(h.Free(c) == 0x1000);           // tail reclaim all the way
         CHECK(h.HeapPtr() == SysmemHeap::kFloor);
         CHECK(h.Free(0xDEAD0) == 0);          // unknown block -> no-op
+    }
+
+    // ---- Vector 8: the 256-byte allocation unit (SYSMEM's granularity) -----
+    // A 0x38-byte request owns a 0x100-byte block: the next block starts 0x100
+    // later, so a module writing 0x48 bytes into it (spiop's 989snd handler node)
+    // never touches a neighbour; QueryBlockSize answers in units; Free returns them.
+    {
+        SysmemHeap h;
+        uint32_t node = h.Alloc(0x38);
+        uint32_t next = h.Alloc(0x10);
+        CHECK(next == node + SysmemHeap::kBlockUnit);
+        CHECK(h.BlockSize(node) == SysmemHeap::kBlockUnit);
+        CHECK(h.Alloc(0x101) == next + SysmemHeap::kBlockUnit);
+        CHECK(h.Free(node) == SysmemHeap::kBlockUnit);
+        CHECK(h.Alloc(0) == node);  // a zero request still takes one unit (the hole fits)
+        CHECK(h.QueryMaxFree() % SysmemHeap::kBlockUnit == 0);
     }
 
     // ---- Vector 7: restored bump tail from the pre-band layout ------------

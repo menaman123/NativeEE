@@ -23,8 +23,26 @@ IopModuleTable::IopModuleTable(const Config& cfg)
 IopModuleTable::~IopModuleTable() { Shutdown(); }
 
 int IopModuleTable::RegisterModule(const std::string& name, uint32_t version, int rpc_tid) {
-    modules_.push_back(ModuleEntry{name, version, rpc_tid});
+    ModuleEntry e;
+    e.name = name;
+    e.version = version;
+    e.rpc_tid = rpc_tid;
+    return RegisterModule(e);
+}
+
+int IopModuleTable::RegisterModule(const ModuleEntry& entry) {
+    modules_.push_back(entry);
     return static_cast<int>(modules_.size()) - 1;
+}
+
+void IopModuleTable::TruncateModules(size_t count) {
+    if (count < modules_.size()) modules_.resize(count);
+}
+
+const IopModuleTable::ModuleEntry* IopModuleTable::FindModule(const std::string& name) const {
+    for (const ModuleEntry& m : modules_)
+        if (m.name == name) return &m;
+    return nullptr;
 }
 
 std::string IopModuleTable::ModulesCensus() const {
@@ -39,13 +57,16 @@ std::string IopModuleTable::ModulesCensus() const {
 }
 
 void IopModuleTable::OnModuleLoaded(int rpc_tid) {
-    if (booted_) return;
+    const bool first = !booted_;
     booted_ = true;
-    rpc_.SetRpcTid(rpc_tid);
+    if (first) rpc_.SetRpcTid(rpc_tid);
     // Boot contract: IOP module init runs to its first block before the EE
     // continues -- run every thread the entry started until none is Ready.
-    kernel_.Dispatch();
-    if (!frame_) host_.Start();
+    // (A later module's threads are run the same way; the host thread, under
+    // REALTIME, is already dispatching them.)
+    if (first || frame_) kernel_.Dispatch();
+    if (first && !frame_) host_.Start();
+    else if (!frame_) host_.Notify();
 }
 
 bool IopModuleTable::DrainQuantum(bool advance_frame) {
@@ -72,9 +93,13 @@ bool IopModuleTable::DrainToUs(uint64_t ceiling) {
     return ran;
 }
 
-void IopModuleTable::PumpAtBoundary() {
+void IopModuleTable::PumpAtBoundary(uint64_t fields) {
     if (!frame_ || !booted_) return;
-    DrainQuantum(/*advance_frame=*/true);
+    // One quantum per delivered field: the IOP's virtual time keeps pace with
+    // the SPU's (800 frames per field) at any boundary rate -- a 989snd stream
+    // refill due in field k of a late boundary runs here, not frame_hz/60 late.
+    if (fields == 0) fields = 1;
+    for (uint64_t i = 0; i < fields; i++) DrainQuantum(/*advance_frame=*/true);
 }
 
 void IopModuleTable::PumpAfterEeService() {

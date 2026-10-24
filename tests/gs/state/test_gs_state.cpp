@@ -1,9 +1,10 @@
 // tests/gs/state/test_gs_state.cpp -- GsRegisters / VertexKick / DrawFlush /
 // GsState units. Usage: test_gs_state <case>
-//   inv01 inv02 inv28 inv32 inv38 decode kick facade priv
+//   inv01 inv02 inv02b inv28 inv32 inv38 decode kick facade priv
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -80,15 +81,15 @@ static void Inv01() {
     // before the completing kick is what the draw carries.
     CHECK(sink.draws.size() == 2 && sink.draws[1].tex_enabled, "latch re-taken while the buffer is still empty");
     CHECK(gs.Regs().prim.texture, "live TME is 1 after PRMODE");
-    // With a triangle already in the buffer, a same-type PRIM flipping TME is
-    // deferred: the queued draw flushes with ITS latched TME at the next kick.
+    // With a triangle already in the buffer, a same-type PRIM flipping TME flushes
+    // it at once (the attributes in force at ITS kicks): the draw keeps TME=1.
     gs.WriteRegister(0x1A, 1);
     gs.WriteRegister(0x00, Prim(3, 0, 1, 0, 0, 0, 0, 0));
     KickAt(gs, 1, 1); KickAt(gs, 2, 1); KickAt(gs, 1, 2);
     gs.WriteRegister(0x00, Prim(3, 0, 0, 0, 0, 0, 0, 0));
-    CHECK(sink.draws.size() == 2, "attribute-only PRIM does not flush");
+    CHECK(sink.draws.size() == 3 && sink.draws[2].tex_enabled, "attribute PRIM flushes: draw keeps TME=1 of its kicks");
     KickAt(gs, 5, 5);
-    CHECK(sink.draws.size() == 3 && sink.draws[2].tex_enabled, "deferred flush: draw keeps TME=1 of its first kick");
+    CHECK(sink.draws.size() == 3, "the next kick opens the new draw");
     KickAt(gs, 6, 5); KickAt(gs, 5, 6);
     gs.KickBoundary();
     CHECK(sink.draws.size() == 4 && !sink.draws[3].tex_enabled, "next draw latched TME=0 at its first kick");
@@ -110,10 +111,11 @@ static void Inv02() {
     gs.WriteRegister(0x4C, 0x10);  // FRAME_1 -> flush
     CHECK(sink.draws.size() == 1 && sink.draws[0].raster.frame.fbp == 0, "FRAME flushed the draw with the OLD frame");
     CHECK(sink.draws[0].raster.dthe == 1 && sink.draws[0].raster.dimx == 0x1234, "dither state captured at flush");
-    // PRIM with the same type: no flush.
+    // PRIM with the same type and only IIP changed: no flush (flat colour is
+    // applied per primitive by the kick).
     KickAt(gs, 0, 0); KickAt(gs, 1, 0); KickAt(gs, 0, 1);
     gs.WriteRegister(0x00, Prim(3, 1, 0, 0, 0, 0, 0, 0));
-    CHECK(sink.draws.size() == 1, "same-type PRIM does not flush");
+    CHECK(sink.draws.size() == 1, "same-type IIP-only PRIM does not flush");
     KickAt(gs, 5, 5); KickAt(gs, 6, 5); KickAt(gs, 5, 6);
     gs.WriteRegister(0x00, Prim(6, 0, 0, 0, 0, 0, 0, 0));  // type change -> flush
     CHECK(sink.draws.size() == 2 && sink.draws[1].verts.size() == 6 && sink.draws[1].prim_type == 3, "type change flushes both triangles");
@@ -128,18 +130,58 @@ static void Inv02() {
         CHECK(sink.draws.size() == n + 1, "setter flushed");
         n = sink.draws.size();
     }
-    // Deferred flush at the kick: a DIRTY register that changes the draw state (FRAME) with pending verts.
+    // A same-type PRIM changing TME with pending verts flushes them at once (Inv02b);
+    // the StateChange flush resets the strip parity.
     gs.WriteRegister(0x00, Prim(4, 0, 0, 0, 0, 0, 0, 0));  // strip
     KickAt(gs, 0, 0); KickAt(gs, 1, 0); KickAt(gs, 0, 1);
     n = sink.draws.size();
-    gs.WriteRegister(0x00, Prim(4, 0, 1, 0, 0, 0, 0, 0));  // same type, TME change: dirty PRIM, no immediate flush
-    CHECK(sink.draws.size() == n, "PRIM attribute change defers");
+    gs.WriteRegister(0x00, Prim(4, 0, 1, 0, 0, 0, 0, 0));  // same type, TME change: immediate flush
+    CHECK(sink.draws.size() == n + 1 && sink.draws.back().verts.size() == 3 && !sink.draws.back().tex_enabled,
+          "PRIM attribute change flushes the strip with its own TME");
     KickAt(gs, 1, 1);
-    CHECK(sink.draws.size() == n + 1 && sink.draws.back().verts.size() == 3, "deferred flush at the next kick");
+    CHECK(sink.draws.size() == n + 1, "the next kick starts the new draw");
     CHECK(gs.Kick().StripCount() == 0, "StateChange flush reset the strip parity");
 }
 
 // Invariant 28: every emitted draw carries the identity stamp + seq/epoch fields.
+// Invariant 2b: a same-type PRIM that changes a draw-carried attribute (ABE here)
+// flushes the queued primitives with the OLD bits -- Sly 2's ink lines: LINE
+// PRIM 0xc1 (ABE AA1) + TEST RGB_ONLY + 2 kicks, then PRIM 0x01 + TEST ZB_ONLY +
+// the same 2 kicks. The colour pass must carry ABE=1, the Z pass ABE=0.
+static void Inv02b() {
+    GsState gs;
+    CaptureSink sink;
+    gs.SetSink(&sink);
+    gs.WriteRegister(0x00, 0xc1);                 // LINE, ABE, AA1
+    gs.WriteRegister(0x47, 0x73001);              // ATE ATST NEVER AFAIL RGB_ONLY ZTE ZTST GREATER
+    KickAt(gs, 200, 143); KickAt(gs, 204, 141);
+    CHECK(sink.draws.empty(), "line queued");
+    gs.WriteRegister(0x00, 0x01);                 // LINE, no ABE: the Z-only pass
+    CHECK(sink.draws.size() == 1, "attribute change flushed the colour pass at once");
+    CHECK(sink.draws[0].alpha_blend && sink.draws[0].prim_type == 1 && sink.draws[0].verts.size() == 2,
+          "colour pass keeps ABE=1 with its two vertices");
+    CHECK(sink.draws[0].raster.test.afail == 3, "colour pass keeps TEST RGB_ONLY");
+    gs.WriteRegister(0x47, 0x72001);              // AFAIL ZB_ONLY
+    KickAt(gs, 200, 143); KickAt(gs, 204, 141);
+    gs.KickBoundary();
+    CHECK(sink.draws.size() == 2 && !sink.draws[1].alpha_blend && sink.draws[1].raster.test.afail == 2,
+          "Z pass: ABE=0, ZB_ONLY");
+    // FGE / FST / CTXT flips split too; AA1 alone (not draw-carried) does not.
+    gs.WriteRegister(0x00, Prim(3, 0, 0, 0, 0, 0, 0, 0));
+    KickAt(gs, 0, 0); KickAt(gs, 1, 0); KickAt(gs, 0, 1);
+    gs.WriteRegister(0x00, Prim(3, 0, 0, 0, 0, 1, 0, 0));
+    CHECK(sink.draws.size() == 2, "AA1-only PRIM does not flush");
+    gs.WriteRegister(0x00, Prim(3, 0, 0, 1, 0, 0, 0, 0));
+    CHECK(sink.draws.size() == 3 && !sink.draws[2].fog, "FGE flip flushes the queued triangle with FGE=0");
+    KickAt(gs, 0, 0); KickAt(gs, 1, 0); KickAt(gs, 0, 1);
+    gs.WriteRegister(0x00, Prim(3, 0, 0, 1, 0, 0, 1, 0));
+    CHECK(sink.draws.size() == 4 && !sink.draws[3].use_fst, "FST flip flushes with FST=0");
+    KickAt(gs, 0, 0); KickAt(gs, 1, 0); KickAt(gs, 0, 1);
+    gs.WriteRegister(0x00, Prim(3, 0, 0, 1, 0, 0, 1, 1));
+    CHECK(sink.draws.size() == 5 && sink.draws[4].ctx == 0, "CTXT flip flushes with the old context");
+    gs.KickBoundary();
+}
+
 static void Inv28() {
     GsState gs;
     CaptureSink sink;
@@ -507,6 +549,56 @@ static void KickSeqs() {
     CHECK(sink.draws.back().tex.fst, "fst recorded from the UV recency flag");
 }
 
+// Flat shading (GS User's Manual 3.4.1, PRIM.IIP = 0): the primitive takes the RGBA
+// of the vertex whose kick completes it -- the LAST vertex (PCSX2: provoking last
+// vertex) -- for triangles, strips (both parities), fans and lines; IIP = 1 keeps
+// each vertex's own colour. The colour-grade mask chain's light-volume strips are
+// flat strips whose triangles alternate G = 2 / G = 254 on their completing vertex.
+static void FlatShading() {
+    GsState gs;
+    CaptureSink sink;
+    gs.SetSink(&sink);
+    auto last = [&]() -> const std::vector<VertexRec>& { return sink.draws.back().verts; };
+    auto color = [&](float x, float y, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+        gs.WriteRegister(0x01, Rgbaq(r, g, b, a, 1.0f));
+        KickAt(gs, x, y);
+    };
+    auto rgba_is = [](const VertexRec& v, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+        return v.r == r && v.g == g && v.b == b && v.a == a;
+    };
+    // Flat strip: triangle 0 completes at vertex 2 (G = 254), triangle 1 at vertex 3 (G = 2).
+    gs.WriteRegister(0x00, Prim(4, 0, 0, 0, 1, 0, 0, 0));
+    color(0, 0, 0, 2, 0, 30); color(1, 0, 0, 2, 0, 238); color(0, 1, 0, 254, 0, 164); color(1, 1, 0, 2, 0, 77);
+    gs.KickBoundary();
+    CHECK(last().size() == 6, "flat strip: two triangles");
+    bool ok = true;
+    for (int i = 0; i < 3; ++i) ok = ok && rgba_is(last()[i], 0, 254, 0, 164);
+    for (int i = 3; i < 6; ++i) ok = ok && rgba_is(last()[i], 0, 2, 0, 77);
+    CHECK(ok, "flat strip: every vertex carries the completing vertex's RGBA (both parities)");
+    CHECK(VertsXy(last(), {{0, 0}, {1, 0}, {0, 1}, {0, 1}, {1, 0}, {1, 1}}), "flat strip: positions untouched");
+    // Gouraud strip: colours stay per vertex.
+    gs.WriteRegister(0x00, Prim(4, 1, 0, 0, 1, 0, 0, 0));
+    color(0, 0, 0, 2, 0, 30); color(1, 0, 0, 2, 0, 238); color(0, 1, 0, 254, 0, 164);
+    gs.KickBoundary();
+    CHECK(rgba_is(last()[0], 0, 2, 0, 30) && rgba_is(last()[1], 0, 2, 0, 238) && rgba_is(last()[2], 0, 254, 0, 164),
+          "gouraud strip: per-vertex colours kept");
+    // Flat triangle list, fan and line: the last vertex's colour.
+    gs.WriteRegister(0x00, Prim(3, 0, 0, 0, 0, 0, 0, 0));
+    color(0, 0, 1, 1, 1, 1); color(1, 0, 2, 2, 2, 2); color(0, 1, 3, 3, 3, 3);
+    gs.KickBoundary();
+    CHECK(rgba_is(last()[0], 3, 3, 3, 3) && rgba_is(last()[1], 3, 3, 3, 3) && rgba_is(last()[2], 3, 3, 3, 3), "flat triangle");
+    gs.WriteRegister(0x00, Prim(5, 0, 0, 0, 0, 0, 0, 0));
+    color(0, 0, 1, 1, 1, 1); color(1, 0, 2, 2, 2, 2); color(1, 1, 3, 3, 3, 3); color(0, 1, 4, 4, 4, 4);
+    gs.KickBoundary();
+    CHECK(last().size() == 6 && rgba_is(last()[0], 3, 3, 3, 3) && rgba_is(last()[2], 3, 3, 3, 3) &&
+              rgba_is(last()[3], 4, 4, 4, 4) && rgba_is(last()[5], 4, 4, 4, 4),
+          "flat fan: each triangle takes its completing vertex's colour");
+    gs.WriteRegister(0x00, Prim(1, 0, 0, 0, 0, 0, 0, 0));
+    color(0, 0, 1, 1, 1, 1); color(1, 0, 2, 2, 2, 2);
+    gs.KickBoundary();
+    CHECK(rgba_is(last()[0], 2, 2, 2, 2) && rgba_is(last()[1], 2, 2, 2, 2), "flat line");
+}
+
 // Façade bridge (G-C1): the register-op stream and the lifted draw-IR stream of
 // the same packet drive GsState to identical DrawIr sequences.
 // Invariant 40: TEX1.K (bits 43:32) is a SIGNED 12-bit s7.4 LOD parameter (GS User's
@@ -675,11 +767,48 @@ static void PrivRegs() {
     const uint64_t display2 = ((uint64_t)3 << 23) | ((uint64_t)2559 << 32) | ((uint64_t)223 << 44);
     gs.WritePrivileged(0x12000080, display2);
     CHECK(jobs_of(JobKind::SetWindow) == 2 && sink.jobs.back().arg3 == ((224u << 16) | 224u), "a new geometry still emits");
+    // (c) SMODE2 interlaced FRAME mode (INT=1 FFMD=1): every buffer line is read in each
+    // field, so the 448-line raster scans a 224-line buffer -- the SetWindow job keeps the
+    // 448 window and carries content 224; the mode change itself re-emits the latched
+    // DISPLAY; FIELD mode (FFMD=0) restores 448/448.
+    gs.WritePrivileged(0x12000080, display);   // 640x448 again (frame mode off): window 448, content 448
+    CHECK(jobs_of(JobKind::SetWindow) == 3 && sink.jobs.back().arg3 == ((448u << 16) | 448u), "field mode: content = raster");
+    gs.WritePrivileged(0x12000020, 3);          // SMODE2 INT | FFMD
+    CHECK(jobs_of(JobKind::SetWindow) == 4 && sink.jobs.back().arg1 == 1 &&
+              sink.jobs.back().arg2 == ((640u << 16) | 640u) && sink.jobs.back().arg3 == ((448u << 16) | 224u),
+          "frame mode: SMODE2 re-emits the window with half the content lines");
+    gs.WritePrivileged(0x12000020, 3);
+    CHECK(jobs_of(JobKind::SetWindow) == 4, "same SMODE2: no re-emit");
+    gs.WritePrivileged(0x12000080, display2);   // DH 223 under frame mode: window 224, content 112
+    CHECK(jobs_of(JobKind::SetWindow) == 5 && sink.jobs.back().arg3 == ((224u << 16) | 112u), "frame mode applies to a new DISPLAY too");
+    gs.WritePrivileged(0x12000020, 1);          // back to FIELD mode
+    CHECK(jobs_of(JobKind::SetWindow) == 6 && sink.jobs.back().arg3 == ((224u << 16) | 224u), "field mode again: content = raster");
+    CHECK(gs.ReadPrivileged(0x12000020) == 1, "SMODE2 reads back");
     // CSR: write-1-to-clear of the event bits.
     gs.WriteRegister(0x61, 0);  // FINISH
     CHECK((gs.ReadPrivileged(0x12001000) & GsPrivRegs::kCsrFinish) != 0, "FINISH sets CSR.FINISH");
     gs.WritePrivileged(0x12001000, GsPrivRegs::kCsrFinish);
     CHECK((gs.ReadPrivileged(0x12001000) & GsPrivRegs::kCsrFinish) == 0, "write-1 clears it");
+    // (c) the job deferrer: a display-register write stores the register at once but
+    // hands the job's push to the deferrer; the job (seq / epoch) is stamped when the
+    // deferred push runs; without a deferrer the push is in place again.
+    {
+        std::vector<std::function<void()>> deferred;
+        gs.Priv().SetJobDeferrer([&deferred](std::function<void()> push) { deferred.push_back(std::move(push)); });
+        const size_t jobs_before = sink.jobs.size();
+        const uint64_t dispfb2 = (uint64_t)0x20 | ((uint64_t)10 << 9);
+        gs.WritePrivileged(0x12000070, dispfb2);
+        CHECK(gs.ReadPrivileged(0x12000070) == dispfb2, "deferred: the register stores at once");
+        CHECK(sink.jobs.size() == jobs_before && deferred.size() == 1, "deferred: the job waits in the deferrer");
+        const uint32_t seq_before = gs.Seq();
+        deferred.back()();
+        CHECK(sink.jobs.size() == jobs_before + 1 && sink.jobs.back().type == (uint32_t)JobKind::SetFrontBuffer &&
+                  sink.jobs.back().arg1 == 0x20u * 8192u && sink.jobs.back().seq == seq_before,
+              "deferred: the push lands the job, stamped at push time");
+        gs.Priv().SetJobDeferrer(nullptr);
+        gs.WritePrivileged(0x12000070, dispfb);
+        CHECK(sink.jobs.size() == jobs_before + 2, "no deferrer: the push is in place");
+    }
 }
 
 static void LibraryDrawSubmission() {
@@ -723,12 +852,14 @@ int main(int argc, char** argv) {
     const std::string c = argc > 1 ? argv[1] : "all";
     if (c == "inv01" || c == "all") Inv01();
     if (c == "inv02" || c == "all") Inv02();
+    if (c == "inv02b" || c == "all") Inv02b();
     if (c == "inv28" || c == "all") Inv28();
     if (c == "inv32" || c == "all") Inv32();
     if (c == "inv38" || c == "all") Inv38();
     if (c == "inv40" || c == "all") Inv40();
     if (c == "decode" || c == "all") DecodeRegs();
     if (c == "kick" || c == "all") KickSeqs();
+    if (c == "flat" || c == "all") FlatShading();
     if (c == "facade" || c == "all") {
         FacadeEmitsDrawIr();
         LibraryDrawSubmission();

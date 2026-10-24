@@ -44,7 +44,26 @@ void XgKick::Arm(const uint8_t* data, uint32_t vi_addr, uint64_t& vu_cycle) {
     next_due_ = lastcycle_ + static_cast<uint64_t>(kQuantum) + 1;
     cyclecount_ = 1;  // the kick itself counts as one transfer cycle
     staging_.clear();
-    if (staging_.capacity() < kMemSize) staging_.reserve(kMemSize);
+    if (staging_.capacity() == 0) {
+        // The previous packet's buffer left with the arbiter: take a recycled one.
+        if (spare_.empty()) {
+            arbiter_.acquirePath1Buffers(spare_, kSpareBatch);
+            if (!spare_.empty()) ++census_.pool_refills;
+        }
+        if (!spare_.empty()) {
+            staging_ = std::move(spare_.back());
+            spare_.pop_back();
+        } else {
+            // Pool empty (the drain lags the worker by more than the pool): one
+            // allocation of the packet's tag-walked size, not a growth ladder.
+            // The bytes are still copied at drain time; a tag written after the
+            // kick only grows the buffer.
+            const uint32_t hint = PacketSize(data, mem_offset, /*flush=*/true) & 0xFFFFu;
+            staging_.reserve(hint != 0 ? hint : kMemSize / 16);
+            ++census_.staging_allocs;
+        }
+    }
+    ++census_.arms;
     if (!paced_) Transfer(data, vu_cycle, 0, /*flush=*/true, /*add_stall_cycles=*/false);
 }
 
@@ -57,6 +76,22 @@ void XgKick::Pace(const uint8_t* data, uint64_t& vu_cycle) {
 
 void XgKick::Flush(const uint8_t* data, uint64_t& vu_cycle, bool add_stall_cycles) {
     if (enable_) Transfer(data, vu_cycle, 0, /*flush=*/true, add_stall_cycles);
+}
+
+void XgKick::SetSubmitTap(SubmitTap fn, void* user) {
+    tap_ = fn;
+    tap_user_ = user;
+}
+
+void XgKick::CopyDrainState(const XgKick& other) {
+    enable_ = other.enable_;
+    addr_ = other.addr_;
+    size_remaining_ = other.size_remaining_;
+    endpacket_ = other.endpacket_;
+    cyclecount_ = other.cyclecount_;
+    lastcycle_ = other.lastcycle_;
+    next_due_ = other.next_due_;
+    staging_.assign(other.staging_.begin(), other.staging_.end());
 }
 
 void XgKick::Reset() {
@@ -107,8 +142,19 @@ void XgKick::Transfer(const uint8_t* data, uint64_t& vu_cycle, int64_t cycles, b
     }
 
     if (!enable_ && !staging_.empty()) {
-        std::vector<uint8_t> out = arbiter_.acquireBuffer();
-        out.swap(staging_);
-        arbiter_.submitOwned(GifPath::Path1, std::move(out));
+        // The packet buffer itself goes to the arbiter (right-sized by the Arm's
+        // tag-walk hint, no second copy); the drain returns it to the PATH1
+        // pool and the next Arm takes it back. The 16 KB-per-packet shape this
+        // replaces (a staging vector reserved per Arm) missed the arbiter's
+        // 4-buffer pool for 95 % of packets: a large-class malloc + free each.
+        census_.submit_bytes += staging_.size();
+        ++census_.submits;
+        if (tap_ != nullptr) tap_(tap_user_, staging_.data(), staging_.size());
+        if (muted_) {
+            staging_.clear();  // dropped: the buffer stays this path's (no pool round trip)
+        } else {
+            arbiter_.submitOwned(GifPath::Path1, std::move(staging_));
+            staging_ = std::vector<uint8_t>();
+        }
     }
 }

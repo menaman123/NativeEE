@@ -1,7 +1,11 @@
 #pragma once
 // EE main RAM: 32 MB of physical memory. KUSEG (0x0xxxxxxx), KSEG0 (0x8...)
 // and KSEG1 (0xA...) all map onto it through `addr & 0x1FFFFFFF`; the RAM
-// itself is the low 32 MB of that physical window.
+// itself is the low 32 MB of that physical window. The kernel's TLB also maps
+// the uncached (0x2...) and uncached-accelerated (0x3..., "UCAB") windows onto
+// the same RAM: 0x2... falls out of the mask, 0x3... needs its own arm (its
+// masked form 0x1xxxxxxx would land in the hardware window). Titles build
+// their DMA display lists through the UCAB window to skip the cache flush.
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -10,11 +14,12 @@ class MainMemory {
 public:
     static constexpr uint32_t kSize = 32u * 1024u * 1024u;
     static constexpr uint32_t kPhysMask = 0x1FFFFFFFu;
+    static constexpr uint32_t kUcabMask = 0x0FFFFFFFu;
 
     MainMemory();
 
-    // Physical address of a KUSEG/KSEG0/KSEG1 virtual address.
-    static uint32_t Phys(uint32_t addr) { return addr & kPhysMask; }
+    // Physical address of a KUSEG/KSEG0/KSEG1/uncached/UCAB virtual address.
+    static uint32_t Phys(uint32_t addr) { return (addr >> 28) == 3u ? addr & kUcabMask : addr & kPhysMask; }
 
     // Host pointer for `size` bytes at physical `phys`, or nullptr when the
     // range is not entirely inside RAM.

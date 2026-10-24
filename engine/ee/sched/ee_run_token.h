@@ -34,6 +34,7 @@
 // post-load runner is therefore the thbase winner, never the first host
 // thread to arrive, and the old incarnation's later GuestExit is a no-op
 // because only the host thread that ENTERED a tid may exit it.
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <mutex>
@@ -59,6 +60,20 @@ public:
     // the host thread that entered `tid`.
     void GuestEnter(int tid, int prio);
     void GuestExit(int tid);
+    // Census: CPU time (host thread clock, user + kernel) the guest tids' host
+    // threads consumed between their GuestEnter and GuestExit, summed over
+    // incarnations -- "tid:ms,tid:ms,...;total=ms" (tids with any time, in order).
+    // Completed incarnations are booked at GuestExit; the running one is a
+    // snapshot refreshed at every BlockBegin (one ~100 ns thread-clock read as
+    // the thread leaves the CPU anyway), so a long-lived thread still running
+    // when the census is written is in it up to its last block. The EE's own
+    // CPU per run independent of what the host's other processes did to the
+    // wall (eecode round 4).
+    std::string CpuCensus() const;
+    uint64_t CpuNs(int tid) const;
+    // Refreshes the calling guest thread's live CPU snapshot (BlockBegin -- the parks go
+    // through it -- and WaitVblank call it: every way a guest thread leaves the CPU).
+    void SnapshotCpu();
 
     // Kernel blocking wait: BlockBegin leaves the ready set and releases
     // (WAITING is not READY); BlockEnd rejoins (fresh seq unless a mutator
@@ -70,6 +85,51 @@ public:
     // the outermost pair acts. The thread rejoins at the TAIL of its priority.
     void ParkBegin();
     void ParkEnd();
+
+    // The frame-boundary wait (sceGsSyncV / WaitForVblank): the calling guest
+    // thread sleeps until the next vblank while the other READY threads run.
+    // The vblank arrives when (a) every other guest thread has blocked -- the
+    // EE is idle and emulated time skips to it -- or (b) a running thread has
+    // consumed one field of emulated time (NoteFieldElapsed: the back-edge
+    // yield point's advance_field). Returns at once when nothing else is
+    // READY. Without it the wait is instantaneous in guest time: a render
+    // thread parks and is back at its next WaitSema before the lower-priority
+    // threads ran a single instruction, and a "frame ready" semaphore that is
+    // only ever signalled while the renderer sleeps on the vblank is never
+    // seen non-zero (a second title's frame pacer spins; its main thread starves).
+    void WaitVblank();
+    void NoteFieldElapsed();
+    // (c) a WALL field is due: the composition's pacer noted a tick no boundary
+    // has consumed while a thread ran past it (the console's vblank interrupt
+    // lands whatever the EE is doing; here it lands at the running holder's
+    // next scheduling point). Readies every thread sleeping in WaitVblank (its
+    // wait returns; the boundary it runs finds the tick noted and fires it) --
+    // no field passes here. Holder only. False = nobody was waiting.
+    bool WakeVblankWaitersForWallTick();
+    uint32_t VblankWaiters();
+    uint64_t WallTickWakes() const { return wall_tick_wakes_.load(std::memory_order_relaxed); }
+    uint64_t VblankWaits() const { return vblank_waits_.load(std::memory_order_relaxed); }
+    uint64_t VblankWaitsIdle() const { return vblank_waits_idle_.load(std::memory_order_relaxed); }
+
+    // The kernel's idle (the thbase idle state: no thread READY). A guest thread
+    // that has just blocked on a kernel object (BlockBegin done, its slot left
+    // the ready set) asks for the IDLE GRANT: it holds the token -- as the idle
+    // runner, not as a schedulable thread -- while nothing is READY, no thread
+    // waits on the vblank (WaitVblank's own "every other thread blocked = the
+    // vblank is now" rule covers that case), no relaunch holds the election and
+    // the token is not shut down. The runner advances emulated time (the yield
+    // sequence: a field, alarms, timers, ISRs, device pumps) so an external event
+    // -- a vblank ISR's iSignalSema, an IOP completion's SIF notify, an alarm --
+    // can ready a thread; it releases after each field (IdleRelease: the
+    // election runs over whatever became READY) and asks again. Under the grant
+    // PreemptPoint and Rotate are no-ops: the idle runner has no ready slot to
+    // resume from and hands over at its release instead. The console's EE idles
+    // with interrupts enabled and the IOP on its own clock; without this grant an
+    // all-blocked EE would stop the world (no boundary, no yield trip, no pump).
+    bool TryIdleAcquire(int tid);
+    void IdleRelease(int tid);
+    bool CurrentThreadIdling() const;
+    uint64_t IdleGrants() const { return idle_grants_.load(std::memory_order_relaxed); }
 
     // Mark tid READY (idempotent). THIS assigns the FIFO seq.
     // A tid whose host thread has EXITED (GuestExit ran, no GuestEnter since)
@@ -83,7 +143,18 @@ public:
     // Preemption point: if a strictly-higher-priority thread is READY, hand
     // over (keeping our seq: a preempted thread resumes at the head of its
     // priority) and block until re-elected. Self-identified.
+    // Inside an interrupt handler (IsrBegin .. IsrEnd on the calling host
+    // thread) the point is only RECORDED: the kernel's i-variants (iSignalSema,
+    // iWakeupThread, iSetEventFlag ...) never dispatch from the handler; the
+    // dispatch happens once, at the handler's exit (IsrEnd), after the
+    // dispatcher has acknowledged the cause. Handing over mid-handler would let
+    // another thread run -- and raise the SAME cause again -- inside the
+    // handler's window, and the acknowledgement after the handler would then
+    // eat that second event (a second title's second GS FINISH).
     void PreemptPoint();
+    void IsrBegin();
+    void IsrEnd();
+    bool InIsr() const;
 
     // RotateThreadReadyQueue(prio): rotating our own priority yields to the
     // next same-priority READY thread (self to tail); another priority moves
@@ -112,6 +183,15 @@ public:
     int CurrentTid() const;
     bool ElectionHeld();
 
+    // The elected tid -- a running thread, a thread elected but not yet arrived,
+    // or the idle runner -- or kNone when no thread holds or is about to hold
+    // the token (a snapshot: the event queue's poke policy reads it).
+    int OwnerTid();
+    // The guest tid that released the token last (BlockBegin / WaitVblank /
+    // exit; never the idle runner, never a host gate): with no owner, the
+    // thread an in-line device pipeline would have run on -- the event queue's
+    // no-holder poke target. kNone before the first release.
+    int LastOwnerTid();
     // Introspection (tests / diagnostics).
     int OwnerForTest();
     bool AnyReadyBesides(int tid);
@@ -163,14 +243,29 @@ private:
     std::condition_variable cv_;
     Ready ready_[kMaxReady];
     bool retired_[kMaxTid] = {};  // GuestExit ran for the tid; cleared by GuestEnter
+    std::atomic<uint64_t> cpu_ns_[kMaxTid] = {};       // CpuCensus: completed incarnations (GuestExit)
+    std::atomic<uint64_t> cpu_live_ns_[kMaxTid] = {};  // CpuCensus: the running incarnation at its last BlockBegin
     uint64_t retired_ready_noops_ = 0;
     int owner_ = kNone;           // elected tid (may not have arrived yet)
+    int last_owner_ = kNone;      // ReleaseLocked's last guest tid (under mu_)
     bool owner_running_ = false;  // elected thread is inside its grant
     bool shutdown_ = false;
     bool hold_election_ = false;  // BeginRelaunch .. EndRelaunch
     uint32_t attached_guests_ = 0, attached_hosts_ = 0;
     std::mutex host_gate_mu_;     // serialises concurrent HostGate users
     void (*post_acquire_)() = nullptr;
+    uint64_t field_gen_ = 0;      // NoteFieldElapsed count (under mu_)
+    uint64_t wall_tick_gen_ = 0;  // WakeVblankWaitersForWallTick count (under mu_)
+    uint32_t vblank_waiters_ = 0; // threads sleeping inside WaitVblank (under mu_)
+    static constexpr int kMaxVblankWaiters = 8;
+    struct VblankWaiter {
+        int tid = kNone;
+        int prio = 0;
+    };
+    VblankWaiter vblank_waiter_[kMaxVblankWaiters];   // the sleepers' tid / prio (under mu_)
+    std::atomic<uint64_t> wall_tick_wakes_{0};
+    std::atomic<uint64_t> vblank_waits_{0}, vblank_waits_idle_{0};
+    std::atomic<uint64_t> idle_grants_{0};
 
     Ready* SlotFor(int tid);
     Ready* FindReady(int tid);

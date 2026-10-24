@@ -24,7 +24,7 @@ PHASE | touched (any site in phase): NORM | SETTING | DIAG | TEST | DELETE | NEW
 7     |       5 |       1 |       2 |       1 |       4 |       0 |    13
 9     |       0 |       0 |       0 |       0 |      10 |       0 |    10
 
-unmapped site cells (ledger prose that is not a file; attributed by the var's other sites): 34
+unmapped site cells (ledger prose that is not a file; attributed by the var's other sites): 35
 
 # var names per phase and outcome (the plan's per-phase 'flags consumed' lists)
 P1 NORM (11): PS2_CRASHRING, PS2_EE_RUNTOKEN, PS2_NO_QOS, PS2_SAVE_ATOMIC, PS2_SLOWSPOT_ASYNC, PS2_SLOWSPOT_COOLDOWN_S, PS2_SLOWSPOT_DEDUPE, PS2_SLOWSPOT_GF_MS, PS2_SLOWSPOT_MS, PS2_SLOWSPOT_SUFFIX, PS2_WAITFIX

@@ -39,8 +39,9 @@ void ResultLine(const SessionControls::Result& result) {
 
 void SessionPanel::DrawSession(SessionControls& controls, const SessionControls::Snapshot& snapshot) {
     const bool pause_busy = Busy(snapshot, Action::TogglePause) || Busy(snapshot, Action::Step);
-    ImGui::Text("%s  |  Game tick %llu  |  game %u Hz  |  render %u fps", snapshot.runtime.paused ? "Paused" : "Playing",
-                static_cast<unsigned long long>(snapshot.runtime.frame), snapshot.runtime.game_hz, snapshot.runtime.render_fps);
+    ImGui::Text("%s  |  Game tick %llu  |  game %u Hz  |  render %u fps  |  doubled %llu", snapshot.runtime.paused ? "Paused" : "Playing",
+                static_cast<unsigned long long>(snapshot.runtime.frame), snapshot.runtime.game_hz, snapshot.runtime.render_fps,
+                static_cast<unsigned long long>(snapshot.runtime.doubled_frames));
     ImGui::BeginDisabled(!snapshot.capabilities.pause || pause_busy || snapshot.closing);
     if (ImGui::Button(snapshot.runtime.paused ? "Resume (F9)" : "Pause (F9)"))
         controls.Submit(Action::TogglePause);
@@ -62,7 +63,7 @@ void SessionPanel::DrawSettings(SessionControls&, const SessionControls::Snapsho
     if (!ImGui::CollapsingHeader("Session state", ImGuiTreeNodeFlags_DefaultOpen)) return;
     const auto& r = snapshot.runtime;
     if (!r.input_name.empty()) ImGui::TextWrapped("Input: %s", r.input_name.c_str());
-    ImGui::TextDisabled("Display: %s, perf overlay %s (set in the game's Options > Display page)",
+    ImGui::TextDisabled("Display: %s, perf overlay %s (the Display page below, or the game's own options page)",
                         r.fullscreen ? "fullscreen" : "windowed", r.perf_overlay ? "on" : "off");
     // Presenter readers (video.vsync / video.fps_cap, Config-owned): shown,
     // not edited here; resize changes the window only, never the game's
@@ -70,6 +71,7 @@ void SessionPanel::DrawSettings(SessionControls&, const SessionControls::Snapsho
     ImGui::TextDisabled("Presentation: vsync %s, %s, window %dx%d", r.vsync ? "on" : "off",
                         r.fps_cap > 0 ? (std::to_string(r.fps_cap) + " fps cap").c_str() : "uncapped",
                         r.window_width, r.window_height);
+    if (!r.renderer.empty()) ImGui::TextDisabled("Renderer: %s", r.renderer.c_str());
 }
 
 // ui.perf_overlay: the clock contract's rule-5 readout (game Hz / render fps)
@@ -87,6 +89,8 @@ void SessionPanel::DrawPerfOverlay(const SessionControls::Snapshot& snapshot) {
     if (ImGui::Begin("Performance", nullptr, flags)) {
         ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "game %u Hz", snapshot.runtime.game_hz);
         ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "render %u fps", snapshot.runtime.render_fps);
+        // The pacer's doubled frames so far: a picture shown > 1.2 fields after the previous one.
+        ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "doubled %llu", static_cast<unsigned long long>(snapshot.runtime.doubled_frames));
     }
     ImGui::End();
     ImGui::PopStyleColor();
@@ -176,6 +180,15 @@ void SessionPanel::DrawNotice(const SessionControls::Snapshot& snapshot) {
     ImGui::End();
 }
 
+// The pause menu's Resume (the button, Escape with the menu open): the menu closes and
+// the pause IT issued is released; a pause the user took with F9 stays.
+void SessionPanel::Resume(SessionControls& controls, const SessionControls::Snapshot& snapshot) {
+    if (snapshot.menu_paused && snapshot.runtime.paused && !Busy(snapshot, Action::TogglePause))
+        controls.Submit(Action::TogglePause);
+    controls.SetMenuPaused(false);
+    controls.Submit(Action::ToggleMenu);
+}
+
 void SessionPanel::Draw(SessionControls& controls, const SessionControls::Snapshot& snapshot) {
     DrawPerfOverlay(snapshot);
     if (!snapshot.menu_open) { DrawNotice(snapshot); return; }
@@ -185,23 +198,38 @@ void SessionPanel::Draw(SessionControls& controls, const SessionControls::Snapsh
                                    std::min(760.0f, std::max(240.0f, available.y - 48.0f))),
                              ImGuiCond_FirstUseEver);
     bool open = true;
-    if (ImGui::Begin("the title", &open, ImGuiWindowFlags_NoCollapse)) {
+    const char* title = snapshot.pause_menu ? "Paused" : "the title";
+    if (ImGui::Begin(title, &open, ImGuiWindowFlags_NoCollapse)) {
+        if (snapshot.pause_menu) {
+            // The pause menu's two verbs first: Resume (Escape) and Quit (the window close).
+            ImGui::BeginDisabled(snapshot.closing);
+            if (ImGui::Button("Resume (Esc)", ImVec2(160, 0))) Resume(controls, snapshot);
+            ImGui::SameLine();
+            if (ImGui::Button("Quit", ImVec2(160, 0))) controls.Submit(Action::Close);
+            ImGui::EndDisabled();
+            ImGui::Spacing();
+        }
         DrawSession(controls, snapshot);
         ImGui::Spacing();
         DrawResults(snapshot);
         DrawSettings(controls, snapshot);
+        display_.Draw(controls, snapshot);
+        controls_page_.Draw(controls, snapshot);
         sound_.Draw(controls, snapshot);
         DrawReproduction(controls, snapshot);
         DrawRecording(controls, snapshot);
         triage_.Draw(snapshot);
         ImGui::Separator();
         ImGui::BeginDisabled(snapshot.closing);
-        if (ImGui::Button("Close session")) controls.Submit(Action::Close);
+        if (ImGui::Button(snapshot.pause_menu ? "Quit to desktop" : "Close session")) controls.Submit(Action::Close);
         ImGui::EndDisabled();
         if (snapshot.closing) ImGui::TextUnformatted("Closing session...");
     }
     ImGui::End();
-    if (!open) controls.Submit(Action::ToggleMenu);
+    if (!open) {
+        if (snapshot.pause_menu) Resume(controls, snapshot);
+        else controls.Submit(Action::ToggleMenu);
+    }
 }
 
 }  // namespace ps2r::app

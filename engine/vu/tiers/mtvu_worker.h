@@ -85,18 +85,41 @@ public:
     void SubmitFrameMark();
     uint64_t FrameMarksPushed() const { return frame_marks_pushed_; }
     uint64_t FrameMarksPassed() const { return frame_marks_passed_.load(std::memory_order_relaxed); }
-    uint64_t FrameLag() const;
+    uint64_t FrameLag() const override;
     // Kicks the worker's unit dropped (VuUnit::DroppedKicks; relaxed census).
     uint64_t DroppedKicks() const;
     // The DMAC staged-feed seam (ChainWalker::SetVif1StagedFeed) in thunk form.
     static void StagedFeedThunk(void* user, const uint8_t* data, size_t size, bool tte);
     static void StagedFlushThunk(void* user);
     static void StagedResetThunk(void* user);
+    // E425: a tap on the producer edge -- every span the EE stages (SubmitVif1 /
+    // SubmitVif1Staged: the bytes, the TTE flag) and every latch reset, on the
+    // producer thread before the segment is queued. The stack's FINISH scan
+    // reads the chain here, at the point the EE has it. Null = off.
+    using StageObserver = void (*)(void* user, const uint8_t* data, size_t size, bool tte);
+    using StageResetObserver = void (*)(void* user);
+    void SetStageObserver(StageObserver span, StageResetObserver reset, void* user);
 
     // Segments in flight (acquire); backs the VIF1_STAT busy view.
     bool IsBusy() const;
     // Batch segments the worker has processed (relaxed census).
     uint64_t BatchSegmentsProcessed() const;
+    // The worker thread's time ledger (relaxed census, written by the worker):
+    // wall ns processing segments (the VIF stream, the programs, their kicks),
+    // ns parked on the work condition, ns in the spin tier; segments and batch
+    // records (spans) processed; queue pops and the deepest pop (segments
+    // taken under one lock -- the feed's queue depth as the worker saw it).
+    struct Ledger {
+        uint64_t busy_ns = 0;
+        uint64_t wait_ns = 0;
+        uint64_t spin_ns = 0;
+        uint64_t segments = 0;
+        uint64_t records = 0;
+        uint64_t pops = 0;
+        uint64_t depth_max = 0;
+        uint64_t seal_wakes_skipped = 0;   // seals that woke no parked producer (the drain thread was kicked instead)
+    };
+    Ledger ledger() const;
     uint64_t StagedRecords() const { return stage_records_; }
     size_t StagedBytes() const { return stage_bytes_.size(); }
     // The staging buffer's high-water capacity (the ONE buffer the producer
@@ -119,11 +142,28 @@ public:
     void EagerDrain() override;
     void WaitIdleOrSeal(uint64_t timeout_ns, uint64_t seen_seal) override;
     void WaitFrameProgress(uint64_t timeout_ns) override;
+    void WaitHoldProgress(uint64_t timeout_ns) override;
     void EnterSyncWait() override;
     void LeaveSyncWait() override;
 
+    // ---- the VIF1 i-bit stall (Vif::SetIrqHooks, the composition's stall) ----
+    // EnterIrqStall: the worker thread publishes the stall, runs `raise` (the composition's
+    // INTC latch -- after the publication, so a release can never precede the stall it ends),
+    // then parks inside the span it is replaying (the i-bit command done, INT | VIS set) until
+    // ReleaseIrqStall (the EE's FBRST.STC) or Stop. A stalled worker is QUIESCENT, not idle:
+    // nothing more leaves the pipeline until the EE acts (the handler's STC), so every EE-side
+    // wait ends on it (MtvuSync services the interrupt there); inflight_ stays > 0 -- the span
+    // resumes after.
+    void EnterIrqStall(void (*raise)(void* user), void* user);
+    void ReleaseIrqStall();
+    bool IrqStalled() const override { return irq_stalled_.load(std::memory_order_acquire); }
+    bool Quiescent() const { return WorkerIdle() || IrqStalled(); }
+    uint64_t IrqStalls() const { return irq_stalls_.load(std::memory_order_relaxed); }
+    // Wall ns the worker spent parked on i-bit stalls (also inside wait_ns).
+    uint64_t IrqStallNs() const { return irq_stall_ns_.load(std::memory_order_relaxed); }
+
     // ---- the wait surface MtvuSync uses ----
-    // Park until no segment is queued, processing or in flight.
+    // Park until no segment is queued, processing or in flight (or the worker stalls).
     void WaitIdle();
     // One guarded arbiter drain on this thread: false when another drain is
     // in progress (the loser skips -- drains are opportunistic).
@@ -161,6 +201,10 @@ private:
     mutable std::mutex mtx_;
     std::condition_variable cv_work_;
     std::condition_variable cv_idle_;
+    std::condition_variable cv_stall_;
+    std::atomic<bool> irq_stalled_{false};
+    std::atomic<uint64_t> irq_stalls_{0};
+    std::atomic<uint64_t> irq_stall_ns_{0};
     std::deque<Segment> queue_;
     bool processing_ = false;
     bool stop_ = false;
@@ -170,6 +214,9 @@ private:
     bool thread_started_ = false;
     void (*on_start_)(void*) = nullptr;
     void* on_start_user_ = nullptr;
+    StageObserver stage_observer_ = nullptr;
+    StageResetObserver stage_reset_observer_ = nullptr;
+    void* stage_observer_user_ = nullptr;
 
     std::atomic<uint32_t> inflight_{0};
     std::atomic<uint64_t> pending_bytes_{0};
@@ -177,8 +224,16 @@ private:
     std::atomic<uint64_t> submit_seq_{0};
     std::atomic<uint64_t> last_work_ns_{0};
     std::atomic<uint64_t> seal_count_{0};
+    std::atomic<uint64_t> seal_wakes_skipped_{0};
     std::atomic<int> sync_waiters_{0};
     std::atomic<uint64_t> batch_segments_{0};
+    std::atomic<uint64_t> busy_ns_{0};
+    std::atomic<uint64_t> wait_ns_{0};
+    std::atomic<uint64_t> spin_ns_{0};
+    std::atomic<uint64_t> segments_{0};
+    std::atomic<uint64_t> records_{0};
+    std::atomic<uint64_t> pops_{0};
+    std::atomic<uint64_t> depth_max_{0};
     uint64_t frame_marks_pushed_ = 0;              // producer thread
     std::atomic<uint64_t> frame_marks_passed_{0};  // worker thread writes, producer reads
     std::atomic<bool> drain_busy_{false};

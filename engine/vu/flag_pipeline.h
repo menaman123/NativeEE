@@ -19,6 +19,7 @@
 #include <cstdint>
 
 #include "engine/ee/cpu/cpu_state.h"
+#include "engine/vu/vu_float.h"  // PS2R_VU_NEON (LazyAcc's lanes) and the lane kernels of the .inl
 
 class FlagPipeline {
 public:
@@ -82,6 +83,34 @@ public:
     void PushMac(VUregs& regs, uint16_t mac);
     // Lazy push of the raw lanes; a full ring folds its oldest entry.
     void PushMacRaw(const uint32_t bits[4], uint8_t mask);
+    // The same pushes for a result ISSUED at `issue_cycle` (<= the clock): the
+    // generated blocks deliver their results late, in issue order, and a
+    // result that has retired by then is folded directly (FoldLazyRetired /
+    // CommitEagerRetired) -- what RetireDue / the ring overflow would do with
+    // it, in the same order.
+    void PushMacRawAt(const uint32_t bits[4], uint8_t mask, uint64_t issue_cycle);
+    void PushMacAt(VUregs& regs, uint16_t mac, uint64_t issue_cycle);
+    void FoldLazyRetired(const uint32_t bits[4], uint8_t mask);
+    // A caller-owned lazy fold (Vu1AotBlockGen::Policy::mac_acc): a generated
+    // block folds the results it will retire for sure into one of these AS
+    // THEY ARE PRODUCED (`Fold<mask>`: the sticky lane sets OR in, in
+    // registers, no store) and hands the whole to FoldLazyBatch at the point
+    // that observes the ring, with the last of them as the MAC word. Equal to
+    // FoldLazyRetired on each in issue order: the sticky fold is an OR (any
+    // order), the last-retired word is the newest. Batch resets the
+    // accumulator.
+    struct LazyAcc {
+#if defined(PS2R_VU_NEON) && PS2R_VU_NEON
+        uint32x4_t z, s, u, o;
+#else
+        uint16_t or_mac;
+#endif
+        void Reset();
+        template <int M>
+        void Fold(const uint32_t bits[4]);
+    };
+    void FoldLazyBatch(LazyAcc& acc, const uint32_t last_bits[4], uint8_t last_mask);
+    void CommitEagerRetired(VUregs& regs, uint16_t mac) { ApplyMacToStatus(regs, mac); }
     // Retire every due entry (commit or fold).
     void RetireDue(VUregs& regs);
     // Fold the lazy accumulators into the architectural registers.
@@ -130,16 +159,18 @@ private:
     void AccumulateLazyEntry(const PendingMac& e);
     void LazyRingOverflow();
 
-    bool lazy_;
-    uint64_t vu_cycle_ = 0;
-
-    PendingClip clip_pending_[kRingDepth] = {};
-    int clip_pending_n_ = 0;
-    uint32_t clip_latest_ = 0;
-
-    PendingMac mac_pending_[kRingDepth] = {};
+    // Hot state first, phased to the host cache line (StallModel::kLineBytes):
+    // the clock and the ring counters share one line, the MAC ring (8 x 32 B)
+    // starts a line so no entry straddles one. The unit's placement used to
+    // decide the phase (bench7 native 9.5 .. 15.0 ns/bundle by phase, E181).
+    alignas(128) uint64_t vu_cycle_ = 0;
     int mac_pending_n_ = 0;
     int mac_head_ = 0;
+    int clip_pending_n_ = 0;
+    uint32_t clip_latest_ = 0;
+    bool lazy_;
+    alignas(128) PendingMac mac_pending_[kRingDepth] = {};
+    alignas(128) PendingClip clip_pending_[kRingDepth] = {};
     alignas(16) uint32_t lazy_acc_[4][4] = {};  // [Z,S,U,O][lane] all-ones where seen (SIMD fold)
     uint16_t lazy_or_mac_ = 0;                  // OR of packed words (scalar fold)
     uint32_t lazy_last_bits_[4] = {};
@@ -155,3 +186,5 @@ private:
     uint64_t p_pending_retire_ = 0;
     float p_pending_value_ = 0.0f;
 };
+
+#include "engine/vu/flag_pipeline.inl"

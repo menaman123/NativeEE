@@ -7,7 +7,9 @@
 #include <algorithm>
 #include <cmath>
 
+#include "engine/gs/hle/ir/alpha_fail_mask.h"
 #include "engine/gs/hle/ir/draw_ir.h"
+#include "engine/gs/hle/ir/prim_expand.h"
 #include "engine/gs/hle/texsrc/texture_source.h"
 #include "engine/render/backends/gl/blend_ff_map.h"
 #include "engine/render/backends/gl/cd_copy_policy.h"
@@ -32,9 +34,10 @@ float SnapRow(float v) {
 GlDrawExecutor::GlDrawExecutor(GlDevice& device) : dev_(device) {}
 
 // FRAME.FBMSK is an RGBA8-layout mask for every frame format; 16-bit frames use the
-// top 5 bits of each channel and bit 31 for A, folded to R[0:4] G[5:9] B[10:14] A[15].
+// top 5 bits of each channel and bit 31 for A, folded to R[0:4] G[5:9] B[10:14] A[15]
+// (one definition, in the ir library).
 uint32_t GlDrawExecutor::Fbmsk16From32(uint32_t m) {
-    return ((m >> 3) & 0x1F) | ((m >> 6) & 0x3E0) | ((m >> 9) & 0x7C00) | ((m >> 16) & 0x8000);
+    return gs::HalfwordShuffle::Fbmsk16From32(m);
 }
 
 // A 5551 mask whose R/G/B fields are each all-0 or all-1 is expressible as a
@@ -52,6 +55,14 @@ bool GlDrawExecutor::Fbmsk16Exact(uint32_t fbmsk16) {
 // Blended reads of another target whose ALPHA maps EXACTLY to fixed-function blending
 // (the eight combos below) skip the destination copy; every other Cd-reading form,
 // C = Ad, PABE, COLCLAMP=0, exact 5551 masks, DATE and FBA stay on the shader blend.
+bool GlDrawExecutor::Fbmsk32Partial(uint32_t fbmsk) {
+    for (int i = 0; i < 4; ++i) {
+        const uint32_t byte = (fbmsk >> (8 * i)) & 0xFFu;
+        if (byte != 0x00u && byte != 0xFFu) return true;
+    }
+    return false;
+}
+
 bool GlDrawExecutor::RouteRtBlend(const gs::DrawIr& ir, bool using_rt, bool fbmsk16_exact) {
     const auto& r = ir.raster;
     if (!(ir.alpha_blend && using_rt && !r.fba && !fbmsk16_exact && !r.test.date && !r.pabe &&
@@ -123,9 +134,25 @@ DrawResult GlDrawExecutor::Draw(const gs::DrawIr& ir, const gs::TextureSource& t
     Step s;
     DrawResult none;
     const size_t n = ir.verts.size();
-    if (n < 3) return none;
+    // Points / lines draw from 1 / 2 vertices (expanded to triangles in ConvertVertices).
+    if (n < gs::PrimExpand::MinVerts(ir.prim_type)) return none;
+    // A 16-bit FRAME over 32-bit content (the companion route) that is the texture
+    // shuffle's column pass runs as an exact half-word copy over the 32-bit image.
+    if (p.alt16_route) {
+        gs::HalfwordShuffle::Op op;
+        if (gs::HalfwordShuffle::Detect(ir, &op)) {
+            const DrawResult hw = DrawHalfwordShuffle(ir, tex, p, op);
+            if (hw.drew) return hw;
+        }
+    }
     if (!BindTarget(ir, p, s)) return none;
     FrameClear(p);
+    // The alpha test's static arm (ATST NEVER / ALWAYS, ATE off): a draw that updates
+    // neither buffer (all pixels fail, AFAIL KEEP) is no draw -- after the per-frame
+    // clear the target layer already consumed for it; the others compose their AFAIL
+    // write mask with FBMSK / ZMSK below (DepthState, ColorMaskState).
+    s.afail = gs::AlphaFailMask::Compute(ir.raster.test);
+    if (s.afail.WritesNothing()) return none;
     BindTextures(tex, p, s);
     if (!ConvertVertices(ir, tex, s)) return none;
     GlStateCache& st = dev_.State();
@@ -141,12 +168,33 @@ DrawResult GlDrawExecutor::Draw(const gs::DrawIr& ir, const gs::TextureSource& t
     ScissorState(ir, s);
     dev_.Vertices().BindForDraw(st);
     s.first = dev_.Vertices().Upload(scratch_.data(), s.tri_verts);
-    ColorMaskState(ir, s);
-    glDrawArrays(GL_TRIANGLES, s.first, static_cast<GLsizei>(s.tri_verts));
-    // Masks return to their open defaults after every draw, so any raw GL pass
-    // that follows (clear, refresh, present) inherits writable colour and depth.
-    st.ColorMask(true, true, true, true);
-    st.DepthMask(true);
+    s.wrote_alpha = ColorMaskState(ir, s);
+    // A per-pixel alpha test whose AFAIL still updates something (GS User's Manual,
+    // TEST register): the passing pixels write per FBMSK / ZMSK, the failing ones per
+    // AFAIL -- GL has no per-fragment depth mask, so the two populations are two
+    // passes of the same geometry, the shader keeping one population each
+    // (u_afail_pass) and the pass's write masks carrying its arm. The passing pass
+    // runs first (it writes Z; the failing pass under FB_ONLY / RGB_ONLY does not).
+    if (gs::AlphaFailMask::SplitsPopulations(ir.raster.test)) {
+        u.Set1i(L.afail_pass, 1);
+        dev_.CensusMut().draw_calls++;
+        glDrawArrays(GL_TRIANGLES, s.first, static_cast<GLsizei>(s.tri_verts));
+        Step fail = s;
+        fail.afail = gs::AlphaFailMask::FailingPixels(ir.raster.test.afail);
+        u.Set1i(L.afail_pass, 2);
+        DepthState(ir, p, fail);
+        s.wrote_alpha = ColorMaskState(ir, fail) || s.wrote_alpha;
+        dev_.CensusMut().draw_calls++;
+        glDrawArrays(GL_TRIANGLES, s.first, static_cast<GLsizei>(s.tri_verts));
+    } else {
+        dev_.CensusMut().draw_calls++;
+        glDrawArrays(GL_TRIANGLES, s.first, static_cast<GLsizei>(s.tri_verts));
+    }
+    // The write masks stay as this draw left them: every raw GL pass sets its own
+    // (FrameClear, GlDevice::Clear / DrawConstQuad / CopyRect / WriteAlphaLane /
+    // Present; blits and readbacks ignore the masks), and the next draw's
+    // DepthState / ColorMaskState set theirs. Resetting them here cost two GL calls
+    // per draw (4000 glDepthMask a Paris frame) that the shadow could never elide.
     return MakeResult(ir, p, s);
 }
 
@@ -206,7 +254,8 @@ DrawResult GlDrawExecutor::DrawStripCount(const gs::DrawIr& ir, const gs::Textur
     s.first = dev_.Vertices().Upload(scratch_.data(), s.tri_verts);
     st.ColorMask(false, false, false, false);
     GlDevice::ApplyStencil(p.stencil_state);
-    glDrawArrays(GL_TRIANGLES, s.first, static_cast<GLsizei>(s.tri_verts));
+    dev_.CensusMut().draw_calls++;
+        glDrawArrays(GL_TRIANGLES, s.first, static_cast<GLsizei>(s.tri_verts));
     GlDevice::ResetStencil();
     st.ColorMask(true, true, true, true);
     st.DepthMask(true);
@@ -245,18 +294,97 @@ DrawResult GlDrawExecutor::DrawInvert(const gs::DrawIr& ir, const gs::TextureSou
     dev_.Vertices().BindForDraw(st);
     s.first = dev_.Vertices().Upload(scratch_.data(), s.tri_verts);
     st.ColorMask(true, true, true, true);
-    glDrawArrays(GL_TRIANGLES, s.first, static_cast<GLsizei>(s.tri_verts));
+    dev_.CensusMut().draw_calls++;
+        glDrawArrays(GL_TRIANGLES, s.first, static_cast<GLsizei>(s.tri_verts));
     st.DepthMask(true);
     return MakeResult(ir, p, s);
 }
 
-// Scissor off before any framebuffer operation; bind the main or companion
-// attachment; viewport = physical size; u_screen_size stays logical so PS2 px -> NDC
-// is unchanged and rasterisation scales through the viewport alone.
+// The half-word copy: the MAIN attachment bound (never the companion), the whole
+// target copied to rt_copy (unit 1: the destination half-words and, for a self read,
+// the source), the sibling target's colour image on unit 0 otherwise; one quad over
+// [0, cols) x [0, rows32) under the halfword program with blend, depth and scissor
+// off and every channel writable (FBMSK is merged in the program).
+DrawResult GlDrawExecutor::DrawHalfwordShuffle(const gs::DrawIr& ir, const gs::TextureSource& tex,
+                                               const DrawParams& p, const gs::HalfwordShuffle::Op& op) {
+    DrawResult none;
+    const GlSurface* copy = dev_.Surface(p.rt_copy);
+    if (!p.rt_copy_available || !copy || !copy->tex) return none;
+    const GlSurface* src = nullptr;
+    if (op.self) {
+        src = copy;
+    } else {
+        // The sibling: a 16-bit read the resolver served from a 32-bit-content
+        // target's companion; the copy reads that target's 32-bit image itself.
+        using Kind = gs::TextureSource::OwnerKind;
+        const GlSurface* main = dev_.Surface(tex.owner.alt16_main);
+        const bool sibling = tex.enabled && tex.owner.kind == Kind::Surface && tex.owner.fmt_case == 0 &&
+                             tex.owner.alt16_serve && main && main->tex;
+        if (!sibling) return none;
+        src = main;
+    }
+    if (op.rows32 > p.target_h || op.cols > p.target_w) return none;
+    GlStateCache& st = dev_.State();
+    st.Disable(GL_SCISSOR_TEST);
+    const int sc = std::max<int>(1, p.scale);
+    const uint32_t fbo = dev_.BindTarget(p.color, p.depth);
+    if (!fbo) return none;
+    FrameClear(p);
+    st.Viewport(0, 0, p.target_w * sc, p.target_h * sc);
+    // The destination copy: the whole target, from the main attachment.
+    st.BindFb(GL_READ_FRAMEBUFFER, fbo);
+    st.ActiveTexture(GL_TEXTURE1);
+    st.BindTex2D(copy->tex);
+    dev_.CensusMut().copies++;
+    dev_.CensusMut().copy_bytes += static_cast<uint64_t>(p.target_w) * p.target_h * sc * sc * 4u;
+    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, p.target_w * sc, p.target_h * sc);
+    if (p.cd_copy) CdCopyPolicy::Invalidate(*p.cd_copy);
+    st.ActiveTexture(GL_TEXTURE0);
+    st.BindTex2D(src->tex);
+    st.UseProgram(dev_.Shaders().HalfwordShuffleProgram());
+    const GlStencilLocations& SL = dev_.Shaders().StencilLocations();
+    glUniform2f(SL.hw_screen, static_cast<float>(p.target_w), static_cast<float>(p.target_h));
+    glUniform1i(SL.hw_dest_hi, op.dest_hi ? 1 : 0);
+    glUniform1i(SL.hw_mask16, static_cast<int>(op.mask16));
+    glUniform1i(SL.hw_ta0, op.ta0);
+    glUniform1i(SL.hw_ta1, op.ta1);
+    glUniform1i(SL.hw_aem, op.aem ? 1 : 0);
+    st.Disable(GL_BLEND);
+    st.Disable(GL_DEPTH_TEST);
+    st.DepthMask(false);
+    st.ColorMask(true, true, true, true);
+    const float w = static_cast<float>(op.cols), h = static_cast<float>(op.rows32);
+    scratch_.assign(6, GpuVertex{});
+    const float xs[6] = {0.f, w, 0.f, w, w, 0.f}, ys[6] = {0.f, 0.f, h, 0.f, h, h};
+    for (int i = 0; i < 6; ++i) { scratch_[i].x = xs[i]; scratch_[i].y = ys[i]; scratch_[i].q = 1.f; }
+    dev_.Vertices().BindForDraw(st);
+    const int first = dev_.Vertices().Upload(scratch_.data(), 6);
+    dev_.CensusMut().draw_calls++;
+    glDrawArrays(GL_TRIANGLES, first, 6);
+    st.DepthMask(true);
+    st.Enable(GL_DEPTH_TEST);
+    DrawResult r;
+    r.drew = true;
+    r.bbox_valid = true;
+    r.bbox_tri[0] = r.bbox_all[0] = 0.f; r.bbox_tri[1] = r.bbox_all[1] = 0.f;
+    r.bbox_tri[2] = r.bbox_all[2] = w; r.bbox_tri[3] = r.bbox_all[3] = h;
+    r.write_rect = Rect{0, 0, op.cols, op.rows32};
+    r.cd_copy_performed = true;
+    r.cd_copy_rect = Rect{0, 0, 0, 0};
+    r.halfword_shuffle = true;
+    (void)ir;
+    return r;
+}
+
+// Bind the main or companion attachment; viewport = physical size; u_screen_size
+// stays logical so PS2 px -> NDC is unchanged and rasterisation scales through the
+// viewport alone. The scissor is left as it is: nothing between here and
+// ScissorState honours it (the FBO bind, texture binds, uniforms, a CdCopy's
+// glCopyTexSubImage2D) except FrameClear's glClear, which turns it off itself.
+// (Disabling it here and re-enabling it in ScissorState was two GL calls per draw.)
 bool GlDrawExecutor::BindTarget(const gs::DrawIr& ir, const DrawParams& p, Step& s) {
     (void)ir;
     GlStateCache& st = dev_.State();
-    st.Disable(GL_SCISSOR_TEST);
     s.render_w = p.render_w;
     s.render_h = p.render_h;
     s.scale = std::max<int>(1, p.scale);
@@ -272,6 +400,7 @@ bool GlDrawExecutor::BindTarget(const gs::DrawIr& ir, const DrawParams& p, Step&
 void GlDrawExecutor::FrameClear(const DrawParams& p) {
     if (!p.do_frame_clear) return;
     GlStateCache& st = dev_.State();
+    st.Disable(GL_SCISSOR_TEST);   // glClear honours the scissor; the clear covers the target
     st.DepthMask(true);
     glClearDepth(0.0);
     GLbitfield bits = GL_DEPTH_BUFFER_BIT;
@@ -280,6 +409,7 @@ void GlDrawExecutor::FrameClear(const DrawParams& p) {
         st.ColorMask(true, true, true, true);
         bits |= GL_COLOR_BUFFER_BIT;
     }
+    dev_.CensusMut().clears++;
     glClear(bits);
 }
 
@@ -402,7 +532,15 @@ void GlDrawExecutor::TextureUniforms(const gs::DrawIr& ir, const gs::TextureSour
 // ((u - rx*q)/q = u/q - rx per pixel); shuffle U scale for STQ; optional column snap.
 bool GlDrawExecutor::ConvertVertices(const gs::DrawIr& ir, const gs::TextureSource& tex, Step& s) {
     const auto& t = tex.transform;
-    const size_t n = ir.verts.size();
+    // POINT / LINE / LINESTRIP: the kick's 1 / 2 vertices per primitive become the
+    // one-pixel-wide quads of PrimExpand (the GS line is one pixel wide; GL draws
+    // triangles only here). Triangle types pass through untouched.
+    const gs::VertexRec* src = ir.verts.data();
+    size_t n = ir.verts.size();
+    if (gs::PrimExpand::IsThin(ir.prim_type)) {
+        n = gs::PrimExpand::ToTriangles(src, n, ir.prim_type, thin_scratch_);
+        src = thin_scratch_.data();
+    }
     scratch_.resize(n);
     // Untextured iff no enabled texture with a positive u_tex_size (uv_tex_w/h);
     // the STQ prescale operands (uv_pre_w/h) are a separate input.
@@ -411,7 +549,7 @@ bool GlDrawExecutor::ConvertVertices(const gs::DrawIr& ir, const gs::TextureSour
         !textured ? VertexConvert::UvMode::Untextured
                   : (ir.tex.fst ? VertexConvert::UvMode::UvFixed : VertexConvert::UvMode::Stq);
     const VertexConvert::FusedBboxes bb =
-        VertexConvert::Convert(ir.verts.data(), n, scratch_.data(), mode, t.uv_pre_w, t.uv_pre_h);
+        VertexConvert::Convert(src, n, scratch_.data(), mode, t.uv_pre_w, t.uv_pre_h);
     s.bb_valid = bb.valid;
     s.bb_tri[0] = bb.tri.x0; s.bb_tri[1] = bb.tri.y0; s.bb_tri[2] = bb.tri.x1; s.bb_tri[3] = bb.tri.y1;
     s.bb_all[0] = bb.all.x0; s.bb_all[1] = bb.all.y0; s.bb_all[2] = bb.all.x1; s.bb_all[3] = bb.all.y1;
@@ -457,10 +595,15 @@ void GlDrawExecutor::RegisterUniforms(const gs::DrawIr& ir, const DrawParams& p)
     u.Set1i(L.atst, r.test.atst);
     u.Set1i(L.aref, r.test.aref);
     u.Set1i(L.afail, r.test.afail);
+    // Every fragment -- except for a two-pass split, whose Draw sets 1 then 2 before
+    // each of its glDrawArrays (writing 0 first was a third glUniform per split draw).
+    if (!gs::AlphaFailMask::SplitsPopulations(r.test)) u.Set1i(L.afail_pass, 0);
     u.Set1i(L.date, r.test.date ? 1 : 0);
     u.Set1i(L.datm, r.test.datm ? 1 : 0);
     u.Set1i(L.fog_enabled, ir.fog ? 1 : 0);
-    u.Set3f(L.fogcol, r.fogcol_r / 255.0f, r.fogcol_g / 255.0f, r.fogcol_b / 255.0f);
+    // The program reads u_fogcol only under u_fog_enabled; the game rewrites FOGCOL
+    // between the lit mesh's two passes (1836 glUniform3f a Paris frame, fog off).
+    if (ir.fog) u.Set3f(L.fogcol, r.fogcol_r / 255.0f, r.fogcol_g / 255.0f, r.fogcol_b / 255.0f);
 }
 
 // fbmsk16 analysis, the exact-GL route, the Cd read rect (bbox ∩ scissor ∩ target),
@@ -471,11 +614,15 @@ void GlDrawExecutor::ClassifyRoutes(const gs::DrawIr& ir, const gs::TextureSourc
     s.alpha_blend = ir.alpha_blend;
     s.fbmsk16 = 0;
     s.fbmsk16_exact = false;
+    s.fbmsk32_exact = false;
     if (Is16BitFrame(r.frame.psm) && r.frame.fbmsk != 0) {
         s.fbmsk16 = Fbmsk16From32(r.frame.fbmsk);
         s.fbmsk16_exact = Fbmsk16Exact(s.fbmsk16);
+    } else if (!Is16BitFrame(r.frame.psm)) {
+        s.fbmsk32_exact = Fbmsk32Partial(r.frame.fbmsk);
     }
-    s.route_rt_blend = RouteRtBlend(ir, s.using_rt, s.fbmsk16_exact);
+    s.route_rt_blend = RouteRtBlend(ir, s.using_rt, s.fbmsk16_exact || s.fbmsk32_exact);
+    if (dev_.ForceShaderBlend()) s.route_rt_blend = false;
     s.idx_self_serve = s.has_texture && s.using_rt && tex.transform.idx_fmt == 4 &&
                        tex.transform.idx_self != 0;
     if (s.idx_self_serve) s.route_rt_blend = false;
@@ -497,15 +644,34 @@ void GlDrawExecutor::ClassifyRoutes(const gs::DrawIr& ir, const gs::TextureSourc
         }
     }
     if (s.idx_self_serve) { s.copy_w = 0; s.copy_h = 0; }   // UV-addressed read: whole copy
-    s.needs_rt_copy = r.test.date || s.fbmsk16_exact || s.idx_self_serve;
+    s.needs_rt_copy = r.test.date || s.fbmsk16_exact || s.fbmsk32_exact || s.idx_self_serve;
+    // What the copy feeds: the exact-mask merges and the indexed self-read consume RGB;
+    // DATE alone reads the destination ALPHA only (BlendState sets this true again when
+    // the shader blends, whose Cd read consumes everything).
+    s.reads_cd_rgb = s.fbmsk16_exact || s.fbmsk32_exact || s.idx_self_serve;
     s.wrap_route = BlendFfMap::RouteWrapBlend(ir.alpha_blend, r.colclamp);
 }
 
-// Lazy destination copy into rt_copy (unit 1) from the bound attachment.
+// Lazy destination copy into rt_copy (unit 1) from the bound attachment -- or, by
+// texture barrier, the attachment itself on unit 1 behind glTextureBarrierNV: the
+// writes of the draws before it are visible to this draw's destination reads
+// without a copy (and without ending the render pass for the copy's sake).
 void GlDrawExecutor::CdCopy(const DrawParams& p, Step& s) {
     const GlSurface* copy = dev_.Surface(p.rt_copy);
     if (!p.rt_copy_available || !copy || !copy->tex) return;
     GlStateCache& st = dev_.State();
+    if (dev_.CdCopyByBarrier()) {
+        const GlSurface* att = dev_.Surface(p.alt16_route ? p.alt16 : p.color);
+        if (att && att->tex) {
+            st.ActiveTexture(GL_TEXTURE1);
+            st.BindTex2D(att->tex);
+            st.ActiveTexture(GL_TEXTURE0);
+            dev_.TextureBarrier()();
+            dev_.CensusMut().barriers++;
+            s.sw_blend_active = true;
+            return;
+        }
+    }
     bool skip = false;
     int cx = s.copy_x, cy = s.copy_y, cw = s.copy_w, ch = s.copy_h;
     if (p.cd_copy) {
@@ -516,7 +682,7 @@ void GlDrawExecutor::CdCopy(const DrawParams& p, Step& s) {
         }
         int oc[4];
         if (!CdCopyPolicy::Decide(*p.cd_copy, s.copy_x, s.copy_y, s.copy_w, s.copy_h,
-                                  s.idx_self_serve, p.target_w, p.target_h, oc)) {
+                                  s.idx_self_serve, p.target_w, p.target_h, oc, s.reads_cd_rgb)) {
             skip = true;
         } else {
             cx = oc[0]; cy = oc[1]; cw = oc[2]; ch = oc[3];
@@ -527,6 +693,9 @@ void GlDrawExecutor::CdCopy(const DrawParams& p, Step& s) {
     st.BindTex2D(copy->tex);
     if (!skip) {
         const int sc = s.scale;
+        const int pw = (cw > 0 && ch > 0) ? cw : p.target_w, ph = (cw > 0 && ch > 0) ? ch : p.target_h;
+        dev_.CensusMut().copies++;
+        dev_.CensusMut().copy_bytes += static_cast<uint64_t>(pw) * ph * sc * sc * 4u;
         if (cw > 0 && ch > 0)
             glCopyTexSubImage2D(GL_TEXTURE_2D, 0, cx * sc, cy * sc, cx * sc, cy * sc, cw * sc, ch * sc);
         else
@@ -540,8 +709,8 @@ void GlDrawExecutor::CdCopy(const DrawParams& p, Step& s) {
 
 // The blend-equation uniforms of a blended draw (both the shader and the
 // fixed-function arm write them); a class-native generic arm inherits them.
-void GlDrawExecutor::BlendAbcdUniforms(const gs::DrawIr& ir, const DrawParams& p) {
-    if (p.inherited_uniforms & kInheritBlendAbcd) return;
+void GlDrawExecutor::BlendAbcdUniforms(const gs::DrawIr& ir, const DrawParams& p, bool force) {
+    if (!force && (p.inherited_uniforms & kInheritBlendAbcd)) return;
     GlUniformCache& u = dev_.Uniforms();
     const GlUniformLocations& L = dev_.Shaders().Locations();
     const auto& a = ir.raster.alpha;
@@ -558,36 +727,79 @@ void GlDrawExecutor::BlendState(const gs::DrawIr& ir, const DrawParams& p, Step&
     const GlUniformLocations& L = dev_.Shaders().Locations();
     const auto& a = ir.raster.alpha;
     s.sw_blend_active = false;
-    if (ir.alpha_blend && (s.using_rt || ir.raster.fba || s.fbmsk16_exact || s.wrap_route) &&
+    // FBA (FBA register: bit 7 OR-ed into the alpha WRITTEN, GS User's Manual
+    // 3.6.3) is applied by the fragment program to its stored-alpha output on
+    // every route, and the fixed-function arm's alpha factor is the SECOND output
+    // (frag_factor, the pre-FBA As), so an FBA draw whose ALPHA tuple has an exact
+    // fixed-function form needs no destination copy: it blends like any other
+    // matched draw. A tuple without an exact form keeps the shader blend (the
+    // OLD route for every FBA draw).
+    const FfBlendMap ffm = BlendFfMap::Map(a.a, a.b, a.c, a.d);
+    const bool fba_sw = ir.raster.fba && !ffm.matched;
+    auto fixed_function = [&]() {
+        st.Enable(GL_BLEND);
+        if (dev_.UnifiedBlend() && BlendFfMap::Unified(ffm)) {
+            // One state for every unified arm; the fragment program derives the
+            // draw's factors from the ALPHA uniforms, which therefore must be THIS
+            // draw's even on an arm that inherits them (kInheritBlendAbcd: the
+            // reference's native arms left them to the previous full-set draw because
+            // the per-tuple GL state, not the program, carried the blend).
+            st.BlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+            st.BlendFuncSeparate(GL_SRC1_COLOR, GL_ONE_MINUS_SRC1_ALPHA, GL_ONE, GL_ZERO);
+            u.Set1i(L.ff_unified, 1);
+            BlendAbcdUniforms(ir, p, /*force=*/true);
+        } else {
+            if (ffm.uses_fix) st.BlendColor(0.f, 0.f, 0.f, a.fix / 128.0f);
+            st.BlendEquationSeparate(ffm.eq_rgb, GL_FUNC_ADD);
+            st.BlendFuncSeparate(ffm.src_rgb, ffm.dst_rgb, GL_ONE, GL_ZERO);   // alpha: source replace
+            u.Set1i(L.ff_unified, 0);
+            BlendAbcdUniforms(ir, p);
+        }
+    };
+    if (ir.alpha_blend &&
+        (s.using_rt || fba_sw || s.fbmsk16_exact || s.fbmsk32_exact || s.wrap_route || dev_.ForceShaderBlend()) &&
         !s.route_rt_blend) {
         s.needs_rt_copy = true;
+        s.reads_cd_rgb = true;
         CdCopy(p, s);
         if (s.sw_blend_active) u.Set1i(L.rt_sampler, 1);
         BlendAbcdUniforms(ir, p);
         st.Disable(GL_BLEND);
     } else if (s.needs_rt_copy) {
-        // DATE / exact mask / idx self-read without a shader blend still reads the
-        // destination copy; an unblended draw must not inherit blend state.
-        CdCopy(p, s);
-        if (s.sw_blend_active) u.Set1i(L.rt_sampler, 1);
-        if (!ir.alpha_blend) st.Disable(GL_BLEND);
+        // DATE / exact mask / idx self-read: the destination copy feeds the shader's
+        // test / merge / serve. The BLEND of such a draw is decided here as it would be
+        // without the copy: a tuple with an exact fixed-function form whose only copy
+        // reason is DATE blends on the GPU (the shadow-volume counter strips -- their
+        // sub/add faces self-overlap, which one pre-draw Cd copy cannot accumulate),
+        // the shader's DATE block reading u_rt_texture independently of u_sw_blend;
+        // every other blended form takes the shader blend with ITS OWN tuple (never
+        // the previous draw's uniforms, never GL_BLEND left on from a fixed-function
+        // draw); an unblended draw must not inherit blend state.
+        const bool date_only = ir.raster.test.date && !s.reads_cd_rgb;
+        if (ir.alpha_blend && date_only && ffm.matched && !fba_sw && ir.raster.colclamp &&
+            !dev_.ForceShaderBlend()) {
+            CdCopy(p, s);
+            if (s.sw_blend_active) u.Set1i(L.rt_sampler, 1);
+            s.ff_with_copy = s.sw_blend_active;
+            fixed_function();
+        } else {
+            if (ir.alpha_blend) s.reads_cd_rgb = true;
+            CdCopy(p, s);
+            if (s.sw_blend_active) u.Set1i(L.rt_sampler, 1);
+            if (ir.alpha_blend) BlendAbcdUniforms(ir, p);
+            st.Disable(GL_BLEND);
+        }
     } else if (ir.alpha_blend) {
-        const FfBlendMap ffm = BlendFfMap::Map(a.a, a.b, a.c, a.d);
-        if (ffm.uses_fix) st.BlendColor(0.f, 0.f, 0.f, a.fix / 128.0f);
-        st.Enable(GL_BLEND);
-        st.BlendEquationSeparate(ffm.eq_rgb, GL_FUNC_ADD);
-        st.BlendFuncSeparate(ffm.src_rgb, ffm.dst_rgb, GL_ONE, GL_ZERO);   // alpha: source replace
-        BlendAbcdUniforms(ir, p);
+        fixed_function();
     } else {
         st.Disable(GL_BLEND);
     }
-    u.Set1i(L.sw_blend, s.sw_blend_active ? 1 : 0);
+    u.Set1i(L.sw_blend, (s.sw_blend_active && !s.ff_with_copy) ? 1 : 0);
 }
 
 // The colour-authored Z source (unit 4) moves the compare into the shader with the
 // GL depth function forced ALWAYS; otherwise TEST.ZTE/ZTST and ZBUF.ZMSK map directly.
 void GlDrawExecutor::DepthState(const gs::DrawIr& ir, const DrawParams& p, const Step& s) {
-    (void)s;
     GlStateCache& st = dev_.State();
     GlUniformCache& u = dev_.Uniforms();
     const GlUniformLocations& L = dev_.Shaders().Locations();
@@ -615,7 +827,9 @@ void GlDrawExecutor::DepthState(const gs::DrawIr& ir, const DrawParams& p, const
             case 3: st.DepthFunc(GL_GREATER); break;
             default: st.DepthFunc(GL_GEQUAL); break;
         }
-        st.DepthMask(!ir.raster.zbuf.zmsk);
+        // ZMSK and the alpha test's static arm (AFAIL FB_ONLY / RGB_ONLY under ATST
+        // NEVER: the frame buffer alone is updated) both veto the depth write.
+        st.DepthMask(!ir.raster.zbuf.zmsk && s.afail.write_depth);
     } else {
         st.Enable(GL_DEPTH_TEST);
         st.DepthFunc(GL_ALWAYS);
@@ -645,15 +859,16 @@ void GlDrawExecutor::ScissorState(const gs::DrawIr& ir, const Step& s) {
 // FBMSK bit = 1 protects. Exact 5551 merge engaged => the shader merges and GL writes
 // all channels; 16-bit frames mask per 5551 field; 32-bit per byte; PSMCT24 never
 // writes alpha.
-void GlDrawExecutor::ColorMaskState(const gs::DrawIr& ir, const Step& s) {
+bool GlDrawExecutor::ColorMaskState(const gs::DrawIr& ir, const Step& s) {
     GlStateCache& st = dev_.State();
     GlUniformCache& u = dev_.Uniforms();
     const GlUniformLocations& L = dev_.Shaders().Locations();
     const uint32_t mask = ir.raster.frame.fbmsk;
     const uint8_t psm = ir.raster.frame.psm;
     const bool engaged = s.fbmsk16_exact && s.sw_blend_active;
+    const bool engaged32 = s.fbmsk32_exact && s.sw_blend_active;
     bool wr, wg, wb, wa;
-    if (engaged) {
+    if (engaged || engaged32) {
         wr = wg = wb = wa = true;
     } else if (Is16BitFrame(psm)) {
         wr = (s.fbmsk16 & 0x001F) != 0x001F;
@@ -667,9 +882,16 @@ void GlDrawExecutor::ColorMaskState(const gs::DrawIr& ir, const Step& s) {
         wa = (mask & 0xFF000000) != 0xFF000000;
     }
     if (psm == 0x01) wa = false;
+    // The alpha test's static arm: ATST NEVER with AFAIL ZB_ONLY updates no colour
+    // (the GS Z-clear idiom), RGB_ONLY no alpha -- composed with FBMSK, never instead.
+    if (!s.afail.write_rgb) wr = wg = wb = false;
+    if (!s.afail.write_alpha) wa = false;
     st.ColorMask(wr, wg, wb, wa);
     u.Set1i(L.fbmsk16_en, engaged ? 1 : 0);
     u.Set1i(L.fbmsk16, static_cast<int>(s.fbmsk16));
+    u.Set1i(L.fbmsk32_en, engaged32 ? 1 : 0);
+    u.Set1i(L.fbmsk32, static_cast<int>(engaged32 ? mask : 0u));
+    return wa;
 }
 
 DrawResult GlDrawExecutor::MakeResult(const gs::DrawIr& ir, const DrawParams& p,
@@ -679,8 +901,11 @@ DrawResult GlDrawExecutor::MakeResult(const gs::DrawIr& ir, const DrawParams& p,
     r.bbox_valid = s.bb_valid;
     for (int i = 0; i < 4; i++) { r.bbox_tri[i] = s.bb_tri[i]; r.bbox_all[i] = s.bb_all[i]; }
     r.alt16_route = p.alt16_route;
-    r.sw_blend_active = s.sw_blend_active;
+    // The shader BLEND engaged (as the Metal executor reports it): not the copy bound for
+    // DATE alone, whether the draw is unblended or blends on the fixed function.
+    r.sw_blend_active = s.alpha_blend && s.sw_blend_active && !s.ff_with_copy;
     r.needs_rt_copy = s.needs_rt_copy;
+    r.wrote_alpha = s.wrote_alpha;
     r.route_rt_blend = s.route_rt_blend;
     r.wrap_route = s.wrap_route;
     r.fbmsk16_exact = s.fbmsk16_exact;

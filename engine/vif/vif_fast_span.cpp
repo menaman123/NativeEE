@@ -21,6 +21,28 @@ inline void AppendWord(std::vector<uint8_t>& out, uint32_t w) {
     out.push_back(static_cast<uint8_t>((w >> 24) & 0xFF));
 }
 
+// The (payload, size) a command executes against, IN PLACE in the span: the
+// slow path's triple is the payload words plus, for an UNPACK, one lookahead
+// word -- the span word after the payload when the payload does not end on a
+// quadword edge (it is right there in the span: `nwords` is a multiple of 4,
+// so `end < nwords`), 0 when it does. Only that last shape needs the copy
+// (the zero is not in the span); every other command reads the span itself.
+// The copy was 1.6 % of the MTVU worker's busy time in the Paris hub.
+inline const uint8_t* PayloadInPlace(std::vector<uint8_t>& scratch, const uint8_t* data, size_t start_word,
+                                     size_t words, bool unpack, size_t& size_out) {
+    const uint8_t* p = data + start_word * 4;
+    size_out = words * 4;
+    if (!unpack) return p;
+    if (((start_word + words) & 3) != 0) {
+        size_out += 4;  // the lookahead word is the next span word
+        return p;
+    }
+    scratch.assign(p, p + words * 4);
+    AppendWord(scratch, 0);
+    size_out = scratch.size();
+    return scratch.data();
+}
+
 }  // namespace
 
 bool VifFastSpan::Process(Vif& vif, int v, const uint8_t* data, size_t size) {
@@ -54,13 +76,9 @@ bool VifFastSpan::Process(Vif& vif, int v, const uint8_t* data, size_t size) {
         }
         vif.UpdateStat(v, VifStat::kVpsTransfer);
         u.unpack_phase = 0;  // the payload resumes at span word 0 = quadword phase 0
-        u.payload.assign(data, data + words_needed * 4);
-        if (VifUnpack::IsUnpackCmd(u.pending_cmd)) {
-            const uint32_t la = (words_needed & 3) != 0 ? ReadWord(data, words_needed) : 0;
-            AppendWord(u.payload, la);
-        }
-        vif.ExecuteCommand(v, u.pending_cmd, u.pending_imm, u.pending_num, u.payload.data(),
-                           u.payload.size(), u.pending_irq, u.pending_use_mask);
+        size_t psize = 0;
+        const uint8_t* payload = PayloadInPlace(u.payload, data, 0, words_needed, VifUnpack::IsUnpackCmd(u.pending_cmd), psize);
+        vif.ExecuteCommand(v, u.pending_cmd, u.pending_imm, u.pending_num, payload, psize, u.pending_irq, u.pending_use_mask);
         u.state = VifState::Idle;
         u.pending_bytes = 0;
         vif.UpdateStat(v, VifStat::kVpsIdle);
@@ -89,7 +107,7 @@ bool VifFastSpan::Process(Vif& vif, int v, const uint8_t* data, size_t size) {
                 u.direct_buffer.insert(u.direct_buffer.end(), data + s * 4, data + s * 4 + need_words * 4);
                 vif.SubmitDirect(v);
                 vif.UpdateStat(v, VifStat::kVpsIdle);
-                if (irq && !(u.regs.err & VifErr::kMii)) u.regs.stat |= VifStat::kInt;
+                if (irq) vif.RaiseIBit(v);
                 u.pending_irq = false;
                 wi = s + need_words;
                 continue;
@@ -135,13 +153,9 @@ bool VifFastSpan::Process(Vif& vif, int v, const uint8_t* data, size_t size) {
         }
 
         u.unpack_phase = static_cast<uint8_t>(s & 1);
-        u.payload.assign(data + s * 4, data + s * 4 + words_needed * 4);
-        if (VifUnpack::IsUnpackCmd(cmd)) {
-            const size_t e = s + words_needed;
-            const uint32_t la = (e & 3) != 0 ? ReadWord(data, e) : 0;  // e < nwords: nwords is a multiple of 4
-            AppendWord(u.payload, la);
-        }
-        vif.ExecuteCommand(v, cmd, imm, num, u.payload.data(), u.payload.size(), irq, use_mask);
+        size_t psize = 0;
+        const uint8_t* payload = PayloadInPlace(u.payload, data, s, words_needed, VifUnpack::IsUnpackCmd(cmd), psize);
+        vif.ExecuteCommand(v, cmd, imm, num, payload, psize, irq, use_mask);
         wi = s + words_needed;
     }
     return true;

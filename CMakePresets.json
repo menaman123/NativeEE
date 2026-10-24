@@ -225,6 +225,67 @@
         "PS2R_DIAGNOSTICS": "OFF",
         "CMAKE_BUILD_TYPE": "Debug"
       }
+    },
+    {
+      "name": "windows-release-lto",
+      "displayName": "Windows release + LTO (clang-cl, lld-link, Ninja, Release)",
+      "inherits": "windows-release",
+      "description": "windows-release with link-time optimisation: PS2R_LTO=ON (CMAKE_INTERPROCEDURAL_OPTIMIZATION through CheckIPOSupported) and lld-link as the linker (link.exe does not read clang-cl's LTO objects). NOT the shipped shape until it passes the component suite and the identity lane on a Windows runner (the oracle lanes' hashes are frozen against the non-LTO build): .\\build.ps1 -Preset windows-release-lto.",
+      "binaryDir": "${sourceDir}/build-windows-release-lto",
+      "cacheVariables": {
+        "PS2R_LTO": "ON",
+        "CMAKE_LINKER": "lld-link"
+      }
+    },
+    {
+      "name": "windows-clang-cl-base",
+      "hidden": true,
+      "description": "The Windows lane: clang-cl + Ninja through cmake/windows-clang-cl.toolchain.cmake (the clang-cl shim as the compiler launcher, vcpkg chain-loaded: SDL2 + opengl-registry + FFmpeg from vcpkg.json; VCPKG_ROOT must point at a vcpkg checkout). Windows hosts only -- on macOS/Linux these presets do not exist (`cmake --list-presets` shows none) and the plain configure in README is the build. Nothing here touches the macOS/Linux defaults. [TwinsanityEvolved's windows-clang-cl-base, verbatim but for the cache variables a title repository passes: PS2R_GAMES_DIR + NATIVEEE_DISC / NATIVEEE_TITLE_ELF on the command line, as the engine's own windows-release preset expects.]",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "generator": "Ninja",
+      "toolchainFile": "${sourceDir}/cmake/windows-clang-cl.toolchain.cmake",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "VCPKG_TARGET_TRIPLET": "x64-windows",
+        "VCPKG_APPLOCAL_DEPS": "ON",
+        "PS2R_BUILD_RECOMPILER": "ON",
+        "PS2R_DIAGNOSTICS": "OFF"
+      }
+    },
+    {
+      "name": "windows-clang-cl-release",
+      "displayName": "Windows release (clang-cl, Ninja, Release)",
+      "description": "The shipped Windows shape: Release, the vcpkg DLLs beside nativeee.exe (tools/ci/release_dist.ps1 -SkipBuild -BuildDir build-windows-clang-cl-release stages it). The CI job .github/workflows/windows.yml (a title repository's) builds this preset.",
+      "inherits": "windows-clang-cl-base",
+      "binaryDir": "${sourceDir}/build-windows-clang-cl-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "windows-clang-cl-dev",
+      "displayName": "Windows dev (clang-cl, Ninja, RelWithDebInfo)",
+      "description": "The development configuration: optimised code with PDBs (crash dumps and a debugger read the frames; the recompiled shards are impractical at /Od), the same dependencies as the release preset.",
+      "inherits": "windows-clang-cl-base",
+      "binaryDir": "${sourceDir}/build-windows-clang-cl-dev",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "windows-clang-cl-release-lto",
+      "displayName": "Windows release + LTO (clang-cl, lld-link, Ninja, Release)",
+      "description": "windows-clang-cl-release with PS2R_LTO=ON (CMAKE_INTERPROCEDURAL_OPTIMIZATION through CheckIPOSupported) and lld-link as the linker (link.exe does not read clang-cl's LTO objects). Not the shipped shape until it passes the unit tests, a boot and a save-state round trip on a Windows machine -- the windows-release-lto preset has the same status.",
+      "inherits": "windows-clang-cl-release",
+      "binaryDir": "${sourceDir}/build-windows-clang-cl-release-lto",
+      "cacheVariables": {
+        "PS2R_LTO": "ON",
+        "CMAKE_LINKER": "lld-link"
+      }
     }
   ],
   "buildPresets": [
@@ -290,6 +351,53 @@
       "name": "windows-msvc-dev",
       "configurePreset": "windows-msvc-dev",
       "jobs": 4
+    },
+    {
+      "name": "windows-release-lto",
+      "configurePreset": "windows-release-lto",
+      "jobs": 4
+    },
+    {
+      "name": "windows-clang-cl-release",
+      "configurePreset": "windows-clang-cl-release",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "targets": [
+        "nativeee",
+        "gs_replay",
+        "test_host_platform"
+      ]
+    },
+    {
+      "name": "windows-clang-cl-dev",
+      "configurePreset": "windows-clang-cl-dev",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "targets": [
+        "nativeee",
+        "gs_replay",
+        "test_host_platform"
+      ]
+    },
+    {
+      "name": "windows-clang-cl-release-lto",
+      "configurePreset": "windows-clang-cl-release-lto",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "targets": [
+        "nativeee",
+        "gs_replay",
+        "test_host_platform"
+      ]
     }
   ],
   "testPresets": [
@@ -416,6 +524,61 @@
     {
       "name": "windows-release",
       "configurePreset": "windows-release",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "timeout": 300
+      }
+    },
+    {
+      "name": "windows-release-lto",
+      "configurePreset": "windows-release-lto",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "timeout": 300
+      }
+    },
+    {
+      "name": "windows-clang-cl-release",
+      "configurePreset": "windows-clang-cl-release",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "timeout": 300
+      }
+    },
+    {
+      "name": "windows-clang-cl-dev",
+      "configurePreset": "windows-clang-cl-dev",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "timeout": 300
+      }
+    },
+    {
+      "name": "windows-clang-cl-release-lto",
+      "configurePreset": "windows-clang-cl-release-lto",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
       "output": {
         "outputOnFailure": true
       },

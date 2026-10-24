@@ -89,6 +89,15 @@ public:
     // Fills `out` with w*h*4 bytes (rows bottom-up); false (w = h = 0) when nothing
     // is readable. `vram` enables the LocalMemory arm (null = targets only).
     bool GrabDisplay(std::vector<uint8_t>* out, int* w, int* h, const VramImage* vram = nullptr);
+    // The DEFERRED form of GrabDisplay (perf: the sync read is a GPU pipeline drain
+    // every frame): the same source pick, but a Target's read is QUEUED
+    // (Backend::BeginReadback; the GPU copies the attachment as it gets there) and
+    // `*fence` names it -- the caller completes it later with Backend::PollReadback
+    // into w*h*4 bytes (rows bottom-up, stride w*4). The Mirror arm is a CPU read and
+    // lands in `out` at once (`*fence` = none). Returns the same bool as GrabDisplay;
+    // LastGrab* describe the pick either way.
+    bool BeginGrabDisplay(render::FenceId* fence, std::vector<uint8_t>* out, int* w, int* h,
+                          const VramImage* vram = nullptr);
     // What the last GrabDisplay read: Target, Mirror (local memory), None; the
     // target's base and whether it was the most-recently-drawn fallback (not the
     // target at the scanout base).
@@ -115,6 +124,7 @@ private:
     RenderTarget* PickSource(const VramLayout& layout, uint32_t frame_count, bool* used_fallback,
                              bool* stale_display);
     bool GrabLocalMemory(const VramImage& vram, std::vector<uint8_t>* out, int* w, int* h);
+    bool GrabDisplayImpl(render::FenceId* fence, std::vector<uint8_t>* out, int* w, int* h, const VramImage* vram);
     void PresentMirror(const VramImage& vram, uint32_t fbp, uint32_t fbw, uint32_t psm, const render::Rect& window);
 
     render::Backend& be_;

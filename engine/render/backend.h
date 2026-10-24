@@ -14,9 +14,13 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <memory>
 #include <vector>
 
+#include "engine/gs/hle/ir/cd_dirty_set.h"
 #include "engine/render/surface_format.h"
+#include "engine/render/texture_filter_selection.h"
 
 namespace ps2r {
 namespace gs {
@@ -33,6 +37,9 @@ struct Caps {
     bool depth_sample = false;       // depth attachment sampleable as a texture
     bool texture_barrier = false;
     bool compute = false;
+    bool copy_pack5551 = false;      // CopyRect honours kCopyPack5551 (a GPU pass); false = the caller's CPU route
+    bool alpha_lane_write = false;   // WriteAlphaLane is a GPU pass; false = the caller's CPU route
+    bool dual_source_blend = false;  // a second fragment output feeds the blend factors (GL_SRC1_*)
 };
 
 struct SurfaceId {
@@ -99,12 +106,19 @@ enum InheritedUniform : uint32_t {
 
 // Cd-copy tracker state a colour target owns (the shader-side blend reads the
 // destination from a copy of the attachment; the copy is refreshed lazily over
-// the union of the rectangles written since it was last taken). Half-open device
+// the rectangles written since it was last taken -- CdCopyPolicy). Half-open device
 // rectangles; last_route records which attachment (main 0 / alt16 companion 1)
 // the copy mirrors.
 struct CdCopyState {
     bool valid = false;
-    int32_t dirty_x0 = 0, dirty_y0 = 0, dirty_x1 = 0, dirty_y1 = 0;
+    // The rects written since the last copy (gs::CdDirtySet: the union and the rects
+    // themselves; CdCopyPolicy decides on them, the target's post-draw tail records them).
+    gs::CdDirtySet dirty;
+    // The subset of those rects written by draws whose colour mask included ALPHA. A read
+    // that consumes only the copy's alpha (the destination alpha test of a draw that is
+    // not shader-blended) is decided on this set alone: a run of DATE strips that masks
+    // alpha (FBMSK ff000000 set) refreshes the copy once, not per strip.
+    gs::CdDirtySet dirty_alpha;
     int8_t last_route = -1;
 };
 
@@ -150,7 +164,47 @@ struct DrawResult {
     uint32_t fbmsk16 = 0;            // FRAME.FBMSK folded to the 5551 layout
     bool cd_copy_performed = false;
     Rect cd_copy_rect;               // logical rect copied (w == 0 => whole target)
+    bool wrote_alpha = true;         // the draw's colour mask included ALPHA (the Cd-copy
+                                     // tracker's alpha-dirty set; true = conservative)
+    bool halfword_shuffle = false;   // the 16-bit column pass ran as a half-word copy over the
+                                     // 32-bit image (the target keeps its 32-bit tags)
     Rect write_rect;                 // bbox_all ∩ scissor ∩ target, logical, half-open
+};
+
+// The backend's call census (diagnostics only; never consulted by a draw): one
+// counter per class of API call the backend ISSUED (a call its state shadow
+// skipped is not counted), monotonic over the backend's life. A reader takes two
+// snapshots and subtracts. `readbacks` are the GPU -> host pixel reads (each a
+// full pipeline drain on an immediate-mode API), `copies` the attachment ->
+// texture copies, `uploads` the host -> texture transfers (bytes as handed to the
+// API), `buffer_maps` the vertex-stream maps, `draw_calls` every rasterising call
+// (draws, quads, presents).
+struct CallCensus {
+    uint64_t draw_calls = 0;
+    uint64_t texture_binds = 0;
+    uint64_t program_binds = 0;
+    uint64_t framebuffer_binds = 0;
+    uint64_t readbacks = 0;
+    uint64_t readback_bytes = 0;
+    uint64_t copies = 0;
+    uint64_t copy_bytes = 0;
+    uint64_t uploads = 0;
+    uint64_t upload_bytes = 0;
+    uint64_t buffer_maps = 0;
+    uint64_t clears = 0;
+    uint64_t barriers = 0;           // texture barriers issued in place of a destination copy
+    uint64_t submits = 0;            // command buffers committed (backends that batch work)
+    uint64_t gpu_ns = 0;             // GPU busy time of the completed command buffers (backends that report it)
+    uint64_t readback_waits = 0;     // PollReadback calls that found the GPU not yet done (a wait)
+    uint64_t gpu_waits = 0;          // CPU waits for the GPU that actually waited (a serial / command buffer not yet complete)
+    uint64_t gpu_wait_ns = 0;        // ... and their total time
+    uint64_t capture_waits = 0;      // present-capture completions that waited for the GPU
+    uint64_t prompt_captures = 0;    // present captures completed in their OWN present (the bounded wait found the GPU done)
+    uint64_t prompt_timeouts = 0;    // ... and the ones whose wait ran out (read back one present late as before)
+    uint64_t prompt_wait_ns = 0;     // the bounded waits' total time
+    uint64_t prompt_skipped = 0;     // ... and the presents the gate kept from waiting (read one present late)
+    uint64_t state_sets = 0;         // fixed-function state calls ISSUED (blend / depth / mask / scissor / viewport / enable)
+    uint64_t uniform_sets = 0;       // uniform calls ISSUED (the shadow caches skip the rest)
 };
 
 // Surface preserves retained callers' sampling. Owned presentation declares
@@ -192,12 +246,37 @@ public:
     virtual void ClearStencil(SurfaceId stencil, uint8_t value) = 0;
     virtual void DrawConstQuad(SurfaceId color, SurfaceId stencil, const Rect& scissor,
                                uint32_t rgba, bool write_alpha, const StencilState& st) = 0;
+    // Copy `src_rect` of `src` to `dst_rect` of `dst` (same size, physical texels).
+    // `transform` kCopyPlain = the bytes as they are; kCopyPack5551 = every texel
+    // through the 16-bit round trip (TexaExpand::Truncate32To16 then Expand16To32:
+    // 5-bit channels replicated, alpha bit -> 0x00 / 0xFF) -- the 16-bit companion
+    // refresh, on the GPU; a backend without the pass falls back to the plain copy.
+    static constexpr uint32_t kCopyPlain = 0;
+    static constexpr uint32_t kCopyPack5551 = 1;
     virtual void CopyRect(SurfaceId src, const Rect& src_rect, SurfaceId dst,
                           const Rect& dst_rect, uint32_t transform) = 0;
+    // Write ONLY the alpha channel of `dst` over `dst_rect` (physical texels) from
+    // the R8 surface `lane`: texel (x, y) of dst_rect takes lane texel ((x - dst_rect.x)
+    // / scale, (y - dst_rect.y) / scale) where `scale` = dst's physical / logical
+    // factor -- the lane is LOGICAL (one byte per logical texel of the rect); RGB is
+    // untouched; texels inside `exclude` (physical, half-open; w or h <= 0 = none)
+    // keep their alpha. The alias import's stored-alpha merge on the GPU (a byte
+    // round-trips exactly through UNORM8). A backend without the pass does nothing
+    // (Caps::alpha_lane_write false): the caller takes its CPU route.
+    virtual void WriteAlphaLane(SurfaceId, const Rect&, SurfaceId, const Rect&) {}
     // Synchronous readback of `rect` (physical texels), rows bottom-up as the
     // attachment stores them, RGBA8 (colour) or float (depth).
     virtual void Readback(SurfaceId id, const Rect& rect, void* out, size_t stride) = 0;
+    // The asynchronous form: BeginReadback queues the read (colour RGBA8 only; the
+    // bytes land in backend-owned storage behind a fence) and returns its handle;
+    // ReadbackReady says whether the GPU has completed it (never waits; a backend
+    // whose readbacks are synchronous says true); PollReadback completes it --
+    // WAITING for the GPU if it has not -- copies the rows (bottom-up, `stride`
+    // bytes apart; 0 = packed) into `out` and releases the handle. False from
+    // PollReadback = unknown handle. Caps::staging_readback says the read is truly
+    // deferred (a caller may overlap work between Begin and Poll).
     virtual FenceId BeginReadback(SurfaceId id, const Rect& rect) = 0;
+    virtual bool ReadbackReady(FenceId) { return true; }
     virtual bool PollReadback(FenceId fence, void* out, size_t stride) = 0;
     // A missing nonzero source or invalid explicit source rectangle refuses
     // before clear/swap; source 0 retains the cold no-image presentation.
@@ -209,8 +288,34 @@ public:
     // draw, scanout or mirror input. A backend without a window reads false.
     virtual void ArmPresentCapture(bool) {}
     virtual bool ReadPresented(std::vector<uint8_t>*, int*, int*) { return false; }
+    // The call census (diagnostics; null = the backend keeps none).
+    virtual const CallCensus* Census() const { return nullptr; }
     virtual void BeginFrame() = 0;
     virtual void EndFrame() = 0;
+    // The compositions' presentation hooks (every one a no-op for a backend without a
+    // window image): the window size Present falls back to when ScanoutDesc.dst is empty;
+    // the armed capture's read one present late behind a fence instead of a pipeline drain
+    // (ReadPresented then hands over the PREVIOUS present's image); a command flush for a
+    // host whose present window is never shown; the player's texture-filtering enhancement
+    // over the owned textures (null = the title's choice everywhere).
+    virtual void SetWindowSize(int, int) {}
+    virtual void SetPresentCaptureDeferred(bool) {}
+    // Round 5 (latency): with the deferred capture, wait up to this long at the end of
+    // Present for the GPU to finish THIS present's capture and hand it over now (the
+    // picture posts the field it was rendered; ReadPresented's PresentedLag() = 0) --
+    // past the bound it is read at the next present as before (lag 1). 0 = never wait.
+    virtual void SetPresentCaptureWaitNs(uint64_t) {}
+    // The prompt capture's gate (round 5): asked at the end of every Present before the
+    // bounded wait; false = this present is read at the next one (lag 1, no wait). The
+    // consumer installs "nothing queued behind this frame": a consumer with the next
+    // frame's records already waiting is behind, and a wait there costs it the CPU/GPU
+    // overlap it needs to catch up (GL hub_ep3: 98 vs 27 consumer gaps of 20-30 ms).
+    virtual void SetPresentCaptureGate(std::function<bool()>) {}
+    // The present lag of the image ReadPresented last handed over (0 = this present's, 1 =
+    // the previous present's: the deferred read).
+    virtual int PresentedLag() const { return 0; }
+    virtual void FlushCommands() {}
+    virtual void SetTextureFilter(std::shared_ptr<const TextureFilterSelection>) {}
 };
 
 }  // namespace render

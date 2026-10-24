@@ -97,6 +97,7 @@
 
 - `gs_replay/` — the corpus replay oracle (replay / census / diff / classdiff) over the NEW GS HLE + GL backend, OLD-grammar output compared against `gs_corpus/baseline` by `tests/gs/replay` (Phase 6).
 - `drawlist_tool/` — the `.gsdl` inspector (`stats | frames | dump | diff`), OLD-grammar output (Phase 6).
+- `vu1_aot_pack/` — the pre-built VU1 library pack: `build --corpus <dir>... --out <pack dir>` emits, compiles, loads and re-verifies every image of a corpus through `Vu1AotBuilder` and writes `pack.txt` + one library per image (keyed by the engine's VU1 AOT ABI key, `vu1_aot_stage_prelude.py --key-header`); `check --corpus ... --pack <dir>` proves a compiler-less engine is served by it; `key` prints the engine's key. The pack is game-derived (never committed, never a public release asset); the engine loads it from `vu1_aot_pack/` next to the executable or `engine.vu1_aot_pack=<dir>`.
 - `check_sizes.py` — PHASE6_PLAN §6 G10 size budgets over the Phase-6 write set (files ≤ 1,500 lines,
   functions ≤ 150; `engine/gs` minus `format`, `engine/render`, `engine/platform/sdl`, `tools/gs_replay`,
   `tools/drawlist_tool`, `tests/lib`, `games/<t>/renderer_profile`); ctest `Phase6SizeBudgets`.

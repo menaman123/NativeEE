@@ -208,6 +208,63 @@ void TestBufferedInputResume(uint32_t source, uint32_t consumed_bits) {
     CHECK(restored.ipu.ReadCmd() == next && restored.ipu.InputSize() == unread * 16);
 }
 
+// The eight-quadword FIFO bound as the composition wires it: the toIPU channel moves
+// what fits and keeps STR with the remaining QWC (libmpeg tells "in flight" from "done"
+// by D4_QWC / D4_CHCR.STR); consumption reopens room and the channel resumes by itself.
+void TestBoundedInputStreams() {
+    TestIpuDmaCoupling rig;
+    rig.dmac.SetIpuInputRoom([&rig] { return rig.ipu.InputRoomBytes(); });
+    rig.ipu.SetInputRoomReady([&rig] {
+        auto& to = rig.dmac.channel(4);
+        if ((to.chcr & DmacChcr::kStr) && to.qwc != 0) rig.dmac.StartChannel(4);
+    });
+    uint8_t* src = rig.ram.Pointer(kSource, 384);
+    for (unsigned i = 0; i < 384; ++i) src[i] = static_cast<uint8_t>(i);
+    StartInput(rig);  // 24 quadwords
+    CHECK(rig.ipu.InputSize() == 128 && (rig.ipu.ReadCtrl() & 15) == 8);
+    CHECK(rig.dmac.channel(4).qwc == 16 && (rig.dmac.channel(4).chcr & DmacChcr::kStr) != 0);
+    CHECK(rig.dmac.channel(4).madr == kSource + 128);
+    // FDECs inside the first quadword free nothing; crossing into the second (bit 128)
+    // frees the first and one more quadword flows in.
+    rig.ipu.WriteCmd(0x4000003f);
+    rig.ipu.WriteCmd(0x4000003f);
+    CHECK(rig.dmac.channel(4).qwc == 16);
+    rig.ipu.WriteCmd(0x40000002);
+    CHECK(rig.ipu.BitPosition() == 128 && rig.dmac.channel(4).qwc == 15 && rig.dmac.channel(4).madr == kSource + 144);
+    CHECK(rig.ipu.ReadCmd() == 0x10111213u && (rig.ipu.ReadCtrl() & 15) == 8);
+    // BCLR empties the FIFO: all the room reopens and eight more quadwords flow in.
+    rig.ipu.WriteCmd(0);
+    CHECK(rig.ipu.InputSize() == 128 && rig.dmac.channel(4).qwc == 7);
+    rig.ipu.WriteCmd(0x40000000);
+    CHECK(rig.ipu.ReadCmd() == 0x90919293u);  // the stream continues at byte 144
+    // Consuming seven more quadwords lets the last seven in: the channel completes (STR
+    // clear, QWC 0, MADR at the end).
+    for (int i = 0; i < 7; ++i) {
+        rig.ipu.WriteCmd(0x4000003f);
+        rig.ipu.WriteCmd(0x4000003f);
+        rig.ipu.WriteCmd(0x40000002);
+    }
+    CHECK((rig.dmac.channel(4).chcr & DmacChcr::kStr) == 0 && rig.dmac.channel(4).qwc == 0);
+    CHECK(rig.dmac.channel(4).madr == kSource + 384);
+
+    // A CSC macroblock (384 bytes) is three times the FIFO: issued first, the DMA kick
+    // streams the whole macroblock through (feed -> retry -> room -> feed ...) and the
+    // command completes with 1024 RGB32 bytes, the channel done.
+    TestIpuDmaCoupling csc;
+    csc.dmac.SetIpuInputRoom([&csc] { return csc.ipu.InputRoomBytes(); });
+    csc.ipu.SetInputRoomReady([&csc] {
+        auto& to = csc.dmac.channel(4);
+        if ((to.chcr & DmacChcr::kStr) && to.qwc != 0) csc.dmac.StartChannel(4);
+    });
+    Macroblock(csc, 0x60);
+    csc.ipu.WriteCmd(0x70000001);
+    CHECK(csc.ipu.IsBusy());
+    StartInput(csc);
+    CHECK(!csc.ipu.IsBusy() && csc.ipu.OutputSize() == 1024);
+    CHECK(csc.dmac.channel(4).qwc == 0 && (csc.dmac.channel(4).chcr & DmacChcr::kStr) == 0);
+    CHECK(csc.ipu.BitPosition() == 384 * 8 && csc.ipu.PendingCompletions() == 1);
+}
+
 void TestSnapshotArithmeticGuards() {
     for (bool count_overflow : {false, true}) {
         TestIpuDmaCoupling rig;
@@ -248,6 +305,7 @@ int main() {
     for (uint32_t bits : {0u, 5u, 127u, 128u, 133u, 2047u, 2048u, 2053u})
         TestBufferedInputResume(kSource, bits);
     TestBufferedInputResume(0, 5);  // exact address-zero rewind is valid, not underflow
+    TestBoundedInputStreams();
     TestSnapshotArithmeticGuards();
     std::printf("test_ipu_dma_coupling: %s (%d failures)\n", failures ? "FAIL" : "PASS", failures);
     return failures ? 1 : 0;

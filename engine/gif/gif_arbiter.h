@@ -27,6 +27,8 @@
 //   bnd_feed_noted_ EE thread only (the frame-boundary HLE)
 //   boundary_hook_  set at construction; called by the drain owner only
 //   pool_/pool_mtx_ leaf lock, any thread
+//   path1_pool_/path1_pool_mtx_   leaf lock, any thread (the drain owner recycles a pass's PATH1
+//                                 buffers in one batch; the VU1 unit's XgKick takes them in batches)
 //   owner_, drain_thread_   set before producer traffic, cleared after it stops
 #include <atomic>
 #include <cstddef>
@@ -36,6 +38,7 @@
 #include <mutex>
 #include <vector>
 
+#include "engine/gif/gif_finish_scan.h"
 #include "engine/gif/gif_mtvu_marker.h"
 #include "engine/gif/gif_tag.h"
 
@@ -58,8 +61,20 @@ public:
     // Staging buffers kept by the pool have a capacity in this range.
     static constexpr size_t kPoolMinCapacity = 0x1000;
     static constexpr size_t kPoolMaxCapacity = 0x10000;
+    // The PATH1 packet pool: right-sized XGKICK packet buffers (capacity <= one
+    // VU1 data memory) that travel worker -> inbox -> drain and come back here
+    // instead of being freed; bounded so a lagging drain cannot grow it.
+    static constexpr size_t kPath1PoolMax = 2048;
+    static constexpr size_t kPath1PoolMaxCapacity = 0x4000;
+    // A marker's packet vector is reserved at open for the packets one Batch
+    // segment of the first title produces (~60), so the worker's fills grow it
+    // once at most instead of through the doubling ladder per segment.
+    static constexpr size_t kMarkerReservePackets = 64;
 
     explicit GifArbiter(GifParser& parser, GifBoundaryHook* boundary_hook = nullptr);
+    // Replace the boundary consumer (set before producer traffic; null = count only).
+    void SetBoundaryHook(GifBoundaryHook* hook) { boundary_hook_ = hook; }
+    GifBoundaryHook* BoundaryHook() const { return boundary_hook_; }
 
     // Queue a copy of `size` bytes on `path`; payloads shorter than a GIFtag are dropped.
     void submit(GifPath path, const uint8_t* data, size_t size, bool is_directhl = false);
@@ -79,6 +94,13 @@ public:
     std::vector<uint8_t> acquireBuffer();
     // Return a staging-class buffer to the pool; others are freed.
     void recycleBuffer(std::vector<uint8_t>&& buffer);
+    // Move up to `count` recycled PATH1 packet buffers (empty, capacity kept)
+    // into `out` under one lock; fewer when the pool runs short. The drain
+    // owner refills the pool with a delivered pass's PATH1 buffers
+    // (recyclePath1Buffers), dropping what exceeds kPath1PoolMax.
+    void acquirePath1Buffers(std::vector<std::vector<uint8_t>>& out, size_t count);
+    void recyclePath1Buffers(std::vector<std::vector<uint8_t>>& buffers);
+    size_t Path1PoolSize() const;
 
     // Deliver every ready packet to the parser in submission order (boundary
     // slots to the hook), then tell the parser a PATH3 pass finished if any
@@ -119,8 +141,18 @@ public:
     bool DrainThreadRunning() const;
     bool OnDrainThread() const;
     // Returns once a drain pass that started after this call completed;
-    // immediate when no drain thread runs or when called from it.
+    // immediate when no drain thread runs or when called from it. Rethrows a
+    // fault the drain thread caught (as drain() does): the exception the inline
+    // drain would have thrown on the caller reaches the caller here.
     void DrainFence();
+    // The drain thread holds or is delivering packets: its parser has not yet
+    // reached everything submitted (the FINISH / SIGNAL an EE waiter needs may
+    // still be in flight). False with the drain inline (the caller drains).
+    bool DrainInFlight() const;
+    // The drain thread's completed-pass count (0 inline) and a bounded park
+    // until it moves past `seen`: the EE's idle wait on the deliveries in flight.
+    uint64_t DrainPassGeneration() const;
+    void WaitDrainPassAfter(uint64_t seen, uint64_t timeout_ns);
 
     // Ledger: payload bytes accepted and not yet delivered / dropped, and
     // inbox slots (packets, markers, boundaries) not yet promoted.
@@ -128,6 +160,35 @@ public:
     uint64_t PendingSlots() const;
     uint64_t DrainedPackets() const;
     size_t PoolSize() const;
+
+    // ---- E425 early FINISH ----
+    // The EE raises the GS FINISH interrupt when it has STAGED the packet that
+    // carries the A+D FINISH write (not when the parser reaches it, behind the
+    // worker and the drain thread): `raiser` performs the raise (the GS CSR bit +
+    // the INTC edge), on the staging thread. Each pre-raise is counted here;
+    // the parser's Finish() CONSUMES one count (ConsumePreRaisedFinish) instead
+    // of raising again, so every FINISH write produces exactly one edge. Null =
+    // off (the parser raises, as before). While on, every PATH3 submit from the
+    // EE thread under a running worker is scanned (GifFinishScan) and its
+    // FINISH writes pre-raised; the PATH2 side is scanned at the VIF1 staging
+    // point by the stack and reported through PreRaiseFinish.
+    using FinishRaiser = void (*)(void* user);
+    void SetEarlyFinish(FinishRaiser raiser, void* user);
+    bool EarlyFinishOn() const { return finish_raiser_ != nullptr; }
+    // `n` FINISH writes were staged by the EE: count them and raise each.
+    void PreRaiseFinish(uint32_t n);
+    // The parser reached a FINISH write: true = it was pre-raised (consume one;
+    // the caller raises nothing), false = raise as before.
+    bool ConsumePreRaisedFinish();
+    // Pre-raised, not yet consumed (the savestate quiesce requires 0).
+    uint32_t PreRaisedFinish() const { return pre_raised_finish_.load(std::memory_order_acquire); }
+    uint64_t PreRaisedFinishTotal() const { return pre_raised_total_.load(std::memory_order_relaxed); }
+    uint64_t ConsumedFinishTotal() const { return consumed_total_.load(std::memory_order_relaxed); }
+    uint64_t PreRaisedPath3Total() const { return pre_raised_path3_.load(std::memory_order_relaxed); }
+    // Drop the outstanding count and the PATH3 scan state (clear(), a restore).
+    void ResetEarlyFinish();
+    // The EE-side PATH3 transfer view (the composed GIF_STAT: OPH / APATH 3).
+    const GifFinishScan& Path3Scan() const { return path3_scan_; }
 
     // Byte tap on every accepted submit (path, payload, size), called before
     // the packet is queued; null = absent. Tools record PATH1 kicks with it.
@@ -137,6 +198,12 @@ public:
     // runs on the drain owner thread. Tools record delivery order with it.
     using DrainObserver = void (*)(void* user, const GifArbiterPacket& pkt);
     void SetDrainObserver(DrainObserver fn, void* user);
+    // Runs on the drain owner thread at the END of every pass that delivered
+    // packets (after FinishPath3 and the ledger settle; not after a fault): the
+    // DrawIR chain's producer hands its staged records on (nothing more arrives
+    // until the next kick). Null = absent.
+    using PassEndHook = void (*)(void* user);
+    void SetPassEndHook(PassEndHook fn, void* user);
 
 private:
     friend class GifDrainThread;
@@ -149,9 +216,15 @@ private:
     void Enqueue(GifArbiterPacket&& pkt);
     void PushInboxSlot(GifArbiterPacket&& pkt);
     void collectReady();
-    // The pass body, run by the drain owner (drain() inline, or the loop).
+    // The pass body, run by the drain owner (drain() inline, or the loop);
+    // DrainPassDelivered reports whether any slot was delivered.
     void DrainPass();
+    bool DrainPassDelivered();
+    void SettleDeliveredQueue();
+    // Producer side: a fault the drain thread caught is thrown here, once.
+    void RethrowDrainFault();
     bool WorkerRunning() const;
+    void ScanPath3ForFinish(const uint8_t* data, size_t size);
 
     GifParser& parser_;
     GifBoundaryHook* boundary_hook_;
@@ -159,8 +232,17 @@ private:
     void* observer_user_ = nullptr;
     DrainObserver drain_observer_ = nullptr;
     void* drain_observer_user_ = nullptr;
+    PassEndHook pass_end_ = nullptr;
+    void* pass_end_user_ = nullptr;
     GifMarkerOwner* owner_ = nullptr;
     GifDrainThread* drain_thread_ = nullptr;
+    FinishRaiser finish_raiser_ = nullptr;
+    void* finish_raiser_user_ = nullptr;
+    GifFinishScan path3_scan_;                       // EE thread only (the PATH3 producer)
+    std::atomic<uint32_t> pre_raised_finish_{0};     // EE ++ / drain owner -- (CAS)
+    std::atomic<uint64_t> pre_raised_total_{0};
+    std::atomic<uint64_t> pre_raised_path3_{0};
+    std::atomic<uint64_t> consumed_total_{0};
     std::vector<GifArbiterPacket> queue_;
     mutable std::mutex mtvu_mtx_;
     std::deque<InboxSlot> inbox_;
@@ -174,4 +256,7 @@ private:
     bool bnd_feed_noted_ = false;
     mutable std::mutex pool_mtx_;
     std::vector<std::vector<uint8_t>> pool_;
+    mutable std::mutex path1_pool_mtx_;
+    std::vector<std::vector<uint8_t>> path1_pool_;
+    std::vector<std::vector<uint8_t>> path1_freed_;  // drain owner only: the pass's PATH1 buffers
 };

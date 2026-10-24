@@ -178,6 +178,41 @@ int main() {
         CHECK(!g0.FramePark(100, 0, t0).park && !g0.FramePark(100, 0, t0).valve_hit, "cap 0: never parks");
     }
 
+    // 12. The HOLD (round 5): an arm on the WORKER's lag (marks pushed - passed), independent of the
+    // declared/presented cap. Hold 1: lag 1 (the worker inside the frame the EE just finished) is
+    // in-bound, lag 2 (a complete frame queued ahead of it) parks; the park releases when the lag
+    // drops, or by the 100 ms valve when it never moves. No hold = never over. The cap is untouched.
+    {
+        FakeClock clk;
+        RunaheadGuard g(2, {}, clk);
+        CHECK(!g.HoldOver(0) && !g.HoldOver(5) && !g.HoldPark(5, clk.now).park, "no hold: the lag is never over");
+        CHECK(g.EffMaxFrames() == 2 && !g.Over(102, 100) && g.Over(103, 100), "the cap reads the setting");
+        g.SetHold(1);
+        CHECK(g.HoldFrames() == 1, "hold 1 armed");
+        CHECK(!g.HoldOver(0) && !g.HoldOver(1) && g.HoldOver(2) && g.HoldOver(7), "hold 1: lag 1 in-bound, lag 2 a park");
+        CHECK(g.EffMaxFrames() == 2 && !g.Over(102, 100) && g.Over(103, 100), "the hold does not move the cap");
+        const uint64_t t0 = clk.now;
+        RunaheadFramePark r = g.HoldPark(2, t0);
+        CHECK(r.park && !r.valve_hit, "lag 2 parks");
+        clk.now = t0 + RunaheadGuard::kFrameValveNs - 1;
+        r = g.HoldPark(2, t0);
+        CHECK(r.park && !r.valve_hit, "... still parked just under the valve");
+        clk.now = t0 + RunaheadGuard::kFrameValveNs;
+        r = g.HoldPark(2, t0);
+        CHECK(!r.park && r.valve_hit, "at +100 ms the valve releases a lag that never moved");
+        r = g.HoldPark(1, t0);
+        CHECK(!r.park && !r.valve_hit, "the worker passed a mark: released by progress, no valve");
+        // Hold 2 (== the cap): lag 3 parks, lag 2 does not.
+        RunaheadGuard h(2, {}, clk);
+        h.SetHold(2);
+        CHECK(!h.HoldOver(2) && h.HoldOver(3), "hold 2: lag 3 parks");
+        // The low band lifts the cap, not the hold.
+        bool low = true;
+        RunaheadGuard lb(2, [&low] { return low; }, clk);
+        lb.SetHold(1);
+        CHECK(lb.EffMaxFrames() == 3 && lb.HoldOver(2), "low band: cap 3, the hold still parks at lag 2");
+    }
+
     if (g_failures == 0) {
         std::printf("test_runahead_guard: ALL PASS\n");
         return 0;

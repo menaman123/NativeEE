@@ -110,9 +110,6 @@ void S9ShadowPredicates() {
     CHECK(!R::RtKeepServe(true, true, 6, 5));
     CHECK(!R::RtKeepServe(false, true, 0, 5));
     CHECK(!R::RtKeepServe(true, false, 0, 5));
-    CHECK(ClutSource::PrescaleAlpha(0) == 0 && ClutSource::PrescaleAlpha(64) == 128);
-    CHECK(ClutSource::PrescaleAlpha(127) == 254 && ClutSource::PrescaleAlpha(128) == 255);
-    CHECK(ClutSource::PrescaleAlpha(255) == 255);
     CHECK(R::Is16BitClass(0x02) && R::Is16BitClass(0x0A) && R::Is16BitClass(0x32) && R::Is16BitClass(0x3A));
     CHECK(!R::Is16BitClass(0x00) && !R::Is16BitClass(0x01) && !R::Is16BitClass(0x30));
     CHECK(R::IsIndexedPsm(0x13) && R::IsIndexedPsm(0x1B) && !R::IsIndexedPsm(0x02));
@@ -177,7 +174,7 @@ void ClutSourceVsReference() {
             const uint8_t* p0 = &s.rgba[i * 4];
             const uint8_t* p1 = &s.rgba[(256 + i) * 4];
             const bool ok0 = p0[0] == bytes[off] && p0[1] == bytes[off + 1] && p0[2] == bytes[off + 2] &&
-                             p0[3] == ClutSource::PrescaleAlpha(bytes[off + 3]);
+                             p0[3] == bytes[off + 3];   // the stored-alpha convention: the stored byte, both rows
             const bool ok1 = p1[0] == bytes[off] && p1[3] == bytes[off + 3];
             if (!ok0 || !ok1) { CHECK(ok0 && ok1); break; }
         }
@@ -275,7 +272,7 @@ void Inv19DecodeRectIsCrop() {
         for (int x = 0; x < 40; x++)
             if (rect[y * 40 + x] != full[(y + 9) * 128 + (x + 20)]) { same = false; break; }
     CHECK(same);
-    CHECK((full[0] >> 24) == 200u);   // PS2 alpha byte 100 (vram[0x80003]) -> GPU 200
+    CHECK((full[0] >> 24) == 100u);   // PS2 alpha byte 100 (vram[0x80003]) stored as is (the stored-alpha convention)
     // CT16 with TEXA and an indexed T8 view both crop too.
     TexReadView v16 = View(0x80000, 0x02, 6, 6, 64);
     TextureDecoder::Decode(vram.data(), v16, nullptr, nullptr, &full);
@@ -556,7 +553,7 @@ void ResolveTiersIndexed() {
     d32.vram_epoch = w.vram.UploadEpoch() + 1;
     (void)w.resolver.ResolveRead(d32, ctx);
     w.vram.ReadView(0x300000, 4, px);
-    CHECK(px[0] == 1 && px[3] == 0x80);
+    CHECK(px[0] == 1 && px[3] == 0xFF);   // the GL alpha byte 255 deposits as 0xFF (the stored-alpha convention)
     // A stale (not recent) target deposits nothing either.
     w.vram.CommitDeposits();
     ctx.frame_count = 30;
@@ -1231,7 +1228,7 @@ void ResolveTiersRemainder() {
         const test::FakeBackend::Surface& fs = w.be.At(f.owner.surface);
         CHECK(TexelR(fs, 49, 0) == 0xAA && TexelR(fs, 55, 0) == 0xAA && TexelR(fs, 63, 0) == 0xAA);   // replicated edge
         CHECK(TexelR(fs, 49, 63) == 0xAA && TexelR(fs, 55, 63) == 0xAA);
-        CHECK(fs.rgba[(0 * 64 + 49) * 4 + 3] == 0xFF);   // PS2 0x80 -> GPU 0xFF
+        CHECK(fs.rgba[(0 * 64 + 49) * 4 + 3] == 0x80);   // PS2 0x80 stored as 0x80 (the stored-alpha convention)
         // The edit is applied AFTER the content key: the same bytes read again HIT
         // the clamped decode (OLD :6581 after r118_tex_key) -- even from another frame.
         DrawIr again = fmv;

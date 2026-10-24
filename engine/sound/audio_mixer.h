@@ -14,6 +14,9 @@ class VoiceSource;
 class AudioMixer final : public MixSource {
 public:
     static constexpr uint32_t kGroups = 2, kChannelsPerGroup = 24;
+    // Core 1's external-input gain for core 0's output: the AVOL register at full scale
+    // (0x7FFF / 0x8000, libsd's SdInit value), as the retained core mixes it.
+    static constexpr float kExternalInputGain = 32767.0f / 32768.0f;
     struct State {
         float master = 1;
         std::array<float, kGroups> left{1, 1}, right{1, 1};

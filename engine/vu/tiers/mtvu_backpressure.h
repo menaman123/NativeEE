@@ -6,10 +6,18 @@
 //             with hysteresis at the low-water mark (7/8) or by the stall valve
 //             (an idle worker with no shrink twice in a row);
 //   frames -- declared minus presented frames above the RunaheadGuard cap,
-//             released when presents catch up or by the guard's 100 ms valve.
+//             released when presents catch up or by the guard's 100 ms valve;
+//   hold   -- (round 5, engine.mtvu_depth_hold) the WORKER's lag in frames
+//             (marks pushed - marks passed) above the hold: more than `hold`
+//             complete frames queued ahead of the worker. Released when the
+//             worker passes a mark (WaitHoldProgress), by an i-bit stall, or
+//             by the same 100 ms valve. Never starves the worker: it parks the
+//             EE only while a whole frame of work is still queued.
 // Every park iteration runs one eager arbiter drain (under deferred
 // boundaries the parked producer is the only boundary deliverer) and waits
-// at most kPollNs on the pipeline. A shutdown flag releases any park.
+// at most kPollNs on the pipeline. A shutdown flag releases any park, and so
+// does a worker parked on a VIFcode i-bit stall (E431: the EE serves that
+// interrupt at its next dispatch point -- AFTER the walk this park sits in).
 //
 // KICK DROP (the clock contract, DT-14, play mode -- SetDropMode): the game
 // thread NEVER parks on the worker. The worker's lag is measured in FRAMES
@@ -81,8 +89,14 @@ public:
 
     uint64_t DepthFrames() const;
     uint64_t Engagements() const { return engagements_; }
+    uint64_t ParkNs() const { return park_ns_; }   // total ns the producer spent parked in Engage
     uint64_t FrameValveHits() const { return frame_valve_hits_; }
     uint64_t StallValveHits() const { return stall_valve_hits_; }
+    // Parks ended because the worker was parked on an i-bit stall (E431).
+    uint64_t IrqStallBreaks() const { return irq_stall_breaks_; }
+    // Engagements the hold arm opened (round 5) and the ones its valve released.
+    uint64_t HoldParks() const { return hold_parks_; }
+    uint64_t HoldValveHits() const { return hold_valve_hits_; }
     // Drop census: frames whose kicks were dropped, segments tagged, drop
     // episodes (a run of consecutive dropped frames), frames the bytes valve
     // cut mid-frame, the largest lag seen at a frame sync.
@@ -110,8 +124,12 @@ private:
     const std::atomic<uint64_t>* presented_ = nullptr;
     const std::atomic<bool>* running_ = nullptr;
     uint64_t engagements_ = 0;
+    uint64_t park_ns_ = 0;
     uint64_t frame_valve_hits_ = 0;
     uint64_t stall_valve_hits_ = 0;
+    uint64_t irq_stall_breaks_ = 0;
+    uint64_t hold_parks_ = 0;
+    uint64_t hold_valve_hits_ = 0;
     bool drop_mode_ = false;
     bool dropping_frame_ = false;
     uint64_t drop_frames_ = 0;

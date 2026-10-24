@@ -78,6 +78,9 @@ public:
     // STR cleared, CIS(ch) set, QWC zeroed; raises INT1 through the slot when CIS & CIM becomes non-zero.
     void CompleteChannel(int ch);
     bool CheckInterrupt() const;
+    // D_STAT.CIM(ch) as the kernel's _EnableDmac / _DisableDmac set it; raises INT1 when the
+    // newly enabled channel already has its status bit pending.
+    void SetChannelInterruptMask(int ch, bool enable);
     // Run the registered handlers of every pending, enabled channel in channel
     // order ($a0 = channel, $gp = handler gp; a -1 return stops that channel's
     // chain), then acknowledge each channel's CIS bit.
@@ -88,11 +91,24 @@ public:
     void FlushDeferredVif1();
     void ChaseVif1Tail();
     bool HasDeferredVif1() const { return deferred_.Active(); }
+    // The kicking thread blocks in a kernel wait (WaitSema / WaitEventFlag /
+    // SleepThread ...): the CPU stops appending tags and the DMA it kicked runs
+    // to completion while it sleeps, so a parked VIF1 chain is walked (its
+    // PATH2 before any PATH3) and the arbiter's queued PATH3 reaches the GS. A
+    // title that observes completion through the GS FINISH / DMAC interrupt
+    // handlers instead of a register read has no other observation point before
+    // its handler's semaphore is waited on. No effect when nothing is pending.
+    void ObserveAtKernelWait();
 
     void SetGuestCall(GuestCall fn);
     void SetSifCallback(SifCallback fn);
     void SetIpuFeedInput(IpuCallback fn);
     void SetIpuDrainOutput(IpuDrainCallback fn);
+    // Optional: the IPU input FIFO's free bytes. Bound, a toIPU transfer moves only what
+    // fits and the channel keeps STR/QWC/MADR for a later StartChannel (the hardware's
+    // eight-quadword FIFO: libmpeg reads D4_QWC and IPU_CTRL.IFC to locate the stream).
+    using IpuRoomCallback = std::function<size_t()>;
+    void SetIpuInputRoom(IpuRoomCallback fn);
     void SetInterruptRaise(InterruptRaise fn);
 
     DmacChannelRegs& channel(int ch) { return ch_[ch]; }
@@ -133,6 +149,7 @@ private:
     SifCallback sif_;
     IpuCallback ipu_feed_input_;
     IpuDrainCallback ipu_drain_output_;
+    IpuRoomCallback ipu_input_room_;
     InterruptRaise raise_;
     DmacSprTransfer spr_;
 };

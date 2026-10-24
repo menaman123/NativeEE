@@ -8,7 +8,9 @@
 // view / idle predicates.
 #include <cstdint>
 #include <cstdio>
+#include <chrono>
 #include <cstring>
+#include <thread>
 #include <vector>
 
 #include "engine/gif/gif_arbiter.h"
@@ -381,6 +383,114 @@ struct TestMtvuWorker {
         }
     }
 
+    // The VIFcode i-bit stall: UNPACK qw2, FLUSHE with the i bit, UNPACK qw4. The worker parks after
+    // the FLUSHE (STAT INT | VIS; quiescent, not idle; qw2 written, qw4 not), the EE-side Sync finds
+    // it stalled and runs the service (the "handler": FBRST.STC), after which the span resumes
+    // (qw4 written, STAT clear, idle). A worker stopped while stalled joins.
+    struct IrqRig {
+        Rig* r = nullptr;
+        int raises = 0;
+        int services = 0;
+        bool stc_from_service = true;
+        static void OnIrq(void* u, int vif) {
+            auto* self = static_cast<IrqRig*>(u);
+            if (vif != 1) return;
+            self->r->worker.EnterIrqStall([](void* x) { ++static_cast<IrqRig*>(x)->raises; }, self);
+        }
+        static void OnStc(void* u, int vif) {
+            auto* self = static_cast<IrqRig*>(u);
+            if (vif == 1) self->r->worker.ReleaseIrqStall();
+        }
+        static int Service(void* u) {
+            auto* self = static_cast<IrqRig*>(u);
+            ++self->services;
+            if (!self->stc_from_service) return -1;
+            self->r->vif.Write(Vif::kVif1Base + VifRegOffset::kFbrst, 4, VifFbrst::kStc);   // the handler's STC
+            return 1;
+        }
+    };
+    static std::vector<uint8_t> IrqChain() {
+        std::vector<uint32_t> w;
+        w.push_back(Vc(0x01, 0, 0x0101));
+        w.push_back(Vc(0x6C, 1, 2));   // UNPACK V4-32 x1 -> qw2
+        for (uint32_t i = 0; i < 4; i++) w.push_back(0x11110000u + i);
+        w.push_back(Vc(0x10, 0, 0) | 0x80000000u);   // FLUSHE, i bit
+        w.push_back(Vc(0x6C, 1, 4));   // UNPACK V4-32 x1 -> qw4
+        for (uint32_t i = 0; i < 4; i++) w.push_back(0x44440000u + i);
+        while (w.size() % 4) w.push_back(0);
+        std::vector<uint8_t> b(w.size() * 4);
+        std::memcpy(b.data(), w.data(), b.size());
+        return b;
+    }
+    static uint32_t Qw0(const VuUnit& unit, uint32_t qw) {
+        uint32_t v = 0;
+        std::memcpy(&v, unit.state().data + qw * 16, 4);
+        return v;
+    }
+    static bool WaitStalled(Rig& r) {
+        for (int i = 0; i < 20000 && !r.worker.IrqStalled(); i++) std::this_thread::sleep_for(std::chrono::microseconds(100));
+        return r.worker.IrqStalled();
+    }
+    static void IrqStall() {
+        const std::vector<uint8_t> chain = IrqChain();
+        {
+            Rig r;
+            IrqRig irq;
+            irq.r = &r;
+            r.vif.Reset();
+            r.vif.SetIrqHooks(&IrqRig::OnIrq, &IrqRig::OnStc, &irq);
+            r.sync.SetIrqStallService(&IrqRig::Service, &irq);
+            r.worker.Start();
+            r.worker.SubmitResetLatch();
+            r.worker.SubmitVif1(chain.data(), chain.size());
+            CHECK(WaitStalled(r), "the worker parks on the i-bit FLUSHE");
+            CHECK(irq.raises == 1, "the raise ran once, after the stall was published");
+            CHECK(r.worker.Quiescent() && !r.worker.WorkerIdle(), "stalled = quiescent, not idle");
+            CHECK(r.worker.IsBusy(), "a stalled worker is still busy (inflight)");
+            CHECK(Qw0(r.vu1w, 2) == 0x11110000u, "the UNPACK before the i bit landed");
+            CHECK(Qw0(r.vu1w, 4) == 0, "the UNPACK after the i bit has NOT run: the unit is stalled");
+            CHECK((r.vif.regs(1).stat & (VifStat::kInt | VifStat::kVis)) == (VifStat::kInt | VifStat::kVis), "STAT INT | VIS");
+            uint32_t stat = 0;
+            CHECK(!r.sync.TryVif1StatBusyView(&stat), "the busy view yields to the real STAT while stalled");
+            r.sync.Sync();   // the EE waits: the service runs the handler (STC), the span resumes to idle
+            CHECK(irq.services == 1, "the service ran once inside the wait");
+            CHECK(r.sync.IrqServices() == 1 && r.sync.IrqServiceRefusals() == 0, "one service, no refusal");
+            CHECK(r.worker.WorkerIdle() && !r.worker.IrqStalled(), "idle after the STC released the stall");
+            CHECK(Qw0(r.vu1w, 4) == 0x44440000u, "the UNPACK after the i bit ran after STC");
+            CHECK((r.vif.regs(1).stat & (VifStat::kInt | VifStat::kVis)) == 0, "STC cleared INT | VIS");
+            CHECK(r.worker.IrqStalls() == 1, "one stall counted");
+            CHECK(r.worker.IrqStallNs() > 0, "the stall's wall time is accounted");
+            r.worker.Stop();
+        }
+        {
+            // The service cannot run (an ISR in progress): the wait ends on the quiescent pipeline;
+            // a later STC releases; Stop while stalled joins.
+            Rig r;
+            IrqRig irq;
+            irq.r = &r;
+            irq.stc_from_service = false;
+            r.vif.Reset();
+            r.vif.SetIrqHooks(&IrqRig::OnIrq, &IrqRig::OnStc, &irq);
+            r.sync.SetIrqStallService(&IrqRig::Service, &irq);
+            r.worker.Start();
+            r.worker.SubmitResetLatch();
+            r.worker.SubmitVif1(chain.data(), chain.size());
+            CHECK(WaitStalled(r), "the worker parks on the i-bit FLUSHE (2)");
+            r.sync.Sync();
+            CHECK(irq.services == 1 && r.sync.IrqServiceRefusals() == 1, "a refused service ends the wait");
+            CHECK(r.worker.IrqStalled(), "still stalled after the refused wait");
+            CHECK(Qw0(r.vu1w, 4) == 0, "nothing ran meanwhile");
+            r.vif.Write(Vif::kVif1Base + VifRegOffset::kFbrst, 4, VifFbrst::kStc);   // the handler, later
+            r.sync.Sync();
+            CHECK(r.worker.WorkerIdle() && Qw0(r.vu1w, 4) == 0x44440000u, "the late STC resumed the span");
+            // Stop while stalled: a second chain, then Stop joins without the STC.
+            r.worker.SubmitVif1(chain.data(), chain.size());
+            CHECK(WaitStalled(r), "the worker parks again");
+            r.worker.Stop();
+            CHECK(!r.worker.IsRunning(), "Stop joined a stalled worker");
+        }
+    }
+
     static void Run() {
         InlineVsWorker();
         TteBracket();
@@ -388,6 +498,7 @@ struct TestMtvuWorker {
         BatchLayout();
         StopDrains();
         KickDrop();
+        IrqStall();
     }
 };
 

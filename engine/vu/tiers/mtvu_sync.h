@@ -20,6 +20,7 @@
 // relaxed atomics. Redirect runs on whichever thread kicks the inline unit.
 #include <atomic>
 #include <cstdint>
+#include <string>
 
 class GifArbiter;
 class MtvuWorker;
@@ -43,6 +44,38 @@ enum class SyncSite : uint8_t {
     Count
 };
 
+// The producer-side WAIT CAUSES (E430 census): every park of an EE thread on
+// the worker / the drain thread, keyed by what the EE was observing when it
+// parked. The first twelve mirror SyncSite (a Sync(site) books under the same
+// index); the rest are the waits that are not register syncs. Published as
+// run.meta `mtvu_waits=<cause>:<count>/<ns>,...` (MtvuSync::WaitCensus).
+enum class WaitCause : uint8_t {
+    Vif1RegRead = 0,       // Sync: a VIF1 register read other than STAT
+    Vif1RegWrite,          // Sync: a VIF1 register write (FBRST / MARK / ERR / ...)
+    Vu1Mem,                // Sync: a VU1 micro / data memory window access from the EE
+    SceGsSyncV,            // Sync: the terminal boundary sync (FrameSync with the deferral off)
+    SceGsSyncPath,         // Sync: sceGsSyncPath's HLE row
+    SceGsResetPath,
+    SceDmaSync,
+    SceGifSyncDma,
+    WaitVblank,
+    Vu1EeKick,             // Sync: an EE kick of the inline unit redirected to the worker
+    Other,                 // Sync: Quiesce (savestate) and unnamed callers
+    PrivPush,
+    Vif1StatPoll,          // ParkVif1StatPoll: the busy-view VIF1_STAT poll parked
+    IdleWaitBlocking,      // WaitProgress from a kernel wait that WOULD block (true idle: nothing else to run)
+    IdleWaitNonBlocking,   // WaitProgress from a kernel wait that would NOT block (the wait returns at once
+                           // after it: the EE serialised itself behind the worker for nothing)
+    IdleWaitVblankWaiter,  // WaitProgress from a kernel wait that would block while a vblank waiter exists
+                           // (the block itself would have woken it: the vblank is "now" on an idle EE)
+    IdleWaitField,         // WaitProgress from the yield point's idle runner (pipeline_wait)
+    IdleWaitOther,         // WaitProgress from an unclassified caller
+    Backpressure,          // MtvuBackpressure::Engage parked the producer (bytes / frames bound)
+    GifFence,              // MtvuStack::FenceDrain: a GIF register access fenced the drain thread
+    VsyncFence,            // the boundary's VSync job fenced the drain thread (terminal composition)
+    Count
+};
+
 class MtvuSync {
 public:
     static constexpr uint32_t kVif1StatBusyView = 0x03u | (1u << 2) | (16u << 24);
@@ -50,16 +83,94 @@ public:
 
     MtvuSync(MtvuWorker& worker, GifArbiter& arbiter);
 
+    // The wait ledger: NoteWait books one park of `ns` under `cause` (any thread; relaxed
+    // atomics). WaitScope books the enclosed block. WaitCensus() = "<cause>:<count>/<ns>,..."
+    // for the causes that occurred ("none" when nothing parked).
+    void NoteWait(WaitCause cause, uint64_t ns);
+    uint64_t WaitCount(WaitCause cause) const;
+    uint64_t WaitNs(WaitCause cause) const;
+    std::string WaitCensus() const;
+    static const char* WaitCauseName(WaitCause cause);
+    class WaitScope {
+    public:
+        WaitScope(MtvuSync& sync, WaitCause cause);
+        ~WaitScope();
+        WaitScope(const WaitScope&) = delete;
+        WaitScope& operator=(const WaitScope&) = delete;
+
+    private:
+        MtvuSync& sync_;
+        WaitCause cause_;
+        uint64_t t0_;
+    };
+
     // Wait until the worker is idle (eager-draining meanwhile), then fence the
     // drain thread. Immediate when the worker is down or on the worker thread.
+    // A completed wait (the pipeline ran empty on the EE's demand) is an
+    // observation point for the device causes the pipeline latched: the
+    // after-sync hook runs then (the root binds Intc::CollectDeferred).
     void Sync(SyncSite site = SyncSite::Other);
+    void SetAfterSyncHook(void (*fn)(void* user), void* user) {
+        after_sync_ = fn;
+        after_sync_user_ = user;
+    }
+    // The VIF1 i-bit stall service: the worker parks on an i-bit (MtvuWorker::EnterIrqStall)
+    // until the EE's interrupt handler writes FBRST.STC. An EE-side wait that finds the
+    // worker stalled runs this (on the EE thread; the root binds the INTC collect + VIF1
+    // dispatch on the running guest thread) and waits on. Returns: > 0 = the handler ran
+    // (its STC resumed the worker); 0 = nothing pending yet (the worker publishes the stall
+    // before its raise lands -- the wait polls on, bounded by kIrqPendingWaitNs); < 0 = the
+    // handler cannot run here (an ISR is in progress: the handler's own FBRST write syncs):
+    // the wait ends on the quiescent pipeline instead.
+    void SetIrqStallService(int (*fn)(void* user), void* user) {
+        irq_service_ = fn;
+        irq_service_user_ = user;
+    }
+    static constexpr uint64_t kIrqPendingWaitNs = 20'000'000;
+    uint64_t IrqServices() const { return irq_services_.load(std::memory_order_relaxed); }
+    uint64_t IrqServiceRefusals() const { return irq_service_refusals_.load(std::memory_order_relaxed); }
     // A site that would have synced skipped it under DeferOn (census only).
     void NoteSiteSkipped(SyncSite site);
     // True and `*stat` = the busy view while segments are in flight.
     bool TryVif1StatBusyView(uint32_t* stat) const;
+    // The busy view answered a VIF1_STAT read: the EE is POLLING the unit (the
+    // title's sync-path loop before its next kick). Instead of spinning the host
+    // core against the worker it waits for, park until the worker seals its
+    // last in-flight segment or falls idle (kPollNs at most), as WaitProgress
+    // does; the next read sees the result. Counted (Vif1StatPolls / Parks).
+    void ParkVif1StatPoll(bool park);   // park=false: count only
+    uint64_t Vif1StatPolls() const { return vif1_stat_polls_.load(std::memory_order_relaxed); }
+    uint64_t Vif1StatParks() const { return vif1_stat_parks_.load(std::memory_order_relaxed); }
     // Opportunistic EE-side drains of the sealed prefix (no wait).
     void TryEagerDrain();
     void TryParkDrain();
+    // The dispatch-point drain: whatever the arbiter holds that is ready -- a
+    // sealed marker OR plain EE-side slots (PATH3 packets, a FIFO-window
+    // DIRECT) queued while the worker thread exists -- reaches the GS on this
+    // thread (no wait). TryEagerDrain's hint covers sealed markers only; an
+    // EE-produced packet behind no marker has no hint and its FINISH would
+    // otherwise wait for the next unconditional drain.
+    void TryDrainPending();
+    // The idle EE's wait on the pipeline: a BLOCKING kernel wait that found no
+    // other READY guest thread while segments are in flight has nothing to run
+    // until the worker's output reaches the GS (the FINISH / SIGNAL a VIF1
+    // chain carries wakes the waiter through the INTC handler) -- the
+    // console's idle loop taking the interrupt the VU1-fed GS raises. Drains
+    // the sealed prefix, then parks until the worker idles or a newer seal
+    // lands (kPollNs at most), then drains again. With the GIF drain thread
+    // up the parser's deliveries are the pipeline's tail: an idle worker with
+    // packets still in flight on that thread parks on its next completed pass
+    // instead (the FINISH it raises arrives through the event queue). Returns
+    // true when the worker is idle and nothing is in flight after the drain
+    // (nothing more will arrive: block for real); false = progress was
+    // delivered and the pipeline still runs (the caller applies the queued
+    // events, re-checks its interrupts and calls again). Immediate (true) when
+    // the worker is down, on the worker thread, or nested inside a drain.
+    // Booked as `vu1wait`; counted (ProgressWaits / ProgressIdle) and in the
+    // wait ledger under `cause` (the caller's classification of its kernel wait).
+    bool WaitProgress(WaitCause cause = WaitCause::IdleWaitOther);
+    uint64_t ProgressWaits() const { return progress_waits_.load(std::memory_order_relaxed); }
+    uint64_t ProgressIdle() const { return progress_idle_.load(std::memory_order_relaxed); }
     // Frame boundaries are deferred: the worker runs.
     bool DeferOn() const;
 
@@ -77,4 +188,20 @@ private:
     GifArbiter& arbiter_;
     std::atomic<uint64_t> sync_count_[static_cast<size_t>(SyncSite::Count)];
     std::atomic<uint64_t> skipped_count_[static_cast<size_t>(SyncSite::Count)];
+    std::atomic<uint64_t> progress_waits_{0};
+    std::atomic<uint64_t> vif1_stat_polls_{0};
+    std::atomic<uint64_t> vif1_stat_parks_{0};
+    std::atomic<uint64_t> progress_idle_{0};
+    std::atomic<uint64_t> wait_count_[static_cast<size_t>(WaitCause::Count)];
+    std::atomic<uint64_t> wait_ns_[static_cast<size_t>(WaitCause::Count)];
+    void (*after_sync_)(void* user) = nullptr;
+    void* after_sync_user_ = nullptr;
+    int (*irq_service_)(void* user) = nullptr;
+    void* irq_service_user_ = nullptr;
+    std::atomic<uint64_t> irq_services_{0};
+    std::atomic<uint64_t> irq_service_refusals_{0};
+    // The worker is stalled on an i-bit: run the service, polling (bounded) while the cause
+    // has not landed. True = the handler ran (the wait goes on); false = it cannot run here
+    // or never became pending (the wait ends: quiescent).
+    bool ServiceIrqStall();
 };

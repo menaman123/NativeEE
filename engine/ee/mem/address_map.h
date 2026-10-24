@@ -7,7 +7,8 @@
 //                          image, BIOS) by VIRTUAL address; anything else in
 //                          the window is unmapped (nullptr) -- MMIO registers
 //                          are served by MmioRouter, not by pointer
-//   3. main RAM + mirrors  phys = addr & 0x1FFFFFFF, phys < 32 MB (KUSEG/KSEG0/KSEG1)
+//   3. main RAM + mirrors  phys = MainMemory::Phys(addr), phys < 32 MB (KUSEG/KSEG0/
+//                          KSEG1 and the kernel's uncached / UCAB windows)
 //   4. extra regions       registered by PHYSICAL address above RAM (a title
 //                          registers its non-hardware arena here)
 //   5. BIOS mirror         phys in 0x1FC00000..0x1FFFFFFF
@@ -50,6 +51,7 @@ public:
     const std::vector<Region>& ExtraRegions() const { return extra_regions_; }
     uint8_t* IoImage() { return io_image_.data(); }
     uint8_t* Bios() { return bios_.data(); }
+    Scratchpad& Spad() { return spad_; }
 
 private:
     static uint8_t* InRegion(const Region& r, uint32_t addr, size_t size);

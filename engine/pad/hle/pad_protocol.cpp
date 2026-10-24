@@ -61,12 +61,17 @@ void PadProtocol::WriteReadySlot(uint32_t slot, uint16_t wire, const Input& in, 
     // Pressure bytes in padButtonStatus order; a closed contact reports full pressure.
     static const uint8_t kPressureBit[12] = {5, 7, 4, 6, 12, 13, 14, 15, 10, 11, 8, 9};
     for (uint32_t i = 0; i < 12; i++) W8(slot + 0x08 + i, (wire & (1u << kPressureBit[i])) ? 0x00 : 0xFF);
+    // The DualShock 2 descriptors libpad's scePadInfoAct / scePadInfoMode read
+    // from the slot: the actuator table [actno][term-1] and the mode table.
+    for (uint32_t i = 0; i < kActuators * 4; i++) W8(slot + 0x30 + i, kActuatorTable[i / 4][i % 4]);
+    for (uint32_t i = 0; i < kModeCount; i++) W16(slot + 0x50 + i * 2, kModeTable[i]);
     W8(slot + 0x60, 0x20);
     W8(slot + 0x64, 0x02);
     W8(slot + 0x65, kModeCurIdAnalog);
     W8(slot + 0x66, 0x02);
-    W8(slot + 0x68, 0x10);
-    W8(slot + 0x6A, 0x10);
+    W8(slot + 0x68, kModeCount);
+    W8(slot + 0x69, kModeCurOffset);
+    W8(slot + 0x6A, kActuators);
     W8(slot + 0x70, kStateStable);
     W8(slot + 0x71, kReqComplete);
     W8(slot + 0x72, 0x01);

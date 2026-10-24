@@ -18,6 +18,8 @@ public:
 
     void CpuSuspendIntr(IopContext& ctx);   // int CpuSuspendIntr(int* state)
     void CpuResumeIntr(IopContext& ctx);    // int CpuResumeIntr(int state)
+    void CpuDisableIntr(IopContext& ctx);   // int CpuDisableIntr() -> 0 (idx 8)
+    void CpuEnableIntr(IopContext& ctx);    // int CpuEnableIntr() -> 0 (idx 9)
 
     uint64_t SuspendCount() const { return suspends_.load(std::memory_order_relaxed); }
     uint64_t ResumeCount() const { return resumes_.load(std::memory_order_relaxed); }

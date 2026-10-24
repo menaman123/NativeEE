@@ -11,6 +11,24 @@
   objects it constructs on its own frame, hands later phases pointers through `EeBootstrap::LegState`
   (leg_state.h, private to these TUs) and tail-calls the next, so destruction runs in reverse construction
   order as one scope would; an early return ends the leg
+- `Vu1AotCache` (vu1_aot_cache.h/.cpp): the VU1 AOT tier's persistent side -- `<user_data>/vu1_aot/corpus/` (the
+  title's `Vu1Case` corpus, collected at first run through the tier's kick observer, quota per image) and
+  `<user_data>/vu1_aot/<build token>/manifest.txt` (one verdict row per image: hash, status, cases, corpus hash,
+  engine build, time, bundles, divergence); `Open` seeds the tier from the manifest and queues the unjudged
+  corpus, a verifier thread runs `Vu1AotVerifier` and publishes the verdicts (the frame never waits), `Close`
+  joins; `CensusRow` is the run.meta `vu1_aot=` row. A title composition constructs it on the LIVE VU1 unit when
+  `engine.vu1_mode=aot`; with a builder attached (`SetBuilder`) every image judged Verified is handed over with its corpus
+- `Vu1AotBuilder` (vu1_aot_builder.h/.cpp): the run-time half of the VU1 code generator (`engine.vu1_aot_codegen`):
+  finds a C++ compiler (`engine.vu1_aot_compiler`, else the one that built the engine, `/usr/bin/clang++`, `c++`,
+  `g++`, `clang++` -- probed with `--version` through `ps2r::host::ProcessRun`, no environment read), stages the
+  prelude headers under `<user_data>/vu1_aot/<build token>/include/`, and on its worker thread(s) per verified image:
+  `Vu1AotEmitter` -> `<image>.cpp` -> `-O2 -std=c++17 -fPIC -shared` + the engine's VU flags -> `<image>.O<n>.<dylib|so>`
+  (reused on the next run of the same build) -> `DynamicLibraryOpen` + `vu1_aot_exports_<hash>()` (abi, slot size,
+  hash, engine build checked) -> `Vu1AotVerifier::Verify(cases, exports)` (the gate again, on the loaded code) ->
+  `Vu1AotTier::SetNativeExports` (the VU thread installs at the next kick) | refused: artefact deleted. `native.txt`
+  rows (status, compiler, opt, blocks, ops, compile / verify ms, bytes); `CensusRow` = the run.meta
+  `vu1_aot_codegen=` row; `BuildNow` = the synchronous path of the tests. Declared before the cache, destroyed after
+  it (the tier may hold its functions until the VU is quiet). No compiler = one notice, the specialised tier continues
 
 ## Does not belong here
 

@@ -43,8 +43,18 @@ void VertexKick::PackedXyz(bool kick_reg, uint64_t lo, uint64_t hi) {
 }
 
 void VertexKick::OnPrimWritten() {
-    vertex_queue_.clear();
+    QueueClear();
     strip_count_ = 0;
+}
+
+void VertexKick::QueueEraseFront() {
+    for (int i = 1; i < queue_n_; ++i) queue_[i - 1] = queue_[i];
+    if (queue_n_ > 0) --queue_n_;
+}
+
+void VertexKick::QueueEraseAt(int at) {
+    for (int i = at + 1; i < queue_n_; ++i) queue_[i - 1] = queue_[i];
+    if (at < queue_n_) --queue_n_;
 }
 
 void VertexKick::Kick(float x, float y, float z, uint8_t f, bool draw) {
@@ -84,35 +94,59 @@ int VertexKick::Needed(uint8_t prim) {
 }
 
 void VertexKick::AssembleStrip(bool draw) {
-    while (vertex_queue_.size() > 3) vertex_queue_.erase(vertex_queue_.begin());
+    while (queue_n_ > 3) QueueEraseFront();
     if (!draw) {
         strip_count_ = 0;  // strip restart; the vertex stays in the window
         return;
     }
-    if (vertex_queue_.size() != 3) return;
-    const VertexRec& q0 = vertex_queue_[0];
-    const VertexRec& q1 = vertex_queue_[1];
-    const VertexRec& q2 = vertex_queue_[2];
+    if (queue_n_ != 3) return;
+    const VertexRec& q0 = queue_[0];
+    const VertexRec& q1 = queue_[1];
+    const VertexRec& q2 = queue_[2];
     const bool degen = (q0.x == q1.x && q0.y == q1.y) || (q1.x == q2.x && q1.y == q2.y) ||
                        (q0.x == q2.x && q0.y == q2.y);
     if (degen) {
         strip_count_++;
         return;
     }
-    if (strip_count_ % 2 == 0) {
-        draw_buffer_.push_back(q0);
-        draw_buffer_.push_back(q1);
-        draw_buffer_.push_back(q2);
-    } else {
-        draw_buffer_.push_back(q1);
-        draw_buffer_.push_back(q0);
-        draw_buffer_.push_back(q2);
-    }
+    if (strip_count_ % 2 == 0) PushTriangle(q0, q1, q2);
+    else PushTriangle(q1, q0, q2);
     strip_count_++;
 }
 
+// IIP = 0: the colour of the vertex that completes the primitive (the last of the
+// n) is the primitive's colour (GS User's Manual 3.4.1 flat shading); fog, z and
+// the texture coordinates stay per vertex.
+void VertexKick::PushPrimitive(const VertexRec* v, int n) {
+    const bool flat = !regs_->prim.gouraud && n > 1;
+    const VertexRec& last = v[n - 1];
+    for (int i = 0; i < n; ++i) {
+        draw_buffer_.push_back(v[i]);
+        if (flat) {
+            VertexRec& out = draw_buffer_.back();
+            out.r = last.r; out.g = last.g; out.b = last.b; out.a = last.a;
+        }
+    }
+}
+
+// The strip's triangle in the given winding; `c` is the vertex whose kick
+// completed it (the flat colour), in every winding.
+void VertexKick::PushTriangle(const VertexRec& a, const VertexRec& b, const VertexRec& c) {
+    const bool flat = !regs_->prim.gouraud;
+    const size_t base = draw_buffer_.size();
+    draw_buffer_.push_back(a);
+    draw_buffer_.push_back(b);
+    draw_buffer_.push_back(c);
+    if (flat) {
+        for (size_t i = base; i < base + 2; ++i) {
+            VertexRec& out = draw_buffer_[i];
+            out.r = c.r; out.g = c.g; out.b = c.b; out.a = c.a;
+        }
+    }
+}
+
 void VertexKick::Assemble(const VertexRec& v, bool draw) {
-    vertex_queue_.push_back(v);
+    QueuePush(v);
     const uint8_t prim = regs_->prim.type;
     if (prim == kTriangleStrip) {
         AssembleStrip(draw);
@@ -120,48 +154,42 @@ void VertexKick::Assemble(const VertexRec& v, bool draw) {
     }
     const int needed = Needed(prim);
     if (draw) {
-        if (static_cast<int>(vertex_queue_.size()) >= needed) FlushPrimitive();
+        if (queue_n_ >= needed) FlushPrimitive();
     } else {
         strip_count_ = 0;
-        if (static_cast<int>(vertex_queue_.size()) >= needed) {
+        if (queue_n_ >= needed) {
             // ADC consume: the primitive completes without drawing.
             switch (prim) {
-                case kLineStrip: vertex_queue_.erase(vertex_queue_.begin()); break;
-                case kTriangleFan: vertex_queue_.erase(vertex_queue_.begin() + 1); break;
-                default: vertex_queue_.clear(); break;
+                case kLineStrip: QueueEraseFront(); break;
+                case kTriangleFan: QueueEraseAt(1); break;
+                default: QueueClear(); break;
             }
         }
     }
-    if (vertex_queue_.size() > 3) vertex_queue_.erase(vertex_queue_.begin());
+    if (queue_n_ > 3) QueueEraseFront();
 }
 
 void VertexKick::FlushPrimitive() {
     switch (regs_->prim.type) {
         case kPoint:
-            draw_buffer_.push_back(vertex_queue_.back());
-            vertex_queue_.clear();
+            draw_buffer_.push_back(queue_[queue_n_ - 1]);
+            QueueClear();
             break;
         case kLine:
-            draw_buffer_.push_back(vertex_queue_[0]);
-            draw_buffer_.push_back(vertex_queue_[1]);
-            vertex_queue_.clear();
+            PushPrimitive(queue_, 2);
+            QueueClear();
             break;
         case kLineStrip:
-            draw_buffer_.push_back(vertex_queue_[0]);
-            draw_buffer_.push_back(vertex_queue_[1]);
-            vertex_queue_.erase(vertex_queue_.begin());
+            PushPrimitive(queue_, 2);
+            QueueEraseFront();
             break;
         case kTriangle:
-            draw_buffer_.push_back(vertex_queue_[0]);
-            draw_buffer_.push_back(vertex_queue_[1]);
-            draw_buffer_.push_back(vertex_queue_[2]);
-            vertex_queue_.clear();
+            PushPrimitive(queue_, 3);
+            QueueClear();
             break;
         case kTriangleFan:
-            draw_buffer_.push_back(vertex_queue_[0]);
-            draw_buffer_.push_back(vertex_queue_[1]);
-            draw_buffer_.push_back(vertex_queue_[2]);
-            vertex_queue_.erase(vertex_queue_.begin() + 1);
+            PushPrimitive(queue_, 3);
+            QueueEraseAt(1);
             break;
         case kSprite:
             EmitSprite();
@@ -174,8 +202,8 @@ void VertexKick::FlushPrimitive() {
 // Sprite (3.2.6): the two kicked vertices are opposite corners; the GS fills the
 // axis-aligned rectangle with the second vertex's z, fog and (flat) colour.
 void VertexKick::EmitSprite() {
-    VertexRec v0 = vertex_queue_[0];
-    VertexRec v1 = vertex_queue_[1];
+    VertexRec v0 = queue_[0];
+    VertexRec v1 = queue_[1];
     if (quirks_.round_sprite_mode == 1) {
         if (v0.x > v1.x) {
             std::swap(v0.x, v1.x);
@@ -208,7 +236,7 @@ void VertexKick::EmitSprite() {
     draw_buffer_.push_back(tr);
     draw_buffer_.push_back(br);
     draw_buffer_.push_back(bl);
-    vertex_queue_.clear();
+    QueueClear();
 }
 
 }  // namespace gs

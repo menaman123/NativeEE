@@ -7,7 +7,15 @@
 //
 //   PumpAtBoundary     -> BoundarySequencer::Step::IopDispatch (slot 5):
 //                         advance the frame clock by one quantum, then dispatch
-//                         with forced advances bounded by the frame ceiling.
+//                         with forced advances bounded by the frame ceiling --
+//                         once per FIELD the boundary delivered (`fields`, min
+//                         1): the IOP's frame clock follows the title's field
+//                         clock (EmuDomain::DomainTick), not the boundary
+//                         count, so a late play-mode boundary that delivers N
+//                         fields (BoundarySequencer rule 3) also runs the IOP's
+//                         N quanta -- BEFORE the Verify slot mixes the N SPU
+//                         quanta of those fields. Under the deterministic
+//                         profile every boundary is exactly one field.
 //   PumpAfterEeService -> Step::EeStreamRpc (slot 6): after the EE services a
 //                         worker marshal (reply copy-back + NotifyEeReply), the
 //                         woken parkee runs within the same boundary.
@@ -51,6 +59,8 @@ public:
         std::string name;      // RegisterLibraryEntries name (e.g. "sio2man") or the IRX file stem
         uint32_t    version = 0;
         int         rpc_tid = 0;   // the module's RPC-dispatch thread, 0 = none
+        // The image as loaded (modload's ReferModuleStatus answers from these; 0 = no image hosted).
+        uint32_t    entry = 0, gp = 0, text_addr = 0, text_size = 0, data_size = 0, bss_size = 0;
     };
 
     explicit IopModuleTable(IopClock::Policy policy);
@@ -66,20 +76,27 @@ public:
     IopClock::Policy Policy() const { return frame_ ? IopClock::Policy::Frame : IopClock::Policy::Realtime; }
 
     // Module registration (the loader records each module it brought up).
+    // Returns the row index; module ids handed to guests are index + 1.
     int  RegisterModule(const std::string& name, uint32_t version, int rpc_tid = 0);
+    int  RegisterModule(const ModuleEntry& entry);
     const std::vector<ModuleEntry>& Modules() const { return modules_; }
+    const ModuleEntry* FindModule(const std::string& name) const;
     size_t ModuleCount() const { return modules_.size(); }
+    // Savestate restore: drops the rows past `count` (the rows a restored image re-registers).
+    void TruncateModules(size_t count);
     // Comma-separated "name:version" list in registration order (run.meta iop_modules=).
     std::string ModulesCensus() const;
 
-    // Called once after the title's module entry has created and started its
-    // threads: run every started thread to its first block on the caller's
-    // thread, then start the host thread under REALTIME.
+    // Called after a module entry has created and started its threads: run
+    // every started thread to its first block on the caller's thread; the first
+    // call also records the RPC tid and starts the host thread under REALTIME.
+    // Callable once per hosted module (each boots to its first block in turn).
     void OnModuleLoaded(int rpc_tid);
     bool Booted() const { return booted_; }
 
     // FRAME-policy pump points (no-ops otherwise / before boot).
-    void PumpAtBoundary();
+    // `fields` = the fields this boundary delivered (0 is treated as 1).
+    void PumpAtBoundary(uint64_t fields = 1);
     void PumpAfterEeService();
     void PumpFromParkLoop();
     bool PumpWithinFrame();

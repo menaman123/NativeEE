@@ -40,8 +40,24 @@ ps2r_gif_test(test_gif_arbiter_order GifArbiterOrder)
 # GifMarkerOwner) delivered in order on the drain thread, boundary slot once
 # in stream position, DrainFence drained-to-mark, idle generation, foreign
 # drain() == kick, Stop with an unsealed marker joins without delivering
-# behind it, restart. Order/count/thread-identity checks only.
+# behind it, restart; the EE's idle view (DrainInFlight / WaitDrainPassAfter /
+# the busy ledger) and a pass fault rethrown on the producer's drain().
+# Order/count/thread-identity checks only.
 ps2r_gif_test(test_gif_drain_thread GifDrainThread)
+
+# GifEarlyFinish (E425): GifFinishScan counts exactly the parser's A+D FINISH
+# writes (PACKED found; REGLIST / IMAGE / FLG 3 / NLOOP 0 not; split anywhere);
+# VifFinishScan agrees with the real Vif + parser on 120 randomized VIF1 streams
+# (every UNPACK format / CL-WL mode, MPG, STMASK/STROW/STCOL, DIRECT/DIRECTHL,
+# TTE quadwords, latch resets); the arbiter pre-raises a PATH3 FINISH once on the
+# EE thread while the worker runs, delivers it in stream order behind the
+# unsealed marker (GifArbiterOrder with a pre-raised FINISH in flight), the
+# consume rule, inert without a worker / raiser, clear(). Links ps2r_vif for the Vif.
+add_executable(test_gif_early_finish test_gif_early_finish.cpp counting_gs_sink.cpp)
+target_link_libraries(test_gif_early_finish PRIVATE ps2r_vif ps2r_gif ps2r_gs_ir)
+target_compile_options(test_gif_early_finish PRIVATE -Wall -Wextra -Werror -O2)
+add_test(NAME GifEarlyFinish COMMAND test_gif_early_finish)
+set_tests_properties(GifEarlyFinish PROPERTIES TIMEOUT 120)
 
 # GifDeferBoundaryOrder: frame boundaries as ordered command slots under
 # inline drains -- the directed interleaving matrix (sealed before/after the
@@ -57,12 +73,14 @@ ps2r_gif_test(test_gif_defer_boundary_order GifDeferBoundaryOrder)
 # RegisterOpStream) must reproduce the op count + hash recorded in
 # fixtures/gsops_seed.txt (126 lines, generated once at stage 5C). SKIP 77 when
 # the frozen corpus is absent.
+if(TARGET vu1_replay)   # the corpus tool is optional in this tree (tools/vu1_replay may define no executable)
 add_test(NAME Vu1GsopsSeed
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/gif/check_gsops_seed.py
             --tool $<TARGET_FILE:vu1_replay>
             --cases ${PS2R_OG_ROOT}/vutrace_cases2
             --seed ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/gsops_seed.txt)
 set_tests_properties(Vu1GsopsSeed PROPERTIES TIMEOUT 600 SKIP_RETURN_CODE 77)
+endif()
 
 # GsStateSink / GsSinkFanout (integration item 6.4): synthetic GIF streams through
 # GifParser(fanout{GsStateSink, RegisterOpStream}) -- A+D writes decoded in the
@@ -76,8 +94,9 @@ set_tests_properties(Vu1GsopsSeed PROPERTIES TIMEOUT 600 SKIP_RETURN_CODE 77)
 add_executable(test_gs_state_sink test_gs_state_sink.cpp)
 target_link_libraries(test_gs_state_sink PRIVATE ps2r_gif_hle)
 target_compile_options(test_gs_state_sink PRIVATE -Wall -Wextra -Werror -O2)
-foreach(pair "GsStateSinkAdWrites;ad" "GsStateSinkPackedItems;packed" "GsStateSinkImageUpload;image"
-        "GsStateSinkEopFlush;eop" "GsSinkFanoutForwards;fanout" "GsStateSinkFinishPath3;path3"
+foreach(pair "GsStateSinkAdWrites;ad" "GsStateSinkPackedItems;packed" "GsStateSinkPackedFlat;packedflat"
+        "GsStateSinkImageUpload;image"
+        "GsStateSinkEopFlush;eop" "GsSinkFanoutForwards;fanout" "GsStateSinkFinishPath3;path3" "GsStateSinkRecorderExtrasOff;extras"
         "GsStateSinkIdentityStamp;identity" "GsStateSinkAttribution;attribution")
     list(GET pair 0 tname)
     list(GET pair 1 arg)

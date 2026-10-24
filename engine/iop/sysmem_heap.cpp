@@ -5,6 +5,9 @@
 
 namespace ps2r::iop {
 
+SysmemHeap::SysmemHeap(const Layout& layout) : layout_(layout), heap_ptr_(layout.floor) {}
+
+
 void SysmemHeap::ResetTransient() {
     alloc_sizes_.clear();
     free_blocks_.clear();
@@ -16,8 +19,8 @@ void SysmemHeap::RestoreHeapPtr(uint32_t heap_ptr) {
 }
 
 uint32_t SysmemHeap::Alloc(uint32_t size) {
-    size = (size + 15) & ~15u;
-    if (size == 0) size = 16;
+    size = (size + (kBlockUnit - 1)) & ~(kBlockUnit - 1);
+    if (size == 0) size = kBlockUnit;
 
     // First fit from the free list.
     for (auto it = free_blocks_.begin(); it != free_blocks_.end(); ++it) {
@@ -33,12 +36,12 @@ uint32_t SysmemHeap::Alloc(uint32_t size) {
     }
     // Bump path: never hand out bytes overlapping the stack band; the sub-band
     // remainder becomes an ordinary free block.
-    if (heap_ptr_ < kStackBandHi && heap_ptr_ + size > kStackBandLo) {
-        if (heap_ptr_ < kStackBandLo) free_blocks_[heap_ptr_] = kStackBandLo - heap_ptr_;
-        heap_ptr_ = kStackBandHi;
+    if (heap_ptr_ < layout_.stack_band_hi && heap_ptr_ + size > layout_.stack_band_lo) {
+        if (heap_ptr_ < layout_.stack_band_lo) free_blocks_[heap_ptr_] = layout_.stack_band_lo - heap_ptr_;
+        heap_ptr_ = layout_.stack_band_hi;
     }
     // Arena exhaustion: fail instead of growing into the scratch stacks.
-    if (heap_ptr_ + size > kCeiling || heap_ptr_ + size < size) return 0;
+    if (heap_ptr_ + size > layout_.ceiling || heap_ptr_ + size < size) return 0;
     const uint32_t addr = heap_ptr_;
     heap_ptr_ += size;
     alloc_sizes_[addr] = size;
@@ -76,18 +79,23 @@ uint32_t SysmemHeap::Free(uint32_t addr) {
 
 uint32_t SysmemHeap::QueryMaxFree() const {
     uint32_t free_size;
-    if (heap_ptr_ <= kStackBandLo) {
-        free_size = kStackBandLo - heap_ptr_;
-        const uint32_t above = kCeiling - kStackBandHi;
+    if (heap_ptr_ <= layout_.stack_band_lo) {
+        free_size = layout_.stack_band_lo - heap_ptr_;
+        const uint32_t above = layout_.ceiling - layout_.stack_band_hi;
         if (above > free_size) free_size = above;
-    } else if (heap_ptr_ < kStackBandHi) {
-        free_size = kCeiling - kStackBandHi;   // the tail is never placed inside the band
+    } else if (heap_ptr_ < layout_.stack_band_hi) {
+        free_size = layout_.ceiling - layout_.stack_band_hi;   // the tail is never placed inside the band
     } else {
-        free_size = (heap_ptr_ <= kCeiling) ? (kCeiling - heap_ptr_) : 0;
+        free_size = (heap_ptr_ <= layout_.ceiling) ? (layout_.ceiling - heap_ptr_) : 0;
     }
     for (const auto& kv : free_blocks_)
         if (kv.second > free_size) free_size = kv.second;
     return free_size;
+}
+
+uint32_t SysmemHeap::BlockSize(uint32_t addr) const {
+    auto it = alloc_sizes_.find(addr);
+    return it == alloc_sizes_.end() ? 0 : it->second;
 }
 
 }  // namespace ps2r::iop

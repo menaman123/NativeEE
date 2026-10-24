@@ -24,7 +24,8 @@ public:
     using GuestFunction = std::function<void(IopContext&)>;
     using FunctionResolver = std::function<GuestFunction(uint32_t addr)>;
 
-    // The handler's scratch stack and the module $gp (title data).
+    // The handler's scratch stack and the module $gp (title data; gp 0 = the
+    // $gp of the thread that called SetTimerHandler, for several hosted modules).
     struct TimerLayout {
         uint32_t handler_sp = 0;
         uint32_t gp = 0;
@@ -42,6 +43,7 @@ public:
     void SetTimerHandler(IopContext& ctx);   // int (id, compare, handler, arg) -> 0
     void SetupHardTimer(IopContext& ctx);    // int (id, source, mode, prescale) -> 0
     void StartHardTimer(IopContext& ctx);    // int (id) -> 0; arms the periodic beat
+    void StopHardTimer(IopContext& ctx);     // int (id) -> 0; stops a running beat (the timer stays allocated)
 
     // compare sysclock ticks -> the beat period in microseconds (clamped).
     static uint64_t PeriodUsec(uint32_t compare);
@@ -64,6 +66,22 @@ public:
     ps2r::IopRestoredTimerDue RestoredTimerDue() const { return restored_due_; }
     // Savestate restore: a hard timer the image records as freed is stopped.
     void ReleaseHardTimer(int id);
+    // One hard timer's descriptor as a savestate section carries it (ids 1..4).
+    struct TimerRecord {
+        bool allocated = false, running = false;
+        uint32_t handler = 0, arg = 0, compare = 0, gp = 0;
+        // The beat's phase: kernel-clock microseconds from the record's instant to
+        // the next due (0 = unknown: the restored-timer due rule applies instead).
+        uint64_t remaining_us = 0;
+    };
+    TimerRecord ExportTimer(int id) const;
+    // Savestate restore of one record: the timer is released first (a live beat
+    // stopped), then, when allocated, its descriptor is installed and -- when the
+    // record says running -- the beat re-armed with the RECORDED $gp at the
+    // recorded phase (first due = now + remaining_us, clamped to one period), or
+    // under the restored-timer due rule when the record has no phase. Returns
+    // true when a beat was armed.
+    bool RestoreTimerRecord(int id, const TimerRecord& record);
 
     bool Running(int id) const;
     int KernelTimerId(int id) const;
@@ -75,11 +93,13 @@ private:
         uint32_t handler = 0;
         uint32_t arg = 0;
         uint32_t compare = 0;
+        uint32_t gp = 0;          // the registering thread's $gp when the layout's gp is 0
         int kernel_timer_id = -1;
     };
     HardTimer* Timer(uint32_t id);
     const HardTimer* Timer(uint32_t id) const;
     bool Arm(HardTimer* t, bool due_now);   // the periodic beat StartHardTimer arms (first due now, or now + period)
+    bool ArmAt(HardTimer* t, uint64_t first_due_us);   // the same beat with an explicit first due
 
     IopModuleTable& table_;
     FunctionResolver resolve_;

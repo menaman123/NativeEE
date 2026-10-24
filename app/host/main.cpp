@@ -13,6 +13,9 @@
 #include <iostream>
 
 #include "app/host/build_id.h"
+#ifdef PS2R_TITLE_HAS_PLAY
+#include "engine/title/title_play.h"
+#endif
 
 namespace {
 
@@ -67,6 +70,11 @@ int main(int argc, char** argv) {
             "Run `nativeee --help` for what a title module is and where it goes.\n";
         return 2;
     }
+#ifdef PS2R_TITLE_HAS_PLAY
+    // The linked title module supplies the play composition (ps2r_title_play,
+    // engine/title/title_play.h): it owns the argument parsing from here on.
+    return TitlePlayMain(argc, argv);
+#endif
     // A title is linked but this build carries no play composition: the title module owns it
     // (games/<serial>_<slug>/), and a module that does not provide one cannot boot.
     std::cerr << "nativeee: title '" << kTitleId

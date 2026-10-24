@@ -67,6 +67,9 @@ public:
     void RegisterServer(uint32_t server_id, Server& server, const char* name);
     const Server* FindServer(uint32_t server_id) const;
     const char* ServerName(uint32_t server_id) const;
+    // Every registered server id, registration order (a composition resolving a
+    // client's handle word back to its id after a restore).
+    std::vector<uint32_t> ServerIds() const;
 
     int Bind(uint32_t client_addr, uint32_t server_id);   // slot index, -1 when full
     const Binding* FindByClient(uint32_t client_addr) const;

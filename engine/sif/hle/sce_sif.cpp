@@ -1,6 +1,8 @@
 #include "engine/sif/hle/sce_sif.h"
 
 #include <cstdio>
+#include <deque>
+#include <map>
 
 #include "engine/ee/cpu/guest_park.h"
 #include "engine/ee/hle/sdk_binding_manifest.h"
@@ -51,6 +53,7 @@ const Row kRegisteredRows[] = {
     {"sceSifSyncIop", &SceSif::SyncIop},
     {"sceSifInitRebootNotify", &SceSif::InitRebootNotify},
     {"sceFsSifCallRpc", &SceSif::FsSifCallRpc},
+    {"sceSifLoadModuleBuffer", &SceSif::LoadModuleBuffer},
 };
 const char* g_row_names[kRowCount];
 
@@ -105,7 +108,77 @@ void SceSif::InitRpc(CpuContext& ctx) {
 }
 
 void SceSif::InitCmd(CpuContext& ctx) { Ret(ctx, 0); }
-void SceSif::AddCmdHandler(CpuContext& ctx) { Ret(ctx, 0); }
+namespace {
+struct CmdHandler { uint32_t handler = 0, arg = 0, gp = 0; };
+struct PendingCmd { uint32_t cid = 0, packet_addr = 0; };
+SceSif::CmdBuffer g_cmd_buffer;
+SceSif::GuestCall g_cmd_guest_call;
+std::map<uint32_t, CmdHandler> g_cmd_handlers;
+std::deque<PendingCmd> g_pending_cmds;
+uint32_t g_cmd_slot = 0;
+uint64_t g_cmds_delivered = 0, g_cmds_dropped = 0;
+}  // namespace
+
+// int sceSifAddCmdHandler(u32 cid, handler, arg): the (cid -> handler, arg) record the
+// SIF interrupt dispatches a received command packet to.
+void SceSif::AddCmdHandler(CpuContext& ctx) {
+    // libkernl keeps {handler, arg, gp} per id: the handler runs with the registering caller's $gp.
+    g_cmd_handlers[A(ctx, 0)] = CmdHandler{A(ctx, 1), A(ctx, 2), ctx.cpuRegs.GPR.r[28].UL[0]};
+    Ret(ctx, 0);
+}
+
+void SceSif::SetCmdBuffer(CmdBuffer buffer) { g_cmd_buffer = buffer; }
+void SceSif::SetGuestCall(GuestCall call) { g_cmd_guest_call = std::move(call); }
+size_t SceSif::PendingCommands() { return g_pending_cmds.size(); }
+uint64_t SceSif::CommandsDelivered() { return g_cmds_delivered; }
+uint64_t SceSif::CommandsDropped() { return g_cmds_dropped; }
+
+bool SceSif::QueueCommand(uint32_t cid, const uint8_t* packet, uint32_t size) {
+    if (!g_cmd_buffer.addr || !packet || size == 0 || size > g_cmd_buffer.slot_bytes) {
+        ++g_cmds_dropped;
+        std::fprintf(stderr, "sif: command 0x%08x (%u bytes) dropped: %s\n", cid, size,
+                     g_cmd_buffer.addr ? "packet larger than a buffer slot" : "no EE command buffer bound");
+        return false;
+    }
+    const uint32_t slot = g_cmd_buffer.addr + (g_cmd_slot % g_cmd_buffer.slots) * g_cmd_buffer.slot_bytes;
+    ++g_cmd_slot;
+    for (uint32_t i = 0; i < size; ++i) memory::write<uint8_t>(slot + i, packet[i]);
+    g_pending_cmds.push_back(PendingCmd{cid, slot});
+    return true;
+}
+
+int SceSif::DeliverPendingCommands(CpuContext& ctx) {
+    int ran = 0;
+    while (!g_pending_cmds.empty()) {
+        const PendingCmd cmd = g_pending_cmds.front();
+        g_pending_cmds.pop_front();
+        auto it = g_cmd_handlers.find(cmd.cid);
+        if (it == g_cmd_handlers.end() || it->second.handler == 0 || !g_cmd_guest_call) {
+            ++g_cmds_dropped;
+            std::fprintf(stderr, "sif: command 0x%08x dropped: %s\n", cmd.cid,
+                         g_cmd_guest_call ? "no sceSifAddCmdHandler handler for this id" : "no guest call bound");
+            continue;
+        }
+        const auto a0 = ctx.cpuRegs.GPR.r[4], a1 = ctx.cpuRegs.GPR.r[5], v0 = ctx.cpuRegs.GPR.r[2],
+                   v1 = ctx.cpuRegs.GPR.r[3], ra = ctx.cpuRegs.GPR.r[31], gp = ctx.cpuRegs.GPR.r[28];
+        const uint32_t pc = ctx.cpuRegs.pc;
+        ctx.cpuRegs.GPR.r[4].UD[0] = cmd.packet_addr;
+        ctx.cpuRegs.GPR.r[5].UD[0] = it->second.arg;
+        if (it->second.gp) ctx.cpuRegs.GPR.r[28].UD[0] = it->second.gp;
+        ctx.cpuRegs.GPR.r[31].UD[0] = RpcRouter::kReturnSentinel;
+        g_cmd_guest_call(it->second.handler, ctx);
+        ctx.cpuRegs.GPR.r[4] = a0;
+        ctx.cpuRegs.GPR.r[5] = a1;
+        ctx.cpuRegs.GPR.r[2] = v0;
+        ctx.cpuRegs.GPR.r[3] = v1;
+        ctx.cpuRegs.GPR.r[31] = ra;
+        ctx.cpuRegs.GPR.r[28] = gp;
+        ctx.cpuRegs.pc = pc;
+        ++ran;
+        ++g_cmds_delivered;
+    }
+    return ran;
+}
 
 // int sceSifBindRpc(sceSifClientData* cd, u32 sid, u32 mode) (sif_hle.cpp:684-740).
 void SceSif::BindRpc(CpuContext& ctx) {
@@ -160,6 +233,9 @@ void SceSif::CallRpc(CpuContext& ctx) {
                       client);
         GuestPark::Forever("sif_server_unbound", Ra(ctx), g_park_detail);
     }
+    // The SIF commands the IOP sent during the round trip: the interrupt the console's EE
+    // would have taken while it waited for the reply runs their handlers now, on this context.
+    DeliverPendingCommands(ctx);
     if (client != 0) {
         // Completed: sceSifCheckStatRpc's condition (next == cbuff), queued flag cleared.
         memory::write<uint32_t>(client + kClientNext, memory::read<uint32_t>(client + kClientCbuff));
@@ -203,6 +279,25 @@ void SceSif::LoadModule(CpuContext& ctx) {
         path += c;
     }
     RetS(ctx, g_module_loader(path));
+}
+// sceSifLoadModuleBuffer(void* iop_addr, int arg_len, const char* args): the image
+// already sits in IOP RAM (the title pushed it with sceSifSetDma), so the loader
+// is named "buffer@<iop addr>" followed, when arg_len > 0, by a space and the
+// args bytes (NUL-separated in the SDK; copied as-is up to arg_len, max 256).
+void SceSif::LoadModuleBuffer(CpuContext& ctx) {
+    if (!g_module_loader) { Ret(ctx, 0); return; }
+    char head[32];
+    std::snprintf(head, sizeof(head), "buffer@0x%08x", A(ctx, 0));
+    std::string name = head;
+    const uint32_t arg_len = A(ctx, 1), args = A(ctx, 2);
+    if (arg_len > 0 && args != 0) {
+        name += ' ';
+        for (uint32_t n = 0; n < arg_len && n < 256; ++n) {
+            const char c = static_cast<char>(memory::read<uint8_t>(args + n));
+            name += c ? c : ' ';
+        }
+    }
+    RetS(ctx, g_module_loader(name));
 }
 void SceSif::SetModuleLoader(ModuleLoader fn) { g_module_loader = std::move(fn); }
 void SceSif::LfBind(CpuContext& ctx) { Ret(ctx, 1); }

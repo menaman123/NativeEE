@@ -68,3 +68,14 @@ add_executable(ps2r_recompiler_v2
 target_link_libraries(ps2r_recompiler_v2 PRIVATE ps2r_rv2_engine ps2r_tp_elfio ps2r_rv2_eeanalyze)
 target_include_directories(ps2r_recompiler_v2 PRIVATE "${RV2}" "${RV2}/recompiler_tool")
 target_compile_features(ps2r_recompiler_v2 PRIVATE cxx_std_17)
+
+# --- the continuation post-pass as a host tool (continuations_tool.cpp: the port of continuations.py) ---
+# The prepared-game pipeline (tools/prepare) runs the generation on the player's machine, where
+# no Python is promised; the title's recomp/CMakeLists.txt runs this tool and MANIFEST.sha256 pins
+# its output together with the shards, so the port cannot drift from the Python unnoticed.
+add_executable(ps2r_continuations
+    "${RV2}/continuations_tool.cpp"
+    "${CMAKE_SOURCE_DIR}/engine/core/hash/sha256.cpp")
+target_include_directories(ps2r_continuations PRIVATE "${CMAKE_SOURCE_DIR}")
+target_compile_options(ps2r_continuations PRIVATE -Wall -Wextra -Werror)
+target_compile_features(ps2r_continuations PRIVATE cxx_std_17)

@@ -1,15 +1,16 @@
 #include "app/host/first_run.h"
 
-#include <sys/stat.h>
-
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
+#include <system_error>
 #include <vector>
 
 #include "app/host/game_files_stamp.h"
 #include "app/host/user_data.h"
+#include "engine/platform/host/platform.h"
 #include "engine/cdvd/iso_fs.h"
 #include "engine/core/config/config.h"
 #include "engine/core/config/settings_file.h"
@@ -26,9 +27,10 @@ std::string Dirname(const std::string& path) {
 }
 
 bool SameFile(const std::string& a, const std::string& b) {
-    struct stat sa, sb;
-    if (::stat(a.c_str(), &sa) != 0 || ::stat(b.c_str(), &sb) != 0) return false;
-    return sa.st_dev == sb.st_dev && sa.st_ino == sb.st_ino;
+    // std::filesystem::equivalent: same device + inode on POSIX, the same file ID on Win32
+    // (where struct stat's st_ino is always 0); false when either path is missing.
+    std::error_code ec;
+    return std::filesystem::equivalent(a, b, ec) && !ec;
 }
 
 bool WriteWhole(const std::string& path, const std::vector<uint8_t>& bytes, std::string* error) {
@@ -57,18 +59,13 @@ const char* FirstRun::StageName(Stage s) {
 }
 
 bool FirstRun::MakeDirectories(const std::string& path, std::string* error) {
-    std::string cur;
-    size_t i = 0;
-    while (i <= path.size()) {
-        const size_t slash = path.find('/', i);
-        const size_t end = slash == std::string::npos ? path.size() : slash;
-        cur = path.substr(0, end);
-        if (!cur.empty() && ::mkdir(cur.c_str(), 0755) != 0 && errno != EEXIST) {
-            if (error) *error = "cannot create " + cur + ": " + std::strerror(errno);
-            return false;
-        }
-        if (slash == std::string::npos) break;
-        i = slash + 1;
+    // std::filesystem::create_directories: every missing component, either separator,
+    // a drive prefix (C:) left alone; true when the tree already exists.
+    std::error_code ec;
+    std::filesystem::create_directories(path, ec);
+    if (ec || !ps2r::host::IsDirectory(path.c_str())) {
+        if (error) *error = "cannot create " + path + ": " + (ec ? ec.message() : std::string("not a directory"));
+        return false;
     }
     return true;
 }
@@ -211,8 +208,7 @@ FirstRun::Result FirstRun::Run(const Plan& plan, const ProgressFn& progress, con
         std::ifstream probe(plan.settings_file);
         if (!probe.is_open()) {
             std::ofstream init(plan.settings_file);
-            init << "# ps2r.ini -- the title (NativeEE) settings. One `section.key = value` per line;\n"
-                    "# the in-game Options pages and the launcher write here. Keys: docs/filemap/settings_table.tsv\n";
+            init << "# nativeee.ini -- the game's settings. The launcher's Settings page and the in-game menu both edit this file.\n";
             if (!init) return fail(Stage::Settings, "cannot create " + plan.settings_file);
         }
     }

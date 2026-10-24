@@ -199,7 +199,7 @@ void TestTagInterruptAndResume() {
 void TestUnsupportedModes() {
     for (int ch : {kFrom, kTo}) {
         for (uint32_t mode : {1u, 2u, 3u}) {
-            if (ch == kTo && mode == 1) continue;
+            if (mode == 1) continue;  // chain: toSPR source chain, fromSPR destination chain (TestDestinationChain)
             Rig rig;
             Fill(rig);
             auto& r = rig.dmac.channel(ch);
@@ -235,6 +235,71 @@ void TestUnsupportedModes() {
     rig.dmac.StartChannel(kFrom);
     CHECK(r.chcr & DmacChcr::kStr);
     CHECK(Count(rig, kFrom, 0).unsupported == 4 && Count(rig, kFrom, 0).faults == 0);
+}
+
+// fromSPR destination chain (MOD=1): CNT / CNTS / END tags are quadwords of the
+// scratchpad stream, each followed by its QWC quadwords; ADDR is the RAM
+// destination. The tags are consumed, never written to RAM; MADR ends past the
+// last packet; an unknown id stops with an invalid tag.
+void TestDestinationChain() {
+    Rig rig;
+    Fill(rig);
+    auto put_spr_tag = [&rig](uint32_t at, uint32_t id, uint32_t qwc, uint32_t address, bool irq = false) {
+        const uint32_t words[] = {(id << 28) | qwc | (irq ? 0x80000000u : 0), address, 0x11111111u, 0x22222222u};
+        std::memcpy(rig.spad.Pointer(at, 16), words, 16);
+    };
+    // Stream at SPR 0x200: CNT(2) -> 0x8000 ; CNTS(1) -> 0x9000 ; END(3) -> 0xA000.
+    put_spr_tag(0x200, DmacTagId::kCnt, 2, 0x8000);
+    put_spr_tag(0x230, 0 /*CNTS*/, 1, 0x9000);
+    put_spr_tag(0x250, DmacTagId::kEnd, 3, 0xA000);
+    const std::vector<uint8_t> ram_before(rig.ram.Data(), rig.ram.Data() + 0x20000);
+    auto& r = rig.dmac.channel(kFrom);
+    r = {kChain, 0, 0, 0, 0, 0, 0x200};
+    rig.dmac.Write(DmacAddr::kSprFrom, 4, kChain);
+    CheckComplete(rig, kFrom);
+    CHECK(std::memcmp(rig.ram.Pointer(0x8000, 32), rig.spad.Pointer(0x210, 32), 32) == 0);
+    CHECK(std::memcmp(rig.ram.Pointer(0x9000, 16), rig.spad.Pointer(0x240, 16), 16) == 0);
+    CHECK(std::memcmp(rig.ram.Pointer(0xA000, 48), rig.spad.Pointer(0x260, 48), 48) == 0);
+    // Nothing else in RAM changed (the tags were not transferred).
+    bool untouched = true;
+    for (uint32_t a = 0; a < 0x20000; ++a) {
+        const bool in_dst = (a >= 0x8000 && a < 0x8020) || (a >= 0x9000 && a < 0x9010) || (a >= 0xA000 && a < 0xA030);
+        if (!in_dst && rig.ram.Data()[a] != ram_before[a]) { untouched = false; break; }
+    }
+    CHECK(untouched);
+    CHECK(r.madr == 0xA030u && r.sadr == 0x290u);
+    CHECK(((r.chcr >> 28) & 7u) == DmacTagId::kEnd);
+    const auto& count = Count(rig, kFrom, 1);
+    CHECK(count.starts == 1 && count.completed == 1 && count.quadwords == 6 && count.rejected == 0);
+    // IRQ + TIE ends the chain after that packet.
+    Rig irq;
+    Fill(irq);
+    {
+        const uint32_t words[] = {(DmacTagId::kCnt << 28) | 1u | 0x80000000u, 0x8000, 0, 0};
+        std::memcpy(irq.spad.Pointer(0x100, 16), words, 16);
+        const uint32_t next[] = {(DmacTagId::kEnd << 28) | 1u, 0x9000, 0, 0};
+        std::memcpy(irq.spad.Pointer(0x120, 16), next, 16);
+    }
+    auto& ri = irq.dmac.channel(kFrom);
+    ri = {kChain | DmacChcr::kTie, 0, 0, 0, 0, 0, 0x100};
+    irq.dmac.Write(DmacAddr::kSprFrom, 4, kChain | DmacChcr::kTie);
+    CheckComplete(irq, kFrom);
+    CHECK(ri.sadr == 0x120u && ri.madr == 0x8010u);
+    CHECK(std::memcmp(irq.ram.Pointer(0x8000, 16), irq.spad.Pointer(0x110, 16), 16) == 0);
+    // An id the destination chain does not define (REF 3) is an invalid tag: STR off, CIS, no BEIS.
+    Rig bad;
+    Fill(bad);
+    {
+        const uint32_t words[] = {(DmacTagId::kRef << 28) | 1u, 0x8000, 0, 0};
+        std::memcpy(bad.spad.Pointer(0x300, 16), words, 16);
+    }
+    auto& rb = bad.dmac.channel(kFrom);
+    rb = {kChain, 0, 0, 0, 0, 0, 0x300};
+    bad.dmac.Write(DmacAddr::kSprFrom, 4, kChain);
+    CHECK(!(rb.chcr & DmacChcr::kStr));
+    CHECK(bad.dmac.globals().stat & DmacStat::Cis(kFrom));
+    CHECK(!(bad.dmac.globals().stat & DmacStat::kBeis));
+    CHECK(Count(bad, kFrom, 1).faults == 1);
 }
 
 void TestChainRejections() {
@@ -424,6 +489,7 @@ int main() {
     TestRoutingTagsAndTte();
     TestTagInterruptAndResume();
     TestUnsupportedModes();
+    TestDestinationChain();
     TestChainRejections();
     TestDroppedControlCensus();
     TestBusErrors();

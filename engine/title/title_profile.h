@@ -16,6 +16,7 @@
 
 struct TitleProfile {
     std::string serial;
+    std::string display_name;   // the title as the launcher / window name it ("" = the serial)
     uint32_t crc = 0;
     std::string elf_path;     // path on the disc image
     std::string elf_dir;      // game_files/ subdirectory holding the ELF copy
@@ -78,6 +79,11 @@ struct TitleProfile {
     // fills and sceGsSyncVCallback keeps its handler in (LibgraphBindings::Statics).
     struct Gs {
         uint32_t gparam_addr = 0;
+        // The title's own vsync-wait routine when its ELF links no sceGsSyncV (a flag +
+        // WaitSema the VBLANK INTC handler signals): the composition root installs the
+        // engine's WaitForVblank mirror there (GsSync::WaitForVblank -> the frame boundary).
+        // 0 = the title waits through sceGsSyncV (the libgraph row).
+        uint32_t vblank_wait_entry = 0;
     } gs;
 
     // libmc 3.0.1's static in the title ELF: the sceSifClientData sceMcInit binds to

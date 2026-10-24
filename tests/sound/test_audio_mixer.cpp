@@ -29,7 +29,7 @@ int main() {
         pcm[i] = static_cast<int16_t>(int(i * 97 % 65536) - 32768);
     for (int mode = 0; mode < 6; ++mode) {
         const float master = mode == 2 ? 0 : .8f;
-        const float left = mode == 1 ? 0 : 1, right = mode == 1 ? 0 : 24575.0f / 32767;
+        const float left = mode == 1 ? 0 : 32767.0f / 32768, right = mode == 1 ? 0 : 24575.0f / 32768;
         retained_voices.silent = owned_voices.silent = mode == 3;
         retained_voices.handoff = owned_voices.handoff = mode == 4;
         spu.SetMasterVolume(master); check(audio.SetMaster(master), "master gain");

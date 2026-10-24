@@ -33,8 +33,8 @@ uint32_t TransferEngine::PixelsPerWord(uint32_t psm) {
     switch (psm) {
         case 0x00: case 0x01: return 2;
         case 0x02: case 0x0A: return 4;
-        case 0x13: return 8;
-        case 0x14: return 16;
+        case 0x13: case 0x1B: return 8;
+        case 0x14: case 0x24: case 0x2C: return 16;
         default: return 2;
     }
 }
@@ -150,6 +150,35 @@ void TransferEngine::StageBytes(uint32_t col, uint32_t addr, const uint8_t* byte
     }
 }
 
+void TransferEngine::StageNibble(uint32_t col, uint32_t addr, uint32_t shift, uint32_t value) {
+    if (addr >= kVram) addr %= kVram;
+    const uint8_t keep = static_cast<uint8_t>(~(0xFu << shift));
+    const uint8_t nib = static_cast<uint8_t>((value & 0xFu) << shift);
+    if (col >= stage_cols_.size()) {   // outside the armed geometry: read-modify-write directly
+        const uint8_t b = static_cast<uint8_t>((vram_->Bytes()[addr] & keep) | nib);
+        vram_->WriteStream(addr, &b, 1);
+        return;
+    }
+    ColumnSlot& slot = stage_cols_[col];
+    const uint32_t base = addr & ~63u;
+    if (slot.base != base) {
+        if (slot.mask) FlushStageSlot(col);
+        slot.base = base;
+    }
+    const uint32_t off = addr & 63u;
+    const uint64_t bit = 1ull << off;
+    if (!(slot.mask & bit)) slot.bytes[off] = vram_->Bytes()[addr];   // the other nibble as the image holds it
+    slot.bytes[off] = static_cast<uint8_t>((slot.bytes[off] & keep) | nib);
+    if (!slot.mask) ++stage_live_;
+    slot.mask |= bit;
+    if (slot.mask == ~0ull) {
+        vram_->WriteStream(slot.base, slot.bytes, 64);
+        slot.mask = 0;
+        slot.base = 0xFFFFFFFFu;
+        --stage_live_;
+    }
+}
+
 // The runs present in one slot, ascending, each one WriteStream.
 void TransferEngine::FlushStageSlot(size_t i) {
     ColumnSlot& slot = stage_cols_[i];
@@ -192,6 +221,7 @@ void TransferEngine::SetTrxDir(uint64_t v) {
     // upload followed by TRXDIR 1/2/3 stays armed (its HWREG data is refused
     // while XDIR != 0) and is partially flushed by the next host->local start.
     if (cur_.xdir == 0) {
+        counters_.host_local_by_dpsm[xfer_.dpsm & 63u]++;
         // A still-active previous upload is flushed partially, attributed to its
         // own destination, before the new transfer replaces it.
         if (cur_.active && cur_.pixels_written > 0 && !linear_.empty()) {
@@ -379,7 +409,7 @@ size_t TransferEngine::WriteWordsInside(const uint8_t* data, size_t nwords) {
 
 // One pixel store at `addr` (through the column stage) plus its RGBA8 linear
 // copy at `lin_index`.
-void TransferEngine::StorePixel(uint32_t addr, uint32_t px, uint32_t lin_index) {
+void TransferEngine::StorePixel(uint32_t addr, uint32_t nibble_shift, uint32_t px, uint32_t lin_index) {
     const uint32_t psm = xfer_.dpsm;
     const uint32_t col = (cur_.cur_x >> stage_col_shift_) - stage_col0_;
     uint8_t buf[4];
@@ -406,10 +436,24 @@ void TransferEngine::StorePixel(uint32_t addr, uint32_t px, uint32_t lin_index) 
             buf[0] = px & 0xFF;
             StageBytes(col, addr, buf, 1);
             break;
+        case 0x14:   // one nibble of the byte PsmLayout names (section 8.3.4)
+            StageNibble(col, addr, nibble_shift, px);
+            break;
+        case 0x1B:   // the index byte = byte 3 of the CT32-layout word (section 8.3.1)
+            if (addr + 4 <= kVram) {
+                buf[0] = px & 0xFF;
+                StageBytes(col, addr + 3, buf, 1);
+            }
+            break;
+        case 0x24:   // bits 24-27 of the word
+            if (addr + 4 <= kVram) StageNibble(col, addr + 3, 0, px);
+            break;
+        case 0x2C:   // bits 28-31 of the word
+            if (addr + 4 <= kVram) StageNibble(col, addr + 3, 4, px);
+            break;
         default:
-            // T4 and the index-in-word modes: no store (upload-drop compatibility),
-            // but the pixel still counts as an EE write of PixelSize bytes so the
-            // completion settle stamps the destination pages.
+            // An undefined DPSM encoding stores nothing but still counts as an EE write
+            // of PixelSize bytes so the completion settle stamps the destination pages.
             if (addr < kVram) vram_->NoteWriteNoBytes(addr, PixelSize(psm));
             break;
     }
@@ -466,30 +510,33 @@ void TransferEngine::WriteHwregWord(uint64_t value) {
             return;
         }
         uint32_t addr;
-        switch (psm) {
-            case 0x00: case 0x01: case 0x02: case 0x0A: case 0x13: case 0x14: {
-                // The row addresser is begun once per (mode, row, dbp, dbw) and
-                // walked along x; its ByteAddress equals PixelByteAddress for every
-                // x (Coretest_psm_layout walks every mode).
-                PsmLayout::RowAddresser& row = row_addr_;
-                const uint32_t bp = xfer_.dbp / kBlock, bw = xfer_.dbw / 64;
-                if (!row_addr_valid_ || row.psm != mode || row.y != cur_.cur_y || row.bp != bp || row.bw != bw) {
-                    row.Begin(mode, cur_.cur_y, bp, bw);
-                    row_addr_valid_ = true;
-                }
-                addr = row.ByteAddress(cur_.cur_x);
-                break;
+        uint32_t nibble_shift = 0;
+        if (known) {
+            // The row addresser is begun once per (mode, row, dbp, dbw) and walked
+            // along x; its ByteAddress equals PixelByteAddress for every x
+            // (Coretest_psm_layout walks every mode). T4's nibble is the element's
+            // low bit (PixelBitInByte).
+            PsmLayout::RowAddresser& row = row_addr_;
+            const uint32_t bp = xfer_.dbp / kBlock, bw = xfer_.dbw / 64;
+            if (!row_addr_valid_ || row.psm != mode || row.y != cur_.cur_y || row.bp != bp || row.bw != bw) {
+                row.Begin(mode, cur_.cur_y, bp, bw);
+                row_addr_valid_ = true;
             }
-            default:
-                addr = xfer_.dbp + (cur_.cur_y * xfer_.dbw + cur_.cur_x) * PixelSize(psm);
-                if (addr >= kVram) addr %= kVram;
-                break;
+            if (psm == 0x14) {
+                const uint32_t element = row.ElementAddress(cur_.cur_x);
+                addr = element >> 1;
+                nibble_shift = (element & 1u) * 4u;
+            } else {
+                addr = row.ByteAddress(cur_.cur_x);
+            }
+        } else {
+            addr = xfer_.dbp + (cur_.cur_y * xfer_.dbw + cur_.cur_x) * PixelSize(psm);
+            if (addr >= kVram) addr %= kVram;
         }
-        (void)known;
         uint32_t px = static_cast<uint32_t>((value >> (p * bits)) & pix_mask);
         if (psm == 0x01) px &= 0xFFFFFF;
         const uint32_t lin0 = ((cur_.cur_y - xfer_.dsay) * xfer_.rrw + (cur_.cur_x - xfer_.dsax)) * 4;
-        StorePixel(addr, px, lin0);
+        StorePixel(addr, nibble_shift, px, lin0);
         cur_.cur_x++;
         cur_.pixels_written++;
     }

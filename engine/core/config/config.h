@@ -13,7 +13,10 @@
 
 namespace ps2r {
 
-enum class VideoBackend : uint8_t { Gl = 0, Soft };
+// Metal: Apple GPUs (macOS builds). Auto (the default): the video stack picks Metal when the
+// host has a Metal device of MTLGPUFamilyApple7 or newer (the Apple-silicon arm), else GL;
+// explicit values are taken as given; the deterministic profile pins gl.
+enum class VideoBackend : uint8_t { Gl = 0, Soft, Metal, Auto };
 enum class FitMode : uint8_t { Stretch = 0, Fit, Fill, Integer, Custom };
 // video.aspect: the display shape the title renders FOR (the projection, culling
 // frustum, HUD fit and movie picture take the ratio -- TR renderer.cpp's
@@ -36,6 +39,16 @@ enum class FullscreenMode : uint8_t { Windowed = 0, Fullscreen, Borderless };
 // regression (s7 vs s8 bisect; 60 clean). Default 60; the Display-page row is hidden
 // (MenuComposition) until Charter 3 item 6; the ini / --set / harness pins still take it.
 enum class RenderRate : uint8_t { Tick60 = 0, Display };
+// video.frame_cap: WHICH presenter fields show a NEW picture (the presented-frame
+// cadence a player sees; the game's logic tick stays 60 Hz by the clock contract
+// and no game tick is dropped -- a picture the cap does not show is superseded by
+// the next). `60` = a new picture at every 60 Hz field edge it is ready for (the
+// first title's shape); `30` = at every OTHER field edge, a steady 33.3 ms train
+// (a game producing 30..60 pictures per second shows every one at a fixed
+// cadence instead of a 1/2/3-field mixture); `off` = at the pump it arrives
+// (the consumer's own cadence, no field quantisation). Applied live from the
+// Display page (FramePacer); persisted.
+enum class FrameCap : uint8_t { Off = 0, Hz30, Hz60 };
 // video.texture_filter (Charter 2 A2): the player's filtering enhancement over
 // the textures the engine owns at load. `title` = the title's own TEX1 choice per
 // draw (point or bilinear, mip-nearest where it authored a chain) -- the
@@ -47,7 +60,13 @@ enum class CdvdLatencyModel : uint8_t { Instant = 0, Modelled };
 // When a completed host-served disc read becomes visible to the EE: at the next
 // boundary (slot 4) or at the poll that asks once the modelled drive is done.
 enum class CdvdDeliveryVisibility : uint8_t { Boundary = 0, Poll };
-enum class Vu1Mode : uint8_t { Hle = 0, Cached, Interp };
+// The VU1 fallback tier: hle = the title's library over the cached tier (the
+// Crash ladder), cached, interp, block (the pre-resolved straight-line block
+// tier), aot (the generic run-time recompiler: a verified image on its
+// (kind, dest)-specialised block table, every other image on vu1_aot_fallback).
+enum class Vu1Mode : uint8_t { Hle = 0, Cached, Interp, Block, Aot };
+// Where an image the AOT tier has not verified runs.
+enum class Vu1AotFallback : uint8_t { Block = 0, Interp };
 enum class Pacing : uint8_t { Realtime = 0, Freerun };
 enum class IopDispatch : uint8_t { Realtime = 0, Frame };
 // The first due of a RUNNING hard timer restored from a savestate: one period
@@ -89,7 +108,28 @@ struct VideoConfig {
     bool         vsync = false;
     FullscreenMode fullscreen = FullscreenMode::Windowed;
     RenderRate   render_rate = RenderRate::Tick60;
-    VideoBackend backend = VideoBackend::Gl;
+    FrameCap     frame_cap = FrameCap::Hz60;
+    // Round 5 (latency): the GS consumer waits up to this many ms at the end of a
+    // present for the GPU to finish the frame's picture and posts it at once (the
+    // PROMPT present capture; run.meta gs_backend= prompt=); past the bound the
+    // picture is read back at the next present as before. 0 = never wait (the
+    // round-4 deferred capture: every picture one present late). Default 8 since
+    // 2026-10-23 (the gates in the latency track's REPORT: lockstep census equal,
+    // <=294 oracle 0, 60 pictures/s on both backends; a frame of input latency
+    // recovered). The wait is skipped when a whole frame is queued behind the
+    // consumer (Backend::SetPresentCaptureGate). Host presentation only:
+    // fingerprint-excluded; the deterministic profile pins 0.
+    int          capture_wait_ms = 8;     // 0..16
+    // Round 5 (latency): the presenter's RELAX policy (app/host/frame_pacer.h): the 60 Hz
+    // admission train is pulled earlier, a few ms per half second, while every picture of
+    // the window waited for its edge with margin to spare -- the edge converges to just
+    // after the latest typical arrival instead of staying where the first (slow) picture
+    // anchored it. off = the round-3 train (moves later only). Default on since
+    // 2026-10-23 (the latency track's gates: 8-12 ms of present latency recovered in
+    // Paris, no doubled frame added at 60 pictures/s). Host presentation only:
+    // fingerprint-excluded; the deterministic profile pins off.
+    bool         present_relax = true;
+    VideoBackend backend = VideoBackend::Auto;
     FitMode      fit_mode = FitMode::Fit;
     AspectSel    aspect = AspectSel::Auto;
     int          custom_scale_pct = 100;  // 25..400
@@ -107,10 +147,20 @@ struct VideoConfig {
     int          anisotropy = 1;
 };
 
+// The SPU2 voice resampler: 2-tap linear (the default: the audio lane's
+// fixtures and hashes are cut with it) or the hardware's 4-tap Gaussian (the
+// SPU gauss table, no$psx "4-Point Gaussian Interpolation"; PCSX2 Mixer.cpp).
+// Linear images +5..+9 dB above 15 kHz on pitched-down voices (PCSX2 LTAS);
+// Gaussian halves that excess but moves judge_audio's centroid ratio away from
+// the oracle's on the paris and fmv_body legs (0.937->0.916, 0.945->0.928), so
+// it is opt-in until the oracle alignment settles. Audio-lane bytes differ.
+enum class AudioInterpolation : uint8_t { Linear = 0, Gaussian };
+
 struct AudioConfig {
     bool enabled = true;
     int  volume = 100;                    // 0..100
     int  sdr_block_ms = 8;                // libsdr virtual SPU2 block transfer duration (ms of mixer time)
+    AudioInterpolation interpolation = AudioInterpolation::Linear;
 };
 
 struct InputConfig {
@@ -133,14 +183,132 @@ struct CdvdConfig {
 
 struct EngineConfig {
     Vu1Mode vu1_mode = Vu1Mode::Cached;
+    // The AOT tier (engine.vu1_mode=aot): the corpus directory of Vu1Case
+    // files its verifier reads at start ("" = only the corpus collected under
+    // <user_data>/vu1_aot/corpus), whether an image must be verified before it
+    // runs native (off = every image native: the harness / bench knob, never
+    // the play default), and the tier an unverified image runs on.
+    std::string    vu1_aot_corpus;
+    bool           vu1_aot_verify = true;
+    Vu1AotFallback vu1_aot_fallback = Vu1AotFallback::Block;
+    // The generated-code step above the specialised tier (Vu1AotBuilder): on
+    // = a verified image's blocks are emitted as C++, compiled with the host
+    // toolchain found at run time and loaded once re-verified; the compiler
+    // ("" = /usr/bin/clang++, then c++ / g++ / clang++ on the PATH; "none" =
+    // never compile: the shipped pack / the cache alone), the staged prelude
+    // include root ("" = the build's), the -O level (2 or 1).
+    bool           vu1_aot_codegen = true;
+    std::string    vu1_aot_compiler;
+    std::string    vu1_aot_prelude;
+    // The SDK a PORTABLE compiler needs (-isysroot; the prepared-game pipeline's bundled
+    // clang has no built-in default): "" = the compiler's own default search.
+    std::string    vu1_aot_sysroot;
+    int            vu1_aot_opt = 2;
+    // The generator's REGION POLICY (Vu1AotBlockGen::Policy): blocks / ops a
+    // region function holds at most, whether it grows over static branch
+    // targets, and block CHAINING (a block end tail-calls its successor's
+    // function instead of returning to the dispatcher). Generation-time
+    // shape only: every library is verified the identity before it runs.
+    int            vu1_aot_region_blocks = 1;
+    int            vu1_aot_region_ops = 48;
+    bool           vu1_aot_region_taken = true;
+    bool           vu1_aot_chain = true;
+    // MAC flag accumulation in registers (Vu1AotRegionPolicy::mac_acc): a
+    // block folds the results it retires for sure into a register-resident
+    // accumulator as they are produced and delivers it once per observation
+    // point, instead of keeping every result live to its edge. Generation-time
+    // shape only (verified the identity before it runs). Off until the
+    // vuworker gates are green.
+    bool           vu1_aot_mac_acc = false;
+    // The pre-built library pack (app/host/vu1_aot_pack.h) the loader tries
+    // before the user cache and the compiler ("" = <executable dir>/vu1_aot_pack).
+    std::string    vu1_aot_pack;
     bool    mtvu = true;
     int     mtvu_depth = 2;
+    // engine.mtvu_depth_hold (round 5): the HOLD -- a second runahead arm on the
+    // WORKER's lag in frames (frame marks pushed at the frame syncs minus marks
+    // the worker passed): the EE parks while more than this many COMPLETE frames
+    // are queued ahead of the worker (1 = the double-buffered console's own
+    // depth: a button's picture waits at most one frame in the queue). It never
+    // starves the worker (a whole frame of work is queued while it parks) and
+    // leaves mtvu_depth's declared/presented cap as it is. 0 = off. Host
+    // scheduling of the worker: fingerprint-excluded; the deterministic profile
+    // pins 0 (it runs no worker).
+    int     mtvu_depth_hold = 0;
     // The clock contract's KICK DROP (play mode): the game thread never parks
     // on the MTVU worker; a frame the worker is > 2 frames behind runs its VIF
     // stream without its VU1 programs (run.meta mtvu= kick_drop/drop/kicks_
     // dropped). off = the bytes/frames PARK (the Mecha-Bandicoot 560 ms stall
     // of 2026-10-13; kept as the red-before and the deterministic lanes' path).
     bool    mtvu_kick_drop = true;
+    // E425/E426/E427 (MTVU only): the GS FINISH is raised when the EE has
+    // STAGED the packet carrying it (not when the parser reaches it behind the
+    // worker); in the paced play composition the frame boundary is also
+    // deferred (no terminal sync, no VSync drain fence, GIF_STAT and the
+    // sceGsSyncPath VIF1_STAT poll answered from the EE's own view) -- the
+    // frame becomes max(worker, logic) instead of their sum. A guest-observable
+    // scheduling change, ON since its gates held (Paris 600 lockstep census
+    // equal incl. gs_irq 1800 / isrs 140 / syscall_count, the <=294 cold-boot
+    // oracle inert, savestate round trip, loader + hub routes park=none;
+    // pictures/s p50 +3..+15 under host load, equal at the GS-consumer cap).
+    // The deterministic profile pins it off (run.meta mtvu= early_finish).
+    bool    mtvu_early_finish = true;
+    // E430 (MTVU only): the kernel-wait observation point (a blocking-class
+    // syscall entered with no other guest thread READY) asks the kernel object
+    // whether the wait would PARK before idling on the worker; a wait that
+    // returns at once (the semaphore the kick's FINISH handler signalled at this
+    // very entry) skips the idle loop. Without it the render thread sat behind
+    // the whole VU1 replay of the chain it had just kicked before a WaitSema
+    // that never blocked (Paris: 20 parks / 15 ms a frame = 100 % of vu1wait).
+    // Host scheduling only (what the EE observes is unchanged: the wait's body
+    // runs the same either way); fingerprint-excluded like mtvu_early_finish.
+    // On by default since 2026-10-22 (gates: Paris 600 lockstep census and
+    // frames.fhash equal to the baseline, h600 <=294 oracle 0, hub warps / loader
+    // route / F5-F8 park=none); the deterministic profile pins it off.
+    bool    mtvu_wait_probe = true;
+    // E432: the back-edge yield point's spin gate (EeYieldPoint header). A trip
+    // passes a field of its own only when its thread SPUN -- no run-token acquire
+    // and no boundary since the previous trip; the 2^18th back-edge of code that
+    // schedules fires only the wall fields the pacer has already noted (no park).
+    // Off = every trip is a field: ordinary code trips once per 2^18 back-edges
+    // (Paris: every ~9 frames), each trip a wall field under Play (16.7 ms of the
+    // frame, one extra VBON/TIM2): 54 pictures/s from a 60 Hz logic with 60 %
+    // slack. Changes the fields the guest observes (fewer); the deterministic
+    // profile pins it off (the frozen oracles' schedule). Fingerprint-excluded: a
+    // slot restores under either setting (the yield budget is not in the image).
+    // On by default since 2026-10-22 (gates as mtvu_wait_probe; Paris / hub_ep3 /
+    // hub_ep6 window 54 -> 60 pictures/s p50, judge_pacing GREEN, Metal and GL);
+    // the deterministic profile pins it off. Census ee_yield= spin_trips /
+    // sched_trips / due_fields.
+    bool    ee_yield_spin_gate = true;
+    // The generated dispatch's raw fast path (eecode round 4): a guest call to
+    // a function whose table entry still holds its init-time body skips the
+    // double ObservedBody / std::function chain and runs shadow-frame push ->
+    // body -> pop (recomp_raw_dispatch); hooked ids (every DispatchTable::
+    // Install) keep the full chain. Off = every call takes the chain (the
+    // pre-round-4 path). Host dispatch mechanics only: nothing the title
+    // executes or an image carries changes with it (fingerprint-excluded;
+    // the <=294 cold-boot oracle and the Paris-600 lockstep census are
+    // byte-equal either way). On by default since 2026-10-22 (the eecode round's gates: Paris 600 lockstep census + frames.fhash + mem.mhash equal knob on vs off, h600 <=294 oracle 0, cold boot / hub warps / F5-F8 park=none).
+    bool    ee_fast_dispatch = true;
+    // The EE's COP0 Count register (mfc0 $9) advancing with the emu tick
+    // (DerivedClocks::Cop0Count: 4915200 counts per field, the 294.912 MHz core
+    // clock; a guest mtc0 reseats it). Off = the register never moves (the
+    // pre-round-5 state): a title's cycle clock reads a constant, every delta
+    // is 0 -- Sly 2's frame dt clamps to its 1/60 floor and runs, but the
+    // lgAud dialog timeline that paces the binocucom typewriter and lip-sync
+    // to the voice stream (hle/leg_core.cpp, the cutscene track) never
+    // advances: one glyph per line. Seated at every syscall return and yield
+    // trip (field granularity: no wall term, BUG-014/031). Changes what the
+    // guest reads (the frozen oracles' RAM hashes from the first frame whose
+    // dt the title derives from Count: the <=294 cold-boot oracle from frame
+    // 271): the deterministic profile pins it ON as well -- the console's
+    // Count advances, so the oracle lanes model the console, and the bases
+    // were re-frozen (gsc_h600_cop0, finalize5 2026-10-23). Fingerprint-
+    // excluded (no image carries it: a restore reseats). On by default since
+    // 2026-10-23 (the finalize5 gates: Paris 600 lockstep divergent=0, h600
+    // self-consistent, judge_cutscene / pacing / pictures green).
+    bool    cop0_count = true;
     int     ee_runahead = 2;
     Pacing  pacing = Pacing::Realtime;
     int     time_regime_pin = -1;         // -1 = none (adaptive)
@@ -353,6 +521,12 @@ struct DiagConfig {
     // chains, printed in run.meta pace_long_trace as callers=... Off = marks
     // are counted only (the long trace keeps its site breakdown).
     bool tick_census = false;
+    // The VU1 tier A/B (VuLockstep): every kick the configured tier runs is
+    // also run on the interpreter reference on a shadow unit and the end
+    // states (registers, data memory, clock, latches, kicked bytes) diffed;
+    // the first divergences are printed, all are counted (run.meta
+    // vu1_lockstep=). The GS sees the tier's output only. Off = no shadow.
+    bool vu1_lockstep = false;
 };
 
 struct TriageConfig {
@@ -525,6 +699,11 @@ public:
     // Harness plumbing (harness.*), paths.* and meta.source_fingerprint are
     // excluded -- they legitimately differ per leg.
     std::string Fingerprint() const;
+    // True for a key Fingerprint() leaves out: harness.* / paths.* / meta.* /
+    // diag.* and the named host-scheduling / toolchain keys (config.cpp
+    // ExcludedFromFingerprint). The settings-table check and
+    // tools/gen_settings_table.py derive the preset's golden with the same set.
+    static bool FingerprintExcludes(const std::string& key);
     // FNV-1a64 over Fingerprint() (run.meta env_hash semantics: each
     // `key=value` entry folded followed by ";").
     uint64_t FingerprintHash() const;

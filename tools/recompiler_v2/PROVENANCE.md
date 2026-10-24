@@ -57,3 +57,15 @@ Existing generated body semantics and hashes remain unchanged. Isolated
 tests extract only the common stack ABI and execute synthetic callables,
 never title code. Unknown special prologues and installed wrappers fail
 closed; range containment and `IsHooked` are not continuation proof.
+
+**Diverged 2026-10-15 (second-title generator fixes; the Sly 2 port, title-neutral):** the rows above keep their pre-change md5 for reference; current md5s:
+
+| File (relative) | change | bytes | md5 |
+|---|---|---|---|
+| `recompiler_tool/discovery/functions.cpp` | u32-wrap guard in in_text() and the data-pointer weak-seed filter (`v <= end - 4`) | 28030 | `f6210bceda356fe1e7efd6f45d676d85` |
+| `recompiler_tool/discovery/jumptables.cpp` | u32-wrap guard; engine2 guard scan follows the taken path of a branch whose delay slot holds the sltiu and hops to branch predecessors of branch-only block leaders; engine2_backward takes func_end | 26981 | `92980711214e2cf3606608ce89ccb708` |
+| `recompiler_tool/recompiler.cpp` | ctc1/cfc1 register index in std::dec; emitters for vadda vadday vmaddx vmaddy vmaddax vsuby vsubz vmuly vmulz vmulw vmulay vmulaz padduw prot3w adda.s; the first title's hardcoded stub/diagnostic blocks gated behind m_legacy_title_stubs | 1608655 | `5d85c633fa70a8d968451d57a1422617` |
+| `recompiler_tool/recompiler.h` | set_legacy_title_stubs / m_legacy_title_stubs | 10561 | `0f6e2379f213c732a02c4b7e568043a8` |
+| `recompiler_tool/main_v2.cpp` | --legacy-title-stubs / --no-legacy-title-stubs (default off) | 29136 | `4d051cacd5a906fc556e73883a1cc7ad` |
+| `recompiler_tool/recompiler.cpp` | every `func.base_address == 0x...` emission override (270 sites: diagnostic wrappers, hand-written bodies, HLE hooks keyed on the first title's retail addresses) tests through `legacy_title_addr()`, so a second title whose function starts collide (six in SCUS_973.16) gets the default emission; byte-identical for the first title under --legacy-title-stubs | 1610753 | `0d112dc47ae765071a34c74a207a9adc` |
+| `recompiler_tool/recompiler.h` | `legacy_title_addr(func, addr)` = m_legacy_title_stubs && func.base_address == addr | 11836 | `f6b2ce76428cc119dd65d715d62b5a57` |

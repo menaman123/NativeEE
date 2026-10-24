@@ -1,6 +1,8 @@
 // engine/iop/hle/libsd/libsd_module.cpp -- the libsd bodies over SpuCore.
 #include "engine/iop/hle/libsd/libsd_module.h"
 
+#include <cmath>
+
 #include "engine/iop/iop_clock.h"
 #include "engine/iop/iop_kernel.h"
 #include "engine/iop/iop_memory.h"
@@ -34,17 +36,26 @@ void LibsdModule::Call(int ordinal, IopContext& ctx) {
     case 7:  core_.SetCoreAttr(a0, a1); break;               // SdSetCoreAttr(entry, value) -> 0
     case 8:  ProcBatch(a0, a1, a2); break;                   // SdProcBatch(batch, rets, num) -> 0
     case 9:  VoiceTrans(ctx); return;                        // SdVoiceTrans -> bytes moved
-    case 10: break;                                          // SdBlockTrans: no autodma model -> 0
+    case 10: core_.NoteUnmodelled(10, a0); break;            // SdBlockTrans: no autodma model -> 0
     case 11:                                                 // SdVoiceTransStatus(chan, flag) -> 1 idle
         RetireTransCompletion(static_cast<int>(a0 & 1));     // the poll delivers a pending completion
         v0 = static_cast<uint32_t>(core_.VoiceTransStatus(static_cast<int>(a0 & 1), static_cast<int>(a1)));
         break;
     case 12: break;                                          // SdBlockTransStatus -> 0 idle
-    case 13: break;                                          // SdSetEffectAttr -> 0 (no reverb)
-    case 14: break;                                          // SdClearEffectWorkArea -> 0
+    case 13: core_.NoteUnmodelled(13, a0); break;            // SdSetEffectAttr -> 0 (no reverb)
+    case 14: core_.NoteUnmodelled(14, a0); break;            // SdClearEffectWorkArea -> 0
     case 15:                                                 // SdSetTransIntrHandler(chan, fn, arg) -> 0
         core_.SetTransIntrHandler(static_cast<int>(a0 & 1), a1, a2);
         break;
+    case 16: {                                               // SdNote2Pitch(center_note, center_fine, note, fine) -> pitch
+        // The SPU2 pitch for `note` relative to the sample's center note: 0x1000 at the
+        // center, doubling every 12 semitones (a fine step is 1/128 of a semitone).
+        const double center = static_cast<double>(static_cast<uint16_t>(a0)) + static_cast<double>(static_cast<uint16_t>(a1)) / 128.0;
+        const double note = static_cast<double>(static_cast<uint16_t>(a2)) + static_cast<double>(static_cast<uint16_t>(ctx.gpr[7])) / 128.0;
+        const double pitch = 4096.0 * std::pow(2.0, (note - center) / 12.0);
+        v0 = pitch >= 0x3FFF ? 0x3FFFu : (pitch < 0 ? 0u : static_cast<uint32_t>(pitch + 0.5));
+        break;
+    }
     default: break;
     }
     ctx.gpr[2] = v0;

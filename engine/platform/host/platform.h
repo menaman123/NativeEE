@@ -38,6 +38,7 @@
 // diagnostics (footprint, exe path, backtrace, GL header) and the file/thread/fiber calls.
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -63,9 +64,12 @@
 #define PS2R_HOST_MACOS 0
 #define PS2R_HOST_LINUX 1
 #elif defined(_WIN32)
-// The Windows target (engine/platform/windows/, Track B2): PS2R_GL_HEADER is NOT defined yet --
-// the GL loader for Windows is B2's open gap 1 (docs/design/PLATFORMS.md section 4); a TU that
-// includes it fails to compile there by design until the loader lands.
+// The Windows target (engine/platform/windows/): opengl32.dll exports GL 1.1 only, so the GL
+// header is the GENERATED loader -- Khronos' glcorearb.h for the types and every entry point the
+// tree calls as a function pointer behind its GL name, filled by ps2r::glwin::Load() once the
+// context is current (gl_context.cpp). tools/build/gen_gl_loader.py regenerates it from the call
+// sites; ctest PlatformGlLoaderCurrent fails when a new GL call is not in it yet.
+#define PS2R_GL_HEADER "engine/platform/windows/gl_loader.h"
 #define PS2R_HOST_MACOS 0
 #define PS2R_HOST_LINUX 0
 #else
@@ -88,10 +92,33 @@
 #define PS2R_FENV_ACCESS_ON
 #endif
 
+// THREAD ROLES (shared by both sections): what the pinned thread is FOR, so the arm can
+// rank it. The emulation's threads are not peers on a desktop OS with a coarse scheduler:
+//   Pacer     the 60 Hz edge train (TickThread / FieldPacer) -- sleeps and notes; a late
+//             wake IS a late field. Win32: THREAD_PRIORITY_TIME_CRITICAL (the thread never
+//             computes; it cannot starve anyone).
+//   Game      the EE / game thread (one frame of work per field).  Win32: HIGHEST.
+//   Graphics  the GS consumer / render thread.                      Win32: ABOVE_NORMAL.
+//   Worker    MTVU and other helpers.                               Win32: ABOVE_NORMAL.
+//   Interactive  anything else on the interactive path (the main / SDL pump).
+// macOS: every role is QOS_CLASS_USER_INTERACTIVE (the QoS class keeps the thread off the
+// efficiency cores; finer ranks are the kernel's). Linux: nice -5 where permitted (CFS).
+// The audio device thread is SDL's (SDL_RunAudio pins it TIME_CRITICAL on Win32 itself).
+namespace ps2r::host {
+using ThreadRole = ps2r::platform::ThreadRole;   // declared with ThreadDesc in engine/platform/platform.h
+}  // namespace ps2r::host
+// A library consumer (a title's own runner over the engine, e.g. the TwinsanityEvolved port) is pinned to an engine commit
+// and may be built against one from before the role API existed: `#if PS2R_HOST_THREAD_ROLES` lets its call sites pass
+// `ThreadRole::Game / Pacer / Graphics` where the engine has them and the name-only form elsewhere. Bumped (never
+// removed) when the role set changes incompatibly.
+#define PS2R_HOST_THREAD_ROLES 1
+
 // ---------------------------------------------------------------------------------------
 // A  TARGET-FOLDER API  (Track B1) -- host/platform.cpp picks the target folder.
 // ---------------------------------------------------------------------------------------
 namespace ps2r::platform::host {
+
+using ps2r::host::ThreadRole;
 
 // The host target's filled-in Platform instance (static storage) and its
 // registration with platform::Register. Idempotent.
@@ -107,7 +134,35 @@ const char* Name();
 // scheduler keeps the thread off the efficiency cores. Linux: the name only;
 // CFS has no QoS class and the default policy already schedules evenly.
 // Idempotent, first call wins per thread; a null name keeps the current one.
-void PinCurrentThreadInteractive(const char* name);
+// `role` ranks the thread where the OS has ranks (Win32 priorities; see
+// ThreadRole above) -- the default is the plain interactive class.
+void PinCurrentThreadInteractive(const char* name, ThreadRole role = ThreadRole::Interactive);
+
+// Timer resolution + the precise sleep the pacers use (the Windows release
+// blockers: a 15.6 ms scheduler quantum cannot pace 16.67 ms fields).
+//   RaiseTimerResolution  Win32: timeBeginPeriod(1) once for the process
+//                         lifetime (+ arms the high-resolution waitable timer);
+//                         POSIX: nothing (the kernels sleep to the microsecond).
+//   SleepUntil            sleep to an absolute steady_clock deadline through
+//                         the arm (Win32: a high-resolution waitable timer,
+//                         CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, falling back to
+//                         the 1 ms period; POSIX: nanosleep, EINTR-safe). Returns
+//                         at or after the deadline, never before.
+void RaiseTimerResolution();
+void SleepUntil(std::chrono::steady_clock::time_point deadline);
+
+// The CPU's SIMD tiers for RUNTIME DISPATCH (never a global /arch flag: the
+// shipped binary runs on the x86-64 baseline and picks a wider kernel per call
+// site when the CPU has it). cpu_features= in run.meta names what was found.
+struct CpuFeatures {
+    bool sse4_2 = false;
+    bool avx2 = false;     // AVX2 + the OS has enabled YMM state (XGETBV)
+    bool fma3 = false;
+    bool neon = false;     // aarch64: always
+    const char* arch = "";   // "x86_64" | "arm64" | "other"
+};
+const CpuFeatures& Cpu();            // detected once, cached
+std::string CpuFeaturesCensus();     // "arch=x86_64,sse4_2=1,avx2=1,fma3=1" (run.meta cpu_features=)
 
 // The process's physical footprint in bytes as the OS charges it (macOS:
 // task_info phys_footprint; Linux: resident set from /proc/self/statm).
@@ -210,6 +265,8 @@ SSize FdPread(int fd, void* buf, size_t n, uint64_t offset);
 int FdSync(int fd);          // fsync / _commit
 int FdClose(int fd);
 int FdOfStream(std::FILE* f);   // fileno / _fileno
+// The size in bytes of the file open on fd (fstat / _filelengthi64; 64-bit on every arm); -1 on failure.
+int64_t FdSize(int fd);
 // Directory sync: POSIX fsyncs the directory fd after a rename; NTFS has no directory
 // fsync, so the Windows arm flushes the volume's view of the parent and reports success.
 int DirectorySync(const char* directory);
@@ -221,6 +278,10 @@ int StrNCaseCmp(const char* a, const char* b, size_t n);    // strncasecmp / _st
 // --- paths ---
 bool MakeDirectory(const char* path);   // true if created or already a directory
 bool IsDirectory(const char* path);
+// A fresh, uniquely named directory under the host's temp root (mkdtemp / GetTempPathW +
+// CreateDirectoryW with a random suffix): "<tmp>/<prefix>XXXXXX". Empty + *err on failure.
+// The tests' scratch directories (nothing of the game writes here).
+std::string MakeTempDirectory(const char* prefix, std::string* err);
 int64_t FileSeek64(std::FILE* f, int64_t offset, int whence);   // fseeko / _fseeki64
 int64_t FileTell64(std::FILE* f);                                // ftello / _ftelli64
 
@@ -230,10 +291,23 @@ int ProcessId();
 // child is spawned and the parent exits with its status, which is the nearest the OS has.
 // Returns only on failure.
 int ExecReplaceProcess(const char* image, char* const argv[]);
+// Run a child image to completion and wait for it: `argv` is the child's own vector
+// (argv[0] = the image name); `search_path` resolves `image` on the PATH the way the shell
+// would (posix_spawnp / the CRT's spawn search) -- the one way the engine reaches a tool it
+// does not know the location of without reading the environment itself. The child's stdout
+// and stderr are gathered into *output (when non-null). Returns the exit status (0..255),
+// -1 when the child could not be started (errno-shaped failure), -2 when it died on a signal.
+// Used by the VU1 AOT builder to drive the host compiler; nothing of the game runs through it.
+int ProcessRun(const char* image, char* const argv[], bool search_path, std::string* output);
 // Resident footprint in bytes as the platform's own memory tool reports it (the peak_mb
 // census row): phys_footprint on Darwin, VmRSS on Linux, PagefileUsage+WorkingSet on Win32.
 uint64_t ProcessFootprintBytes();
 uint64_t ProcessPeakFootprintBytes();
+// The process's page-fault count so far (minor + major: getrusage ru_minflt + ru_majflt on
+// POSIX, PageFaultCount on Win32); 0 when unavailable. The clock census differences it per
+// second: first-touch memory (lazily faulted heap growth) shows as the first windows'
+// faults standing far above the steady state.
+uint64_t ProcessPageFaults();
 // The absolute path of the running executable image (_NSGetExecutablePath / readlink
 // /proc/self/exe / GetModuleFileNameW). Empty + *err on failure. The target folders'
 // ExecutablePath() statics forward here; the F8 relaunch and the build-id check read it.
@@ -251,13 +325,80 @@ void ThreadDetach(NativeThread t);
 // Name the calling thread (<= 15 bytes are kept on Linux/Darwin; Win32 keeps all).
 void SetCurrentThreadName(const char* name);
 // Pin the calling thread to the OS's interactive class: USER_INTERACTIVE QoS on Darwin,
-// SCHED_OTHER nice -5 where permitted on Linux (best effort), ABOVE_NORMAL on Win32.
-void PinCurrentThreadInteractive();
+// SCHED_OTHER nice -5 where permitted on Linux (best effort), a priority by role on Win32
+// (ThreadRole at the top of this header: Pacer TIME_CRITICAL, Game HIGHEST, else ABOVE_NORMAL).
+void PinCurrentThreadInteractive(ThreadRole role = ThreadRole::Interactive);
+// Win32: timeBeginPeriod(1) once per process (the scheduler's 15.6 ms quantum cannot pace
+// 16.67 ms fields) and the high-resolution waitable timer the sleeps use. POSIX: no-op.
+void RaiseTimerResolution();
+// Sleep for `ns` through the arm's finest timer (Win32: a high-resolution waitable timer,
+// else the 1 ms period; POSIX: nanosleep, resumed on EINTR). Returns no earlier than `ns`.
+void SleepForNs(uint64_t ns);
+// The CPU's SIMD tiers (cpuid + xgetbv on x86-64; NEON on aarch64) -- see platform::host::Cpu.
+bool CpuDetect(bool* sse4_2, bool* avx2, bool* fma3, bool* neon, const char** arch);
+
+// --- dynamic libraries (dlopen / LoadLibrary): the VU1 AOT builder's generated image
+//     libraries. A handle stays open until Close; symbols are the library's C names. ---
+struct DynamicLibrary { void* handle = nullptr; };
+bool DynamicLibraryOpen(DynamicLibrary* out, const char* path, std::string* err);
+void* DynamicLibrarySymbol(DynamicLibrary lib, const char* name);
+void DynamicLibraryClose(DynamicLibrary lib);
+// The platform's shared-library file extension ("dylib" | "so" | "dll").
+const char* DynamicLibraryExtension();
 
 // --- clocks ---
 uint64_t MonotonicNowNs();   // the steady clock the TimeDomain samples
+// The cheapest monotonic nanosecond clock the host has, for per-event ledgers
+// on hot paths (the VU1 tier's per-kick run_ns: thousands of pairs a frame).
+// macOS: mach_absolute_time scaled by the timebase (~5 ns a read; steady_clock
+// is ~17 ns); elsewhere MonotonicNowNs. Its epoch is its own: never mix its
+// values with MonotonicNowNs / NowNs, difference it against itself only.
+uint64_t FastNowNs();
+// Block the calling thread until MonotonicNowNs() >= deadline_ns, with the finest timer the
+// host has: the field-edge trains (the tick thread's 60 Hz edges, the presenter's pacer)
+// need a wake within a few tens of microseconds of the edge, which std::this_thread::
+// sleep_until does not promise (Darwin's nanosleep lands 0.1-1 ms late under load; the
+// Windows SleepEx default is the 15.6 ms scheduler quantum).
+//   Darwin   mach_wait_until on the absolute-time clock (the scheduler's own deadline timer)
+//   Linux    clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME), EINTR resumed
+//   Windows  a per-thread CREATE_WAITABLE_TIMER_HIGH_RESOLUTION waitable timer (Win10 1803+);
+//            where the kernel refuses it, the classic timer with timeBeginPeriod(1) in force.
+// Returns at or after the deadline (never early); a deadline already passed returns at once.
+// The deadline is in MonotonicNowNs's domain (std::chrono::steady_clock's on every arm).
+void PreciseSleepUntilNs(uint64_t deadline_ns);
+// CPU time the CALLING thread has consumed, in ns (user + kernel): clock_gettime
+// CLOCK_THREAD_CPUTIME_ID on POSIX, GetThreadTimes on Win32 (100 ns units; the kernel's
+// quantum-sampled accounting, so individual reads are coarse but sums over a second are
+// right). 0 when the host cannot say. The app's clock census books per-thread CPU with it.
+uint64_t ThreadCpuTimeNs();
+// Ask the OS for the finest scheduler / timer granularity the process may have, once, at
+// boot (the target folder's RegisterSelf calls it). POSIX: nothing to ask (nanosleep,
+// condition-variable deadlines and mach_wait_until are already sub-millisecond). Win32: the
+// default timer resolution is 15.625 ms and every Sleep / SleepConditionVariable /
+// WaitForSingleObject timeout rounds UP to it -- a 60 Hz tick or a 4 ms pump wait cannot hold
+// -- so: timeBeginPeriod(1) (per-process since Windows 10 2004) and the process power-throttling
+// flag that keeps the 1 ms when the window is unfocused / minimized (Windows 11 otherwise
+// reverts a background process to 15.6 ms). The pacing lever on top of this is the pacing
+// track's PreciseSleepUntilNs (CREATE_WAITABLE_TIMER_HIGH_RESOLUTION on Win32).
+void RequestFineTimerResolution();
 // Thread-safe UTC broken-down time (gmtime_r / gmtime_s); false when the conversion fails.
 bool GmTimeUtc(int64_t unix_seconds, struct tm* out);
+
+// --- OpenGL entry points. Windows' opengl32.dll exports GL 1.1 only; every core 3.3 / 4.1
+//     name the backend calls is a per-context pointer from wglGetProcAddress. The Windows arm
+//     fills the generated table (engine/platform/windows/gl_loader.{h,cpp}, tools/build/
+//     gen_gl_loader.py: ps2r::glwin::Load) through `resolve` (the SDL window layer passes
+//     SDL_GL_GetProcAddress, which falls back
+//     to opengl32.dll's exports for the 1.1 names; the arm falls back the same way when
+//     `resolve` returns null). Idempotent: the first successful load wins. On POSIX the names
+//     are linked directly and this returns true without touching anything. `missing` (when
+//     non-null) receives the space-joined names that resolved to null; false iff any did. ---
+bool GlLoadEntryPoints(void* (*resolve)(const char* name), std::string* missing);
+// One GL entry point by name, for the OPTIONAL extensions the backend probes after
+// HasExtension (glTextureBarrierNV): the process's own GL symbols on POSIX (dlsym
+// RTLD_DEFAULT -- the framework / libGL is linked in), the resolver GlLoadEntryPoints was
+// given (then opengl32.dll's exports) on Windows. Null when absent or before a context exists.
+void* GlGetProcAddress(const char* name);
 
 // --- diagnostics: stack walking and symbolisation (crash handler, triage bundle,
 //     word watch). Frames are return addresses, innermost first. ---

@@ -53,11 +53,42 @@ public:
     uint32_t cyclecount() const { return cyclecount_; }
     size_t staging_bytes() const { return staging_.size(); }
 
+    // Census of the PATH1 hand-off: kicks armed, packets submitted and their
+    // bytes, and the Arms whose staging had to allocate. Counts only: a clock
+    // read per packet cost 2.8 % of the worker's run time (E182's measurement:
+    // the submit tail itself is ~150 ns per packet, 0.6 ns per bundle).
+    struct Census {
+        uint64_t arms = 0;
+        uint64_t submits = 0;
+        uint64_t submit_bytes = 0;
+        uint64_t staging_allocs = 0;   // Arms that allocated a fresh buffer (the pool had none)
+        uint64_t pool_refills = 0;     // batches taken from the arbiter's PATH1 pool
+    };
+    const Census& census() const { return census_; }
+
+    // Byte tap on every packet handed to the arbiter (the bytes, before the
+    // hand-off); null = absent. The lockstep A/B compares two units' kicks
+    // with it (VuLockstep), tools record them.
+    using SubmitTap = void (*)(void* user, const uint8_t* data, size_t size);
+    void SetSubmitTap(SubmitTap fn, void* user);
+    // Muted: a completed packet is tapped and DROPPED instead of submitted
+    // (the lockstep's probe re-runs of a kick must not reach the GS).
+    void SetMuted(bool muted) { muted_ = muted; }
+    bool muted() const { return muted_; }
+    // Copy the drain state (armed, pointer, span, bank, deadlines, the bytes
+    // staged so far) of another kick path; the arbiter, pacing form, pool and
+    // census stay this one's. The lockstep clones a unit with it.
+    void CopyDrainState(const XgKick& other);
+
 private:
     void Transfer(const uint8_t* data, uint64_t& vu_cycle, int64_t cycles, bool flush, bool add_stall_cycles);
 
     GifArbiter& arbiter_;
+    Census census_;
+    SubmitTap tap_ = nullptr;
+    void* tap_user_ = nullptr;
     bool paced_;
+    bool muted_ = false;
     bool enable_ = false;
     uint32_t addr_ = 0;            // drain pointer (byte address)
     uint32_t size_remaining_ = 0;  // bytes left of the current tag's span
@@ -65,5 +96,12 @@ private:
     uint32_t cyclecount_ = 0;      // banked drain cycles (2 per quadword)
     uint64_t lastcycle_ = 0;       // VU cycle the bank was last settled at
     uint64_t next_due_ = 0;        // first cycle the next Pace acts
+    // The packet under construction IS the buffer handed to the arbiter: no
+    // second copy. Arm takes the next buffer from `spare_` (refilled in batches
+    // from the arbiter's PATH1 pool: the buffers the drain delivered and gave
+    // back, each keeping the capacity it grew to); a fresh allocation only when
+    // the pool is empty (census staging_allocs).
+    static constexpr size_t kSpareBatch = 32;
     std::vector<uint8_t> staging_;
+    std::vector<std::vector<uint8_t>> spare_;
 };

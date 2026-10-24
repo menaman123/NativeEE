@@ -15,6 +15,7 @@
 #include "engine/core/config/settings_file.h"
 #include "engine/platform/host/platform.h"
 #include "engine/platform/sdl/gl_context.h"
+#include "engine/platform/sdl/window.h"
 #include "engine/title/title_profile.h"
 #include "imgui.h"
 #include PS2R_GL_HEADER
@@ -66,18 +67,25 @@ std::string Launcher::DiscPath() const {
     return !cfg_.paths.iso.empty() ? cfg_.paths.iso : cfg_.paths.game_files + "/" + title_.disc_image_file;
 }
 
+std::string Launcher::TitleName() const {
+    return title_.display_name.empty() ? title_.serial : title_.display_name;
+}
+
 bool Launcher::OpenWindow(std::string& error) {
     if (!SDL_WasInit(SDL_INIT_VIDEO)) {
+        platform::Window::RequestVideoHints();
         if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) { error = SDL_GetError(); return false; }
         video_inited_ = true;
     }
     platform::GlContext::RequestAttributes();
-    window_ = SDL_CreateWindow("NativeEE -- the title -- Setup", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, kWidth, kHeight,
+    const std::string window_title = "NativeEE -- " + TitleName() + " -- Setup";
+    window_ = SDL_CreateWindow(window_title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, kWidth, kHeight,
                                SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     if (!window_) { error = SDL_GetError(); return false; }
     gl_context_ = SDL_GL_CreateContext(window_);
     if (!gl_context_) { error = SDL_GetError(); return false; }
     SDL_GL_MakeCurrent(window_, gl_context_);
+    if (!platform::GlContext::LoadEntryPoints(&error)) return false;
     SDL_GL_SetSwapInterval(1);
     SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
     IMGUI_CHECKVERSION();
@@ -312,7 +320,7 @@ void Launcher::DrawFrame() {
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(display);
     ImGui::Begin("launcher", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus);
-    ImGui::Text("the title -- PC (NativeEE)");
+    ImGui::Text("%s -- PC (NativeEE)", TitleName().c_str());
     ImGui::SameLine(display.x - 330);
     ImGui::TextDisabled("%s", build_id_.c_str());
     ImGui::Separator();
@@ -335,12 +343,21 @@ void Launcher::DrawFrame() {
 void Launcher::DrawNeedDisc() {
     ImGui::Spacing();
     ImGui::TextWrapped("No game files found under %s.", cfg_.paths.game_files.c_str());
-    ImGui::TextWrapped("This program ships no game data. Drop your own the title disc image (NTSC-U, SLUS-12345; .iso or "
-                       ".bin) on this window, or type its path below. The image is verified (ISO9660 volume, SLUS_123.45 present, "
-                       "ELF SHA-256 equal to the one this build was made from) before anything is written.");
+    // The disc id in its label form (SCUS-97316) and as the volume names the ELF (SCUS_973.16).
+    std::string label_serial;
+    for (char c : title_.elf_path) {
+        if (c == '.') continue;
+        label_serial += c == '_' ? '-' : c;
+    }
+    const std::string region = DiscVerify::RegionOf(title_.elf_path);
+    ImGui::TextWrapped("This program ships no game data. Drop your own %s disc image (%s%s%s; .iso or "
+                       ".bin) on this window, or type its path below. The image is verified (ISO9660 volume, %s present, "
+                       "ELF SHA-256 equal to the one this build was made from) before anything is written.",
+                       TitleName().c_str(), region.c_str(), region.empty() ? "" : ", ", label_serial.c_str(), title_.elf_path.c_str());
     ImGui::Spacing();
     ImGui::SetNextItemWidth(-130);
-    ImGui::InputTextWithHint("##path", "/path/to/the title.iso", path_buffer_, sizeof path_buffer_);
+    const std::string hint = "/path/to/" + TitleName() + ".iso";
+    ImGui::InputTextWithHint("##path", hint.c_str(), path_buffer_, sizeof path_buffer_);
     ImGui::SameLine();
     if (ImGui::Button("Verify & extract", ImVec2(120, 0)) && path_buffer_[0]) {
         image_path_ = path_buffer_;

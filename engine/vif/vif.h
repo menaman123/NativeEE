@@ -10,7 +10,8 @@
 // next word; DIRECT / DIRECTHL payloads start on the next quadword and go to
 // the GIF on PATH2; MSCAL / MSCALF / MSCNT latch TOP := TOPS, ITOPS := ITOP,
 // toggle DBF and swap TOPS between BASE and BASE+OFST before starting the VU1
-// program (VIF0 has no double buffer); the i-bit sets STAT.INT unless ERR.MII.
+// program (VIF0 has no double buffer); the i-bit sets STAT.INT | VIS unless ERR.MII
+// and stalls the unit until FBRST.STC (SetIrqHooks: the composition's stall).
 //
 // Cross-thread contract: single writer (the EE / DMAC thread), or the MTVU
 // worker for VIF1 while it runs (MtvuVifFeed: the worker replays every VIF1
@@ -84,6 +85,16 @@ public:
     using TopsObserver = void (*)(void* user, uint16_t tops, uint16_t itops);
     void SetTopsObserver(TopsObserver fn, void* user);
 
+    // The i-bit interrupt stall (EE User's Manual, VIFcode i bit / VIFn_STAT VIS, INT /
+    // VIFn_FBRST STC): a code word with the i bit set and ERR.MII clear raises INT and
+    // STALLS the unit after the command completes; the unit resumes when the EE writes
+    // FBRST.STC. The stall is the composition's: `on_irq` runs on the feeding thread right
+    // after the command (the INTC raise, and the park under MTVU); `on_stc` runs on the
+    // writing thread after STC cleared VIS / INT (the release). Null = no stall (the
+    // register bits alone).
+    using IrqHook = void (*)(void* user, int vif);
+    void SetIrqHooks(IrqHook on_irq, IrqHook on_stc, void* user);
+
     VifRegs& regs(int vif) { return u_[vif].regs; }
     const VifRegs& regs(int vif) const { return u_[vif].regs; }
     const VifUnitState& unit(int vif) const { return u_[vif]; }
@@ -105,6 +116,8 @@ private:
     void CompleteDirect(int vif);
     void SwapDoubleBuffer();
     void KickVu1(uint32_t start_pc, bool resume);
+    // The command carrying the i bit completed: INT (+ VIS) unless ERR.MII, then the hook.
+    void RaiseIBit(int vif);
     void WriteRegister(int vif, uint32_t offset, uint32_t value);
     uint32_t ReadRegister(int vif, uint32_t offset) const;
 
@@ -118,4 +131,7 @@ private:
     VifUnitState u_[2];
     TopsObserver tops_obs_ = nullptr;
     void* tops_user_ = nullptr;
+    IrqHook on_irq_ = nullptr;
+    IrqHook on_stc_ = nullptr;
+    void* irq_user_ = nullptr;
 };

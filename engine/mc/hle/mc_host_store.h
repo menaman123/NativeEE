@@ -56,6 +56,8 @@ public:
     // Pattern = "/dir/prefix*" or an exact path; `max` bounds the entries.
     // Returns the entry count or -4.
     int32_t GetDir(const std::string& pattern, uint32_t max, std::vector<DirEntry>& out);
+    // Whether `guest_path` names a directory of the card ("" and "/" = the root, which always exists).
+    bool DirExists(const std::string& guest_path);
 
     const std::string& Cwd() const { return cwd_; }
     std::string HostPath(const std::string& guest_path) const;

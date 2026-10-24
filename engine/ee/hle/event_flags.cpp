@@ -148,13 +148,14 @@ int EventFlags::Wait(int eid, uint32_t wait_bits, uint32_t mode, uint32_t* resul
         if (satisfied) break;
         tm.NotePark(tid, true);
         EeRunToken::Instance().BlockBegin(tid);
+        tm.IdleWhileBlocked(t);   // the kernel's idle: the last runner advances time
         {
             EeEventQueue::ParkReg reg(&info->m, &info->cv);
             std::unique_lock<std::mutex> lk(info->m);
             info->cv.wait(lk, [&] {
                 return (t && (t->released.load(std::memory_order_acquire) || t->force_release.load() ||
                               t->terminated.load())) ||
-                       info->deleted || EeEventQueue::Instance().HasPending() || !tm.Running();
+                       info->deleted || EeEventQueue::Instance().ParkWakeDue() || !tm.Running();
             });
             for (auto it = info->waitq.begin(); it != info->waitq.end(); ++it)
                 if (it->tid == tid) {
@@ -206,6 +207,18 @@ int EventFlags::Poll(int eid, uint32_t wait_bits, uint32_t mode, uint32_t* resul
     if (!Satisfied(info->bits, wait_bits, mode)) return KE_EVF_COND;  // E5
     if (result) *result = info->bits;
     info->bits = AfterRelease(info->bits, wait_bits, mode);
+    return KE_OK;
+}
+
+int EventFlags::ReferStatus(int eid, EventFlagStatus& out) {
+    auto info = Lookup(eid);
+    if (!info) return KE_UNKNOWN_EVFID;
+    std::lock_guard<std::mutex> lk(info->m);
+    out.attr = info->attr;
+    out.option = info->option;
+    out.init_bits = info->init_bits;
+    out.bits = info->bits;
+    out.wait_threads = info->waiters;
     return KE_OK;
 }
 

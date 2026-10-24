@@ -38,7 +38,14 @@ struct DmacVifWalkResult {
 
 class ChainWalker {
 public:
-    static constexpr int kMaxTags = 10000;
+    // The walk's loop guard. The console's DMAC has no tag limit: a chain ends at
+    // its terminator or hangs the bus (a NEXT to itself). Every DMAtag occupies
+    // one quadword of RAM (32 MiB) or the scratchpad (16 KiB), so a walk that has
+    // read more tags than those hold has re-read a slot and is looping -- that,
+    // not a round number, is the bound. (A real display list of a loading world
+    // exceeded a 10000-tag guard; its END and the FINISH behind it were dropped
+    // and the title's render thread waited for ever.)
+    static constexpr int kMaxTags = (32 * 1024 * 1024 + 16 * 1024) / 16;
     static constexpr uint32_t kRamMask = 0x01FFFFFFu;    // VIF walk: 25-bit RAM window
     static constexpr uint32_t kTadrMask = 0x0FFFFFFFu;   // VIF walk: TADR without the SPR prefix
 
@@ -76,9 +83,11 @@ public:
     // Guest reads shared with the tail chase: 8 bytes at a VIF-walk tag
     // address (masked RAM / scratchpad), 0 when out of range.
     uint64_t ReadTagWord(uint32_t tadr, bool from_spr) const;
-    // A full guest address for `bytes`: the scratchpad prefix routes to the
-    // scratchpad, everything else to RAM through the physical mask; nullptr
-    // when the span is not entirely inside. Shared with the IPU/SIF channel bodies.
+    // A channel register address (MADR / TADR) for `bytes`: the SPR flag (bit 31)
+    // or the scratchpad prefix routes to the scratchpad, everything else to RAM
+    // through the physical map; nullptr when the span is not entirely inside.
+    // Shared with the IPU/SIF channel bodies.
+    static constexpr uint32_t kRegSprFlag = 0x80000000u;
     uint8_t* Translate(uint32_t addr, size_t bytes) const;
 
 private:

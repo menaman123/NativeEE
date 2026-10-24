@@ -29,9 +29,14 @@
 //   sceMcChdir(port, slot, path)        -> queues (0xC, 0 | -4), 0
 //   sceMcGetDir(port, slot, pattern, mode, max[t0], table[t1])
 //                                       -> 64-byte sceMcTblGetDir entries
-//                                          written, queues (0xD, count | -4), 0
+//                                          written, queues (0xD, count | -4), 0;
+//                                          max -1 = count only (no table, which
+//                                          may be NULL)
 //   sceMcDelete(port, slot, name)       -> queues (0xF, 0 | -4), 0
 //   sceMcFormat(port, slot)             -> queues (0x10, 0), 0
+//   sceMcGetEntSpace(port, slot, path)  -> queues (0x12, free entries | -4), 0:
+//                                          the fresh card's free clusters x 2
+//                                          entries when `path` is a directory
 //   mceIntrReadFixAlign / mceGetInfoApdx / mceStorePwd -> 0 (internal RPC
 //                                          fragments; the work is in the rows)
 // Every row but sceMcSync returns -100 while the model is not bound.
@@ -53,6 +58,7 @@ public:
     static constexpr uint32_t kDirEntryBytes = 64;
     static constexpr uint32_t kMaxTransfer = 2u * 1024u * 1024u;  // 2 MiB per sceMcRead/Write call
     static constexpr uint32_t kMaxDirEntries = 512;
+    static constexpr uint32_t kCountOnly = 0xFFFFFFFFu;   // sceMcGetDir maxent -1
     static constexpr size_t kMaxPath = 256;
 
     // Registers every row above; returns the number registered.
@@ -74,6 +80,7 @@ public:
     static void GetDir(CpuContext& ctx);
     static void Delete(CpuContext& ctx);
     static void Format(CpuContext& ctx);
+    static void GetEntSpace(CpuContext& ctx);
     static void Internal(CpuContext& ctx);
 
     // Census (tests / run.meta).

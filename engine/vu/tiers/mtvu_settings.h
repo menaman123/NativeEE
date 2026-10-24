@@ -11,4 +11,7 @@
 struct MtvuSettings {
     bool enabled = true;
     int depth_frames = 2;
+    // engine.mtvu_depth_hold (round 5): the HOLD on the worker's lag in frames
+    // (runahead_guard.h); 0 = no hold, depth_frames is the only frame bound.
+    int depth_hold = 0;
 };

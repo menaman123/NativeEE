@@ -2,6 +2,7 @@
 
 #include <SDL.h>   // SDL_CONTROLLER_* constants only
 
+#include <cstdio>
 #include <fstream>
 #include <sstream>
 
@@ -29,7 +30,7 @@ std::string Trim(const std::string& s) {
 
 }  // namespace
 
-ControlsBindings::ControlsBindings(std::string user_data_root) : user_data_root_(std::move(user_data_root)) {
+ControlsBindings::ControlsBindings(std::string dir) : dir_(std::move(dir)) {
     for (int i = 0; i < kRows; i++) {
         keys_.push_back({kButtonOrder[i], kDefaultKeys[i]});
         pad_.push_back({kButtonOrder[i], kDefaultPad[i]});
@@ -64,7 +65,7 @@ bool ControlsBindings::Load() {
 
 std::string ControlsBindings::Text() const {
     std::ostringstream o;
-    o << "; bindings.ini -- written by the launcher's Controls page (InputMapper grammar).\n"
+    o << "; bindings.ini -- your controls, written by the Controls page (kept beside the settings file).\n"
          "[sticks]\nmouse = right\nkey_left_up = W\nkey_left_down = S\nkey_left_left = A\nkey_left_right = D\n"
          "mouse_sensitivity = 0.35\nmouse_decay = 12.0\n\n[buttons]\n";
     for (const Row& r : keys_)
@@ -76,11 +77,22 @@ std::string ControlsBindings::Text() const {
 }
 
 bool ControlsBindings::Save(std::string* err) {
-    std::ofstream out(Path(), std::ios::trunc);
-    out << Text();
-    if (!out) {
-        last_error_ = "could not write " + Path();
+    // Whole file through a temporary + rename: a crash never leaves torn bindings.
+    const std::string tmp = Path() + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::trunc);
+        out << Text();
+        if (!out) {
+            last_error_ = "could not write " + tmp;
+            if (err) *err = last_error_;
+            std::remove(tmp.c_str());
+            return false;
+        }
+    }
+    if (std::rename(tmp.c_str(), Path().c_str()) != 0) {
+        last_error_ = "could not replace " + Path();
         if (err) *err = last_error_;
+        std::remove(tmp.c_str());
         return false;
     }
     last_error_.clear();
@@ -105,8 +117,15 @@ void ControlsBindings::Arm(Target target, int row) {
 bool ControlsBindings::OfferKey(const std::string& sdl_key_name) {
     if (armed_ != Target::Key || armed_row_ < 0 || armed_row_ >= static_cast<int>(keys_.size())) return false;
     if (sdl_key_name == "Escape") { Disarm(); return true; }
-    if (sdl_key_name == "Backspace") keys_[armed_row_].value.clear();
-    else keys_[armed_row_].value = sdl_key_name;
+    if (sdl_key_name == "Backspace") {
+        keys_[armed_row_].value.clear();
+    } else {
+        // The same key may drive only one PS2 button (as a pad control may): the row that
+        // had it is unbound, so a rebound key never presses two buttons at once.
+        for (Row& r : keys_)
+            if (r.value == sdl_key_name) r.value.clear();
+        keys_[armed_row_].value = sdl_key_name;
+    }
     Disarm();
     Save(nullptr);
     return true;

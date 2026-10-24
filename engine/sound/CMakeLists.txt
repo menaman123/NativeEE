@@ -11,6 +11,7 @@ add_library(ps2r_sound STATIC
     mixer.cpp
     audio_mixer.cpp
     fmv_pcm_input.cpp
+    voice_trace.cpp
 )
 # The libsdr surface (4E''): the SDRDRV face and the EE rows over SpuCore. Links
 # the manifest (ps2r_ee) and the RPC router (ps2r_sif); ps2r_sound itself stays

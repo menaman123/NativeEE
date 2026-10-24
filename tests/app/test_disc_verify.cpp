@@ -21,9 +21,8 @@
 #include <string>
 #include <vector>
 
-#include <dirent.h>
-#include <sys/stat.h>
-#include <unistd.h>
+#include <filesystem>
+#include <system_error>
 
 #include "app/host/disc_verify.h"
 #include "app/host/first_run.h"
@@ -45,23 +44,9 @@ static std::vector<uint8_t> Pattern(size_t n, uint8_t seed) {
     for (size_t i = 0; i < n; i++) v[i] = static_cast<uint8_t>(seed + i * 13 + (i >> 7));
     return v;
 }
-static bool Exists(const std::string& p) { struct stat st; return ::stat(p.c_str(), &st) == 0; }
-static void RemoveTree(const std::string& p) {
-    struct stat st;
-    if (::lstat(p.c_str(), &st) != 0) return;
-    if (S_ISDIR(st.st_mode)) {
-        if (DIR* d = ::opendir(p.c_str())) {
-            while (dirent* e = ::readdir(d)) {
-                if (std::strcmp(e->d_name, ".") == 0 || std::strcmp(e->d_name, "..") == 0) continue;
-                RemoveTree(p + "/" + e->d_name);
-            }
-            ::closedir(d);
-        }
-        ::rmdir(p.c_str());
-    } else {
-        std::remove(p.c_str());
-    }
-}
+static bool Exists(const std::string& p) { std::error_code ec; return std::filesystem::exists(p, ec); }
+static void RemoveTree(const std::string& p) { std::error_code ec; std::filesystem::remove_all(p, ec); }
+static void MakeDir(const std::string& p) { std::error_code ec; std::filesystem::create_directory(p, ec); }
 static std::vector<uint8_t> ReadWhole(const std::string& p) {
     std::ifstream in(p, std::ios::binary);
     return std::vector<uint8_t>(std::istreambuf_iterator<char>(in), {});
@@ -81,7 +66,7 @@ static std::string WriteImage(const std::string& path, bool raw, const char* ser
 int main(int argc, char** argv) {
     if (argc < 2) { std::printf("usage: test_disc_verify <scratch>\n"); return 2; }
     const std::string S = argv[1];
-    ::mkdir(S.c_str(), 0755);
+    MakeDir(S.c_str());
     // The FirstRun cases assert on what a run leaves behind: start them from
     // nothing (a previous run's layout would read as a pre-existing install).
     for (const char* sub : {"data", "ref", "bad", "cancel", "fail"}) RemoveTree(S + "/" + sub);
@@ -163,7 +148,7 @@ int main(int argc, char** argv) {
     plan.serial = kSerial;
     plan.disc_image_file = "example_title.rep/the title.iso";
     plan.mc_dir = S + "/data/memcards";
-    plan.settings_file = S + "/data/ps2r.ini";
+    plan.settings_file = S + "/data/nativeee.ini";
     plan.build_id = "TEST-BUILD-1";
     plan.expected_sha256 = hash;
     plan.copy_disc = true;
@@ -190,7 +175,7 @@ int main(int argc, char** argv) {
     {
         const std::vector<uint8_t> ini = ReadWhole(plan.settings_file);
         const std::string text(ini.begin(), ini.end());
-        CHECK(text.find("paths.iso = ") != std::string::npos && text.find("# ps2r.ini") == 0, "firstrun_settings_file");
+        CHECK(text.find("iso = ") != std::string::npos && text.find("# nativeee.ini") == 0, "firstrun_settings_file");
     }
     {
         const ps2r::app::GameFilesStamp::Check c = ps2r::app::GameFilesStamp::Verify(plan.game_files_dir, "TEST-BUILD-1");
@@ -206,12 +191,12 @@ int main(int argc, char** argv) {
         FirstRun::Plan ref = plan;
         ref.game_files_dir = S + "/ref/game_files";
         ref.mc_dir = S + "/ref/memcards";
-        ref.settings_file = S + "/ref/ps2r.ini";
+        ref.settings_file = S + "/ref/nativeee.ini";
         ref.copy_disc = false;
         const FirstRun::Result rr = FirstRun::Run(ref, nullptr);
         const std::vector<uint8_t> ini = ReadWhole(ref.settings_file);
         const std::string text(ini.begin(), ini.end());
-        CHECK(rr.ok && rr.disc_referenced && text.find("paths.iso = " + raw) != std::string::npos &&
+        CHECK(rr.ok && rr.disc_referenced && text.find("[paths]\niso = " + raw) != std::string::npos &&
               !Exists(ref.game_files_dir + "/" + plan.disc_image_file), "firstrun_reference_in_place");
     }
     // Refused: nothing laid down.
@@ -220,7 +205,7 @@ int main(int argc, char** argv) {
         bad.image = S + "/pal.iso";
         bad.game_files_dir = S + "/bad/game_files";
         bad.mc_dir = S + "/bad/memcards";
-        bad.settings_file = S + "/bad/ps2r.ini";
+        bad.settings_file = S + "/bad/nativeee.ini";
         const FirstRun::Result rb = FirstRun::Run(bad, nullptr);
         CHECK(!rb.ok && rb.verify.state == DiscVerify::State::WrongRegion && !Exists(S + "/bad"), "firstrun_refused_leaves_nothing");
     }
@@ -231,7 +216,7 @@ int main(int argc, char** argv) {
         FirstRun::Plan c = plan;
         c.game_files_dir = S + "/cancel/game_files";
         c.mc_dir = S + "/cancel/memcards";
-        c.settings_file = S + "/cancel/ps2r.ini";
+        c.settings_file = S + "/cancel/nativeee.ini";
         const std::string c_elf = c.game_files_dir + "/" + plan.elf_dir + "/" + kSerial;
         std::atomic<bool> cancel{false};
         bool elf_seen_written = false;
@@ -249,8 +234,8 @@ int main(int argc, char** argv) {
         FirstRun::Plan f = plan;
         f.game_files_dir = S + "/fail/game_files";
         f.mc_dir = S + "/fail/blocker/memcards";
-        f.settings_file = S + "/fail/ps2r.ini";
-        ::mkdir((S + "/fail").c_str(), 0755);
+        f.settings_file = S + "/fail/nativeee.ini";
+        MakeDir((S + "/fail").c_str());
         if (std::FILE* b = std::fopen((S + "/fail/blocker").c_str(), "wb")) std::fclose(b);
         const FirstRun::Result rf = FirstRun::Run(f, nullptr);
         CHECK(!rf.ok && rf.elf_removed && !Exists(f.game_files_dir + "/" + plan.elf_dir + "/" + kSerial) &&
@@ -277,13 +262,13 @@ int main(int argc, char** argv) {
         const std::string legacy = base + "/" + ps2r::app::UserData::kLegacyAppName;
         const std::string root = base + "/" + ps2r::app::UserData::kAppName;
         RemoveTree(base);
-        ::mkdir(base.c_str(), 0755);
-        ::mkdir(root.c_str(), 0755);
+        MakeDir(base.c_str());
+        MakeDir(root.c_str());
         std::string note = "x";
         CHECK(!ps2r::app::UserData::CarryOverLegacyRoot(root, &note) && note.empty() && !Exists(root + "/ps2r.ini"),
               "legacy_root_absent_nothing_copied");
-        ::mkdir(legacy.c_str(), 0755);
-        ::mkdir((legacy + "/memcards").c_str(), 0755);
+        MakeDir(legacy.c_str());
+        MakeDir((legacy + "/memcards").c_str());
         std::ofstream(legacy + "/ps2r.ini") << "video.vsync = on\n";
         std::ofstream(legacy + "/memcards/mc0.ps2") << "card";
         CHECK(ps2r::app::UserData::CarryOverLegacyRoot(root, &note) && note.find("copied the former root") != std::string::npos &&
