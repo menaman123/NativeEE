@@ -4,7 +4,8 @@
 // judge runs without a window; `--index URL` names the release index the Build step reads (the manifest's by default;
 // an offline copy for a judge); `--prepare --index URL --iso IMAGE --folder DIR [--jobs N] [--release TAG]
 // [--json REPORT]` is the headless Build: no window, progress on stderr, the game's path on stdout, the same report the
-// command-line tool writes, exit 0 when the game is ready. The launcher never looks for disc images by itself (D-L10).
+// command-line tool writes, exit 0 when the game is ready; `--iso IMAGE` alone opens the setup window on that disc. The
+// launcher never looks for disc images by itself (D-L10).
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QFile>
@@ -115,7 +116,7 @@ int main(int argc, char** argv) {
     const QCommandLineOption indexOpt("index", "Where the release index is (the game description's by default).", "url");
     const QCommandLineOption releaseOpt("release", "The release to use (the newest by default).", "tag");
     const QCommandLineOption prepareOpt("prepare", "Build the game without a window (with --iso and --folder).");
-    const QCommandLineOption isoOpt("iso", "The disc image (--prepare).", "image");
+    const QCommandLineOption isoOpt("iso", "The disc image: opened in the setup window, or built with --prepare.", "image");
     const QCommandLineOption folderOpt("folder", "The game folder (--prepare).", "dir");
     const QCommandLineOption jobsOpt("jobs", "How many things to do at once (--prepare).", "n");
     const QCommandLineOption jsonOpt("json", "Write the report here (--prepare).", "report");   // lint: allow
@@ -167,6 +168,7 @@ int main(int argc, char** argv) {
 #endif
     ps2r::launcher::MainWindow window(&launcher);
     window.show();
-    window.startSetupIfNeeded();
+    if (parser.isSet(isoOpt)) window.showSetup(QFileInfo(parser.value(isoOpt)).absoluteFilePath());   // a disc named on the command line
+    else window.startSetupIfNeeded();
     return app->exec();
 }

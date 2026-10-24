@@ -26,7 +26,7 @@ SettingsRow::SettingsRow(const SettingsRowSpec& spec, QWidget* parent) : QWidget
     help_->setWordWrap(true);
     help_->setFixedWidth(420);
     help_->setVisible(!spec.help.isEmpty());
-    help_->setMinimumHeight(help_->heightForWidth(420));   // a wrapped label's height, so the row below never overlaps
+    help_->setMinimumHeight(qMax(0, help_->heightForWidth(420)));   // a wrapped label's height, so the row below never overlaps
     QWidget* control = nullptr;
     if (spec.kind == "switch") {
         switch_ = new SwitchControl(this);
