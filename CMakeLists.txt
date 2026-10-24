@@ -260,3 +260,7 @@ add_subdirectory(engine/ipu)
 # tools/fmv_layout_ppm -- the FMV plane check's layout helper (verify/fmv_plane_check.py):
 # a decoded picture through the real FrameWriter strip layout.
 add_subdirectory(tools/fmv_layout_ppm)
+
+# --- the redistributable engine bundle (decision D-A: the player's disc is recompiled on the player's
+# machine against this bundle + a pinned compiler; tools/prepare drives it). `--target engine_bundle`.
+include(${CMAKE_SOURCE_DIR}/cmake/EngineBundle.cmake)

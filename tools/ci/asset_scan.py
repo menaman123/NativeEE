@@ -139,9 +139,32 @@ def elf_md5(data):
     return hashlib.md5(data).hexdigest()
 
 
+def _public_tables():
+    """Byte images of PUBLIC constant tables a game ELF and an unrelated engine both carry
+    (the IEEE CRC-32 lookup table, little-endian: zlib's crc_table, the engine's core/hash):
+    a window that is a slice of one proves nothing about game data and is never chosen."""
+    table = []
+    for n in range(256):
+        c = n
+        for _ in range(8):
+            c = (c >> 1) ^ 0xEDB88320 if c & 1 else c >> 1
+        table.append(c)
+    le = b"".join(c.to_bytes(4, "little") for c in table)
+    be = b"".join(c.to_bytes(4, "big") for c in table)
+    return [le, be]
+
+
+PUBLIC_TABLES = _public_tables()
+
+
+def is_public_table_slice(w):
+    return any(w in t for t in PUBLIC_TABLES)
+
+
 def choose_windows(elf, count, size, seed_stride=None):
     """`count` windows of `size` bytes spread over the ELF, each with enough byte diversity
-    that an accidental 8-byte anchor match in an unrelated binary is implausible."""
+    that an accidental 8-byte anchor match in an unrelated binary is implausible, and none a
+    slice of a public constant table (is_public_table_slice)."""
     windows = []
     if len(elf) < size:
         return windows
@@ -150,7 +173,7 @@ def choose_windows(elf, count, size, seed_stride=None):
     while at + size <= len(elf) and len(windows) < count:
         w = elf[at:at + size]
         anchor = w[:8]
-        if len(set(w)) >= 28 and len(set(anchor)) >= 6 and anchor != b"\0" * 8:
+        if len(set(w)) >= 28 and len(set(anchor)) >= 6 and anchor != b"\0" * 8 and not is_public_table_slice(w):
             windows.append({"offset": at, "anchor": anchor.hex(),
                             "sha256": hashlib.sha256(w).hexdigest(), "size": size})
             at += stride
