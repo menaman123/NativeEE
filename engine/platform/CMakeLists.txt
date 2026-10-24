@@ -37,6 +37,7 @@ if(WIN32)
     # (cmake/OpenGlDependency.cmake). [TwinsanityEvolved engine/platform/CMakeLists.txt keeps this block on
     # ps2r_platform; here the arm itself is the loader's caller, so it sits one library lower.]
     include(${CMAKE_SOURCE_DIR}/cmake/OpenGlDependency.cmake)
+    target_compile_definitions(ps2r_host PRIVATE PS2R_HOST_WINDOWS_GL_LOADER=1)
     target_sources(ps2r_host PRIVATE windows/gl_loader.cpp)
     target_link_libraries(ps2r_host PUBLIC OpenGL::GL)
 else()

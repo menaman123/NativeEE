@@ -55,11 +55,8 @@ if(PS2R_LAUNCHER_PREPARE)
             "${PS2R_LAUNCHER_ROOT}/engine/core/hash/sha256.cpp"   # lint: allow
             "${PS2R_LAUNCHER_ROOT}/engine/platform/platform.cpp")
         if(WIN32)
-            # the Windows arm carries the GL entry-point table (engine/platform/CMakeLists.txt keeps them together)
-            target_sources(ps2r_prepare PRIVATE "${PS2R_LAUNCHER_ROOT}/engine/platform/host/host_windows.cpp"
-                                                "${PS2R_LAUNCHER_ROOT}/engine/platform/windows/gl_loader.cpp")
-            find_package(OpenGL REQUIRED)
-            target_link_libraries(ps2r_prepare PUBLIC dbghelp psapi winmm OpenGL::GL)
+            target_sources(ps2r_prepare PRIVATE "${PS2R_LAUNCHER_ROOT}/engine/platform/host/host_windows.cpp")
+            target_link_libraries(ps2r_prepare PUBLIC dbghelp psapi winmm)
         else()
             target_sources(ps2r_prepare PRIVATE "${PS2R_LAUNCHER_ROOT}/engine/platform/host/host_posix.cpp"
                                                 "${PS2R_LAUNCHER_ROOT}/engine/platform/posix/fiber_posix.cpp")

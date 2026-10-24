@@ -7,7 +7,9 @@
 // (.github/workflows/windows.yml). Keep every call here to the documented Win32/UCRT
 // surface so the first CI run is a compile check, not a redesign.
 #include "engine/platform/host/platform.h"
+#if defined(PS2R_HOST_WINDOWS_GL_LOADER)
 #include "engine/platform/windows/gl_loader.h"   // ps2r::glwin::Load / Count: the GENERATED entry-point table
+#endif
 
 #include <random>
 #include <string>
@@ -508,6 +510,7 @@ bool GmTimeUtc(int64_t unix_seconds, struct tm* out) {
     return _gmtime64_s(out, &t) == 0;
 }
 
+#if defined(PS2R_HOST_WINDOWS_GL_LOADER)
 namespace {
 std::mutex g_gl_load_mutex;
 bool g_gl_loaded = false;
@@ -556,6 +559,7 @@ void* GlGetProcAddress(const char* name) {
     std::lock_guard<std::mutex> lock(g_gl_load_mutex);
     return GlResolveOne(g_gl_resolve, GetModuleHandleW(L"opengl32.dll"), name);
 }
+#endif
 
 namespace {
 std::once_flag g_sym_once;
