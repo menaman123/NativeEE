@@ -1,6 +1,8 @@
 // app/launcher/title_manifest.h -- the per-title manifest (`title.json`) a title ships beside the launcher: who the
-// game is (id, name, the disc's fingerprint), where its source is pinned, how each target is built, how it is run,
-// and the settings rows that mirror its options file. Everything the launcher knows about a game comes from here.
+// game is (id, name, the disc's fingerprint and the executable's checksum), which discs are recognised but not
+// supported and why, which platforms it is prepared for, how the game folder is laid out, how the game is run, the
+// settings rows that mirror its options file, and what is not supported. Everything the launcher knows about a game
+// comes from here; nothing of a title is compiled in.
 #pragma once
 #include <QJsonObject>
 #include <QString>
@@ -9,23 +11,35 @@
 namespace ps2r::launcher {
 
 struct DiscFingerprint {
-    QString file;     // the file that must be on the disc (ISO 9660 root): the game's executable name
-    QString region;   // PAL / NTSC-U -- shown on the card
-    QString id;       // the disc id shown on the card
+    QString file;         // the file that must be on the disc (ISO 9660 root): the game's executable name
+    QString region;       // NTSC-U / PAL / NTSC-J -- shown on the card
+    QString regionLabel;  // "North America" -- the plain name shown beside the region code
+    QString id;           // the disc id shown on the card
+    QString sha256;       // the executable's checksum (lower-case hex); empty = not checked
+    bool supported = true;   // false = recognised, shown with the "Not supported yet" badge and `reason`
+    QString reason;
 };
 
 struct SettingsChoice {
-    QString value;    // what is written to the options file
-    QString label;    // what the user reads
+    QString value;         // what is written to the options file
+    QString label;         // what the user reads
+    QStringList platforms;   // empty = everywhere; else the host OS ids this choice is offered on (macos / windows / linux)
+};
+
+struct SettingsLock {
+    QString key;     // another row's key
+    QString value;   // while that row has this value, this row is locked...
+    QString help;    // ...and says why
 };
 
 struct SettingsRowSpec {
-    QString key;      // the options-file key (e.g. video.frame_rate)
+    QString key;      // the options-file key (e.g. video.frame_cap)
     QString label;
     QString kind;     // "choice" or "switch"
     QString defaultValue;
     QString help;
     QVector<SettingsChoice> choices;
+    SettingsLock lockedBy;   // key empty = no lock
 };
 
 struct SettingsGroupSpec {
@@ -34,29 +48,18 @@ struct SettingsGroupSpec {
 };
 
 struct TargetSpec {
-    QString id;             // macos / windows / vita
-    QString label;
-    QString host;           // the host that can build it: macos / windows / any
-    QString artifact;       // binary / zip / vpk
-    QString preset;         // a CMake configure preset, or empty
-    QStringList configure;  // configure arguments when there is no preset (${ffmpeg} substituted)
-    QString buildTarget;
-    QString binary;         // the runnable binary under the build directory (macos / windows)
-    QString artifactPath;   // the artefact under the build directory (vpk)
-    QStringList needs;      // extra installs: vitasdk
-    QString installText;    // how to put the artefact on that machine
-    QString crossReason;    // why this host cannot build it
-    QString unavailableReason;   // why NO host can build it from this source (a lane not merged yet) -- greyed with the reason
-    QString distScript;     // a staging script run after the build (windows: release_dist.ps1)
-    QStringList distArgs;
-    QString distArtifact;   // the staged artefact
+    QString id;       // macos-arm64 / windows-x64 / linux-x86_64 ...
+    QString label;    // "macOS (Apple silicon)"
+    QString os;       // macos / windows / linux
+    QString arch;     // arm64 / x86_64
+    QString binary;   // the game's executable name on that platform (sly2.app / sly2.exe / sly2)
 };
 
-struct FolderSpec {
-    QString id, label, defaultPath, seedFromSource;
-};
+struct UnsupportedItem { QString label, reason; };
 
-struct LicenceLink { QString label, path; };
+struct SubfolderSpec { QString id, label, defaultName; };
+
+struct LicenceLink { QString label, file; };
 
 class TitleManifest {
 public:
@@ -75,36 +78,37 @@ public:
     const DiscFingerprint& fingerprint() const { return fingerprint_; }
     const QVector<DiscFingerprint>& alternates() const { return alternates_; }
     QStringList discExtensions() const { return discExtensions_; }
-    // Every fingerprint file the launcher accepts (the main one first).
+    QStringList requiredFiles() const { return requiredFiles_; }
+    QString modifiedReason() const { return modifiedReason_; }
+    // Every fingerprint the launcher recognises (the supported one first).
     QVector<DiscFingerprint> allFingerprints() const;
+    const DiscFingerprint* fingerprintFor(const QString& file) const;
 
-    QString sourceUrl() const { return sourceUrl_; }
-    // The GitHub repository whose releases carry the finished game ("owner/name"): manifest release.repo, else the
-    // source URL's github.com path. Empty when neither names one.
     QString releaseRepo() const { return releaseRepo_; }
-    QString toolchainScript() const { return toolchainScript_; }
-    QString toolchainWindowsScript() const { return toolchainWindowsScript_; }
-    QString toolchainPins() const { return toolchainPins_; }
-    QString toolchainFolder() const { return toolchainFolder_; }
-    QString ffmpegRecipe() const { return ffmpegRecipe_; }
-    bool needsPython() const { return needsPython_; }
+    // The release asset for a platform: release.asset_pattern with ${product}, ${tag}, ${platform} substituted.
+    QString releaseAsset(const QString& tag, const QString& platform) const;
+    QString bundleFolder(const QString& platform) const;
 
     const QVector<TargetSpec>& targets() const { return targets_; }
     const TargetSpec* target(const QString& id) const;
+    const QVector<UnsupportedItem>& unsupported() const { return unsupported_; }
 
-    QString runIsoFlag() const { return runIsoFlag_; }
-    QString runConfigFlag() const { return runConfigFlag_; }
-    QString runMemoryCardsFlag() const { return runMemoryCardsFlag_; }
+    QString configFileName() const { return configFileName_; }
+    const QVector<SubfolderSpec>& subfolders() const { return subfolders_; }
+    QString portableNote() const { return portableNote_; }
+
+    // run.args with ${iso} ${config} ${memcards} ${saves} ${cache} ${folder} left for GameFolder to substitute
     QStringList runArgs() const { return runArgs_; }
-    QString titleStateLine() const { return titleStateLine_; }
-    QString titleStateName() const { return titleStateName_; }
+    QStringList resumeArgs() const { return resumeArgs_; }
+    QString saveStatesFolder() const { return saveStatesFolder_; }
+    QString saveStateExtension() const { return saveStateExtension_; }
+    QString saveStateMetaExtension() const { return saveStateMetaExtension_; }
+    QString saveStateThumbnailExtension() const { return saveStateThumbnailExtension_; }
 
-    QString settingsFile() const { return settingsFile_; }
     QString settingsNote() const { return settingsNote_; }
     const QVector<SettingsGroupSpec>& settingsGroups() const { return settingsGroups_; }
     QVector<SettingsRowSpec> allSettingsRows() const;
 
-    const QVector<FolderSpec>& folders() const { return folders_; }
     QStringList scanFolders() const { return scanFolders_; }
     bool scanRemovable() const { return scanRemovable_; }
     int scanMaxDepth() const { return scanMaxDepth_; }
@@ -115,16 +119,17 @@ private:
     QString path_, id_, name_, product_, description_, appDataFolder_, binaryName_;
     DiscFingerprint fingerprint_;
     QVector<DiscFingerprint> alternates_;
-    QStringList discExtensions_;
-    QString releaseRepo_;
-    QString sourceUrl_, toolchainScript_, toolchainWindowsScript_, toolchainPins_, toolchainFolder_, ffmpegRecipe_;
-    bool needsPython_ = true;
+    QStringList discExtensions_, requiredFiles_;
+    QString modifiedReason_;
+    QString releaseRepo_, assetPattern_, bundleFolderPattern_;
     QVector<TargetSpec> targets_;
-    QString runIsoFlag_, runConfigFlag_, runMemoryCardsFlag_, titleStateLine_, titleStateName_;
-    QStringList runArgs_;
-    QString settingsFile_, settingsNote_;
+    QVector<UnsupportedItem> unsupported_;
+    QString configFileName_, portableNote_;
+    QVector<SubfolderSpec> subfolders_;
+    QStringList runArgs_, resumeArgs_;
+    QString saveStatesFolder_, saveStateExtension_, saveStateMetaExtension_, saveStateThumbnailExtension_;
+    QString settingsNote_;
     QVector<SettingsGroupSpec> settingsGroups_;
-    QVector<FolderSpec> folders_;
     QStringList scanFolders_;
     bool scanRemovable_ = true;
     int scanMaxDepth_ = 2;

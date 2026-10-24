@@ -1,6 +1,6 @@
-// app/launcher/process_runner.h -- one child process (a download helper, the toolchain script, cmake, ninja, the
-// game) with its output going to a log file under Logs/ and, line by line, to whoever listens (the Details sheet,
-// the progress parser). Ninja's `[n/m]` lines are recognised and reported as progress.
+// app/launcher/process_runner.h -- one child process (the game, or whatever a prepare runner starts) with its output
+// going to a log file under Logs/ and, line by line, to whoever listens (the Details sheet, the progress parser).
+// `[n/m]` step lines are recognised and reported as progress.
 #pragma once
 #include <QElapsedTimer>
 #include <QFile>
@@ -33,8 +33,8 @@ public:
     QProcess* process() { return process_; }
     void writeNote(const QString& text);  // a line written to the log and emitted as output (not from the child)
 
-    // Parses a ninja line "[12/345] ..." into done/total; false for any other line.
-    static bool parseNinjaProgress(const QString& line, int* done, int* total);
+    // Parses a step line "[12/345] ..." into done/total; false for any other line.
+    static bool parseStepProgress(const QString& line, int* done, int* total);
 
 signals:
     void line(const QString& text);

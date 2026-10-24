@@ -88,7 +88,7 @@ void ProcessRunner::handleText(const QString& text) {
         tail_ << l;
         while (tail_.size() > 200) tail_.removeFirst();
         int done = 0, total = 0;
-        if (parseNinjaProgress(l, &done, &total)) emit progress(done, total);
+        if (parseStepProgress(l, &done, &total)) emit progress(done, total);
         emit line(l);
     }
 }
@@ -107,7 +107,7 @@ QString ProcessRunner::tail(int lines) const {
     return QStringList(tail_.mid(tail_.size() - n)).join('\n');
 }
 
-bool ProcessRunner::parseNinjaProgress(const QString& line, int* done, int* total) {
+bool ProcessRunner::parseStepProgress(const QString& line, int* done, int* total) {
     static const QRegularExpression re("^\\[(\\d+)/(\\d+)\\]");
     const QRegularExpressionMatch m = re.match(line);
     if (!m.hasMatch()) return false;

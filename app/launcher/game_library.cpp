@@ -16,6 +16,15 @@ void GameLibrary::load() {
         e.path = o.value("path").toString();
         e.fingerprintFile = o.value("fingerprint").toString();
         e.sizeBytes = qint64(o.value("size").toDouble());
+        e.identity.path = e.path;
+        e.identity.fingerprintFile = e.fingerprintFile;
+        e.identity.status = DiscIdentity::statusFromKey(o.value("status").toString(QStringLiteral("supported")));
+        e.identity.region = o.value("region").toString();
+        e.identity.regionLabel = o.value("region_label").toString();
+        e.identity.id = o.value("id").toString();
+        e.identity.sha256 = o.value("sha256").toString();   // lint: allow
+        e.identity.reason = o.value("reason").toString();
+        e.identity.sizeBytes = e.sizeBytes;
         e.lastPlayed = QDateTime::fromString(o.value("last_played").toString(), Qt::ISODate);
         e.playtimeSeconds = qint64(o.value("playtime_seconds").toDouble());
         if (!e.path.isEmpty()) games_ << e;
@@ -30,6 +39,12 @@ void GameLibrary::save() {
         o["path"] = e.path;
         o["fingerprint"] = e.fingerprintFile;
         o["size"] = double(e.sizeBytes);
+        o["status"] = DiscIdentity::statusKey(e.identity.status);
+        o["region"] = e.identity.region;
+        o["region_label"] = e.identity.regionLabel;
+        o["id"] = e.identity.id;
+        o["sha256"] = e.identity.sha256;   // lint: allow
+        o["reason"] = e.identity.reason;
         if (e.lastPlayed.isValid()) o["last_played"] = e.lastPlayed.toString(Qt::ISODate);
         o["playtime_seconds"] = double(e.playtimeSeconds);
         arr << o;
@@ -48,20 +63,23 @@ const GameEntry* GameLibrary::game(const QString& path) const {
     return i < 0 ? nullptr : &games_[i];
 }
 
-bool GameLibrary::add(const QString& path, const QString& fingerprintFile, qint64 sizeBytes) {
-    const int i = indexOf(path);
+bool GameLibrary::add(const DiscIdentity& identity) {
+    if (!identity.recognised()) return false;
+    const int i = indexOf(identity.path);
     if (i >= 0) {
-        games_[i].fingerprintFile = fingerprintFile;
-        games_[i].sizeBytes = sizeBytes;
+        games_[i].fingerprintFile = identity.fingerprintFile;
+        games_[i].identity = identity;
+        games_[i].sizeBytes = identity.sizeBytes;
         games_[i].missing = false;
         save();
         emit changed();
         return false;
     }
     GameEntry e;
-    e.path = path;
-    e.fingerprintFile = fingerprintFile;
-    e.sizeBytes = sizeBytes;
+    e.path = identity.path;
+    e.fingerprintFile = identity.fingerprintFile;
+    e.identity = identity;
+    e.sizeBytes = identity.sizeBytes;
     games_ << e;
     save();
     emit changed();

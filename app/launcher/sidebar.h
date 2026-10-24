@@ -1,5 +1,5 @@
-// app/launcher/sidebar.h -- the 220 px column: the product name and version at the top, the four pages (Games,
-// Settings, Targets, About), the app-data path with Open at the bottom. Painted flat; Cmd/Ctrl+1..4 select.
+// app/launcher/sidebar.h -- the 220 px column: the game's name and version at the top, the four pages (Games, Save
+// States, Settings, About), the game folder with Open at the bottom. Painted flat; Cmd/Ctrl+1..4 select.
 #pragma once
 #include <QStringList>
 #include <QWidget>

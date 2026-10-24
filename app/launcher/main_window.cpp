@@ -4,68 +4,84 @@
 #include <QCloseEvent>
 #include <QDateTime>
 #include <QDir>
-#include <QFileDialog>
-#include <QMessageBox>
-#include <QStandardPaths>
 #include <QHBoxLayout>
 #include <QJsonObject>
 #include <QKeySequence>
-#include <QScreen>
 #include <QStackedWidget>
-#include <QWindow>
 #include "about_page.h"
 #include "app_data.h"
 #include "details_sheet.h"
-#include "first_run_sheet.h"
+#include "first_run_flow.h"
 #include "folder_row.h"
+#include "game_folder.h"
 #include "game_process.h"
 #include "games_page.h"
-#include "installer.h"
 #include "launcher_app.h"
 #include "launcher_style.h"
 #include "launcher_theme.h"
+#include "save_states_page.h"
 #include "settings_page.h"
 #include "sidebar.h"
-#include "targets_page.h"
 #include "title_manifest.h"
 namespace ps2r::launcher {
 
 MainWindow::MainWindow(LauncherApp* app, QWidget* parent) : QMainWindow(parent), app_(app) {
-    setWindowTitle(app->manifest()->product());
+    setWindowTitle(app->manifest()->name());
     setMinimumSize(1024, 640);
     auto* central = new QWidget(this);
-    auto* row = new QHBoxLayout(central);
+    auto* centralCol = new QHBoxLayout(central);
+    centralCol->setContentsMargins(0, 0, 0, 0);
+    root_ = new QStackedWidget(central);
+    centralCol->addWidget(root_);
+    details_ = new DetailsSheet(central);
+
+    // the pages: the sidebar and the stack
+    pagesArea_ = new QWidget(root_);
+    auto* row = new QHBoxLayout(pagesArea_);
     row->setContentsMargins(0, 0, 0, 0);
     row->setSpacing(0);
     QString version = QStringLiteral("Launcher %1").arg(app->version());
     if (!app->engineCommit().isEmpty()) version += QStringLiteral(" · engine %1").arg(app->engineCommit().left(7));
-    sidebar_ = new Sidebar(app->manifest()->product(), version, {QStringLiteral("Games"), QStringLiteral("Settings"), QStringLiteral("Targets"), QStringLiteral("About")}, central);
-    sidebar_->setFooter(app->appData()->root());
-    content_ = new QWidget(central);
+    sidebar_ = new Sidebar(app->manifest()->name(), version,
+                           {QStringLiteral("Games"), QStringLiteral("Save States"), QStringLiteral("Settings"), QStringLiteral("About")}, pagesArea_);
+    sidebar_->setFooter(app->gameFolder()->chosen() ? app->gameFolder()->path() : app->appData()->root());
+    content_ = new QWidget(pagesArea_);
     stack_ = new QStackedWidget(content_);
     auto* contentCol = new QHBoxLayout(content_);
     contentCol->setContentsMargins(0, 0, 0, 0);
     contentCol->addWidget(stack_);
-    details_ = new DetailsSheet(content_);
     games_ = new GamesPage(app, details_, stack_);
+    saves_ = new SaveStatesPage(app, stack_);
     settings_ = new SettingsPage(app, stack_);
-    targets_ = new TargetsPage(app, details_, stack_);
     about_ = new AboutPage(app, details_, stack_);
     stack_->addWidget(games_);
+    stack_->addWidget(saves_);
     stack_->addWidget(settings_);
-    stack_->addWidget(targets_);
     stack_->addWidget(about_);
-    firstRun_ = new FirstRunSheet(app->installer(), details_, content_);
-    games_->setFirstRunSheet(firstRun_);
     row->addWidget(sidebar_);
     row->addWidget(content_, 1);
+
+    firstRun_ = new FirstRunFlow(app, details_, root_);
+    root_->addWidget(firstRun_);
+    root_->addWidget(pagesArea_);
     setCentralWidget(central);
+
     connect(sidebar_, &Sidebar::selected, this, &MainWindow::showPage);
-    connect(sidebar_, &Sidebar::openRequested, this, [this] { FolderRow::revealInFileManager(app_->appData()->root()); });
+    connect(sidebar_, &Sidebar::openRequested, this, [this] {
+        FolderRow::revealInFileManager(app_->gameFolder()->chosen() ? app_->gameFolder()->path() : app_->appData()->root());
+    });
+    connect(app_, &LauncherApp::foldersChanged, this, [this] {
+        sidebar_->setFooter(app_->gameFolder()->chosen() ? app_->gameFolder()->path() : app_->appData()->root());
+    });
+    connect(firstRun_, &FirstRunFlow::completed, this, &MainWindow::showPages);
+    connect(games_, &GamesPage::prepareRequested, this, [this](const QString&) { showFirstRun(FirstRunFlow::WhichComputer); });
+    connect(games_, &GamesPage::folderRequested, this, [this] { showFirstRun(FirstRunFlow::WhereItLives); });
+    connect(games_, &GamesPage::otherComputerRequested, this, [this] { showFirstRun(FirstRunFlow::WhichComputer); });
+    connect(settings_, &SettingsPage::folderRequested, this, [this] { showFirstRun(FirstRunFlow::WhereItLives); });
     for (int i = 0; i < 4; ++i) {
         auto* a = new QAction(this);
         a->setShortcut(QKeySequence(QStringLiteral("Ctrl+%1").arg(i + 1)));
-        connect(a, &QAction::triggered, this, [this, i] { showPage(i); });
+        connect(a, &QAction::triggered, this, [this, i] { if (!firstRunShowing()) showPage(i); });
         addAction(a);
     }
     auto* shot = new QAction(QStringLiteral("Save a screenshot"), this);
@@ -77,6 +93,7 @@ MainWindow::MainWindow(LauncherApp* app, QWidget* parent) : QMainWindow(parent),
     const int w = qMax(1024, win.value("width").toInt(1120)), h = qMax(640, win.value("height").toInt(720));
     resize(w, h);
     showPage(qBound(0, win.value("page").toInt(0), 3));
+    root_->setCurrentWidget(pagesArea_);
 }
 
 MainWindow::~MainWindow() = default;
@@ -84,31 +101,26 @@ MainWindow::~MainWindow() = default;
 void MainWindow::showPage(int index) {
     stack_->setCurrentIndex(index);
     sidebar_->setCurrent(index);
-    if (index == 1) settings_->reload();
+    if (index == SettingsIndex) settings_->reload();
+    if (index == SaveStatesIndex) saves_->refresh();
 }
 
 int MainWindow::currentPage() const { return stack_->currentIndex(); }
+bool MainWindow::firstRunShowing() const { return root_->currentWidget() == firstRun_; }
 
-void MainWindow::askGameFolderIfNeeded() {
-    if (app_->gameFolderChosen()) return;
-    const QString name = app_->manifest()->name();
-    QMessageBox::information(this, QStringLiteral("Where should %1 go?").arg(name),
-                             QStringLiteral("%1 installs %2 as a normal program you can start without the launcher, and plays "
-                                            "it with your own disc.\n\nChoose the folder to put it in (any drive): a \"%2\" folder "
-                                            "is made there, with a shortcut on your Desktop.").arg(app_->manifest()->product(), name));
-    const QString start = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
-    const QString picked = QFileDialog::getExistingDirectory(this, QStringLiteral("Choose where to install %1").arg(name), start);
-    app_->chooseGameFolder(picked.isEmpty() ? start : picked);
+void MainWindow::showFirstRun(int page) {
+    firstRun_->open(FirstRunFlow::Page(page));
+    root_->setCurrentWidget(firstRun_);
+}
+
+void MainWindow::showPages() {
+    root_->setCurrentWidget(pagesArea_);
+    showPage(currentPage());
 }
 
 bool MainWindow::startFirstRunIfNeeded() {
-    askGameFolderIfNeeded();
-    if (app_->installer()->complete()) {
-        app_->installer()->checkForSourceUpdate();
-        return false;
-    }
-    firstRun_->open();
-    app_->install();
+    if (app_->setupComplete()) return false;
+    showFirstRun(FirstRunFlow::WhereIsTheGame);
     return true;
 }
 

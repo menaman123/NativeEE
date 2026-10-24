@@ -1,4 +1,5 @@
 // app/launcher/disc_scanner.cpp -- the folder walk and the fingerprint check off the GUI thread.
+#include "disc_identifier.h"
 #include "disc_scanner.h"
 #include <QDir>
 #include <QDirIterator>
@@ -6,6 +7,7 @@
 #include <QStorageInfo>
 #include <QtConcurrent/QtConcurrentRun>
 #include "iso_fingerprint.h"
+#include "title_manifest.h"
 namespace ps2r::launcher {
 
 namespace {
@@ -53,43 +55,34 @@ QStringList DiscScanner::removableVolumes() {
     return out;
 }
 
-QVector<DiscFound> DiscScanner::scanNow(const QStringList& folders, int maxDepth, const QStringList& extensions,
-                                        const QStringList& fingerprintFiles) {
+QVector<DiscIdentity> DiscScanner::scanNow(const TitleManifest* manifest, const QStringList& folders, int maxDepth) {
     QStringList files;
-    for (const QString& f : folders) walk(f, 0, maxDepth, extensions, &files);
+    for (const QString& f : folders) walk(f, 0, maxDepth, manifest->discExtensions(), &files);
     files.removeDuplicates();
-    QVector<DiscFound> out;
+    QVector<DiscIdentity> out;
     for (const QString& path : files) {
-        QString matched, err;
-        if (IsoFingerprint::identify(path, fingerprintFiles, &matched, &err) == IsoFingerprint::Match) {
-            DiscFound d;
-            d.path = path;
-            d.fingerprintFile = matched;
-            d.sizeBytes = QFileInfo(path).size();
-            out << d;
-        }
+        const DiscIdentity d = DiscIdentifier::identify(*manifest, path);
+        if (d.recognised()) out << d;
     }
-    // the count of files looked at travels in a trailing sentinel-free way: the caller re-counts; keep it simple
     return out;
 }
 
-void DiscScanner::start(const QStringList& folders, bool removable, int maxDepth, const QStringList& extensions,
-                        const QStringList& fingerprintFiles) {
+void DiscScanner::start(const TitleManifest* manifest, const QStringList& folders, bool removable, int maxDepth) {
     if (running_) return;
     running_ = true;
     QStringList all = folders;
     if (removable) all += removableVolumes();
     all.removeDuplicates();
     if (!watcher_) {
-        watcher_ = new QFutureWatcher<QVector<DiscFound>>(this);
+        watcher_ = new QFutureWatcher<QVector<DiscIdentity>>(this);
         connect(watcher_, &QFutureWatcherBase::finished, this, [this] {
             running_ = false;
-            const QVector<DiscFound> found = watcher_->result();
-            for (const DiscFound& d : found) emit this->found(d);
+            const QVector<DiscIdentity> found = watcher_->result();
+            for (const DiscIdentity& d : found) emit this->found(d);
             emit finished(found.size(), 0);
         });
     }
-    watcher_->setFuture(QtConcurrent::run([=] { return scanNow(all, maxDepth, extensions, fingerprintFiles); }));
+    watcher_->setFuture(QtConcurrent::run([=] { return scanNow(manifest, all, maxDepth); }));
 }
 
 }  // namespace ps2r::launcher

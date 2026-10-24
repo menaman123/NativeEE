@@ -5,13 +5,26 @@
 #include <QScrollArea>
 #include <QVBoxLayout>
 #include "app_data.h"
+#include "empty_state.h"
 #include "folder_row.h"
+#include "game_folder.h"
+#include "host_platform.h"
 #include "launcher_app.h"
 #include "launcher_theme.h"
 #include "page_header.h"
 #include "settings_row.h"
 #include "title_manifest.h"
 namespace ps2r::launcher {
+
+namespace {
+// the row's choices as offered on this machine: a choice naming platforms is kept only when this os is among them
+SettingsRowSpec forThisMachine(const SettingsRowSpec& spec) {
+    SettingsRowSpec out = spec;
+    out.choices.clear();
+    for (const SettingsChoice& c : spec.choices) if (c.platforms.isEmpty() || c.platforms.contains(HostPlatform::os())) out.choices << c;
+    return out;
+}
+}  // namespace
 
 SettingsPage::SettingsPage(LauncherApp* app, QWidget* parent) : QWidget(parent), app_(app) {
     const LauncherTheme& t = LauncherTheme::instance();
@@ -23,70 +36,72 @@ SettingsPage::SettingsPage(LauncherApp* app, QWidget* parent) : QWidget(parent),
     auto* col = new QVBoxLayout(inner);
     col->setContentsMargins(LauncherTheme::S5, 0, LauncherTheme::S5, LauncherTheme::S5);
     col->setSpacing(LauncherTheme::S1);
-    col->addWidget(new PageHeader(QStringLiteral("Settings"), QStringLiteral("The same settings the game shows under Options; a change here is a change there."), inner));
+    col->addWidget(new PageHeader(QStringLiteral("Settings"), QStringLiteral("The same settings the game shows in its own menu; a change here is a change there."), inner));
+    empty_ = new EmptyState(QStringLiteral("Choose where the game lives first"),
+                            QStringLiteral("The settings are kept in the game folder, beside the game. Pick the folder and they appear here."),
+                            QStringLiteral("Choose a folder…"), QString(), inner);
+    empty_->setObjectName(QStringLiteral("settings_empty"));
+    connect(empty_, &EmptyState::primaryClicked, this, &SettingsPage::folderRequested);
+    col->addWidget(empty_);
+    body_ = new QWidget(inner);
+    auto* body = new QVBoxLayout(body_);
+    body->setContentsMargins(0, 0, 0, 0);
+    body->setSpacing(LauncherTheme::S1);
     for (const SettingsGroupSpec& g : app->manifest()->settingsGroups()) {
-        auto* title = new QLabel(g.title, inner);
+        auto* title = new QLabel(g.title, body_);
         title->setFont(t.font(LauncherTheme::Title));
         title->setStyleSheet(QStringLiteral("color: %1;").arg(t.css(LauncherTheme::Text)));
-        col->addSpacing(LauncherTheme::S3);
-        col->addWidget(title);
+        body->addSpacing(LauncherTheme::S3);
+        body->addWidget(title);
         for (const SettingsRowSpec& spec : g.rows) {
-            auto* row = new SettingsRow(spec, inner);
+            auto* row = new SettingsRow(forThisMachine(spec), body_);
             connect(row, &SettingsRow::valueChanged, this, [this](const QString& key, const QString& value) {
                 QString err;
                 app_->setSettingValue(key, value, &err);
-                applyDependencies();
+                applyLocks();
             });
             rows_ << row;
-            col->addWidget(row);
+            body->addWidget(row);
         }
     }
-    for (const FolderSpec& f : app->manifest()->folders()) {
-        if (f.id != "game_output") continue;
-        auto* title = new QLabel(QStringLiteral("Installed game"), inner);
-        title->setFont(t.font(LauncherTheme::Title));
-        title->setStyleSheet(QStringLiteral("color: %1;").arg(t.css(LauncherTheme::Text)));
-        col->addSpacing(LauncherTheme::S3);
-        col->addWidget(title);
-        gameFolder_ = new FolderRow(f.label, inner);
-        gameFolder_->setObjectName(QStringLiteral("folder_game_output_settings"));
-        connect(gameFolder_, &FolderRow::changeRequested, this, [this] {
-            const QString dir = QFileDialog::getExistingDirectory(this, QStringLiteral("Choose where to install the game"), app_->folder("game_output"));
-            if (!dir.isEmpty()) app_->chooseGameFolder(dir);
+    auto* foldersTitle = new QLabel(QStringLiteral("Folders"), body_);
+    foldersTitle->setFont(t.font(LauncherTheme::Title));
+    foldersTitle->setStyleSheet(QStringLiteral("color: %1;").arg(t.css(LauncherTheme::Text)));
+    body->addSpacing(LauncherTheme::S3);
+    body->addWidget(foldersTitle);
+    auto* gameRow = new FolderRow(QStringLiteral("Game folder"), body_);
+    gameRow->setObjectName(QStringLiteral("folder_game_settings"));
+    gameRow->setProperty("folder_id", QStringLiteral("game"));
+    connect(gameRow, &FolderRow::changeRequested, this, &SettingsPage::folderRequested);
+    folders_ << gameRow;
+    body->addWidget(gameRow);
+    for (const SubfolderSpec& s : app->manifest()->subfolders()) {
+        auto* row = new FolderRow(s.label, body_);
+        row->setObjectName(QStringLiteral("folder_%1_settings").arg(s.id));
+        row->setProperty("folder_id", s.id);
+        connect(row, &FolderRow::changeRequested, this, [this, id = s.id, label = s.label] {
+            const QString dir = QFileDialog::getExistingDirectory(this, QStringLiteral("Choose the %1 folder").arg(label.toLower()), app_->gameFolder()->subfolder(id));
+            if (!dir.isEmpty()) app_->setSubfolder(id, dir);
         });
-        connect(app_, &LauncherApp::foldersChanged, this, [this] { gameFolder_->setPath(app_->folder("game_output")); });
-        gameFolder_->setPath(app_->folder("game_output"));
-        col->addWidget(gameFolder_);
+        folders_ << row;
+        body->addWidget(row);
     }
-    for (const FolderSpec& f : app->manifest()->folders()) {
-        if (f.id != "memory_cards") continue;
-        auto* title = new QLabel(QStringLiteral("Saves"), inner);
-        title->setFont(t.font(LauncherTheme::Title));
-        title->setStyleSheet(QStringLiteral("color: %1;").arg(t.css(LauncherTheme::Text)));
-        col->addSpacing(LauncherTheme::S3);
-        col->addWidget(title);
-        memoryCards_ = new FolderRow(f.label, inner);
-        memoryCards_->setObjectName(QStringLiteral("folder_memory_cards_settings"));
-        connect(memoryCards_, &FolderRow::changeRequested, this, [this] {
-            const QString dir = QFileDialog::getExistingDirectory(this, QStringLiteral("Choose the memory-card folder"), app_->folder("memory_cards"));
-            if (!dir.isEmpty()) app_->setFolder("memory_cards", dir);
-        });
-        connect(app_, &LauncherApp::foldersChanged, this, [this] { memoryCards_->setPath(app_->folder("memory_cards")); });
-        memoryCards_->setPath(app_->folder("memory_cards"));
-        col->addWidget(memoryCards_);
-    }
-    auto* note = new QLabel(inner);
+    auto* note = new QLabel(body_);
     note->setFont(t.font(LauncherTheme::Caption));
     note->setWordWrap(true);
     note->setStyleSheet(QStringLiteral("color: %1;").arg(t.css(LauncherTheme::TextMuted)));
+    note->setObjectName(QStringLiteral("settings_note"));
     const QString n = app->manifest()->settingsNote();
-    note->setText(n.isEmpty() ? QStringLiteral("Written to %1 as the game reads it.").arg(AppData::shortPath(app->settingsFilePath())) : n);
-    col->addSpacing(LauncherTheme::S3);
-    col->addWidget(note);
+    note->setText(n.isEmpty() ? QStringLiteral("Written to %1 in the game folder, the file the game reads.").arg(app->manifest()->configFileName()) : n);
+    body->addSpacing(LauncherTheme::S3);
+    body->addWidget(note);
+    col->addWidget(body_);
     col->addStretch(1);
     auto* outer = new QVBoxLayout(this);
     outer->setContentsMargins(0, 0, 0, 0);
     outer->addWidget(scroll);
+    connect(app_, &LauncherApp::foldersChanged, this, [this] { refreshFolders(); reload(); });
+    refreshFolders();
     reload();
 }
 
@@ -95,19 +110,36 @@ SettingsRow* SettingsPage::row(const QString& key) const {
     return nullptr;
 }
 
-void SettingsPage::reload() {
-    for (SettingsRow* r : rows_) r->setValue(app_->settingValue(r->spec().key));
-    applyDependencies();
+FolderRow* SettingsPage::folderRow(const QString& id) const {
+    for (FolderRow* r : folders_) if (r->property("folder_id").toString() == id) return r;
+    return nullptr;
 }
 
-void SettingsPage::applyDependencies() {
-    // the game's rule: UNCAPPED forces vertical sync off for the session, and the vsync row says so
-    SettingsRow* rate = row("video.frame_rate");
-    SettingsRow* vsync = row("video.vsync");
-    if (!rate || !vsync) return;
-    const bool uncapped = rate->value() == "uncapped";
-    vsync->setLocked(uncapped);
-    vsync->setHelpOverride(uncapped ? QStringLiteral("Off while the frame rate is uncapped.") : QString());
+void SettingsPage::refreshFolders() {
+    GameFolder* f = app_->gameFolder();
+    for (FolderRow* r : folders_) {
+        const QString id = r->property("folder_id").toString();
+        r->setPath(!f->chosen() ? QString() : id == QLatin1String("game") ? f->path() : f->subfolder(id));
+    }
+}
+
+void SettingsPage::reload() {
+    const bool chosen = app_->gameFolder()->chosen();
+    empty_->setVisible(!chosen);
+    body_->setVisible(chosen);
+    for (SettingsRow* r : rows_) r->setValue(app_->settingValue(r->spec().key));
+    applyLocks();
+}
+
+void SettingsPage::applyLocks() {
+    for (SettingsRow* r : rows_) {
+        const SettingsLock& lock = r->spec().lockedBy;
+        if (lock.key.isEmpty()) continue;
+        SettingsRow* other = row(lock.key);
+        const bool locked = other ? other->value() == lock.value : app_->settingValue(lock.key) == lock.value;
+        r->setLocked(locked);
+        r->setHelpOverride(locked ? lock.help : QString());
+    }
 }
 
 void SettingsPage::showEvent(QShowEvent* event) {

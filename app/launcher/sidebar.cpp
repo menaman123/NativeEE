@@ -88,7 +88,7 @@ void Sidebar::paintEvent(QPaintEvent*) {
     p.setFont(t.font(LauncherTheme::Caption));
     const QFontMetrics fm(p.font());
     const QRect footer(LauncherTheme::S3, height() - LauncherTheme::S3 - open_->height() - 18, width() - 2 * LauncherTheme::S3, 16);
-    p.drawText(footer, Qt::AlignLeft | Qt::AlignVCenter, fm.elidedText(QStringLiteral("app data: %1").arg(AppData::shortPath(footer_)), Qt::ElideMiddle, footer.width()));
+    p.drawText(footer, Qt::AlignLeft | Qt::AlignVCenter, fm.elidedText(QStringLiteral("Game folder: %1").arg(AppData::shortPath(footer_)), Qt::ElideMiddle, footer.width()));
 }
 
 void Sidebar::mousePressEvent(QMouseEvent* event) {

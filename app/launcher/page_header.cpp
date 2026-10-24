@@ -19,7 +19,10 @@ PageHeader::PageHeader(const QString& title, const QString& description, QWidget
     col->setSpacing(LauncherTheme::S2);
     col->addWidget(title_);
     col->addWidget(description_);
-    description_->setVisible(!description.isEmpty());
+    // the block keeps its full height in a layout that squeezes: the title's descenders and a wrapped description
+    // are never clipped (a stretching neighbour below gets the room, not the header)
+    setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    setDescription(description);
     connect(&t, &LauncherTheme::changed, this, &PageHeader::restyle);
     restyle();
 }
@@ -27,6 +30,7 @@ PageHeader::PageHeader(const QString& title, const QString& description, QWidget
 void PageHeader::setDescription(const QString& description) {
     description_->setText(description);
     description_->setVisible(!description.isEmpty());
+    description_->setMinimumHeight(description.isEmpty() ? 0 : description_->heightForWidth(description_->maximumWidth()));
 }
 
 void PageHeader::restyle() {

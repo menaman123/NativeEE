@@ -1,6 +1,5 @@
 // app/launcher/title_manifest.cpp -- reading title.json.
 #include "title_manifest.h"
-#include <QRegularExpression>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -13,11 +12,15 @@ QStringList stringList(const QJsonValue& v) {
     for (const QJsonValue& e : v.toArray()) out << e.toString();
     return out;
 }
-DiscFingerprint fingerprintOf(const QJsonObject& o) {
+DiscFingerprint fingerprintOf(const QJsonObject& o, bool supportedDefault) {
     DiscFingerprint f;
     f.file = o.value("file").toString();
     f.region = o.value("region").toString();
+    f.regionLabel = o.value("region_label").toString();
     f.id = o.value("id").toString();
+    f.sha256 = o.value("sha256").toString().toLower();   // lint: allow
+    f.supported = o.value("supported").toBool(supportedDefault);
+    f.reason = o.value("reason").toString();
     return f;
 }
 }  // namespace
@@ -31,7 +34,7 @@ bool TitleManifest::load(const QString& path, QString* error) {
     QJsonParseError perr;
     const QJsonDocument doc = QJsonDocument::fromJson(f.readAll(), &perr);
     if (doc.isNull() || !doc.isObject()) {
-        if (error) *error = QStringLiteral("%1 is not a JSON object: %2").arg(path, perr.errorString());
+        if (error) *error = QStringLiteral("%1 is not a game description: %2").arg(path, perr.errorString());
         return false;
     }
     path_ = path;
@@ -45,36 +48,29 @@ bool TitleManifest::loadJson(const QJsonObject& root, QString* error) {
     product_ = root.value("product").toString(name_);
     description_ = root.value("description").toString();
     appDataFolder_ = root.value("app_data_folder").toString(product_);
-    binaryName_ = root.value("binary_name").toString();
+    binaryName_ = root.value("binary_name").toString(product_.toLower());
     if (id_.isEmpty() || name_.isEmpty()) {
-        if (error) *error = QStringLiteral("the manifest needs an id and a name");
+        if (error) *error = QStringLiteral("the game description needs an id and a name");
         return false;
     }
     const QJsonObject disc = root.value("disc").toObject();
-    fingerprint_ = fingerprintOf(disc.value("fingerprint").toObject());
+    fingerprint_ = fingerprintOf(disc.value("fingerprint").toObject(), true);
     if (fingerprint_.file.isEmpty()) {
-        if (error) *error = QStringLiteral("the manifest needs disc.fingerprint.file");
+        if (error) *error = QStringLiteral("the game description needs disc.fingerprint.file");
         return false;
     }
     alternates_.clear();
-    for (const QJsonValue& v : disc.value("alternates").toArray()) alternates_ << fingerprintOf(v.toObject());
+    for (const QJsonValue& v : disc.value("alternates").toArray()) alternates_ << fingerprintOf(v.toObject(), false);
     discExtensions_ = stringList(disc.value("extensions"));
     if (discExtensions_.isEmpty()) discExtensions_ << ".iso";
+    requiredFiles_ = stringList(disc.value("required_files"));
+    modifiedReason_ = disc.value("modified_reason").toString(
+        QStringLiteral("This disc image carries the right game but its code differs from the original disc, so it cannot be prepared."));
 
-    const QJsonObject source = root.value("source").toObject();
-    sourceUrl_ = source.value("url").toString();
-    releaseRepo_ = root.value("release").toObject().value("repo").toString();
-    if (releaseRepo_.isEmpty()) {   // https://github.com/<owner>/<name>(.git)
-        const QRegularExpressionMatch m = QRegularExpression("github\\.com[/:]([^/]+)/([^/.]+)").match(sourceUrl_);
-        if (m.hasMatch()) releaseRepo_ = m.captured(1) + "/" + m.captured(2);
-    }
-    const QJsonObject tc = source.value("toolchain").toObject();
-    toolchainScript_ = tc.value("script").toString("tools/fetch_toolchain.sh");
-    toolchainWindowsScript_ = tc.value("windows_script").toString("tools/fetch_toolchain.ps1");
-    toolchainPins_ = tc.value("pins").toString("tools/toolchain/PINS.sha256");
-    toolchainFolder_ = tc.value("folder").toString("tools/toolchain");
-    ffmpegRecipe_ = source.value("ffmpeg_recipe").toString();
-    needsPython_ = source.value("needs_python").toBool(true);
+    const QJsonObject release = root.value("release").toObject();
+    releaseRepo_ = release.value("repo").toString();
+    assetPattern_ = release.value("asset_pattern").toString("${product}-${tag}-${platform}.zip");
+    bundleFolderPattern_ = release.value("bundle_folder").toString("${product}-${platform}");
 
     targets_.clear();
     const QJsonObject targets = root.value("targets").toObject();
@@ -83,41 +79,56 @@ bool TitleManifest::loadJson(const QJsonObject& root, QString* error) {
         TargetSpec t;
         t.id = it.key();
         t.label = o.value("label").toString(t.id);
-        t.host = o.value("host").toString("any");
-        t.artifact = o.value("artifact").toString("binary");
-        t.preset = o.value("preset").toString();
-        t.configure = stringList(o.value("configure"));
-        t.buildTarget = o.value("build_target").toString();
-        t.binary = o.value("binary").toString();
-        t.artifactPath = o.value("artifact_path").toString();
-        t.needs = stringList(o.value("needs"));
-        t.installText = o.value("install_text").toString();
-        t.crossReason = o.value("cross_reason").toString();
-        t.unavailableReason = o.value("unavailable_reason").toString();
-        const QJsonObject dist = o.value("dist").toObject();
-        t.distScript = dist.value("script").toString();
-        t.distArgs = stringList(dist.value("args"));
-        t.distArtifact = dist.value("artifact").toString();
+        t.os = o.value("os").toString(t.id.section('-', 0, 0));
+        t.arch = o.value("arch").toString(t.id.section('-', 1));
+        t.binary = o.value("binary").toString(binaryName_);
         targets_ << t;
     }
-    // a stable order: macos, windows, vita, then anything else alphabetically
-    const QStringList order{"macos", "windows", "vita"};
+    // a stable order: macOS, Windows, Linux, then anything else alphabetically
+    const QStringList order{"macos", "windows", "linux"};
     std::sort(targets_.begin(), targets_.end(), [&](const TargetSpec& a, const TargetSpec& b) {
-        const int ia = order.indexOf(a.id), ib = order.indexOf(b.id);
-        if (ia >= 0 || ib >= 0) return (ia < 0 ? 99 : ia) < (ib < 0 ? 99 : ib);
+        const int ia = order.indexOf(a.os), ib = order.indexOf(b.os);
+        if (ia != ib) return (ia < 0 ? 99 : ia) < (ib < 0 ? 99 : ib);
         return a.id < b.id;
     });
+    unsupported_.clear();
+    for (const QJsonValue& v : root.value("unsupported").toArray()) {
+        const QJsonObject o = v.toObject();
+        unsupported_ << UnsupportedItem{o.value("label").toString(), o.value("reason").toString()};
+    }
+
+    const QJsonObject folder = root.value("game_folder").toObject();
+    configFileName_ = folder.value("config").toString("nativeee.ini");
+    portableNote_ = folder.value("portable_note").toString();
+    subfolders_.clear();
+    const QJsonObject subs = folder.value("subfolders").toObject();
+    for (const QString& id : {QStringLiteral("memcards"), QStringLiteral("saves"), QStringLiteral("cache")}) {
+        const QJsonObject o = subs.value(id).toObject();
+        SubfolderSpec s;
+        s.id = id;
+        s.label = o.value("label").toString(id);
+        s.defaultName = o.value("default").toString(id);
+        subfolders_ << s;
+    }
+    for (auto it = subs.begin(); it != subs.end(); ++it) {   // any extra sub-folder the title names
+        bool known = false;
+        for (const SubfolderSpec& s : subfolders_) known = known || s.id == it.key();
+        if (known) continue;
+        const QJsonObject o = it.value().toObject();
+        subfolders_ << SubfolderSpec{it.key(), o.value("label").toString(it.key()), o.value("default").toString(it.key())};
+    }
 
     const QJsonObject run = root.value("run").toObject();
-    runIsoFlag_ = run.value("iso_flag").toString("--iso");
-    runConfigFlag_ = run.value("config_flag").toString("--config");
-    runMemoryCardsFlag_ = run.value("memory_cards_flag").toString();
     runArgs_ = stringList(run.value("args"));
-    titleStateLine_ = run.value("title_state_line").toString();
-    titleStateName_ = run.value("title_state_name").toString();
+    if (runArgs_.isEmpty()) runArgs_ << "--iso" << "${iso}" << "--config" << "${config}";
+    resumeArgs_ = stringList(run.value("resume_args"));
+    const QJsonObject states = run.value("save_states").toObject();
+    saveStatesFolder_ = states.value("folder").toString("${saves}");
+    saveStateExtension_ = states.value("extension").toString(".ps2st");
+    saveStateMetaExtension_ = states.value("meta_extension").toString(".meta");
+    saveStateThumbnailExtension_ = states.value("thumbnail_extension").toString(".png");
 
     const QJsonObject settings = root.value("settings").toObject();
-    settingsFile_ = settings.value("file").toString();
     settingsNote_ = settings.value("note").toString();
     settingsGroups_.clear();
     for (const QJsonValue& gv : settings.value("groups").toArray()) {
@@ -134,34 +145,26 @@ bool TitleManifest::loadJson(const QJsonObject& root, QString* error) {
             row.help = r.value("help").toString();
             for (const QJsonValue& cv : r.value("choices").toArray()) {
                 const QJsonObject c = cv.toObject();
-                row.choices << SettingsChoice{c.value("value").toString(), c.value("label").toString(c.value("value").toString())};
+                row.choices << SettingsChoice{c.value("value").toString(), c.value("label").toString(c.value("value").toString()),
+                                              stringList(c.value("platforms"))};
             }
-            if (row.kind == "switch" && row.choices.isEmpty()) row.choices << SettingsChoice{"off", "Off"} << SettingsChoice{"on", "On"};
+            if (row.kind == "switch" && row.choices.isEmpty()) row.choices << SettingsChoice{"off", "Off", {}} << SettingsChoice{"on", "On", {}};
+            const QJsonObject lock = r.value("locked_by").toObject();
+            row.lockedBy = SettingsLock{lock.value("key").toString(), lock.value("value").toString(), lock.value("help").toString()};
             if (!row.key.isEmpty()) group.rows << row;
         }
         settingsGroups_ << group;
     }
 
-    folders_.clear();
-    const QJsonObject folders = root.value("folders").toObject();
-    for (const QString& id : {QStringLiteral("games"), QStringLiteral("mods"), QStringLiteral("memory_cards"), QStringLiteral("game_output")}) {
-        if (!folders.contains(id)) continue;
-        const QJsonObject o = folders.value(id).toObject();
-        FolderSpec fs;
-        fs.id = id;
-        fs.label = o.value("label").toString(id);
-        fs.defaultPath = o.value("default").toString();
-        fs.seedFromSource = o.value("seed_from_source").toString();
-        folders_ << fs;
-    }
     const QJsonObject scan = root.value("scan").toObject();
     scanFolders_ = stringList(scan.value("folders"));
+    if (scanFolders_.isEmpty()) scanFolders_ << "~/Downloads" << "~/Desktop" << "~/Documents";
     scanRemovable_ = scan.value("removable").toBool(true);
     scanMaxDepth_ = scan.value("max_depth").toInt(2);
     licences_.clear();
     for (const QJsonValue& v : root.value("licences").toArray()) {
         const QJsonObject o = v.toObject();
-        licences_ << LicenceLink{o.value("label").toString(), o.value("path").toString()};
+        licences_ << LicenceLink{o.value("label").toString(), o.value("file").toString(o.value("path").toString())};
     }
     valid_ = true;
     return true;
@@ -172,6 +175,27 @@ QVector<DiscFingerprint> TitleManifest::allFingerprints() const {
     all << fingerprint_;
     all += alternates_;
     return all;
+}
+
+const DiscFingerprint* TitleManifest::fingerprintFor(const QString& file) const {
+    if (fingerprint_.file.compare(file, Qt::CaseInsensitive) == 0) return &fingerprint_;
+    for (const DiscFingerprint& f : alternates_) if (f.file.compare(file, Qt::CaseInsensitive) == 0) return &f;
+    return nullptr;
+}
+
+QString TitleManifest::releaseAsset(const QString& tag, const QString& platform) const {
+    QString s = assetPattern_;
+    s.replace("${product}", product_);
+    s.replace("${tag}", tag);
+    s.replace("${platform}", platform);
+    return s;
+}
+
+QString TitleManifest::bundleFolder(const QString& platform) const {
+    QString s = bundleFolderPattern_;
+    s.replace("${product}", product_);
+    s.replace("${platform}", platform);
+    return s;
 }
 
 const TargetSpec* TitleManifest::target(const QString& id) const {

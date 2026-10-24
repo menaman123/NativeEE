@@ -31,25 +31,16 @@ AppData::AppData(const QString& productFolder) {
     loadState();
 }
 
-QString AppData::toolchainDir() const { return root_ + "/Toolchain"; }
-QString AppData::sourcesDir() const { return root_ + "/Sources"; }
-QString AppData::buildsDir() const { return root_ + "/Builds"; }
 QString AppData::logsDir() const { return root_ + "/Logs"; }
-QString AppData::downloadsDir() const { return root_ + "/Downloads"; }
-QString AppData::defaultGamesDir() const { return root_ + "/Games"; }
-QString AppData::defaultModsDir() const { return root_ + "/Mods"; }
-QString AppData::sourceDir(const QString& titleId) const { return sourcesDir() + "/" + titleId; }
-QString AppData::buildDir(const QString& titleId, const QString& targetId) const { return buildsDir() + "/" + titleId + "/" + targetId; }
-QString AppData::statePath() const { return root_ + "/launcher.json"; }
+QString AppData::statePath() const { return root_ + "/launcher.json"; }   // lint: allow
 
 QString AppData::logPath(const QString& step) const {
     return logsDir() + "/" + step + "-" + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss") + ".log";
 }
 
-QString AppData::expand(const QString& path, const QString& gamesDir) const {
+QString AppData::expand(const QString& path) const {
     QString p = path;
     p.replace("${app_data}", root_);
-    p.replace("${games}", gamesDir.isEmpty() ? defaultGamesDir() : gamesDir);
     if (p == "~") p = homePath();
     else if (p.startsWith("~/")) p = homePath() + p.mid(1);
     return QDir::cleanPath(p);
@@ -63,7 +54,7 @@ QString AppData::shortPath(const QString& path) {
 }
 
 bool AppData::ensureFolders(QString* error) const {
-    for (const QString& d : {root_, toolchainDir(), sourcesDir(), buildsDir(), logsDir(), downloadsDir(), defaultGamesDir(), defaultModsDir()}) {
+    for (const QString& d : {root_, logsDir()}) {
         if (!QDir().mkpath(d)) {
             if (error) *error = QStringLiteral("cannot create %1").arg(d);
             return false;
