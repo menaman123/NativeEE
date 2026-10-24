@@ -77,7 +77,7 @@ if(Python3_EXECUTABLE)
     # LauncherLint: no codenames in app/launcher at all; no developer vocabulary, placeholder text or emoji in any
     # string literal; also over the visible strings the screens test dumped (strings.txt) when it has run.
     add_test(NAME LauncherLint
-        COMMAND ${Python3_EXECUTABLE} -P ${PS2R_LAUNCHER_ROOT}/tools/launcher_lint.py --root ${PS2R_LAUNCHER_ROOT}
+        COMMAND ${Python3_EXECUTABLE} ${PS2R_LAUNCHER_ROOT}/tools/launcher_lint.py --root ${PS2R_LAUNCHER_ROOT}
                 --strings ${CMAKE_CURRENT_BINARY_DIR}/launcher_screens/strings.txt)
     add_test(NAME LauncherOneClass
         COMMAND ${Python3_EXECUTABLE} ${PS2R_LAUNCHER_ROOT}/tests/lint/lint_one_class.py --root ${PS2R_LAUNCHER_ROOT} --scan app/launcher tests/app/launcher)
