@@ -22,7 +22,7 @@ public:
 
     // Name the calling thread and raise it to ABOVE_NORMAL (the Win32 counterpart of the
     // USER_INTERACTIVE QoS pin); idempotent, first call wins per thread.
-    static void PinCurrentThreadInteractive(const char* name);
+    static void PinCurrentThreadInteractive(const char* name, ThreadRole role = ThreadRole::Interactive);
     // GetProcessMemoryInfo private usage (not phys_footprint: platform-keyed pins).
     static uint64_t PhysFootprintBytes();
     // GetModuleFileNameW of the main module, UTF-8; empty + *err on failure.

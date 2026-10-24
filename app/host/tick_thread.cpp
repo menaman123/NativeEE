@@ -29,7 +29,11 @@ void TickThread::Loop() {
     // GS consumer and the MTVU worker hold, so a loaded machine does not park the
     // edge train for a period (a re-anchor loses edges; the census read a 58/58
     // window from exactly that).
-    ps2r::platform::host::PinCurrentThreadInteractive("ps2r-tick");
+    ps2r::platform::host::PinCurrentThreadInteractive("ps2r-tick", ps2r::host::ThreadRole::Pacer);
+    // The edge train needs the finest timer the OS has (Win32: the 15.6 ms quantum
+    // cannot pace 16.67 ms fields -- timeBeginPeriod(1) + a high-resolution
+    // waitable timer; POSIX: the kernel's microsecond sleep already).
+    ps2r::platform::host::RaiseTimerResolution();
     // The edge train: anchor + k * period. The base period is EXACTLY 1/60 s
     // (a perfect 60 Hz console; the clock contract's wall edge), kept as a
     // rational in nanoseconds so no rounding accumulates; turbo periods

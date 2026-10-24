@@ -38,6 +38,7 @@
 // diagnostics (footprint, exe path, backtrace, GL header) and the file/thread/fiber calls.
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -64,10 +65,11 @@
 #define PS2R_HOST_LINUX 1
 #elif defined(_WIN32)
 // The Windows target (engine/platform/windows/): opengl32.dll exports GL 1.1 only, so the GL
-// header is the tree's own generated loader header (tools/build/gen_gl_windows.py: the enums
-// and entry points the GL arm uses, each name a macro over a function pointer that
-// host::GlLoadEntryPoints fills once a context is current -- platform/sdl/gl_context.cpp).
-#define PS2R_GL_HEADER <engine/platform/host/gl_windows.h>
+// header is the GENERATED loader -- Khronos' glcorearb.h for the types and every entry point the
+// tree calls as a function pointer behind its GL name, filled by ps2r::glwin::Load() once the
+// context is current (gl_context.cpp). tools/build/gen_gl_loader.py regenerates it from the call
+// sites; ctest PlatformGlLoaderCurrent fails when a new GL call is not in it yet.
+#define PS2R_GL_HEADER "engine/platform/windows/gl_loader.h"
 #define PS2R_HOST_MACOS 0
 #define PS2R_HOST_LINUX 0
 #else
@@ -90,10 +92,33 @@
 #define PS2R_FENV_ACCESS_ON
 #endif
 
+// THREAD ROLES (shared by both sections): what the pinned thread is FOR, so the arm can
+// rank it. The emulation's threads are not peers on a desktop OS with a coarse scheduler:
+//   Pacer     the 60 Hz edge train (TickThread / FieldPacer) -- sleeps and notes; a late
+//             wake IS a late field. Win32: THREAD_PRIORITY_TIME_CRITICAL (the thread never
+//             computes; it cannot starve anyone).
+//   Game      the EE / game thread (one frame of work per field).  Win32: HIGHEST.
+//   Graphics  the GS consumer / render thread.                      Win32: ABOVE_NORMAL.
+//   Worker    MTVU and other helpers.                               Win32: ABOVE_NORMAL.
+//   Interactive  anything else on the interactive path (the main / SDL pump).
+// macOS: every role is QOS_CLASS_USER_INTERACTIVE (the QoS class keeps the thread off the
+// efficiency cores; finer ranks are the kernel's). Linux: nice -5 where permitted (CFS).
+// The audio device thread is SDL's (SDL_RunAudio pins it TIME_CRITICAL on Win32 itself).
+namespace ps2r::host {
+using ThreadRole = ps2r::platform::ThreadRole;   // declared with ThreadDesc in engine/platform/platform.h
+}  // namespace ps2r::host
+// A library consumer (a title's own runner over the engine, e.g. the TwinsanityEvolved port) is pinned to an engine commit
+// and may be built against one from before the role API existed: `#if PS2R_HOST_THREAD_ROLES` lets its call sites pass
+// `ThreadRole::Game / Pacer / Graphics` where the engine has them and the name-only form elsewhere. Bumped (never
+// removed) when the role set changes incompatibly.
+#define PS2R_HOST_THREAD_ROLES 1
+
 // ---------------------------------------------------------------------------------------
 // A  TARGET-FOLDER API  (Track B1) -- host/platform.cpp picks the target folder.
 // ---------------------------------------------------------------------------------------
 namespace ps2r::platform::host {
+
+using ps2r::host::ThreadRole;
 
 // The host target's filled-in Platform instance (static storage) and its
 // registration with platform::Register. Idempotent.
@@ -109,7 +134,35 @@ const char* Name();
 // scheduler keeps the thread off the efficiency cores. Linux: the name only;
 // CFS has no QoS class and the default policy already schedules evenly.
 // Idempotent, first call wins per thread; a null name keeps the current one.
-void PinCurrentThreadInteractive(const char* name);
+// `role` ranks the thread where the OS has ranks (Win32 priorities; see
+// ThreadRole above) -- the default is the plain interactive class.
+void PinCurrentThreadInteractive(const char* name, ThreadRole role = ThreadRole::Interactive);
+
+// Timer resolution + the precise sleep the pacers use (the Windows release
+// blockers: a 15.6 ms scheduler quantum cannot pace 16.67 ms fields).
+//   RaiseTimerResolution  Win32: timeBeginPeriod(1) once for the process
+//                         lifetime (+ arms the high-resolution waitable timer);
+//                         POSIX: nothing (the kernels sleep to the microsecond).
+//   SleepUntil            sleep to an absolute steady_clock deadline through
+//                         the arm (Win32: a high-resolution waitable timer,
+//                         CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, falling back to
+//                         the 1 ms period; POSIX: nanosleep, EINTR-safe). Returns
+//                         at or after the deadline, never before.
+void RaiseTimerResolution();
+void SleepUntil(std::chrono::steady_clock::time_point deadline);
+
+// The CPU's SIMD tiers for RUNTIME DISPATCH (never a global /arch flag: the
+// shipped binary runs on the x86-64 baseline and picks a wider kernel per call
+// site when the CPU has it). cpu_features= in run.meta names what was found.
+struct CpuFeatures {
+    bool sse4_2 = false;
+    bool avx2 = false;     // AVX2 + the OS has enabled YMM state (XGETBV)
+    bool fma3 = false;
+    bool neon = false;     // aarch64: always
+    const char* arch = "";   // "x86_64" | "arm64" | "other"
+};
+const CpuFeatures& Cpu();            // detected once, cached
+std::string CpuFeaturesCensus();     // "arch=x86_64,sse4_2=1,avx2=1,fma3=1" (run.meta cpu_features=)
 
 // The process's physical footprint in bytes as the OS charges it (macOS:
 // task_info phys_footprint; Linux: resident set from /proc/self/statm).
@@ -212,6 +265,8 @@ SSize FdPread(int fd, void* buf, size_t n, uint64_t offset);
 int FdSync(int fd);          // fsync / _commit
 int FdClose(int fd);
 int FdOfStream(std::FILE* f);   // fileno / _fileno
+// The size in bytes of the file open on fd (fstat / _filelengthi64; 64-bit on every arm); -1 on failure.
+int64_t FdSize(int fd);
 // Directory sync: POSIX fsyncs the directory fd after a rename; NTFS has no directory
 // fsync, so the Windows arm flushes the volume's view of the parent and reports success.
 int DirectorySync(const char* directory);
@@ -270,8 +325,17 @@ void ThreadDetach(NativeThread t);
 // Name the calling thread (<= 15 bytes are kept on Linux/Darwin; Win32 keeps all).
 void SetCurrentThreadName(const char* name);
 // Pin the calling thread to the OS's interactive class: USER_INTERACTIVE QoS on Darwin,
-// SCHED_OTHER nice -5 where permitted on Linux (best effort), ABOVE_NORMAL on Win32.
-void PinCurrentThreadInteractive();
+// SCHED_OTHER nice -5 where permitted on Linux (best effort), a priority by role on Win32
+// (ThreadRole at the top of this header: Pacer TIME_CRITICAL, Game HIGHEST, else ABOVE_NORMAL).
+void PinCurrentThreadInteractive(ThreadRole role = ThreadRole::Interactive);
+// Win32: timeBeginPeriod(1) once per process (the scheduler's 15.6 ms quantum cannot pace
+// 16.67 ms fields) and the high-resolution waitable timer the sleeps use. POSIX: no-op.
+void RaiseTimerResolution();
+// Sleep for `ns` through the arm's finest timer (Win32: a high-resolution waitable timer,
+// else the 1 ms period; POSIX: nanosleep, resumed on EINTR). Returns no earlier than `ns`.
+void SleepForNs(uint64_t ns);
+// The CPU's SIMD tiers (cpuid + xgetbv on x86-64; NEON on aarch64) -- see platform::host::Cpu.
+bool CpuDetect(bool* sse4_2, bool* avx2, bool* fma3, bool* neon, const char** arch);
 
 // --- dynamic libraries (dlopen / LoadLibrary): the VU1 AOT builder's generated image
 //     libraries. A handle stays open until Close; symbols are the library's C names. ---
@@ -322,8 +386,9 @@ bool GmTimeUtc(int64_t unix_seconds, struct tm* out);
 
 // --- OpenGL entry points. Windows' opengl32.dll exports GL 1.1 only; every core 3.3 / 4.1
 //     name the backend calls is a per-context pointer from wglGetProcAddress. The Windows arm
-//     fills the generated table (gl_windows.h / gl_windows.cpp, tools/build/gen_gl_windows.py)
-//     through `resolve` (the SDL window layer passes SDL_GL_GetProcAddress, which falls back
+//     fills the generated table (engine/platform/windows/gl_loader.{h,cpp}, tools/build/
+//     gen_gl_loader.py: ps2r::glwin::Load) through `resolve` (the SDL window layer passes
+//     SDL_GL_GetProcAddress, which falls back
 //     to opengl32.dll's exports for the 1.1 names; the arm falls back the same way when
 //     `resolve` returns null). Idempotent: the first successful load wins. On POSIX the names
 //     are linked directly and this returns true without touching anything. `missing` (when

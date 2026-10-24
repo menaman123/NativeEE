@@ -64,7 +64,7 @@ MtvuStack::~MtvuStack() {
 }
 
 void MtvuStack::OnThreadStart(void* name) {
-    ps2r::platform::host::PinCurrentThreadInteractive(static_cast<const char*>(name));
+    ps2r::platform::host::PinCurrentThreadInteractive(static_cast<const char*>(name), ps2r::host::ThreadRole::Worker);
 }
 
 void MtvuStack::Start(bool with_drain_thread) {

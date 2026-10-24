@@ -78,6 +78,10 @@ SSize FdPread(int fd, void* buf, size_t n, uint64_t offset) {
     return ::pread(fd, buf, n, static_cast<off_t>(offset));
 }
 int FdSync(int fd) { return ::fsync(fd); }
+int64_t FdSize(int fd) {
+    struct stat st{};
+    return ::fstat(fd, &st) == 0 ? static_cast<int64_t>(st.st_size) : -1;
+}
 int FdClose(int fd) { return ::close(fd); }
 int FdOfStream(std::FILE* f) { return ::fileno(f); }
 int DirectorySync(const char* directory) {
@@ -286,7 +290,8 @@ void SetCurrentThreadName(const char* name) {
     pthread_setname_np(pthread_self(), buf);
 #endif
 }
-void PinCurrentThreadInteractive() {
+void PinCurrentThreadInteractive(ThreadRole role) {
+    (void)role;   // the roles rank threads on Win32; here every role is the interactive class
 #if defined(__APPLE__)
     pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
 #else
@@ -355,6 +360,52 @@ void PreciseSleepUntilNs(uint64_t deadline_ns) {
 }
 
 void RequestFineTimerResolution() {}   // nothing to ask for on Darwin / Linux
+
+void RaiseTimerResolution() {
+    // Nothing to raise: the POSIX kernels sleep to the microsecond (hrtimers / mach).
+}
+
+void SleepForNs(uint64_t ns) {
+    timespec req{};
+    req.tv_sec = static_cast<time_t>(ns / 1000000000ull);
+    req.tv_nsec = static_cast<long>(ns % 1000000000ull);
+    // nanosleep returns the remainder on EINTR: resume it so the span is never cut short.
+    while (nanosleep(&req, &req) == -1 && errno == EINTR) {
+    }
+}
+
+bool CpuDetect(bool* sse4_2, bool* avx2, bool* fma3, bool* neon, const char** arch) {
+    *sse4_2 = *avx2 = *fma3 = *neon = false;
+#if defined(__aarch64__) || defined(__arm64__)
+    *neon = true;
+    *arch = "arm64";
+    return true;
+#elif defined(__x86_64__)
+    *arch = "x86_64";
+    unsigned eax, ebx, ecx, edx;
+    // Leaf 1: SSE4.2 (ECX bit 20), FMA (ECX bit 12), OSXSAVE (ECX bit 27), AVX (ECX bit 28).
+    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(1), "c"(0));
+    *sse4_2 = (ecx & (1u << 20)) != 0;
+    const bool fma = (ecx & (1u << 12)) != 0;
+    const bool osxsave = (ecx & (1u << 27)) != 0;
+    const bool avx = (ecx & (1u << 28)) != 0;
+    bool ymm_enabled = false;
+    if (osxsave) {
+        unsigned xcr0_lo, xcr0_hi;
+        __asm__ volatile("xgetbv" : "=a"(xcr0_lo), "=d"(xcr0_hi) : "c"(0));
+        ymm_enabled = (xcr0_lo & 0x6u) == 0x6u;   // XMM + YMM state saved by the OS
+    }
+    // Leaf 7 sub-leaf 0: AVX2 (EBX bit 5).
+    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
+    const bool avx2_bit = (ebx & (1u << 5)) != 0;
+    *avx2 = avx && avx2_bit && ymm_enabled;
+    *fma3 = fma && *avx2;
+    return true;
+#else
+    *arch = "other";
+    return false;
+#endif
+}
 
 uint64_t ThreadCpuTimeNs() {
     timespec ts{};

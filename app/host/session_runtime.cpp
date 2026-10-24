@@ -642,7 +642,7 @@ int SessionRuntime::Run(std::function<int()> game, unsigned shutdown_seconds) {
         // cores first when the machine is loaded -- the level route's EE read ~40 CPU
         // ms per frame on a shared machine with every other thread of the process
         // pinned above it (track 1d). Scheduling only; the game's work is unchanged.
-        ps2r::platform::host::PinCurrentThreadInteractive("ps2r-game");
+        ps2r::platform::host::PinCurrentThreadInteractive("ps2r-game", ps2r::host::ThreadRole::Game);
         job.session->shutdown_.Enter("game_unwind");   // the game's own return / unwind to here
         try { job.result = job.session->Supervise(job.game()); } catch (...) { job.failure = std::current_exception(); }
         // Service joins belong under the same main-owned shutdown deadline as

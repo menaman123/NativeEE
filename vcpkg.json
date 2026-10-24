@@ -2,13 +2,18 @@
   "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
   "name": "nativeee",
   "version-string": "0.0.0",
-  "description": "Windows dependency manifest (the windows-* presets read it through the vcpkg toolchain): the two runtime libraries the binary links, nothing else. macOS and Linux take the same two from Homebrew / the distribution.",
+  "builtin-baseline": "bf19794383e8fb95eba5aa553235bc8ec2271688",
+  "description": "Windows dependency manifest (the windows-* presets read it through the vcpkg toolchain): the two runtime libraries the binary links plus the Khronos GL registry headers (opengl-registry: GL/glcorearb.h for the Windows GL loader, engine/platform/windows/gl_loader.h), nothing else. builtin-baseline = the vcpkg commit the port versions are resolved against (github.com/microsoft/vcpkg master HEAD on 2026-10-17; VCPKG_ROOT must be a checkout that contains it); KEEP IDENTICAL to the TwinsanityEvolved port's vcpkg.json (its D55 item 8: one installed tree). macOS and Linux take the same two from Homebrew / the distribution.",
   "dependencies": [
     "sdl2",
+    "opengl-registry",
     {
       "name": "ffmpeg",
       "default-features": false,
-      "features": ["avcodec", "swscale"]
+      "features": [
+        "avcodec",
+        "swscale"
+      ]
     }
   ]
 }

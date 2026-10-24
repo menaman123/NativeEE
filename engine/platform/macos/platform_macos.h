@@ -22,7 +22,7 @@ public:
 
     // Pin the calling thread to USER_INTERACTIVE QoS; idempotent, first call
     // wins per thread. Also names the thread (16 chars max on Darwin).
-    static void PinCurrentThreadInteractive(const char* name);
+    static void PinCurrentThreadInteractive(const char* name, ThreadRole role = ThreadRole::Interactive);
 
     // task_info(TASK_VM_INFO).phys_footprint; 0 when the query fails.
     static uint64_t PhysFootprintBytes();

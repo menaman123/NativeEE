@@ -117,6 +117,31 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     add_compile_options(-ffp-contract=off -frounding-math)
 endif()
 
+# --- release code generation: the Windows release blockers, spelled for every target ----------
+# Optimisation level: the build type's (Release = -O3 / clang-cl /O2 through
+# tools/build/clang_cl_shim.py); never a global instruction-set flag -- no -march=native, no
+# /arch:AVX2: the shipped x86-64 binary runs on the baseline ISA and a wider kernel is chosen at
+# RUN TIME per call site (ps2r::platform::host::Cpu(): cpuid + xgetbv; run.meta cpu_features=).
+# [TwinsanityEvolved's PS2R_SIMD_DISPATCH option -- the AVX2/FMA per-function kernel variants --
+# is NOT here: this tree's gs/gif/vif kernels have no such variants yet (PS2R_SIMD = the NEON
+# bodies on arm64, the scalar twins elsewhere); Cpu() is the hook a future variant dispatches on.]
+# Link-time optimisation: CMAKE_INTERPROCEDURAL_OPTIMIZATION for every target when the toolchain
+# supports it (CheckIPOSupported). OFF by default: the oracle lanes' hash identity is frozen
+# against the non-LTO build and the Windows job's default linker (link.exe) does not read
+# clang-cl's LTO objects -- the windows-release-lto preset sets lld-link and PS2R_LTO=ON and must
+# pass the component suite AND the identity lane before it becomes the shipped shape.
+option(PS2R_LTO "Link-time optimisation (CMAKE_INTERPROCEDURAL_OPTIMIZATION) for every target; needs a linker that reads the compiler's LTO objects (clang-cl: lld-link)" OFF)
+if(PS2R_LTO)
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT _ps2r_ipo_ok OUTPUT _ps2r_ipo_msg LANGUAGES CXX)
+    if(_ps2r_ipo_ok)
+        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+        message(STATUS "nativeee: PS2R_LTO: interprocedural optimisation ON for every target")
+    else()
+        message(FATAL_ERROR "nativeee: PS2R_LTO=ON but the toolchain refused IPO: ${_ps2r_ipo_msg}")
+    endif()
+endif()
+
 # --- build id: regenerated on EVERY build (custom target with no OUTPUT) ------
 set(PS2R_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated")
 file(MAKE_DIRECTORY "${PS2R_GENERATED_DIR}")

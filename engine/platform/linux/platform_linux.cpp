@@ -115,11 +115,12 @@ const Platform& PlatformLinux::Instance() {
 
 void PlatformLinux::RegisterSelf() { Register(&Instance()); }
 
-void PlatformLinux::PinCurrentThreadInteractive(const char* name) {
+void PlatformLinux::PinCurrentThreadInteractive(const char* name, ThreadRole role) {
     static thread_local bool pinned = false;
     SetThreadName(name);
     if (pinned) return;
     pinned = true;
+    (void)role;   // no ranks here (below); the roles are Win32's
     // No QoS class on Linux: CFS has no performance/efficiency-core placement
     // to pin against, and raising a thread's priority needs CAP_SYS_NICE. The
     // scheduling intent (every emulation thread in the same class as main)
