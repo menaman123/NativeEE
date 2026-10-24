@@ -12,7 +12,8 @@
 #      --preset macos-dist): nativeee (the stub), the tools, the title's HLE library -- the bundle's source;
 #   2. the compiler kit: tools/toolchain/fetch_compiler.sh --smoke --pack (sha256-pinned official LLVM, cut, smoked);
 #   3. the engine bundle: tools/ci/stage_engine_bundle.sh (engine_bundle target when present, else the fallback shape),
-#      named per the manifest's release.bundle_folder, asset-scanned, zipped;
+#      named per the manifest's release.bundle_folder, asset-scanned, zipped; then tools/ci/bundle_smoke.sh: the cut
+#      compiler compiles a title TU out of the bundle against the bundle's headers (the pair works together);
 #   4. the launcher: tools/ci/release_launcher.sh (the real app/launcher when --launcher-engine has it and Qt is found;
 #      --stub-launcher otherwise, which release_index.py then REFUSES -- the dry run shows the refusal);
 #   5. the asset scan over EVERY file in <out>/release (the release job's last gate);
@@ -86,6 +87,8 @@ step "3. the engine bundle (stage_engine_bundle.sh --name $FOLDER)"
     --platform "$PLATFORM" --version "$TAG" --name "$FOLDER" --compiler-json "$OUT/compiler/compiler/COMPILER.json" > "$OUT/bundle.log" 2>&1 || { tail -20 "$OUT/bundle.log"; exit 1; }
 grep -E "route|lib/:|bin/:|include/:|games/|BUNDLE.json|NOTE|CLEAN|zip:" "$OUT/bundle.log"
 cp "$OUT/bundle/$FOLDER.zip" "$REL/$BUNDLE_ZIP"
+echo "--- bundle_smoke.sh (the cut compiler compiles a title TU against the bundle)"
+"$ENGINE/tools/ci/bundle_smoke.sh" --bundle "$OUT/bundle/$FOLDER" --compiler "$OUT/compiler/compiler" | tail -2
 T3=$(date +%s)
 
 step "4. the launcher (release_launcher.sh$( [ "$STUB" = 1 ] && echo ' --stub' ))"
