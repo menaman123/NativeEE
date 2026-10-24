@@ -1,5 +1,13 @@
 cmake_minimum_required(VERSION 3.21)
 project(nativeee LANGUAGES CXX)
+# The Metal adapter's Objective-C++ bodies (engine/render/backends/metal/*.mm) need OBJCXX. Enabled HERE, at the
+# root, not only in that directory: `enable_language` in a subdirectory sets the language's per-directory
+# variables for that scope alone, and a tree that also fetches SDL2 (the macos-dist preset: PS2R_FETCH_SDL2=ON,
+# SDL2's CMake enables OBJC in its own scope) then fails at generate time with "required internal CMake variable
+# not set: CMAKE_OBJCXX_COMPILE_OBJECT" for the .mm objects. CMake's documentation asks for the root as well.
+if(APPLE)
+    enable_language(OBJCXX)
+endif()
 # Static libraries reached both directly and through a PUBLIC dependency (ps2r_ee,
 # ps2r_sif through ps2r_pad / ps2r_title_hle) would otherwise be repeated on the
 # link line, which Apple's linker warns about: de-duplicate per the linker's rules.

@@ -1,0 +1,10 @@
+# tools/toolchain/PACKAGING_PINS.sha256 -- the pinned downloads the LAUNCHER packaging needs on Linux (AppImage).
+# `shasum -a 256` format. release_launcher.sh fetches each by name, REFUSES a mismatching hash.
+#
+# linuxdeploy 1-alpha-20251107-1: sha256 == the GitHub Releases API digest of the asset (read 2026-10-24).
+# linuxdeploy-plugin-qt 1-alpha-20250213-1: no API digest for that release; hashed from the download on 2026-10-24.
+# The files are renamed with their release tag so a cache never confuses two releases of the same asset name.
+#   https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage
+#   https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/1-alpha-20250213-1/linuxdeploy-plugin-qt-x86_64.AppImage
+c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d  linuxdeploy-1-alpha-20251107-1-x86_64.AppImage
+15106be885c1c48a021198e7e1e9a48ce9d02a86dd0a1848f00bdbf3c1c92724  linuxdeploy-plugin-qt-1-alpha-20250213-1-x86_64.AppImage
