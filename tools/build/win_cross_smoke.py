@@ -17,7 +17,9 @@ picks the selected TUs, and re-issues each compile with
     -fwrapv, -ffp-contract=off ...), so a Windows-only diagnostic here is the diagnostic the
     windows-release preset (clang-cl + tools/build/clang_cl_shim.py) prints on the runner.
   * `host/host_posix.cpp` is swapped for `host/host_windows.cpp` (+ `windows/platform_windows.cpp`,
-    `host/gl_windows.cpp`: the generated GL entry-point table) with the same flags: the Windows
+    `windows/gl_loader.cpp`: the generated GL entry-point table, TwinsanityEvolved's shape over
+    Khronos' glcorearb.h -- `--gl-include DIR` names the directory holding GL/glcorearb.h +
+    KHR/khrplatform.h, what vcpkg's `opengl-registry` port installs) with the same flags: the Windows
     arm is otherwise never compiled on this host.
   * `-iframework` and `-DPS2R_HAS_METAL=1` (the macOS Metal arm) are dropped; the Windows target
     has neither. With `--sdl-include DIR` (the SDL2 VC development headers, what vcpkg's port
@@ -91,6 +93,8 @@ def select_entries(entries, tree, select, shard, extra, prefixes):
 
 
 PCH_DROP = {"-Winvalid-pch"}
+
+GL_INCLUDE = ""   # --gl-include (set in main): GL/glcorearb.h's directory for the Windows loader header
 
 # The root CMakeLists.txt's `if(WIN32) add_compile_definitions(...)` list, verbatim: the
 # UCRT/<windows.h> surface every TU sees on the Windows target.
@@ -168,6 +172,8 @@ def rewrite(args, tree, clang, xwin, out_dir, obj_name, syntax_only, src_overrid
     new += ["--target=x86_64-pc-windows-msvc"] + WIN_DEFINES
     for d in ("crt/include", "sdk/include/ucrt", "sdk/include/um", "sdk/include/shared"):
         new += ["-isystem", os.path.join(xwin, d)]
+    if GL_INCLUDE:
+        new += ["-isystem", GL_INCLUDE]   # GL/glcorearb.h + KHR/khrplatform.h for engine/platform/windows/gl_loader.h
     # The GNU driver on the MSVC target: match what the windows presets do for the
     # exceptions/RTTI model (clang-cl's defaults are /EHsc /GR; the GNU driver defaults off).
     new += ["-fexceptions", "-fcxx-exceptions"]
@@ -205,6 +211,8 @@ def run_one(label, cmd, log_path):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--build", required=True, help="CMake build dir with compile_commands.json (macos-release)")
+    ap.add_argument("--gl-include", default=os.environ.get("PS2R_GLCOREARB_INCLUDE_DIR", ""),
+                    help="directory holding GL/glcorearb.h + KHR/khrplatform.h (vcpkg opengl-registry); default $PS2R_GLCOREARB_INCLUDE_DIR")
     ap.add_argument("--xwin", default=os.environ.get("PS2R_XWIN_ROOT", ""), help="xwin splat root (crt/, sdk/); default $PS2R_XWIN_ROOT")
     ap.add_argument("--clang", default="/opt/homebrew/opt/llvm/bin/clang++")
     ap.add_argument("--tree", default=None, help="source tree root (default: derived from the build dir's CMakeCache)")
@@ -228,6 +236,8 @@ def main():
                     "replaces Homebrew's -isystem .../include/SDL2")
     ap.add_argument("--ffmpeg-include", default="", help="FFmpeg headers for the Windows target; replaces -isystem /opt/homebrew/include")
     a = ap.parse_args()
+    global GL_INCLUDE
+    GL_INCLUDE = a.gl_include
     if a.all:
         a.prefix = ["engine/", "app/", "games/", "tools/", "tests/", "third_party/"]
         a.select = "shim,host,shard,recomp_common"
@@ -270,7 +280,7 @@ def main():
         seen.add(rel)
         if kind == "host-arm":
             for win_src in ("engine/platform/host/host_windows.cpp", "engine/platform/windows/platform_windows.cpp",
-                            "engine/platform/host/gl_windows.cpp"):
+                            "engine/platform/windows/gl_loader.cpp"):
                 obj = win_src.replace("/", "_") + ".obj"
                 cmd, _ = rewrite(args, tree, a.clang, a.xwin, a.out, obj, a.syntax_only,
                                  src_override=os.path.join(tree, win_src), sdl_include=a.sdl_include,

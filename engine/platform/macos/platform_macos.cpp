@@ -105,11 +105,12 @@ const Platform& PlatformMacos::Instance() {
 
 void PlatformMacos::RegisterSelf() { Register(&Instance()); }
 
-void PlatformMacos::PinCurrentThreadInteractive(const char* name) {
+void PlatformMacos::PinCurrentThreadInteractive(const char* name, ThreadRole role) {
     static thread_local bool pinned = false;
     if (name && *name) pthread_setname_np(name);
     if (pinned) return;
     pinned = true;
+    (void)role;   // every role is the USER_INTERACTIVE class here; the ranks are Win32's
     pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
 }
 

@@ -22,7 +22,7 @@ public:
 
     // Name the calling thread (15 characters survive) -- the Linux half of the
     // macOS interactive-QoS pin. Idempotent, first call wins per thread.
-    static void PinCurrentThreadInteractive(const char* name);
+    static void PinCurrentThreadInteractive(const char* name, ThreadRole role = ThreadRole::Interactive);
 
     // Resident set in bytes from /proc/self/statm; 0 when unreadable.
     static uint64_t PhysFootprintBytes();

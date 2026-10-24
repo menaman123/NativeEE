@@ -7,7 +7,7 @@
 // (.github/workflows/windows.yml). Keep every call here to the documented Win32/UCRT
 // surface so the first CI run is a compile check, not a redesign.
 #include "engine/platform/host/platform.h"
-#include "engine/platform/host/gl_windows.h"
+#include "engine/platform/windows/gl_loader.h"   // ps2r::glwin::Load / Count: the GENERATED entry-point table
 
 #include <random>
 #include <string>
@@ -33,6 +33,9 @@
 #include <share.h>
 #include <sys/stat.h>
 #include <timeapi.h>   // timeBeginPeriod (winmm): the pre-1803 fallback of PreciseSleepUntilNs
+#if defined(_M_X64) || defined(_M_AMD64)
+#include <immintrin.h>   // _xgetbv (CpuDetect)
+#endif
 
 #include <cerrno>
 #include <chrono>
@@ -125,6 +128,7 @@ SSize FdPread(int fd, void* buf, size_t n, uint64_t offset) {
     return static_cast<SSize>(got);
 }
 int FdSync(int fd) { return _commit(fd); }
+int64_t FdSize(int fd) { return _filelengthi64(fd); }
 int FdClose(int fd) { return _close(fd); }
 int FdOfStream(std::FILE* f) { return _fileno(f); }
 int DirectorySync(const char* directory) {
@@ -310,7 +314,8 @@ void SetCurrentThreadName(const char* name) {
     if (!name || !*name) return;
     // SetThreadDescription (Windows 10 1607+); resolved at run time so older loaders start.
     using Fn = HRESULT(WINAPI*)(HANDLE, PCWSTR);
-    static Fn fn = reinterpret_cast<Fn>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "SetThreadDescription"));
+    // through void*: newer clang-cl rejects a direct FARPROC -> Fn cast (-Wcast-function-type-mismatch)
+    static Fn fn = reinterpret_cast<Fn>(reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "SetThreadDescription")));
     if (!fn) return;
     wchar_t wide[64];
     const int n = MultiByteToWideChar(CP_UTF8, 0, name, -1, wide, 63);
@@ -318,8 +323,20 @@ void SetCurrentThreadName(const char* name) {
     wide[63] = 0;
     fn(GetCurrentThread(), wide);
 }
-void PinCurrentThreadInteractive() {
-    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
+void PinCurrentThreadInteractive(ThreadRole role) {
+    // The ranks (platform.h ThreadRole): the pacer never computes and must wake on its
+    // edge (TIME_CRITICAL); the game thread owns the frame (HIGHEST); the GS consumer,
+    // MTVU and the main pump share ABOVE_NORMAL -- above the desktop's background work,
+    // below the pacer, so a loaded machine delays a frame rather than an edge.
+    int prio = THREAD_PRIORITY_ABOVE_NORMAL;
+    switch (role) {
+        case ThreadRole::Pacer: prio = THREAD_PRIORITY_TIME_CRITICAL; break;
+        case ThreadRole::Game: prio = THREAD_PRIORITY_HIGHEST; break;
+        case ThreadRole::Graphics:
+        case ThreadRole::Worker:
+        case ThreadRole::Interactive: prio = THREAD_PRIORITY_ABOVE_NORMAL; break;
+    }
+    SetThreadPriority(GetCurrentThread(), prio);
 }
 
 uint64_t MonotonicNowNs() {
@@ -410,6 +427,74 @@ void RequestFineTimerResolution() {
     });
 }
 
+namespace {
+std::once_flag g_timer_res_once;
+// The calling thread's waitable timer (one per thread: a timer is single-waiter). nullptr
+// until first use; a high-resolution one (Windows 10 1803+) when the kernel grants it, else
+// a plain one whose wake rides the 1 ms period timeBeginPeriod set.
+thread_local HANDLE t_sleep_timer = nullptr;
+HANDLE SleepTimer() {
+    if (t_sleep_timer) return t_sleep_timer;
+    HANDLE h = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    if (!h) h = CreateWaitableTimerExW(nullptr, nullptr, 0, TIMER_ALL_ACCESS);
+    t_sleep_timer = h;
+    return h;
+}
+}  // namespace
+
+void RaiseTimerResolution() {
+    // Once for the process lifetime (never timeEndPeriod'd: the game runs until exit). On
+    // Windows 10 2004+ the period is per process and only honoured while a window is in
+    // the foreground unless the process opts out; the high-resolution waitable timer in
+    // SleepForNs does not depend on it.
+    std::call_once(g_timer_res_once, [] { timeBeginPeriod(1); });
+}
+
+void SleepForNs(uint64_t ns) {
+    if (ns == 0) return;
+    RaiseTimerResolution();
+    if (HANDLE h = SleepTimer()) {
+        LARGE_INTEGER due;
+        // Relative due time in 100 ns units (negative = relative), rounded UP so the wake is
+        // never before the span.
+        const uint64_t ticks100 = (ns + 99) / 100;
+        due.QuadPart = -static_cast<LONGLONG>(ticks100 ? ticks100 : 1);
+        if (SetWaitableTimer(h, &due, 0, nullptr, nullptr, FALSE)) {
+            WaitForSingleObject(h, INFINITE);
+            return;
+        }
+    }
+    // No timer at all: the 1 ms period's Sleep, rounded up.
+    Sleep(static_cast<DWORD>((ns + 999999ull) / 1000000ull));
+}
+
+bool CpuDetect(bool* sse4_2, bool* avx2, bool* fma3, bool* neon, const char** arch) {
+    *sse4_2 = *avx2 = *fma3 = *neon = false;
+#if defined(_M_ARM64)
+    *neon = true;
+    *arch = "arm64";
+    return true;
+#elif defined(_M_X64) || defined(_M_AMD64)
+    *arch = "x86_64";
+    int r[4] = {};
+    __cpuid(r, 1);
+    *sse4_2 = (r[2] & (1 << 20)) != 0;
+    const bool fma = (r[2] & (1 << 12)) != 0;
+    const bool osxsave = (r[2] & (1 << 27)) != 0;
+    const bool avx = (r[2] & (1 << 28)) != 0;
+    bool ymm_enabled = false;
+    if (osxsave) ymm_enabled = (_xgetbv(0) & 0x6ull) == 0x6ull;   // XMM + YMM state saved by the OS
+    __cpuidex(r, 7, 0);
+    const bool avx2_bit = (r[1] & (1 << 5)) != 0;
+    *avx2 = avx && avx2_bit && ymm_enabled;
+    *fma3 = fma && *avx2;
+    return true;
+#else
+    *arch = "other";
+    return false;
+#endif
+}
+
 uint64_t ThreadCpuTimeNs() {
     FILETIME create, exit, kernel, user;
     if (!GetThreadTimes(GetCurrentThread(), &create, &exit, &kernel, &user)) return 0;
@@ -438,6 +523,12 @@ void* GlResolveOne(void* (*resolve)(const char*), HMODULE gl32, const char* name
     if (!p && gl32) p = reinterpret_cast<void*>(GetProcAddress(gl32, name));
     return p;
 }
+// The getproc ps2r::glwin::Load is handed (a plain function pointer): the registered resolver
+// with the failure-value filter and the opengl32.dll fallback above. g_gl_load_mutex is held
+// by the caller.
+void* GlResolveRegistered(const char* name) {
+    return GlResolveOne(g_gl_resolve, GetModuleHandleW(L"opengl32.dll"), name);
+}
 }  // namespace
 
 bool GlLoadEntryPoints(void* (*resolve)(const char*), std::string* missing) {
@@ -447,18 +538,17 @@ bool GlLoadEntryPoints(void* (*resolve)(const char*), std::string* missing) {
     if (g_gl_loaded) return true;
     HMODULE gl32 = GetModuleHandleW(L"opengl32.dll");
     if (!gl32) gl32 = LoadLibraryW(L"opengl32.dll");
-    bool ok = true;
-    for (int i = 0; i < gl_windows::kEntryPointCount; ++i) {
-        const gl_windows::EntryPoint& e = gl_windows::kEntryPoints[i];
-        void* p = GlResolveOne(resolve, gl32, e.name);
-        *e.slot = p;
-        if (!p) {
-            ok = false;
-            if (missing) { if (!missing->empty()) *missing += ' '; *missing += e.name; }
-        }
+    // The table is TwinsanityEvolved's generated loader (engine/platform/windows/gl_loader.{h,cpp}:
+    // PS2R_GLWIN_FUNCS, ps2r::glwin::Load fills the ps2r_glwin_* pointers; the optional set --
+    // glClipControl -- is resolved when the driver has it, null otherwise, never a failure).
+    const char* names[16];
+    const int n_missing = ps2r::glwin::Load(&GlResolveRegistered, names, 16);
+    if (missing) {
+        for (int i = 0; i < n_missing && i < 16; ++i) { if (!missing->empty()) *missing += ' '; *missing += names[i]; }
+        if (n_missing > 16) *missing += " (+" + std::to_string(n_missing - 16) + " more of " + std::to_string(ps2r::glwin::Count()) + ")";
     }
-    g_gl_loaded = ok;
-    return ok;
+    g_gl_loaded = n_missing == 0;
+    return g_gl_loaded;
 }
 
 void* GlGetProcAddress(const char* name) {

@@ -95,12 +95,12 @@ void PlatformWindows::RegisterSelf() {
     arm::RequestFineTimerResolution();   // 1 ms scheduler granularity for the process (host_windows.cpp)
 }
 
-void PlatformWindows::PinCurrentThreadInteractive(const char* name) {
+void PlatformWindows::PinCurrentThreadInteractive(const char* name, ThreadRole role) {
     static thread_local bool pinned = false;
     if (name && *name) arm::SetCurrentThreadName(name);
     if (pinned) return;
     pinned = true;
-    arm::PinCurrentThreadInteractive();
+    arm::PinCurrentThreadInteractive(role);
 }
 
 uint64_t PlatformWindows::PhysFootprintBytes() { return arm::ProcessFootprintBytes(); }
