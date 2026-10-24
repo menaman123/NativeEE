@@ -3,8 +3,8 @@
 // (status, region, id, checksum, reason) and exits 0 when it is the supported disc -- the check a packaging step or a
 // judge runs without a window; `--index URL` names the release index the Build step reads (the manifest's by default;
 // an offline copy for a judge); `--prepare --index URL --iso IMAGE --folder DIR [--jobs N] [--release TAG]
-// [--json REPORT]` is the headless Build: no window, progress on stderr, the game's path on stdout, the same report the
-// command-line tool writes, exit 0 when the game is ready; `--iso IMAGE` alone opens the setup window on that disc. The
+// [--json REPORT] [--subfolder memcards=DIR] [--subfolder saves=DIR]` is the headless Build: no window, progress on
+// stderr, the game's path on stdout, the same report the command-line tool writes, exit 0 when the game is ready; `--iso IMAGE` alone opens the setup window on that disc. The
 // launcher never looks for disc images by itself (D-L10).
 #include <QApplication>
 #include <QCommandLineParser>
@@ -15,6 +15,7 @@
 #include <QVBoxLayout>
 #include <memory>
 #include "disc_identifier.h"
+#include "game_folder.h"
 #include "launcher_app.h"
 #include "launcher_style.h"
 #include "launcher_theme.h"
@@ -35,7 +36,7 @@ QString etaLine(qint64 seconds) {
 
 // The headless Build: the judge's driver (`--prepare`). Returns the process exit code.
 int runHeadless(ps2r::launcher::LauncherApp& launcher, const QString& iso, const QString& folder, const QString& index,
-                const QString& release, int jobs, const QString& reportPath) {
+                const QString& release, int jobs, const QString& reportPath, const QStringList& subfolders) {
     QTextStream err(stderr), out(stdout);
     auto writeReport = [&](const QString& text) {
         if (reportPath.isEmpty()) return;
@@ -64,6 +65,13 @@ int runHeadless(ps2r::launcher::LauncherApp& launcher, const QString& iso, const
         return 1;
     }
     launcher.chooseGameFolder(QFileInfo(folder).absoluteFilePath(), true);
+    for (const QString& s : subfolders) {   // --subfolder memcards=DIR: the setup window's folder rows, scripted
+        const int eq = s.indexOf('=');
+        if (eq <= 0) { err << "launcher --prepare: --subfolder wants id=DIR, got " << s << "\n"; return 2; }
+        const QString id = s.left(eq);
+        if (launcher.gameFolder()->subfolderKey(id).isEmpty()) { err << "launcher --prepare: no changeable sub-folder named " << id << "\n"; return 2; }
+        launcher.setSubfolder(id, QFileInfo(s.mid(eq + 1)).absoluteFilePath());
+    }
     int lastPct = -1;
     QString lastLine;
     QObject::connect(bundled, &ps2r::launcher::PrepareRunner::progress, [&](double fraction, qint64 eta, const QString& phase) {
@@ -120,7 +128,8 @@ int main(int argc, char** argv) {
     const QCommandLineOption folderOpt("folder", "The game folder (--prepare).", "dir");
     const QCommandLineOption jobsOpt("jobs", "How many things to do at once (--prepare).", "n");
     const QCommandLineOption jsonOpt("json", "Write the report here (--prepare).", "report");   // lint: allow
-    parser.addOptions({manifestOpt, identifyOpt, indexOpt, releaseOpt, prepareOpt, isoOpt, folderOpt, jobsOpt, jsonOpt});
+    const QCommandLineOption subfolderOpt("subfolder", "Where the memory cards or save states go (--prepare), e.g. memcards=DIR; else inside the game folder.", "id=dir");
+    parser.addOptions({manifestOpt, identifyOpt, indexOpt, releaseOpt, prepareOpt, isoOpt, folderOpt, jobsOpt, jsonOpt, subfolderOpt});
     parser.process(*app);
 
     ps2r::launcher::LauncherApp launcher;
@@ -157,7 +166,7 @@ int main(int argc, char** argv) {
     }
     if (headless) {
         return runHeadless(launcher, parser.value(isoOpt), parser.value(folderOpt), parser.value(indexOpt), parser.value(releaseOpt),
-                           parser.value(jobsOpt).toInt(), parser.value(jsonOpt));
+                           parser.value(jobsOpt).toInt(), parser.value(jsonOpt), parser.values(subfolderOpt));
     }
 #ifdef PS2R_LAUNCHER_HAS_PREPARE
     if (auto* bundled = dynamic_cast<ps2r::launcher::BundledPrepareRunner*>(launcher.preparer())) {

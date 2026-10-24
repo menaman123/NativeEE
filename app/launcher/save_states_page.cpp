@@ -51,6 +51,9 @@ SaveStatesPage::SaveStatesPage(LauncherApp* app, QWidget* parent) : QWidget(pare
     note_ = new QLabel(inner);
     note_->setFont(t.font(LauncherTheme::Caption));
     note_->setStyleSheet(QStringLiteral("color: %1;").arg(t.css(LauncherTheme::TextMuted)));
+    note_->setWordWrap(true);   // a save states folder chosen far away is a long path: it wraps, never widens the page
+    note_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    note_->setMinimumWidth(160);
     bottom->addWidget(note_, 1);
     open_ = new FlatButton(QStringLiteral("Open the folder"), FlatButton::Secondary, inner);
     refresh_ = new FlatButton(QStringLiteral("Refresh"), FlatButton::Quiet, inner);

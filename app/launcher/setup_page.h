@@ -2,7 +2,9 @@
 // again from Games > "Add a game…" or a Settings folder change. Top to bottom: "Your game" (a path field, Choose…, a drop
 // anywhere on the window; the chosen file is identified by its content and shown as a card -- Supported, or "Not supported
 // yet" with the plain reason -- never looked for by itself), "Where the game lives" (one folder, Documents by default,
-// Change…), "Settings" (the manifest's rows, kept here and written to <folder>/nativeee.ini when the game is built),
+// Change…; under it the memory cards and the save states -- inside the game folder unless the player chooses somewhere
+// else; their places are the options file's own paths.* keys, written when the game is built -- D-L15), "Settings"
+// (the manifest's rows, kept here and written to <folder>/nativeee.ini when the game is built),
 // "Advanced" (which computer; this one preselected), and at the bottom ONE button, "Build the game", that runs the
 // PrepareRunner and shows ONE progress bar in the same window (fraction, honest time left, Stop, Details); a failure is a
 // plain sentence with Try again and Details; done = "Your game is ready" with Play. Then the window becomes the launcher.
@@ -36,6 +38,7 @@ public:
     // the actions, as methods so the test driver and the clicks share them
     void chooseDisc(const QString& path);   // identifies `path` by content; the card or the error state follows
     void chooseFolder(const QString& folder);
+    void chooseSubfolder(const QString& id, const QString& folder);   // Memory cards / Save states: Change…
     void build();
     void stop();
     void play();
@@ -44,6 +47,7 @@ public:
     QString selectedTarget() const;
     void setAdvancedOpen(bool open);
     bool advancedOpen() const;
+    void scrollToFolders();   // brings "Where the game lives" into view (the screens test)
 
     // what the test driver reads
     QString discPath() const { return disc_.path; }
@@ -52,6 +56,8 @@ public:
     QLabel* discStatus() const { return discStatus_; }
     QLineEdit* discField() const { return discField_; }
     FolderRow* folderRow() const { return folder_; }
+    FolderRow* subfolderRow(const QString& id) const;   // memcards / saves (the ones the manifest asks for)
+    QLabel* folderNote() const { return folderNote_; }
     SettingsRow* settingsRow(const QString& key) const;
     const QVector<SettingsRow*>& settingsRows() const { return rows_; }
     SegmentedControl* targetSelector() const { return targets_; }
@@ -106,6 +112,7 @@ private:
     GameCard* card_ = nullptr;
     QLabel* discStatus_;
     FolderRow* folder_;
+    QVector<FolderRow*> subfolderRows_;
     QLabel* folderNote_;
     QVector<SettingsRow*> rows_;
     FlatButton* advancedToggle_;

@@ -3,6 +3,7 @@
 // drives it through the same methods the buttons call. The launcher never looks for disc images by itself (decision
 // D-L10): a disc enters through addDisc() -- the file dialog, a drop, or the command line -- and is identified by content.
 #pragma once
+#include <QMap>
 #include <QObject>
 #include <QStringList>
 #include "disc_identity.h"
@@ -34,7 +35,9 @@ public:
     GameProcess* game() const { return game_; }
 
     // the game folder and its sub-folders; `exact` takes the path as the game folder itself (a scripted run), else the
-    // picker's choice is made into one (GameFolder::folderFor)
+    // picker's choice is made into one (GameFolder::folderFor). A sub-folder choice is the options file's own key
+    // (paths.mc_dir / paths.save_dir, the ones the game reads -- GameFolder): the setup window, the Settings page and
+    // the game share ONE store.
     void chooseGameFolder(const QString& pickedOrFolder, bool exact = false);
     void setSubfolder(const QString& id, const QString& path);
     QString settingsFilePath() const;
@@ -83,6 +86,7 @@ private:
     GameProcess* game_ = nullptr;
     IniSettings* settings_ = nullptr;
     QString playingIso_, preparingIso_, preparingTarget_, preparingSha_;
+    QMap<QString, QString> subfoldersAtBuild_;   // the sub-folder choices when Build was pressed (re-applied after the pipeline)
 };
 
 }  // namespace ps2r::launcher

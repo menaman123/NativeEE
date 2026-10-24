@@ -89,6 +89,7 @@ SetupPage::SetupPage(LauncherApp* app, DetailsSheet* details, QWidget* parent) :
     col->addWidget(buildBottom(this));
 
     connect(app_, &LauncherApp::foldersChanged, this, [this] { refreshFolder(); refreshButtons(); });
+    refreshFolder();
     connect(app_->library(), &GameLibrary::changed, this, [this] { refreshDisc(); refreshButtons(); });
     connect(app_, &LauncherApp::stateChanged, this, [this] { if (card_) card_->refresh(); });
     connect(app_->preparer(), &PrepareRunner::progress, this, [this](double fraction, qint64 eta, const QString& phase) {
@@ -183,8 +184,31 @@ QWidget* SetupPage::buildWhereItLives(QWidget* parent) {
         if (!picked.isEmpty()) chooseFolder(picked);
     });
     col->addWidget(folder_);
-    const QString note = app_->manifest()->portableNote();
-    folderNote_ = mutedLabel(note.isEmpty() ? QStringLiteral("One folder holds the game, its options and its saves.") : note, box, LauncherTheme::Caption);
+    // the memory cards and the save states (game_folder.subfolders with `ask`): inside the game folder unless the
+    // player chooses somewhere else; the cache is the pipeline's and stays on the Settings page only
+    for (const SubfolderSpec& spec : app_->manifest()->subfolders()) {
+        if (!spec.ask || spec.key.isEmpty()) continue;
+        auto* row = new FolderRow(spec.label, box);
+        row->setObjectName(QStringLiteral("setup_folder_%1").arg(spec.id));
+        row->setProperty("folder_id", spec.id);
+        row->setMaximumWidth(720);
+        connect(row, &FolderRow::changeRequested, this, [this, id = spec.id, label = spec.label] {
+            const QString current = app_->gameFolder()->subfolderIn(id, folderPath());
+            const QString start = QDir(current).exists() ? current : QDir(folderPath()).exists() ? folderPath() : app_->gameFolder()->defaultParent();
+            const QString picked = QFileDialog::getExistingDirectory(this, QStringLiteral("Choose where the %1 should be").arg(label.toLower()), start);
+            if (!picked.isEmpty()) chooseSubfolder(id, picked);
+        });
+        subfolderRows_ << row;
+        col->addWidget(row);
+        if (!spec.help.isEmpty()) {
+            auto* help = mutedLabel(spec.help, box, LauncherTheme::Caption);
+            help->setObjectName(QStringLiteral("setup_folder_%1_help").arg(spec.id));
+            help->setMaximumWidth(720);
+            col->addWidget(help);
+        }
+    }
+    folderNote_ = mutedLabel(QString(), box, LauncherTheme::Caption);
+    folderNote_->setObjectName(QStringLiteral("setup_folder_note"));
     folderNote_->setMaximumWidth(720);
     col->addWidget(folderNote_);
     return box;
@@ -359,7 +383,37 @@ void SetupPage::chooseFolder(const QString& folder) {
     flushSettings();
 }
 
-void SetupPage::refreshFolder() { folder_->setPath(folderPath()); }
+void SetupPage::chooseSubfolder(const QString& id, const QString& folder) {
+    // before a game folder exists the choice waits in the model and lands in the options file when Build is pressed
+    app_->setSubfolder(id, folder);
+    refreshFolder();
+}
+
+FolderRow* SetupPage::subfolderRow(const QString& id) const {
+    for (FolderRow* r : subfolderRows_) if (r->property("folder_id").toString() == id) return r;
+    return nullptr;
+}
+
+void SetupPage::refreshFolder() {
+    const QString base = folderPath();
+    folder_->setPath(base);
+    QStringList outside;
+    for (FolderRow* r : subfolderRows_) {
+        const QString id = r->property("folder_id").toString();
+        const QString choice = app_->gameFolder()->subfolderChoice(id);
+        r->setPath(GameFolder::resolveIn(choice, base), app_->gameFolder()->subfolderInside(id) ? choice : AppData::shortPath(choice));
+        if (!app_->gameFolder()->subfolderInside(id)) outside << r->property("folder_id").toString();
+    }
+    // the portable note holds while everything is inside; a folder chosen elsewhere is said so, in its place
+    const QString portable = app_->manifest()->portableNote();
+    QStringList sentences;
+    if (outside.isEmpty()) sentences << (portable.isEmpty() ? QStringLiteral("One folder holds the game, its options and its saves.") : portable);
+    for (const QString& id : outside) {
+        const SubfolderSpec* spec = app_->manifest()->subfolder(id);
+        sentences << QStringLiteral("The %1 live outside the game folder; moving the folder leaves them where they are.").arg(spec ? spec->label.toLower() : id);
+    }
+    folderNote_->setText(sentences.join(' '));
+}
 
 void SetupPage::refreshSettingsRows() {
     for (SettingsRow* r : rows_) {
@@ -400,6 +454,7 @@ QString SetupPage::selectedTarget() const {
 }
 
 void SetupPage::setAdvancedOpen(bool open) { advancedToggle_->setChecked(open); }
+void SetupPage::scrollToFolders() { scroll_->ensureWidgetVisible(folderNote_, 0, LauncherTheme::S3); }
 bool SetupPage::advancedOpen() const { return advancedToggle_->isChecked(); }
 
 void SetupPage::refreshTarget() {
@@ -448,6 +503,7 @@ void SetupPage::refreshButtons() {
     error_->setVisible(failed);
     // the inputs are frozen while building
     for (QWidget* w : QList<QWidget*>{discField_, choose_, folder_, targets_}) w->setEnabled(!building);
+    for (FolderRow* r : subfolderRows_) r->setEnabled(!building);
     for (SettingsRow* r : rows_) r->setEnabled(!building);
 }
 

@@ -51,8 +51,9 @@ void FolderRow::revealInFileManager(const QString& path) {
     QDesktopServices::openUrl(QUrl::fromLocalFile(path));
 }
 
-void FolderRow::setPath(const QString& path) {
+void FolderRow::setPath(const QString& path, const QString& shownAs) {
     path_ = path;
+    shownAs_ = shownAs;
     relayout();
 }
 
@@ -61,7 +62,7 @@ void FolderRow::relayout() {
     label_->setStyleSheet(QStringLiteral("color: %1;").arg(t.css(LauncherTheme::Text)));
     pathLabel_->setStyleSheet(QStringLiteral("color: %1;").arg(t.css(LauncherTheme::TextMuted)));
     const QFontMetrics fm(pathLabel_->font());
-    pathLabel_->setText(fm.elidedText(AppData::shortPath(path_), Qt::ElideMiddle, qMax(80, pathLabel_->width() - 8)));
+    pathLabel_->setText(fm.elidedText(shownAs_.isEmpty() ? AppData::shortPath(path_) : shownAs_, Qt::ElideMiddle, qMax(80, pathLabel_->width() - 8)));
     pathLabel_->setToolTip(path_);
     pathLabel_->setAccessibleName(path_);
 }

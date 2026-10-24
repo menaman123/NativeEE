@@ -94,7 +94,7 @@ set_target_properties(ps2r_launcher PROPERTIES
 # release packaging (tools/ci/release_launcher.*) does the same from the staged release; this is only
 # the build tree's copy. Without a manifest the launcher shows "This launcher has no game to launch".
 if(DEFINED PS2R_GAMES_DIR)
-    file(GLOB _ps2r_launcher_manifests "${PS2R_GAMES_DIR}/../launcher/*.json")
+    file(GLOB _ps2r_launcher_manifests "${PS2R_GAMES_DIR}/../launcher/*.json")   # lint: allow
     if(_ps2r_launcher_manifests)
         if(APPLE)
             set(_ps2r_launcher_titles_dir "$<TARGET_BUNDLE_CONTENT_DIR:ps2r_launcher>/Resources/titles")

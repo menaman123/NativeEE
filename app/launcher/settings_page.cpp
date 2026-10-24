@@ -1,11 +1,13 @@
 // app/launcher/settings_page.cpp -- the Settings page.
 #include "settings_page.h"
+#include <QDir>
 #include <QFileDialog>
 #include <QLabel>
 #include <QScrollArea>
 #include <QVBoxLayout>
 #include "app_data.h"
 #include "empty_state.h"
+#include "flat_button.h"
 #include "folder_row.h"
 #include "game_folder.h"
 #include "host_platform.h"
@@ -75,12 +77,18 @@ SettingsPage::SettingsPage(LauncherApp* app, QWidget* parent) : QWidget(parent),
     connect(gameRow, &FolderRow::changeRequested, this, &SettingsPage::folderRequested);
     folders_ << gameRow;
     body->addWidget(gameRow);
+    // the sub-folders read the options file's own keys (paths.mc_dir / paths.save_dir / paths.user_data): the same
+    // store the setup window wrote and the game reads; one without a key is fixed inside the game folder
     for (const SubfolderSpec& s : app->manifest()->subfolders()) {
         auto* row = new FolderRow(s.label, body_);
         row->setObjectName(QStringLiteral("folder_%1_settings").arg(s.id));
         row->setProperty("folder_id", s.id);
+        if (!s.help.isEmpty()) row->setToolTip(s.help);
+        row->changeButton()->setVisible(!s.key.isEmpty());
         connect(row, &FolderRow::changeRequested, this, [this, id = s.id, label = s.label] {
-            const QString dir = QFileDialog::getExistingDirectory(this, QStringLiteral("Choose the %1 folder").arg(label.toLower()), app_->gameFolder()->subfolder(id));
+            const QString current = app_->gameFolder()->subfolder(id);
+            const QString start = QDir(current).exists() ? current : app_->gameFolder()->path();
+            const QString dir = QFileDialog::getExistingDirectory(this, QStringLiteral("Choose where the %1 should be").arg(label.toLower()), start);
             if (!dir.isEmpty()) app_->setSubfolder(id, dir);
         });
         folders_ << row;
@@ -119,7 +127,10 @@ void SettingsPage::refreshFolders() {
     GameFolder* f = app_->gameFolder();
     for (FolderRow* r : folders_) {
         const QString id = r->property("folder_id").toString();
-        r->setPath(!f->chosen() ? QString() : id == QLatin1String("game") ? f->path() : f->subfolder(id));
+        if (!f->chosen()) { r->setPath(QString()); continue; }
+        if (id == QLatin1String("game")) { r->setPath(f->path()); continue; }
+        // inside the game folder: the relative form, as on the setup window; elsewhere: the path
+        r->setPath(f->subfolder(id), f->subfolderInside(id) ? f->subfolderChoice(id) : QString());
     }
 }
 

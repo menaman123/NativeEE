@@ -10,8 +10,11 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QRegularExpression>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QTemporaryDir>
 #include "about_page.h"
+#include "app_data.h"
 #include "details_sheet.h"
 #include "disc_list.h"
 #include "empty_state.h"
@@ -100,7 +103,7 @@ const char* kManifest = R"JSON({
                "linux-x86_64": { "label": "Linux (64-bit)", "os": "linux", "arch": "x86_64", "binary": "examplegame" } },
   "unsupported": [ { "label": "A handheld console", "reason": "The graphics work of the game is far heavier than it can carry at full speed." },
                    { "label": "Other regions of the disc", "reason": "Only the North American disc is prepared by this version." } ],
-  "game_folder": { "config": "nativeee.ini", "default": "~/Documents/Example Game", "subfolders": { "memcards": { "label": "Memory cards", "default": "memcards" }, "saves": { "label": "Save states", "default": "saves" }, "cache": { "label": "Cache", "default": "cache" } },
+  "game_folder": { "config": "nativeee.ini", "default": "~/Documents/Example Game", "subfolders": { "memcards": { "label": "Memory cards", "default": "memcards", "key": "paths.mc_dir", "help": "The saved progress of your game. Inside the game folder unless you choose somewhere else." }, "saves": { "label": "Save states", "default": "saves", "key": "paths.save_dir", "help": "Snapshots you can resume from." }, "cache": { "label": "Cache", "default": "cache", "key": "paths.user_data", "ask": false } },
                    "portable_note": "Everything the game needs is in this one folder. Move or copy the folder and the game moves with it." },
   "run": { "args": ["--iso", "${iso}", "--config", "${config}"], "resume_args": ["--load-state", "${state}"], "save_states": { "folder": "${saves}/savestates", "extension": ".ps2st" } },
   "settings": { "note": "Written to nativeee.ini in the game folder, the file the game reads.", "groups": [
@@ -216,6 +219,17 @@ private slots:
         QVERIFY(setup->buildHint()->text().contains("Choose your disc"));
         QVERIFY(setup->folderRow()->path().endsWith("/Documents/Example Game"));   // suggested, not yet chosen
         QVERIFY(!app_->gameFolder()->chosen());
+        // the memory cards and the save states under the game folder: the relative default, following the folder; the
+        // cache is not a player's choice and is not here
+        QVERIFY(setup->subfolderRow("memcards"));
+        QVERIFY(setup->subfolderRow("saves"));
+        QVERIFY(!setup->subfolderRow("cache"));
+        QCOMPARE(setup->subfolderRow("memcards")->shownText(), QStringLiteral("memcards"));
+        QCOMPARE(setup->subfolderRow("saves")->shownText(), QStringLiteral("saves"));
+        QCOMPARE(setup->subfolderRow("memcards")->path(), setup->folderPath() + "/memcards");
+        QVERIFY(setup->folderNote()->text().contains("Move or copy the folder"));
+        QVERIFY(!setup->folderNote()->text().contains("outside"));
+        QVERIFY(setup->findChild<QLabel*>("setup_folder_memcards_help")->text().contains("Inside the game folder"));
         QVERIFY(setup->settingsRow("video.frame_cap"));
         QVERIFY(setup->settingsRow("video.vsync"));
         QVERIFY(!setup->advancedOpen());
@@ -291,6 +305,22 @@ private slots:
 #endif
                                                  ) == "yes");
         shot("05_setup_disc_chosen");
+        // the folders chosen elsewhere (no game folder yet): the save states outside show the absolute path and the
+        // note says so; the memory cards inside the suggested folder stay relative and follow it
+        setup->chooseSubfolder("saves", home_.path() + "/My save states");
+        QCOMPARE(setup->subfolderRow("saves")->shownText(), AppData::shortPath(home_.path() + "/My save states"));
+        QCOMPARE(setup->subfolderRow("saves")->path(), home_.path() + "/My save states");
+        QVERIFY(setup->folderNote()->text().contains("The save states live outside the game folder; moving the folder leaves them where they are."));
+        QVERIFY(!setup->folderNote()->text().contains("Move or copy the folder"));
+        setup->chooseSubfolder("memcards", setup->folderPath() + "/cards");
+        QCOMPARE(setup->subfolderRow("memcards")->shownText(), QStringLiteral("cards"));
+        QVERIFY(!setup->folderNote()->text().contains("memory cards live outside"));
+        QVERIFY(!app_->gameFolder()->chosen());
+        QVERIFY(!QFileInfo::exists(setup->folderPath() + "/nativeee.ini"));   // nothing written before Build
+        setup->scrollToFolders();
+        shot("05b_setup_folders_custom");
+        setup->chooseSubfolder("memcards", setup->folderPath() + "/memcards");   // back to the default
+        QCOMPARE(setup->subfolderRow("memcards")->shownText(), QStringLiteral("memcards"));
     }
 
     void setupAdvanced() {
@@ -322,6 +352,12 @@ private slots:
         QVERIFY(app_->gameFolder()->path().endsWith("/Documents/Example Game"));
         QCOMPARE(IniSettings(app_->settingsFilePath()).get("video.frame_cap"), QStringLiteral("30"));
         QVERIFY(setup->pendingSettings().isEmpty());
+        // ...and the folder choices as the keys the game reads: the memory cards inside (absolute in the file), the
+        // save states where they were chosen
+        QCOMPARE(IniSettings(app_->settingsFilePath()).get("paths.mc_dir"), app_->gameFolder()->path() + "/memcards");
+        QCOMPARE(IniSettings(app_->settingsFilePath()).get("paths.save_dir"), home_.path() + "/My save states");
+        QCOMPARE(IniSettings(app_->settingsFilePath()).get("paths.user_data"), app_->gameFolder()->path() + "/cache");
+        QVERIFY(QDir(home_.path() + "/My save states").exists());
         QVERIFY(setup->stopButton()->isVisible());
         QVERIFY(setup->detailsButton()->isVisible());
         QVERIFY(!setup->buildButton()->isVisible());
@@ -340,6 +376,9 @@ private slots:
         QCOMPARE(setup->leaveButton()->text(), QStringLiteral("Go to the launcher"));
         QCOMPARE(setup->discCard()->statusText(), QStringLiteral("Ready to play."));
         QCOMPARE(IniSettings(app_->settingsFilePath()).get("video.frame_cap"), QStringLiteral("30"));   // written again after the build
+        QCOMPARE(IniSettings(app_->settingsFilePath()).get("paths.save_dir"), home_.path() + "/My save states");   // and the folders (D-L13)
+        QCOMPARE(IniSettings(app_->settingsFilePath()).get("paths.mc_dir"), app_->gameFolder()->path() + "/memcards");
+        QCOMPARE(app_->gameFolder()->saveStatesFolder(), home_.path() + "/My save states/savestates");
         shot("08_setup_done");
         setup->leave();
         QVERIFY(!window_->setupShowing());
@@ -386,6 +425,7 @@ private slots:
         QVERIFY(s->cards().isEmpty());
         shot("10_save_states_empty");
         const QString dir = app_->gameFolder()->saveStatesFolder();
+        QCOMPARE(dir, home_.path() + "/My save states/savestates");   // the Save States page lists the folder chosen on the setup window
         QDir().mkpath(dir);
         for (const char* name : {"slot0", "slot1"}) {
             QFile f(dir + "/" + name + ".ps2st");
@@ -404,6 +444,8 @@ private slots:
         QCOMPARE(s->cards().size(), 2);
         QVERIFY(!s->emptyState()->isVisible());
         QVERIFY(s->cards()[0]->factsText().contains("frame 1501") || s->cards()[1]->factsText().contains("frame 1501"));
+        // the long path of a folder chosen elsewhere wraps; the page never grows wider than the window
+        QVERIFY(!s->findChild<QScrollArea*>()->horizontalScrollBar()->isVisible());
         shot("11_save_states");
     }
 
@@ -415,7 +457,20 @@ private slots:
         QVERIFY(s->row("video.vsync"));
         QVERIFY(s->folderRow("game"));
         QVERIFY(s->folderRow("saves"));
+        QVERIFY(s->folderRow("memcards"));
+        QVERIFY(s->folderRow("cache"));   // the cache: here, not on the setup window
+        // the same store as the setup window: the save states chosen there, the memory cards inside shown relative
         QCOMPARE(s->folderRow("saves")->path(), app_->gameFolder()->subfolder("saves"));
+        QCOMPARE(s->folderRow("saves")->path(), home_.path() + "/My save states");
+        QCOMPARE(s->folderRow("memcards")->shownText(), QStringLiteral("memcards"));
+        QCOMPARE(s->folderRow("cache")->shownText(), QStringLiteral("cache"));
+        // a change here is a change in the file and on the setup window
+        app_->setSubfolder("memcards", home_.path() + "/My cards");
+        QCOMPARE(IniSettings(app_->settingsFilePath()).get("paths.mc_dir"), home_.path() + "/My cards");
+        QCOMPARE(s->folderRow("memcards")->shownText(), AppData::shortPath(home_.path() + "/My cards"));
+        QCOMPARE(window_->setup()->subfolderRow("memcards")->path(), home_.path() + "/My cards");
+        app_->setSubfolder("memcards", app_->gameFolder()->path() + "/memcards");
+        QCOMPARE(s->folderRow("memcards")->shownText(), QStringLiteral("memcards"));
         // the platform-filtered choice: Metal only on macOS
         const QStringList graphics = s->row("video.backend")->segmented()->values();
         QCOMPARE(graphics.contains("metal"), QString::fromLatin1(

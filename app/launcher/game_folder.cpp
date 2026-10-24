@@ -8,6 +8,7 @@
 #include <QSaveFile>
 #include "app_data.h"
 #include "host_platform.h"
+#include "ini_settings.h"
 #include "title_manifest.h"
 namespace ps2r::launcher {
 
@@ -17,8 +18,13 @@ bool GameFolder::chosen() const { return !path().isEmpty(); }
 QString GameFolder::path() const { return appData_->value("game_folder").toString(); }
 
 void GameFolder::choose(const QString& folder) {
+    // the choices made so far travel with the player (D-L15): a relative one follows into the new folder, an absolute
+    // one stays where it is; both land in the new folder's options file
+    const QMap<QString, QString> choices = subfolderChoices();
     appData_->setValue("game_folder", QDir::cleanPath(folder));
     appData_->save();
+    for (auto it = choices.begin(); it != choices.end(); ++it) pending_[it.key()] = it.value();
+    writeSubfolderKeys();
 }
 
 QString GameFolder::suggestedPath() const {
@@ -78,17 +84,79 @@ QStringList GameFolder::subfolderIds() const {
     return ids;
 }
 
-QString GameFolder::subfolder(const QString& id) const {
-    const QString chosen = appData_->value("subfolder." + id).toString();
-    if (!chosen.isEmpty()) return chosen;
-    for (const SubfolderSpec& s : manifest_->subfolders()) if (s.id == id) return path() + "/" + s.defaultName;
-    return path() + "/" + id;
+QString GameFolder::subfolderKey(const QString& id) const {
+    const SubfolderSpec* s = manifest_->subfolder(id);
+    return s ? s->key : QString();
 }
 
+QString GameFolder::relativeIfInside(const QString& path, const QString& folder) {
+    const QString p = QDir::cleanPath(path), f = QDir::cleanPath(folder);
+    if (f.isEmpty() || p.isEmpty()) return p;
+    if (p == f) return QStringLiteral(".");
+    if (p.startsWith(f + "/")) return p.mid(f.size() + 1);
+    return p;
+}
+
+QString GameFolder::resolveIn(const QString& choice, const QString& folder) {
+    if (QDir::isAbsolutePath(choice)) return QDir::cleanPath(choice);
+    return QDir::cleanPath(folder + "/" + choice);
+}
+
+QString GameFolder::storedSubfolder(const QString& id) const {
+    const QString key = subfolderKey(id);
+    if (key.isEmpty() || !chosen()) return QString();
+    return IniSettings(configPath()).get(key);
+}
+
+QString GameFolder::subfolderChoice(const QString& id) const {
+    // the choice: what waits for the first write, else what the options file says (made relative when it is inside
+    // the game folder), else the manifest's default name inside the game folder
+    if (pending_.contains(id)) return pending_.value(id);
+    const QString stored = storedSubfolder(id);
+    if (!stored.isEmpty()) return relativeIfInside(stored, path());
+    const SubfolderSpec* s = manifest_->subfolder(id);
+    return s ? s->defaultName : id;
+}
+
+bool GameFolder::subfolderInside(const QString& id) const { return !QDir::isAbsolutePath(subfolderChoice(id)); }
+
+QString GameFolder::subfolderIn(const QString& id, const QString& folder) const { return resolveIn(subfolderChoice(id), folder); }
+
+QString GameFolder::subfolder(const QString& id) const { return subfolderIn(id, path()); }
+
 void GameFolder::setSubfolder(const QString& id, const QString& folder) {
-    appData_->setValue("subfolder." + id, QDir::cleanPath(folder));
-    appData_->save();
-    QDir().mkpath(folder);
+    if (subfolderKey(id).isEmpty()) return;   // fixed at <folder>/<default>: nothing to choose
+    // decision D-L15: inside the game folder (or the suggested one, before any is chosen) -> relative, follows the game
+    // folder; anywhere else -> absolute, stays where it is
+    const QString base = chosen() ? path() : suggestedPath();
+    pending_[id] = relativeIfInside(folder, base);
+    if (chosen()) writeSubfolderKeys();
+}
+
+QMap<QString, QString> GameFolder::subfolderChoices() const {
+    QMap<QString, QString> out;
+    for (const QString& id : subfolderIds()) if (!subfolderKey(id).isEmpty()) out[id] = subfolderChoice(id);
+    return out;
+}
+
+void GameFolder::setSubfolderChoices(const QMap<QString, QString>& choices) {
+    for (auto it = choices.begin(); it != choices.end(); ++it) if (!subfolderKey(it.key()).isEmpty()) pending_[it.key()] = it.value();
+    if (chosen()) writeSubfolderKeys();
+}
+
+bool GameFolder::writeSubfolderKeys(QString* error) {
+    if (!chosen()) { if (error) *error = QStringLiteral("Choose where the game lives first."); return false; }
+    IniSettings ini(configPath());
+    bool ok = true;
+    for (const QString& id : subfolderIds()) {
+        const QString key = subfolderKey(id);
+        if (key.isEmpty()) continue;
+        const QString absolute = subfolder(id);   // the game reads an absolute path; the relative form is the launcher's
+        QString err;
+        if (ini.set(key, absolute, &err)) pending_.remove(id);
+        else { ok = false; if (error) *error = err; }
+    }
+    return ok;
 }
 
 bool GameFolder::makeSubfolders(QString* error) const {

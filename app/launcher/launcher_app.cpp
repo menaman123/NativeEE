@@ -66,6 +66,9 @@ bool LauncherApp::loadManifest(const QString& explicitPath, QString* error) {
     if (!preset.isEmpty() && !folder_->chosen()) folder_->choose(preset);
     openSettings();
     connect(preparer_, &PrepareRunner::finished, this, [this](const QString& binary) {
+        // the pipeline wrote a fresh options file (D-L13): the player's folder choices go back in first, so the game
+        // started from the folder reads the same memory cards and save states the launcher shows
+        folder_->setSubfolderChoices(subfoldersAtBuild_);
         PreparedRecord r;
         r.ok = true;
         r.discSha256 = preparingSha_;
@@ -102,6 +105,8 @@ void LauncherApp::chooseGameFolder(const QString& pickedOrFolder, bool exact) {
 
 void LauncherApp::setSubfolder(const QString& id, const QString& path) {
     folder_->setSubfolder(id, path);
+    const QString key = folder_->subfolderKey(id);
+    if (!key.isEmpty() && folder_->chosen()) emit settingsChanged(key);
     emit foldersChanged();
 }
 
@@ -173,6 +178,8 @@ bool LauncherApp::prepare(const QString& isoPath, const QString& targetId, QStri
     if (!folder_->chosen()) { if (error) *error = QStringLiteral("Choose where the game should live first."); return false; }
     if (preparer_->running()) { if (error) *error = QStringLiteral("The game is already being prepared."); return false; }
     QString err;
+    subfoldersAtBuild_ = folder_->subfolderChoices();   // kept for after the pipeline's rewrite (D-L13)
+    if (!folder_->writeSubfolderKeys(&err)) { if (error) *error = err; return false; }
     if (!folder_->makeSubfolders(&err)) { if (error) *error = err; return false; }
     const QString target = targetId.isEmpty() ? hostTarget() : targetId;
     const TargetSpec* t = manifest_->target(target);

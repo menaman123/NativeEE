@@ -57,7 +57,16 @@ struct TargetSpec {
 
 struct UnsupportedItem { QString label, reason; };
 
-struct SubfolderSpec { QString id, label, defaultName; };
+// A sub-folder of the game folder (game_folder.subfolders.<id>): memcards / saves / cache and any other the title names.
+struct SubfolderSpec {
+    QString id;            // memcards / saves / cache
+    QString label;         // "Memory cards"
+    QString defaultName;   // the folder inside the game folder when the player chose nothing: "memcards"
+    QString key;           // the options-file key the GAME reads for it (paths.mc_dir / paths.save_dir / paths.user_data);
+                           // empty = the launcher's own folder, not written to the file and not changeable
+    QString help;          // the plain caption under the row on the setup window
+    bool ask = true;       // asked on the setup window; false = the Settings page only (the cache is not a player's choice)
+};
 
 struct LicenceLink { QString label, file; };
 
@@ -101,6 +110,7 @@ public:
     // game_folder.default: where the game is suggested to live ("~/Documents/<name>"); empty = ~/Documents/<safe name>.
     QString defaultGameFolder() const { return defaultGameFolder_; }
     const QVector<SubfolderSpec>& subfolders() const { return subfolders_; }
+    const SubfolderSpec* subfolder(const QString& id) const;   // by id, else null
     QString portableNote() const { return portableNote_; }
 
     // run.args with ${iso} ${config} ${memcards} ${saves} ${cache} ${folder} left for GameFolder to substitute

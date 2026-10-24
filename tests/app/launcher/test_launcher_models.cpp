@@ -86,7 +86,7 @@ const char* kManifest = R"JSON({
                "linux-x86_64": { "label": "Linux", "os": "linux", "arch": "x86_64", "binary": "examplegame" },
                "macos-x86_64": { "label": "macOS (Intel)", "os": "macos", "arch": "x86_64", "binary": "examplegame.app" } },
   "unsupported": [ { "label": "A handheld", "reason": "Too heavy for it." } ],
-  "game_folder": { "config": "nativeee.ini", "default": "~/Documents/Example Game", "subfolders": { "memcards": { "label": "Memory cards", "default": "memcards" }, "saves": { "label": "Save states", "default": "saves" }, "cache": { "label": "Cache", "default": "cache" } } },
+  "game_folder": { "config": "nativeee.ini", "default": "~/Documents/Example Game", "subfolders": { "memcards": { "label": "Memory cards", "default": "memcards", "key": "paths.mc_dir", "help": "The saved progress of your game. Inside the game folder unless you choose somewhere else." }, "saves": { "label": "Save states", "default": "saves", "key": "paths.save_dir", "help": "Snapshots you can resume from." }, "cache": { "label": "Cache", "default": "cache", "key": "paths.user_data", "ask": false } } },
   "run": { "args": ["--iso", "${iso}", "--config", "${config}", "--set", "paths.save_dir=${saves}"], "resume_args": ["--load-state", "${state}"],
            "save_states": { "folder": "${saves}/savestates", "extension": ".ps2st" } },
   "settings": { "groups": [ { "title": "Picture", "rows": [
@@ -137,6 +137,14 @@ private slots:
         QVERIFY(noRelease.releaseIndexUrl().isEmpty());
         QVERIFY(noRelease.defaultGameFolder().isEmpty());
         QCOMPARE(manifest_.subfolders().size(), 3);
+        // the sub-folders name the options-file key the game reads; the cache is not asked on the setup window
+        QCOMPARE(manifest_.subfolder("memcards")->key, QStringLiteral("paths.mc_dir"));
+        QCOMPARE(manifest_.subfolder("saves")->key, QStringLiteral("paths.save_dir"));
+        QVERIFY(manifest_.subfolder("memcards")->ask);
+        QVERIFY(manifest_.subfolder("saves")->ask);
+        QVERIFY(!manifest_.subfolder("cache")->ask);
+        QVERIFY(manifest_.subfolder("memcards")->help.contains("Inside the game folder"));
+        QVERIFY(!manifest_.subfolder("nothing"));
         QCOMPARE(manifest_.unsupported().size(), 1);
         QCOMPARE(manifest_.allSettingsRows().size(), 3);
         QCOMPARE(manifest_.allSettingsRows()[1].lockedBy.key, QStringLiteral("video.frame_cap"));
@@ -196,18 +204,82 @@ private slots:
         // the suggested folder: the manifest's default under the HOME the launcher uses, never the real user's
         QCOMPARE(f.suggestedPath(), home_.path() + "/Documents/Example Game");
         QCOMPARE(f.defaultParent(), QDir(home_.path() + "/Documents").exists() ? home_.path() + "/Documents" : home_.path());
+        // before any folder is chosen the sub-folders resolve against the suggested one and show their relative form
+        QCOMPARE(f.subfolderChoice("memcards"), QStringLiteral("memcards"));
+        QVERIFY(f.subfolderInside("memcards"));
+        QCOMPARE(f.subfolderIn("memcards", "/g"), QStringLiteral("/g/memcards"));
+        QCOMPARE(GameFolder::relativeIfInside("/g/memcards", "/g"), QStringLiteral("memcards"));
+        QCOMPARE(GameFolder::relativeIfInside("/g/cards/here", "/g/"), QStringLiteral("cards/here"));
+        QCOMPARE(GameFolder::relativeIfInside("/elsewhere/g", "/g"), QStringLiteral("/elsewhere/g"));
+        QCOMPARE(GameFolder::resolveIn("memcards", "/g"), QStringLiteral("/g/memcards"));
+        QCOMPARE(GameFolder::resolveIn("/v/cards", "/g"), QStringLiteral("/v/cards"));
+        // a choice made before the folder exists waits (D-L15): inside the suggested folder -> relative; elsewhere -> absolute
+        f.setSubfolder("memcards", f.suggestedPath() + "/cards");
+        QCOMPARE(f.subfolderChoice("memcards"), QStringLiteral("cards"));
+        f.setSubfolder("saves", home_.path() + "/elsewhere");
+        QCOMPARE(f.subfolderChoice("saves"), home_.path() + "/elsewhere");
+        QVERIFY(!f.subfolderInside("saves"));
+        QVERIFY(!QFileInfo::exists(home_.path() + "/Example Game/nativeee.ini"));   // nothing written yet: no folder
+        f.setSubfolder("cache", home_.path() + "/cachehere");   // the cache has a key and is written like the rest; an unknown id is ignored
+        f.setSubfolder("nothing", "/nowhere");
+        QVERIFY(f.subfolderKey("nothing").isEmpty());
         f.choose(home_.path() + "/Example Game");
         QVERIFY(f.chosen());
         QCOMPARE(f.configPath(), home_.path() + "/Example Game/nativeee.ini");
+        // choosing the folder wrote every keyed sub-folder into the options file, as the absolute path the game reads
+        IniSettings ini(f.configPath());
+        QVERIFY(ini.exists());
+        QCOMPARE(ini.get("paths.mc_dir"), home_.path() + "/Example Game/cards");    // relative followed the game folder
+        QCOMPARE(ini.get("paths.save_dir"), home_.path() + "/elsewhere");           // absolute stayed
+        QCOMPARE(ini.get("paths.user_data"), home_.path() + "/cachehere");
+        QCOMPARE(f.subfolder("memcards"), home_.path() + "/Example Game/cards");
+        QCOMPARE(f.subfolderChoice("memcards"), QStringLiteral("cards"));   // read back from the file, made relative
+        QCOMPARE(f.subfolder("saves"), home_.path() + "/elsewhere");
+        QCOMPARE(f.saveStatesFolder(), home_.path() + "/elsewhere/savestates");
+        // back inside: relative again, the file says the absolute path
+        f.setSubfolder("saves", home_.path() + "/Example Game/saves");
+        QCOMPARE(f.subfolderChoice("saves"), QStringLiteral("saves"));
         QCOMPARE(f.subfolder("saves"), home_.path() + "/Example Game/saves");
         QCOMPARE(f.saveStatesFolder(), home_.path() + "/Example Game/saves/savestates");
+        QCOMPARE(IniSettings(f.configPath()).get("paths.save_dir"), home_.path() + "/Example Game/saves");
         f.setSubfolder("saves", home_.path() + "/elsewhere");
         QCOMPARE(f.subfolder("saves"), home_.path() + "/elsewhere");
         QCOMPARE(f.runArgs("/d/game.iso"), QStringList({"--iso", "/d/game.iso", "--config", home_.path() + "/Example Game/nativeee.ini", "--set", "paths.save_dir=" + home_.path() + "/elsewhere"}));
         QCOMPARE(f.runArgs("/d/game.iso", "/s/one.ps2st").last(), QStringLiteral("/s/one.ps2st"));
+        // the file is the one store: a value the game (or a hand) wrote there is what the launcher shows
+        QVERIFY(IniSettings(f.configPath()).set("paths.mc_dir", home_.path() + "/Example Game/memcards"));
+        QCOMPARE(f.subfolderChoice("memcards"), QStringLiteral("memcards"));
+        QVERIFY(IniSettings(f.configPath()).set("paths.mc_dir", "/v/cards"));
+        QCOMPARE(f.subfolder("memcards"), QStringLiteral("/v/cards"));
+        QVERIFY(!f.subfolderInside("memcards"));
+        // the game folder moves: a relative choice follows, an absolute one stays, the new folder's file gets both
+        QVERIFY(IniSettings(f.configPath()).set("paths.mc_dir", home_.path() + "/Example Game/memcards"));
+        f.choose(home_.path() + "/Moved Game");
+        QCOMPARE(f.subfolder("memcards"), home_.path() + "/Moved Game/memcards");
+        QCOMPARE(f.subfolder("saves"), home_.path() + "/elsewhere");
+        QCOMPARE(IniSettings(f.configPath()).get("paths.mc_dir"), home_.path() + "/Moved Game/memcards");
+        QCOMPARE(IniSettings(f.configPath()).get("paths.save_dir"), home_.path() + "/elsewhere");
+        // the pipeline rewrote the file without the save states key and with its own memory cards line (D-L13): the
+        // choices kept at Build go back in and the file reads as the launcher shows
+        const QMap<QString, QString> atBuild = f.subfolderChoices();
+        QCOMPARE(atBuild.value("saves"), home_.path() + "/elsewhere");
+        QCOMPARE(atBuild.value("memcards"), QStringLiteral("memcards"));
+        QFile rewrite(f.configPath());
+        QVERIFY(rewrite.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        rewrite.write("# written by the pipeline\npaths.user_data = /p/cache\npaths.mc_dir = /p/memcards\npaths.iso = /d/game.iso\n");
+        rewrite.close();
+        QCOMPARE(f.subfolder("memcards"), QStringLiteral("/p/memcards"));
+        QCOMPARE(f.subfolder("saves"), home_.path() + "/Moved Game/saves");   // the key is gone: the default
+        f.setSubfolderChoices(atBuild);
+        QCOMPARE(IniSettings(f.configPath()).get("paths.mc_dir"), home_.path() + "/Moved Game/memcards");
+        QCOMPARE(IniSettings(f.configPath()).get("paths.save_dir"), home_.path() + "/elsewhere");
+        QCOMPARE(IniSettings(f.configPath()).get("paths.iso"), QStringLiteral("/d/game.iso"));   // the pipeline's other lines kept
+        f.choose(home_.path() + "/Example Game");
+        f.setSubfolder("saves", home_.path() + "/elsewhere");
         QString err;
         QVERIFY(f.makeSubfolders(&err));
         QVERIFY(QDir(home_.path() + "/Example Game/memcards").exists());
+        QVERIFY(QDir(home_.path() + "/elsewhere").exists());
         QVERIFY(!f.prepared().ok);
         PreparedRecord r;
         r.discSha256 = kHelloSha;

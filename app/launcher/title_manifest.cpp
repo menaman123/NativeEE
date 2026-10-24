@@ -105,20 +105,23 @@ bool TitleManifest::loadJson(const QJsonObject& root, QString* error) {
     defaultGameFolder_ = folder.value("default").toString();
     subfolders_.clear();
     const QJsonObject subs = folder.value("subfolders").toObject();
-    for (const QString& id : {QStringLiteral("memcards"), QStringLiteral("saves"), QStringLiteral("cache")}) {
+    const auto subfolderSpec = [&subs](const QString& id) {
         const QJsonObject o = subs.value(id).toObject();
         SubfolderSpec s;
         s.id = id;
         s.label = o.value("label").toString(id);
         s.defaultName = o.value("default").toString(id);
-        subfolders_ << s;
-    }
+        s.key = o.value("key").toString();
+        s.help = o.value("help").toString();
+        // the cache is the pipeline's own folder, never a player's choice: not asked unless the manifest says so
+        s.ask = o.value("ask").toBool(id != QLatin1String("cache"));
+        return s;
+    };
+    for (const QString& id : {QStringLiteral("memcards"), QStringLiteral("saves"), QStringLiteral("cache")}) subfolders_ << subfolderSpec(id);
     for (auto it = subs.begin(); it != subs.end(); ++it) {   // any extra sub-folder the title names
         bool known = false;
         for (const SubfolderSpec& s : subfolders_) known = known || s.id == it.key();
-        if (known) continue;
-        const QJsonObject o = it.value().toObject();
-        subfolders_ << SubfolderSpec{it.key(), o.value("label").toString(it.key()), o.value("default").toString(it.key())};
+        if (!known) subfolders_ << subfolderSpec(it.key());
     }
 
     const QJsonObject run = root.value("run").toObject();
@@ -213,6 +216,11 @@ QVector<SettingsRowSpec> TitleManifest::allSettingsRows() const {
     QVector<SettingsRowSpec> rows;
     for (const SettingsGroupSpec& g : settingsGroups_) rows += g.rows;
     return rows;
+}
+
+const SubfolderSpec* TitleManifest::subfolder(const QString& id) const {
+    for (const SubfolderSpec& s : subfolders_) if (s.id == id) return &s;
+    return nullptr;
 }
 
 }  // namespace ps2r::launcher
