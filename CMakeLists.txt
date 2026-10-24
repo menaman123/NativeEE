@@ -95,6 +95,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 find_package(Python3 3.8 COMPONENTS Interpreter REQUIRED)
+enable_testing()   # before every add_subdirectory: an add_test in a title module (games/<title>/recomp) must be recorded too
 
 # --- strict float semantics: ONE rule for GNU ----------------------------------------
 # The tree's float results are step-exact by contract: ps2_float / vu_float emulate the PS2's
@@ -230,7 +231,7 @@ add_subdirectory(tools/drawlist_tool)  # Phase 6
 add_subdirectory(tools/gs_replay)  # Phase 6
 
 # --- tests: lints are ctest targets from the first commit (ARCH section 13) -----
-enable_testing()
+# (enable_testing() itself runs before the title directories above, so a title's add_test is recorded.)
 add_subdirectory(app/gui)
 if(NOT TARGET ps2r_session_runtime)
     message(FATAL_ERROR "The game application requires PS2R_PRODUCT_GUI=ON for its session runtime")
