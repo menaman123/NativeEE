@@ -604,6 +604,12 @@ bool PrepareRunner::Run() {
     I.t0 = NowS();
     report_ = Report{};
     report_.platform = options_.platform.empty() ? HostPlatform() : options_.platform;
+    {   // every path absolute: the generation steps run in their own working directories
+        std::error_code aec;
+        options_.folder = fs::absolute(options_.folder, aec).lexically_normal().string();
+        if (!options_.iso.empty()) options_.iso = fs::absolute(options_.iso, aec).lexically_normal().string();
+        if (!options_.compiler_dir.empty()) options_.compiler_dir = fs::absolute(options_.compiler_dir, aec).string();
+    }
     I.folder = fs::path(options_.folder);
     I.cache = I.folder / "cache";
     I.downloads = I.cache / "downloads";
