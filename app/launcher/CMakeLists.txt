@@ -88,6 +88,28 @@ set_target_properties(ps2r_launcher PROPERTIES
     MACOSX_BUNDLE_GUI_IDENTIFIER "dev.nativeee.launcher"
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in")
 
+# A developer build stages the title's manifest beside the launcher the way the packaging does, so the
+# launcher opened from the build tree finds its game: <title repo>/launcher/title.json (the folder above
+# PS2R_GAMES_DIR) -> Contents/Resources/titles/ on macOS, titles/ beside the executable elsewhere. The
+# release packaging (tools/ci/release_launcher.*) does the same from the staged release; this is only
+# the build tree's copy. Without a manifest the launcher shows "This launcher has no game to launch".
+if(DEFINED PS2R_GAMES_DIR)
+    file(GLOB _ps2r_launcher_manifests "${PS2R_GAMES_DIR}/../launcher/*.json")
+    if(_ps2r_launcher_manifests)
+        if(APPLE)
+            set(_ps2r_launcher_titles_dir "$<TARGET_BUNDLE_CONTENT_DIR:ps2r_launcher>/Resources/titles")
+        else()
+            set(_ps2r_launcher_titles_dir "$<TARGET_FILE_DIR:ps2r_launcher>/titles")
+        endif()
+        add_custom_command(TARGET ps2r_launcher POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${_ps2r_launcher_titles_dir}"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_ps2r_launcher_manifests} "${_ps2r_launcher_titles_dir}"
+            COMMENT "Staging the title manifest beside the launcher")
+        unset(_ps2r_launcher_titles_dir)
+    endif()
+    unset(_ps2r_launcher_manifests)
+endif()
+
 # The tests: the unit test of the models (manifest, fingerprint, identity, folder, ini) and the screens test: every
 # page and sheet rendered offscreen at 1024x640 with a neutral manifest and the fake prepare runner, no lint hit in any
 # visible string, the PNGs written (PS2R_LAUNCHER_SCREENS_DIR, else <build>/launcher_screens/).
