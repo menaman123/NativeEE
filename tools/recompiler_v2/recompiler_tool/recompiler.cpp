@@ -65,6 +65,36 @@ static std::string format_imm(int32_t imm) {
 //
 // emit_vu_masked_write writes `result_expr` (a VR_reg-typed expression) into
 // `dest_expr` (a VR_reg lvalue), applying the instruction's xyzw mask.
+// PS2 rule: every FMAC arithmetic result (ADD/SUB/MUL/MADD/MSUB and their
+// broadcast, accumulator, I and Q forms; OPMULA/OPMSUB) updates the MAC and
+// STATUS flag registers the EE reads back with CFC2 $vi17 / $vi16 -- the
+// macro-mode frustum tests of a title are built on exactly that read. MAX /
+// MINI / MOVE / MR32 / ABS leave the flags alone (VU User's Manual, the
+// per-instruction "Flags" rows). The commit is VuMacroCommitFlags
+// (engine/ee/recomp_abi/host_app/vu.h): the lanes the dest mask selects.
+static bool vu_macro_op_sets_mac_flags(const rabbitizer::InstructionR5900& instr) {
+    switch (instr.getUniqueId()) {
+        case rabbitizer::InstrId::UniqueId::r5900_vabs:
+        case rabbitizer::InstrId::UniqueId::r5900_vmove:
+        case rabbitizer::InstrId::UniqueId::r5900_vmr32:
+        case rabbitizer::InstrId::UniqueId::r5900_vmax:
+        case rabbitizer::InstrId::UniqueId::r5900_vmaxx:
+        case rabbitizer::InstrId::UniqueId::r5900_vmaxy:
+        case rabbitizer::InstrId::UniqueId::r5900_vmaxz:
+        case rabbitizer::InstrId::UniqueId::r5900_vmaxw:
+        case rabbitizer::InstrId::UniqueId::r5900_vmaxi:
+        case rabbitizer::InstrId::UniqueId::r5900_vmini:
+        case rabbitizer::InstrId::UniqueId::r5900_vminix:
+        case rabbitizer::InstrId::UniqueId::r5900_vminiy:
+        case rabbitizer::InstrId::UniqueId::r5900_vminiz:
+        case rabbitizer::InstrId::UniqueId::r5900_vminiw:
+        case rabbitizer::InstrId::UniqueId::r5900_vminii:
+            return false;
+        default:
+            return true;
+    }
+}
+
 static void emit_vu_masked_write(std::ofstream& file,
                                  const rabbitizer::InstructionR5900& instr,
                                  const std::string& dest_expr,
@@ -73,9 +103,12 @@ static void emit_vu_masked_write(std::ofstream& file,
     bool my = instr.GetR5900_xyzw_y();
     bool mz = instr.GetR5900_xyzw_z();
     bool mw = instr.GetR5900_xyzw_w();
+    const bool flags = vu_macro_op_sets_mac_flags(instr);
+    const unsigned mask = (mx ? 8u : 0u) | (my ? 4u : 0u) | (mz ? 2u : 0u) | (mw ? 1u : 0u);
     // Fast path: all 4 fields selected -> single assignment, avoids a temp.
     if (mx && my && mz && mw) {
         file << "    " << dest_expr << " = " << result_expr << ";\n";
+        if (flags) file << "    VuMacroCommitFlags(ctx.vuRegs, " << dest_expr << ", 0xF);\n";
         return;
     }
     // Masked path: compute into temp, commit lanes individually.
@@ -85,6 +118,7 @@ static void emit_vu_masked_write(std::ofstream& file,
     if (my) file << "        " << dest_expr << ".y = _vu_res.y;\n";
     if (mz) file << "        " << dest_expr << ".z = _vu_res.z;\n";
     if (mw) file << "        " << dest_expr << ".w = _vu_res.w;\n";
+    if (flags) file << "        VuMacroCommitFlags(ctx.vuRegs, _vu_res, 0x" << std::hex << mask << std::dec << ");\n";
     file << "    }\n";
 }
 
@@ -23163,6 +23197,7 @@ void Recompiler::translate_instruction(const rabbitizer::InstructionR5900& instr
                 file << "    ctx.vuRegs.ACC.x = " << fs << ".y * " << ft << ".z;\n";
                 file << "    ctx.vuRegs.ACC.y = " << fs << ".z * " << ft << ".x;\n";
                 file << "    ctx.vuRegs.ACC.z = " << fs << ".x * " << ft << ".y;\n";
+                file << "    VuMacroCommitFlags(ctx.vuRegs, ctx.vuRegs.ACC, 0xE);\n";
             }
             break;
 
@@ -23192,6 +23227,7 @@ void Recompiler::translate_instruction(const rabbitizer::InstructionR5900& instr
                 file << "        " << fd << ".x = _nx;\n";
                 file << "        " << fd << ".y = _ny;\n";
                 file << "        " << fd << ".z = _nz;\n";
+                file << "        VuMacroCommitFlags(ctx.vuRegs, VR_reg{_nx, _ny, _nz, 0.0f}, 0xE);\n";
                 file << "    }\n";
             }
             break;
@@ -23933,14 +23969,17 @@ void Recompiler::translate_instruction(const rabbitizer::InstructionR5900& instr
                 bool my = instr.GetR5900_xyzw_y();
                 bool mz = instr.GetR5900_xyzw_z();
                 bool mw = instr.GetR5900_xyzw_w();
+                const unsigned mask = (mx ? 8u : 0u) | (my ? 4u : 0u) | (mz ? 2u : 0u) | (mw ? 1u : 0u);
                 if (mx && my && mz && mw) {
                     file << "        " << fd << " = " << result << ";\n";
+                    file << "        VuMacroCommitFlags(ctx.vuRegs, " << fd << ", 0xF);\n";
                 } else {
                     file << "        VR_reg _vu_res = " << result << ";\n";
                     if (mx) file << "        " << fd << ".x = _vu_res.x;\n";
                     if (my) file << "        " << fd << ".y = _vu_res.y;\n";
                     if (mz) file << "        " << fd << ".z = _vu_res.z;\n";
                     if (mw) file << "        " << fd << ".w = _vu_res.w;\n";
+                    file << "        VuMacroCommitFlags(ctx.vuRegs, _vu_res, 0x" << std::hex << mask << std::dec << ");\n";
                 }
                 file << "    }\n";
             }

@@ -12,6 +12,8 @@
 #include "engine/ee/recomp_abi/host_app/vu.h"
 #include "engine/vu/vu0/vu0_registry.h"
 #include "engine/vu/vu0/vu0_trace.h"
+#include "engine/vu/vu_decoder.h"
+#include "engine/vu/vu_float.h"
 #include "engine/vu/vu_unit.h"
 
 namespace {
@@ -111,6 +113,25 @@ void VuMacroBridge::ExecuteVu1(CpuContext& ctx, uint32_t start_addr) {
     if (!g_vu1_unit) ParkAbsent(ctx, "cmsar1 start", start_addr);
     ++g_stats.vu1_kicks;
     g_vu1_unit->Execute(start_addr);
+}
+
+// Macro-mode FMAC flags (engine/ee/recomp_abi/host_app/vu.h). The same pack
+// and STATUS fold as the microprogram tiers' FlagPipeline::ApplyMacToStatus;
+// macro mode commits at once (the EE reads CFC2 $vi16/$vi17 after its own
+// VNOP spacing, as the manual asks of it).
+void VuMacroCommitFlags(VUregs& regs, const VR_reg& result, uint8_t mask) {
+    const uint16_t mac = VuFloat::PackMacBits(result.I, mask);
+    regs.mac_flag = mac;
+    uint16_t status = static_cast<uint16_t>(regs.status_flag & 0xFF0u);
+    if (mac & 0x000Fu) status |= vu_status::Z;
+    if (mac & 0x00F0u) status |= vu_status::S;
+    if (mac & 0x0F00u) status |= vu_status::U;
+    if (mac & 0xF000u) status |= vu_status::O;
+    if (status & vu_status::Z) status |= vu_status::ZS;
+    if (status & vu_status::S) status |= vu_status::SS;
+    if (status & vu_status::U) status |= vu_status::US;
+    if (status & vu_status::O) status |= vu_status::OS;
+    regs.status_flag = status;
 }
 
 // ---- row 27 seam bodies (the generated code's g_vu0 / g_vu1 objects) ------
