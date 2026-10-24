@@ -129,4 +129,5 @@ Compress-Archive -Path $Folder -DestinationPath $Zip -CompressionLevel Optimal
 $sha = (Get-FileHash $Zip -Algorithm SHA256).Hash.ToLower()
 "$sha  $ZipName" | Set-Content "$Zip.sha256" -Encoding ASCII
 Write-Host "zip: $Zip ($([math]::Round((Get-Item $Zip).Length / 1MB)) MB)  sha256 $sha"
+if ($Stub) { "STUB -- not a launcher build; a pipeline dry run" | Set-Content "$Zip.STUB" -Encoding ASCII }   # release_index.py refuses it
 Write-Host ""; Write-Host "release_launcher: OK -> $Folder$(if ($Stub) { ' (STUB)' })"
