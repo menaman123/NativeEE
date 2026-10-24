@@ -192,6 +192,12 @@ struct PrepareRunner::Impl {
         for (size_t i = lines.size() - 60; i < lines.size(); ++i) text += lines[i] + "\n";
         Log(text);
     }
+    void Fail(Phase phase, const std::string& ui_text, const std::string& why) {
+        rep.failed_phase = phase;
+        rep.failure = why;
+        Log("FAILED (" + std::string(PhaseName(phase)) + "): " + why);
+        ui.failed(self.cancelled() ? std::string(ui::kFailCancelled) : ui_text, rep.log_path);
+    }
     bool Cancelled() { return self.cancelled(); }
 
     // --- the placeholders ---------------------------------------------------------------------
