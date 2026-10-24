@@ -423,6 +423,15 @@
       "user_facing": false
     },
     {
+      "key": "engine.vu1_aot_sysroot",
+      "section": "engine",
+      "name": "vu1_aot_sysroot",
+      "type": "str",
+      "default": "",
+      "kind": "text",
+      "user_facing": false
+    },
+    {
       "key": "engine.vu1_aot_verify",
       "section": "engine",
       "name": "vu1_aot_verify",
