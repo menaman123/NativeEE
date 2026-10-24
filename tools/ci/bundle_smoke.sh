@@ -36,15 +36,12 @@ case "$platform" in
         [ -n "$sdk" ] || { echo "bundle_smoke: no macOS SDK (xcode-select --install)" >&2; exit 1; }
         # shellcheck disable=SC2086
         "$compiler/$cxx" -isysroot "$sdk" $flags -I"$bundle/include" -I"$bundle" -c "$tu" -o "$tmp/tu.o" ;;
-    linux-*)
+    linux-*|windows-*)
+        # Windows: bin/clang++.exe targets x86_64-pc-windows-msvc and takes the same GNU-style flags (tools/prepare's driver)
         # shellcheck disable=SC2086
         "$compiler/$cxx" $flags -I"$bundle/include" -I"$bundle" -c "$tu" -o "$tmp/tu.o" ;;
-    windows-*)
-        # clang-cl: the GNU-style flags the shards use are spelled for the cl front end as the clang-cl shim does
-        "$compiler/$cxx" /std:c++17 /O2 /EHsc /w -clang:-fno-strict-aliasing -clang:-fwrapv -clang:-ffp-contract=off \
-            /I"$bundle/include" /I"$bundle" /c "$tu" /Fo"$tmp/tu.obj" ;;
 esac
-ls -la "$tmp"/tu.o* | awk '{print "object: " $5 " bytes"}'
+ls -la "$tmp"/tu.o | awk '{print "object: " $5 " bytes"}'
 case "$platform" in
     windows-*) "$compiler/$ar" /LIST "$lib" | head -3 ;;
     *) "$compiler/$ar" t "$lib" | head -3 ;;

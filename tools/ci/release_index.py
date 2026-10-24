@@ -16,7 +16,9 @@ tell the two apart. One extension block, `x-nativeee` (a key GitHub never emits)
                                                   "compiler": "<asset name>", "bundle_folder": "<folder in the zip>" } },
                   "not_in_this_release": ["<platform>", ...], "unsupported": [ the manifest's `unsupported` rows ] }
 
-Roles (D-A): launcher, engine_bundle, compiler -- per platform in D-B's set. Nothing game-derived is in the folder
+Roles (D-A): launcher, engine_bundle, compiler -- per platform in D-B's set (macos-arm64, macos-x86_64, linux-x86_64,
+windows-x86_64 -- the key tools/prepare computes at run time). Names: `<product>-launcher-<tag>-<platform>.<ext>`,
+`engine-bundle-<platform>.tar.xz`, `compiler-<platform>.tar.xz` (the last two are tools/prepare's lookup names). Nothing game-derived is in the folder
 (the asset scan already ran on each file; this script re-checks the names against the roles and refuses unknown files).
 
 Refusals: a launcher whose BUILD-ID says STUB (looked up inside the .dmg? no: the packaging writes
@@ -25,10 +27,10 @@ an asset not matching any role.
 """
 import argparse, datetime, hashlib, json, os, re, sys
 
-PLATFORMS = ["macos-arm64", "macos-x86_64", "linux-x86_64", "windows-x64"]
-LAUNCHER_EXT = {"macos-arm64": ".dmg", "macos-x86_64": ".dmg", "linux-x86_64": ".AppImage", "windows-x64": ".zip"}
+PLATFORMS = ["macos-arm64", "macos-x86_64", "linux-x86_64", "windows-x86_64"]
+LAUNCHER_EXT = {"macos-arm64": ".dmg", "macos-x86_64": ".dmg", "linux-x86_64": ".AppImage", "windows-x86_64": ".zip"}
 CONTENT_TYPES = {".zip": "application/zip", ".dmg": "application/x-apple-diskimage", ".AppImage": "application/x-executable",
-                 ".json": "application/json", "": "text/plain", ".md": "text/markdown", ".sha256": "text/plain"}
+                 ".xz": "application/x-xz", ".json": "application/json", "": "text/plain", ".md": "text/markdown", ".sha256": "text/plain"}
 
 
 def sha256_of(path):
@@ -50,10 +52,14 @@ def roles_for(manifest, tag):
     """asset name per (platform, role) from the manifest's release block (defaults when absent)."""
     product = manifest["product"].lower()
     rel = manifest.get("release", {})
-    bundle_pat = rel.get("asset_pattern", "${product}-${tag}-${platform}.zip")
-    folder_pat = rel.get("bundle_folder", "${product}-${platform}")
+    # The engine bundle's and the compiler's names are tools/prepare's contract (engine/tools/prepare/prepare.cpp:
+    # `engine-bundle-<platform>.tar.xz`, `compiler-<platform>.tar.xz`, both looked up by name in the release's
+    # assets and verified against SHA256SUMS / the asset digest); a manifest may override them ONLY if that tool
+    # learns the override (release.engine_bundle_pattern / release.compiler_pattern) -- today it does not.
+    bundle_pat = rel.get("engine_bundle_pattern", "engine-bundle-${platform}.tar.xz")
+    folder_pat = rel.get("bundle_folder", "engine-bundle-${platform}")
     launcher_pat = rel.get("launcher_pattern", "${product}-launcher-${tag}-${platform}${ext}")
-    compiler_pat = rel.get("compiler_pattern", "nativeee-compiler-${platform}-llvm${llvm}.zip")
+    compiler_pat = rel.get("compiler_pattern", "compiler-${platform}.tar.xz")
     return product, bundle_pat, folder_pat, launcher_pat, compiler_pat
 
 
@@ -160,27 +166,27 @@ def selftest():
     import tempfile
     with tempfile.TemporaryDirectory() as d:
         mf = os.path.join(d, "title.json")
-        json.dump({"id": "SCUS-97316", "name": "Sly 2", "product": "sly2", "release": {"asset_pattern": "${product}-${tag}-${platform}.zip", "bundle_folder": "${product}-${platform}"},
+        json.dump({"id": "SCUS-97316", "name": "Sly 2", "product": "sly2",
                    "unsupported": [{"label": "PlayStation Vita", "reason": "no"}]}, open(mf, "w"))
         rd = os.path.join(d, "rel"); os.mkdir(rd)
-        for n in ["sly2-launcher-v1.0.0-macos-arm64.dmg", "sly2-v1.0.0-macos-arm64.zip", "nativeee-compiler-macos-arm64-llvm20.1.7.zip",
-                  "sly2-launcher-v1.0.0-linux-x86_64.AppImage", "sly2-v1.0.0-linux-x86_64.zip"]:
+        for n in ["sly2-launcher-v1.0.0-macos-arm64.dmg", "engine-bundle-macos-arm64.tar.xz", "compiler-macos-arm64.tar.xz",
+                  "sly2-launcher-v1.0.0-linux-x86_64.AppImage", "engine-bundle-linux-x86_64.tar.xz"]:
             open(os.path.join(rd, n), "wb").write(n.encode())
-        a = argparse.Namespace(dir=rd, tag="v1.0.0", repo="o/r", manifest=mf, engine_commit="e", title_commit="t", llvm="20.1.7", allow_missing="macos-x86_64,windows-x64")
+        a = argparse.Namespace(dir=rd, tag="v1.0.0", repo="o/r", manifest=mf, engine_commit="e", title_commit="t", llvm="20.1.7", allow_missing="macos-x86_64,windows-x86_64")
         try:
             build(a); return "selftest: incomplete linux-x86_64 was not refused"
         except SystemExit as e:
             assert "linux-x86_64 lacks compiler" in str(e), str(e)
-        a.allow_missing = "linux-x86_64,macos-x86_64,windows-x64"
+        a.allow_missing = "linux-x86_64,macos-x86_64,windows-x86_64"
         build(a)
         idx = json.load(open(os.path.join(rd, "release-index.json")))
         assert set(idx["x-nativeee"]["platforms"]) == {"macos-arm64"}, idx["x-nativeee"]["platforms"]
-        assert idx["x-nativeee"]["not_in_this_release"] == ["macos-x86_64", "linux-x86_64", "windows-x64"], idx["x-nativeee"]["not_in_this_release"]
+        assert idx["x-nativeee"]["not_in_this_release"] == ["macos-x86_64", "linux-x86_64", "windows-x86_64"], idx["x-nativeee"]["not_in_this_release"]
         assert any(x["name"] == "SHA256SUMS" for x in idx["assets"])
         assert all(x["digest"].startswith("sha256:") for x in idx["assets"])
-        assert idx["x-nativeee"]["platforms"]["macos-arm64"]["bundle_folder"] == "sly2-macos-arm64"
+        assert idx["x-nativeee"]["platforms"]["macos-arm64"]["bundle_folder"] == "engine-bundle-macos-arm64"
         sums = open(os.path.join(rd, "SHA256SUMS")).read()
-        assert "sly2-v1.0.0-macos-arm64.zip" in sums and "sly2-launcher-v1.0.0-linux-x86_64.AppImage" in sums
+        assert "engine-bundle-macos-arm64.tar.xz" in sums and "sly2-launcher-v1.0.0-linux-x86_64.AppImage" in sums
         open(os.path.join(rd, "sly2-launcher-v1.0.0-macos-arm64.dmg.STUB"), "w").write("")
         try:
             build(a); return "selftest: a STUB marker was not refused"

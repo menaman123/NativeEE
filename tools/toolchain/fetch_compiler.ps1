@@ -1,6 +1,6 @@
 # tools/toolchain/fetch_compiler.ps1 -- the Windows twin of fetch_compiler.sh: the pinned official LLVM kit for
-# windows-x64 (tools/toolchain/COMPILER_PINS.sha256), downloaded (cached), sha256-VERIFIED, cut to the slim subset the
-# release ships (clang-cl.exe, lld-link.exe, llvm-lib.exe, lib\clang\<major>\include, LICENSE.TXT), COMPILER.json
+# windows-x86_64 (tools/toolchain/COMPILER_PINS.sha256), downloaded (cached), sha256-VERIFIED, cut to the slim subset the
+# release ships (clang++.exe, clang-cl.exe, lld-link.exe, llvm-lib.exe, llvm-ar.exe, lib\clang\<major>\include, LICENSE.TXT), COMPILER.json
 # written, optionally smoked (clang-cl compiles + lld-link links a one-file program against the installed Windows SDK /
 # MSVC CRT -- the kit does not and cannot carry those) and zipped.
 #
@@ -20,11 +20,11 @@ $Pins = Join-Path $Here "COMPILER_PINS.sha256"
 function Step($t) { Write-Host ""; Write-Host "=== $t" }
 
 $row = Get-Content $Pins | Where-Object { $_ -notmatch '^\s*#' -and $_ -match '^([0-9a-f]{64})\s+(clang\+llvm-[0-9.]+-x86_64-pc-windows-msvc\.tar\.xz)$' } | Select-Object -First 1
-if (-not $row) { throw "fetch_compiler: no windows-x64 row in $Pins" }
+if (-not $row) { throw "fetch_compiler: no windows-x86_64 row in $Pins" }
 $null = $row -match '^([0-9a-f]{64})\s+(\S+)$'; $WantSha = $Matches[1]; $Kit = $Matches[2]
 $Version = [regex]::Match($Kit, '[0-9]+\.[0-9]+\.[0-9]+').Value; $Major = $Version.Split('.')[0]
 $Url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$Version/$Kit"
-Write-Host "platform windows-x64  kit $Kit  llvm $Version  sha256 $WantSha"
+Write-Host "platform windows-x86_64  kit $Kit  llvm $Version  sha256 $WantSha"
 New-Item -ItemType Directory -Force -Path $Out | Out-Null; $Out = (Resolve-Path $Out).Path
 if (-not $Cache) { $Cache = Join-Path $Out ".cache" }
 New-Item -ItemType Directory -Force -Path $Cache | Out-Null; $Cache = (Resolve-Path $Cache).Path
@@ -50,7 +50,7 @@ if (-not (Test-Path $Members) -or (Get-Item $Members).Length -eq 0) { & tar.exe 
 $all = Get-Content $Members
 $Top = ($all | Select-Object -First 1).Split('/')[0]
 Write-Host "top folder: $Top  ($($all.Count) members)"
-$WantRe = "^$([regex]::Escape($Top))/(bin/(clang-cl\.exe|lld-link\.exe|llvm-lib\.exe)$|lib/clang/$Major/include(/|$)|LICENSE\.TXT$)"
+$WantRe = "^$([regex]::Escape($Top))/(bin/(clang\+\+\.exe|clang-cl\.exe|lld-link\.exe|llvm-lib\.exe|llvm-ar\.exe)$|lib/clang/$Major/include(/|$)|LICENSE\.TXT$)"
 $cut = $all | Where-Object { $_ -match $WantRe }
 if ($cut.Count -eq 0) { throw "fetch_compiler: nothing matched in $Kit" }
 Write-Host "cutting $($cut.Count) members"
@@ -66,9 +66,9 @@ Get-ChildItem (Join-Path $Dest "bin") | ForEach-Object { Write-Host $_.Name }
 $files = Get-ChildItem $Dest -Recurse -File | Where-Object { $_.Name -ne "COMPILER.json" } | Sort-Object FullName | ForEach-Object {
     [ordered]@{ path = $_.FullName.Substring($Dest.Length + 1).Replace('\', '/'); size = $_.Length; symlink = $null } }
 $doc = [ordered]@{
-    format = 1; llvm = $Version; platform = "windows-x64"
+    format = 1; llvm = $Version; platform = "windows-x86_64"
     kit = [ordered]@{ name = $Kit; sha256 = $WantSha; url = $Url }
-    bin = [ordered]@{ cc = "bin/clang-cl.exe"; cxx = "bin/clang-cl.exe"; ld = "bin/lld-link.exe"; ar = "bin/llvm-lib.exe" }
+    bin = [ordered]@{ cc = "bin/clang++.exe"; cxx = "bin/clang++.exe"; ld = "bin/lld-link.exe"; ar = "bin/llvm-lib.exe" }
     resource_dir = "lib/clang/$Major"
     licence = "LICENSE.TXT (Apache License v2.0 with LLVM Exceptions)"
     system_sdk_required = "the Windows SDK and the MSVC C runtime headers/libraries (Visual Studio Build Tools)"
@@ -100,17 +100,15 @@ int main() { std::vector<std::uint32_t> v{1, 2, 3}; std::printf("nativeee compil
 }
 
 if ($Pack) {
-    Step "pack"
-    $Name = "nativeee-compiler-windows-x64-llvm$Version"
-    $Zip = Join-Path $Out "$Name.zip"
-    if (Test-Path $Zip) { Remove-Item $Zip }
-    $staged = Join-Path $Out $Name
-    if (Test-Path $staged) { Remove-Item -Recurse -Force $staged }
-    Rename-Item $Dest $staged
-    Compress-Archive -Path $staged -DestinationPath $Zip -CompressionLevel Optimal
-    Rename-Item $staged $Dest
-    $sha = (Get-FileHash $Zip -Algorithm SHA256).Hash.ToLower()
-    "$sha  $Name.zip" | Set-Content "$Zip.sha256" -Encoding ASCII
-    Write-Host "zip: $Zip ($([math]::Round((Get-Item $Zip).Length / 1MB)) MB)  sha256 $sha"
+    Step "pack (compiler-windows-x86_64.tar.xz; top folder compiler/) -- the name tools/prepare reads"
+    $Name = "compiler-windows-x86_64"
+    $Archive = Join-Path $Out "$Name.tar.xz"
+    if (Test-Path $Archive) { Remove-Item $Archive }
+    # tar.exe (bsdtar, Windows 10+) writes xz through libarchive
+    & tar.exe -cJf $Archive -C $Out compiler
+    if ($LASTEXITCODE -ne 0) { throw "fetch_compiler: tar failed" }
+    $sha = (Get-FileHash $Archive -Algorithm SHA256).Hash.ToLower()
+    "$sha  $Name.tar.xz" | Set-Content "$Archive.sha256" -Encoding ASCII
+    Write-Host "archive: $Archive ($([math]::Round((Get-Item $Archive).Length / 1MB)) MB)  sha256 $sha"
 }
 Write-Host ""; Write-Host "fetch_compiler: OK -> $Dest"

@@ -2,7 +2,7 @@
 # tools/toolchain/fetch_compiler.sh -- the portable compiler+linker a release ships (D-A: the player's game program
 # is compiled on the player's machine; the release carries the compiler, never anything compiled from a disc).
 #
-#   fetch_compiler.sh --platform <macos-arm64|macos-x86_64|linux-x86_64|windows-x64|auto> --out DIR
+#   fetch_compiler.sh --platform <macos-arm64|macos-x86_64|linux-x86_64|windows-x86_64|auto> --out DIR
 #                     [--cache DIR] [--pack] [--smoke] [--verify-only] [--offline]
 #
 # What it does, in order:
@@ -18,8 +18,9 @@
 #      ~100 MB packed, and it is ALL the prepare step needs from LLVM;
 #   4. writes <out>/compiler/COMPILER.json (what was cut, from which kit, which hash; the launcher reads `bin`);
 #   5. --smoke (native platform only): the cut clang compiles and the cut lld links a one-file C++ program;
-#   6. --pack: <out>/nativeee-compiler-<platform>-llvm<version>.zip + .sha256 (zip on EVERY platform: it is what the
-#      launcher unpacks with `tar -xf` (bsdtar, macOS / Windows) or `unzip` (Linux); `zip -ry` keeps modes + links).
+#   6. --pack: <out>/compiler-<platform>.tar.xz + .sha256 -- the NAME and FORMAT tools/prepare (nativeee-prepare) reads
+#      from a release (`compiler-<platform>.tar.xz`, unpacked with `tar -xf`, the driver found at <top>/bin/clang++);
+#      the top folder inside is `compiler/`. COMPILER.json inside says which LLVM build it was cut from.
 #
 # The subset does NOT include a C library or an SDK: the system headers and link stubs are the OS's (macOS: Apple's
 # Command Line Tools / Xcode SDK; Linux: libc6-dev; Windows: the Windows SDK + MSVC CRT) -- they are not ours to
@@ -53,7 +54,7 @@ host_platform() {
         Darwin-arm64) echo macos-arm64 ;;
         Darwin-x86_64) echo macos-x86_64 ;;
         Linux-x86_64) echo linux-x86_64 ;;
-        MINGW*|MSYS*|CYGWIN*) echo windows-x64 ;;
+        MINGW*|MSYS*|CYGWIN*) echo windows-x86_64 ;;
         *) echo "fetch_compiler: unsupported host $(uname -s)-$(uname -m) (D-B: macOS arm64/x86_64, Linux x86_64, Windows x64)" >&2; exit 2 ;;
     esac
 }
@@ -62,7 +63,7 @@ case "$platform" in
     macos-arm64)  kit_re='^LLVM-[0-9.]+-macOS-ARM64\.tar\.xz$' ;;
     macos-x86_64) kit_re='^LLVM-[0-9.]+-macOS-X64\.tar\.xz$' ;;
     linux-x86_64) kit_re='^LLVM-[0-9.]+-Linux-X64\.tar\.xz$' ;;
-    windows-x64)  kit_re='^clang\+llvm-[0-9.]+-x86_64-pc-windows-msvc\.tar\.xz$' ;;
+    windows-x86_64)  kit_re='^clang\+llvm-[0-9.]+-x86_64-pc-windows-msvc\.tar\.xz$' ;;
     *) echo "fetch_compiler: unknown platform $platform" >&2; exit 2 ;;
 esac
 row="$(grep -v '^#' "$PINS" | awk 'NF==2' | grep -E " $(printf '%s' "$kit_re" | sed 's/\^//; s/\$$//')$" || true)"
@@ -115,10 +116,12 @@ fi
 top="$(head -1 "$members" | cut -d/ -f1)"
 echo "top folder: $top  ($(wc -l < "$members" | tr -d ' ') members)"
 case "$platform" in
-    windows-x64)
-        # clang-cl.exe (the driver the windows-clang-cl preset names), lld-link.exe, llvm-lib.exe (the archiver of
-        # the MSVC shape); the kit's .exe files are copies, not links, so ONLY the named ones are cut.
-        want_re="^$top/(bin/(clang-cl\.exe|lld-link\.exe|llvm-lib\.exe)$|lib/clang/$major/include(/|$)|LICENSE\.TXT$)" ;;
+    windows-x86_64)
+        # clang++.exe (the GNU-style driver tools/prepare runs: bin/clang++ on every platform; it targets
+        # x86_64-pc-windows-msvc and drives lld-link with -fuse-ld=lld), clang-cl.exe (the driver the
+        # windows-clang-cl preset names), lld-link.exe, llvm-lib.exe + llvm-ar.exe (archivers). The kit's .exe files
+        # are COPIES, not links (~120 MB each before compression), so only the named ones are cut.
+        want_re="^$top/(bin/(clang\+\+\.exe|clang-cl\.exe|lld-link\.exe|llvm-lib\.exe|llvm-ar\.exe)$|lib/clang/$major/include(/|$)|LICENSE\.TXT$)" ;;
     macos-*)
         # clang -> clang-<major>, clang++ -> clang (symlinks; `tar` restores them), llvm-ar + llvm-ranlib (-> llvm-ar).
         # NO lld: lld $version's ld64 flavour cannot read the TBD stubs of the macOS 26 SDK ("unknown architecture
@@ -148,7 +151,7 @@ ls "$dest/bin"
 
 # --- COMPILER.json ----------------------------------------------------------------------------------------------
 case "$platform" in
-    windows-x64) cc=bin/clang-cl.exe; cxx=bin/clang-cl.exe; ld=bin/lld-link.exe; ar=bin/llvm-lib.exe ;;
+    windows-x86_64) cc=bin/clang++.exe; cxx=bin/clang++.exe; ld=bin/lld-link.exe; ar=bin/llvm-lib.exe ;;
     macos-*)     cc=bin/clang; cxx=bin/clang++; ld="/usr/bin/ld (Apple, from the Command Line Tools)"; ar=bin/llvm-ar ;;
     linux-*)     cc=bin/clang; cxx=bin/clang++; ld=bin/ld.lld; ar=bin/llvm-ar ;;
 esac
@@ -177,7 +180,7 @@ doc = {
         "macos-arm64": "Apple Command Line Tools or Xcode (the macOS SDK: system headers and link stubs)",
         "macos-x86_64": "Apple Command Line Tools or Xcode (the macOS SDK: system headers and link stubs)",
         "linux-x86_64": "libc6-dev (glibc headers) and the system's libstdc++ development headers",
-        "windows-x64": "the Windows SDK and the MSVC C runtime headers/libraries (Visual Studio Build Tools)",
+        "windows-x86_64": "the Windows SDK and the MSVC C runtime headers/libraries (Visual Studio Build Tools)",
     }[platform],
     "cut_by": "engine/tools/toolchain/fetch_compiler.sh",
     "members": [l.strip() for l in open(members) if l.strip()],
@@ -214,13 +217,12 @@ fi
 
 # --- pack -----------------------------------------------------------------------------------------------------------
 if [ "$pack" = 1 ]; then
-    step "pack"
-    name="nativeee-compiler-$platform-llvm$version"
-    rm -f "$out/$name.zip" "$out/$name.zip.sha256"
-    rm -rf "$out/$name"; mv "$dest" "$out/$name"
-    (cd "$out" && zip -qry "$name.zip" "$name")
-    mv "$out/$name" "$dest"
-    (cd "$out" && { command -v sha256sum >/dev/null 2>&1 && sha256sum "$name.zip" || shasum -a 256 "$name.zip"; } > "$name.zip.sha256" && cat "$name.zip.sha256")
-    echo "zip: $out/$name.zip ($(( $(stat -f %z "$out/$name.zip" 2>/dev/null || stat -c %s "$out/$name.zip") / 1048576 )) MB)"
+    step "pack (compiler-$platform.tar.xz; top folder compiler/)"
+    name="compiler-$platform"
+    rm -f "$out/$name.tar.xz" "$out/$name.tar.xz.sha256"
+    # tar | xz -T0: every platform's tar reads .tar.xz back (bsdtar on macOS / Windows 10+, GNU tar on Linux)
+    (cd "$out" && tar -cf - compiler | xz -T0 -6 > "$name.tar.xz")
+    (cd "$out" && { command -v sha256sum >/dev/null 2>&1 && sha256sum "$name.tar.xz" || shasum -a 256 "$name.tar.xz"; } > "$name.tar.xz.sha256" && cat "$name.tar.xz.sha256")
+    echo "archive: $out/$name.tar.xz ($(( $(stat -f %z "$out/$name.tar.xz" 2>/dev/null || stat -c %s "$out/$name.tar.xz") / 1048576 )) MB)"
 fi
 echo; echo "fetch_compiler: OK -> $dest"

@@ -36,7 +36,7 @@ if (-not $Product -or -not $TitleId) { throw "release_launcher: the manifest nee
 $LauncherName = if ($m.PSObject.Properties['launcher_name'] -and $m.launcher_name) { $m.launcher_name } elseif ($m.app_data_folder) { "$($m.app_data_folder) Launcher" } else { "$Product Launcher" }
 $ProductLc = $Product.ToLower()
 if (-not $Version) { $Version = (git -C $Engine describe --tags --always 2>$null); if (-not $Version) { $Version = (git -C $Engine rev-parse --short HEAD) } }
-$Platform = "windows-x64"
+$Platform = "windows-x86_64"
 Write-Host "product $Product ($TitleId)  launcher name '$LauncherName'  version $Version  platform $Platform"
 if (-not $Licence) { $Licence = Join-Path (Split-Path -Parent (Split-Path -Parent $Manifest)) "LICENSE" }
 if (-not (Test-Path $Licence)) { $Licence = Join-Path $Engine "LICENSE" }

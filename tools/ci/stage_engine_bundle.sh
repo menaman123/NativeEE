@@ -5,21 +5,25 @@
 # construction such a build never saw a game file, and the asset scan over the staged folder proves it again.
 #
 #   stage_engine_bundle.sh --engine DIR --games DIR --build-dir DIR --out DIR [--platform KEY] [--version TAG]
-#                          [--name FOLDER] [--compiler-json FILE] [--no-zip]
+#                          [--name FOLDER] [--compiler-json FILE] [--no-archive]
 #
-# One script for the three OS lanes (Windows: Git Bash, `shell: bash`; python3 or python; zip or Python's zipfile).
-# --name: the folder / zip base name (default nativeee-engine-<platform>; a title passes its manifest's
-# release.bundle_folder, e.g. sly2-macos-arm64, so the launcher's resolver finds it unchanged).
+# One script for the three OS lanes (Windows: Git Bash, `shell: bash`; python3 or python; tar + xz on all three).
+# --name: the folder / archive base name. Default engine-bundle-<platform> = what tools/prepare (nativeee-prepare)
+# asks a release for (`engine-bundle-<platform>.tar.xz`); the archive is .tar.xz (`tar -xf` everywhere).
 #
 # Two routes:
-#   A. the engine's `engine_bundle` CMake target exists in the build dir (the prepare track's; probed with
-#      `ninja -t targets all`): `cmake --build <dir> --target engine_bundle` is run and its output folder
-#      (<build-dir>/engine_bundle/) is taken AS IS -- the target owns the shape and BUNDLE.json;
+#   A. the engine's `engine_bundle` CMake target exists in the build dir (cmake/EngineBundle.cmake, tools/dist/
+#      engine_bundle.py; probed with `ninja -t targets all`): `cmake --build <dir> --target engine_bundle` is run and
+#      its output folder (${PS2R_BUNDLE_DIR}/engine-bundle-<platform>/, default <build-dir>/dist/) is taken AS IS --
+#      the target owns the shape and BUNDLE.json (the EXACT command templates tools/prepare replays). NOTE: that
+#      target defines itself only in a build that has the title's recompiled code (a DISC build: it reads the real
+#      shard / link commands from build.ninja), so on a public runner it never exists and route B runs; a self-hosted
+#      lane with the disc takes route A. Either way the folder is asset-scanned here (route A's own scan too).
 #   B. the target does not exist yet (this script predates it): the FALLBACK shape below is staged, so CI and the
 #      local dry run produce a real, scanned, sized artefact today. The two routes must converge: when A lands,
 #      the fallback is deleted here and the key names below are the proposal it was built from.
 #
-# Fallback shape (route B):  nativeee-engine-<platform>/
+# Fallback shape (route B):  engine-bundle-<platform>/
 #   BUNDLE.json           format 0 (fallback): engine commit, platform, the libs IN LINK ORDER as the no-disc nativeee
 #                         was linked (read from `ninja -t commands nativeee`), the system frameworks / libs on that
 #                         line, the include roots, the recompiled-shard compile flags (games/<title>/recomp/CMakeLists.txt),
@@ -38,7 +42,7 @@
 #                         with the recompiled code) -- scanned like everything else
 #   LICENSE-NativeEE.txt, THIRD_PARTY_NOTICES.md, licenses/
 # then: tools/ci/asset_scan.py over the folder (zero findings or the folder is removed),
-#       <out>/nativeee-engine-<platform>.zip + .sha256 (zip on every platform: what the launcher unpacks).
+#       <out>/<name>.tar.xz + .sha256 (what tools/prepare unpacks with `tar -xf`).
 set -euo pipefail
 engine=""; games=""; build_dir=""; out=""; platform=""; version=""; compiler_json=""; do_zip=1; name=""
 PY="$(command -v python3 || command -v python || true)"; [ -n "$PY" ] || { echo "stage_engine_bundle: no python3 / python" >&2; exit 2; }
@@ -52,7 +56,7 @@ while [ $# -gt 0 ]; do
         --version) version="$2"; shift 2 ;;
         --compiler-json) compiler_json="$2"; shift 2 ;;
         --name) name="$2"; shift 2 ;;
-        --no-zip) do_zip=0; shift ;;
+        --no-zip|--no-archive) do_zip=0; shift ;;
         -h|--help) sed -n '2,42p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "stage_engine_bundle: unknown argument $1" >&2; exit 2 ;;
     esac
@@ -66,21 +70,13 @@ if [ -z "$platform" ]; then
     case "$(uname -s)-$(uname -m)" in
         Darwin-arm64) platform=macos-arm64 ;; Darwin-x86_64) platform=macos-x86_64 ;;
         Linux-x86_64) platform=linux-x86_64 ;;
-        MINGW*|MSYS*|CYGWIN*) platform=windows-x64 ;;
+        MINGW*|MSYS*|CYGWIN*) platform=windows-x86_64 ;;
         *) echo "stage_engine_bundle: unsupported host (D-B)" >&2; exit 2 ;;
     esac
 fi
 [ -n "$version" ] || version="$(git -C "$engine" describe --tags --always 2>/dev/null || git -C "$engine" rev-parse --short HEAD)"
-[ -n "$name" ] || name="nativeee-engine-$platform"
+[ -n "$name" ] || name="engine-bundle-$platform"
 dist="$out/$name"
-zip_dir() {  # $1 = out dir, $2 = folder name, $3 = zip name: Info-ZIP keeps modes + symlinks; Python's zipfile is the Windows lane's fallback
-    if command -v zip >/dev/null 2>&1; then (cd "$1" && zip -qry "$3" "$2"); else
-        (cd "$1" && "$PY" -c 'import os,sys,zipfile
-root,out=sys.argv[1],sys.argv[2]
-with zipfile.ZipFile(out,"w",zipfile.ZIP_DEFLATED) as z:
-    for d,_,fs in os.walk(root):
-        for f in fs: p=os.path.join(d,f); z.write(p,p)' "$2" "$3"); fi
-}
 
 # --- the no-disc proof, before anything is copied -------------------------------------------------------------------
 step "the build dir is a NO-DISC build ($build_dir)"
@@ -98,8 +94,9 @@ rm -rf "$dist"
 if (cd "$build_dir" && ninja -t targets all 2>/dev/null | grep -qE '^engine_bundle:'); then
     step "route A: cmake --build --target engine_bundle"
     cmake --build "$build_dir" --target engine_bundle
-    src="$build_dir/engine_bundle"
-    [ -f "$src/BUNDLE.json" ] || { echo "stage_engine_bundle: the engine_bundle target left no $src/BUNDLE.json" >&2; exit 1; }
+    src="$(grep -E '^PS2R_BUNDLE_DIR:' "$build_dir/CMakeCache.txt" | cut -d= -f2-)"; [ -n "$src" ] || src="$build_dir/dist"
+    src="$src/$(ls "$src" | grep -E '^engine-bundle-' | head -1)"
+    [ -f "$src/BUNDLE.json" ] || { echo "stage_engine_bundle: the engine_bundle target left no engine-bundle-*/BUNDLE.json under $(dirname "$src")" >&2; exit 1; }
     mkdir -p "$out"; cp -R "$src" "$dist"
     route=A
 else
@@ -214,7 +211,7 @@ doc = {
   "engine": {"commit": git("rev-parse", "HEAD"), "describe": version, "branch": git("rev-parse", "--abbrev-ref", "HEAD")},
   "platform": platform,
   "title": {"id": title_id, "module": "games/%s" % title_id, "inputs_sha256": "games/%s/TITLE_INPUTS.sha256" % title_id},
-  "compiler": (json.load(open(compiler_json)) if compiler_json and os.path.exists(compiler_json) else {"note": "see the compiler kit shipped beside this bundle (nativeee-compiler-<platform>-llvm<ver>.zip, COMPILER.json)"}),
+  "compiler": (json.load(open(compiler_json)) if compiler_json and os.path.exists(compiler_json) else {"note": "see the compiler kit shipped beside this bundle (compiler-<platform>.tar.xz, COMPILER.json)"}),
   "include_roots": ["include", "."],
   "shard_compile_flags": ["-std=c++17", "-O2", "-fno-strict-aliasing", "-fwrapv", "-ffp-contract=off", "-w"],
   "hle_compile_flags_observed": hle_flags,
@@ -252,10 +249,10 @@ fi
 step "artefact ($dist, route $route)"
 du -sh "$dist"; ls -la "$dist"
 if [ "$do_zip" = 1 ]; then
-    rm -f "$out/$name.zip" "$out/$name.zip.sha256"
-    zip_dir "$out" "$name" "$name.zip"
-    "$PY" "$engine/tools/ci/asset_scan.py" "$out/$name.zip" ${scan_args[@]+"${scan_args[@]}"} > /dev/null || { echo "stage_engine_bundle: REFUSING -- the asset scan found game data in the zip" >&2; rm -f "$out/$name.zip"; rm -rf "$dist"; exit 1; }
-    (cd "$out" && sha256_file "$name.zip" > "$name.zip.sha256" && cat "$name.zip.sha256")
-    echo "zip: $out/$name.zip ($(( $(stat -f %z "$out/$name.zip" 2>/dev/null || stat -c %s "$out/$name.zip") / 1048576 )) MB)"
+    rm -f "$out/$name.tar.xz" "$out/$name.tar.xz.sha256"
+    (cd "$out" && tar -cf - "$name" | xz -T0 -6 > "$name.tar.xz")
+    "$PY" "$engine/tools/ci/asset_scan.py" "$out/$name.tar.xz" ${scan_args[@]+"${scan_args[@]}"} > /dev/null || { echo "stage_engine_bundle: REFUSING -- the asset scan found game data in the archive" >&2; rm -f "$out/$name.tar.xz"; rm -rf "$dist"; exit 1; }
+    (cd "$out" && sha256_file "$name.tar.xz" > "$name.tar.xz.sha256" && cat "$name.tar.xz.sha256")
+    echo "archive: $out/$name.tar.xz ($(( $(stat -f %z "$out/$name.tar.xz" 2>/dev/null || stat -c %s "$out/$name.tar.xz") / 1048576 )) MB)"
 fi
 echo "stage_engine_bundle: OK -> $dist"

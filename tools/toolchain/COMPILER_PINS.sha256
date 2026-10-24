@@ -15,7 +15,7 @@
 #   macos-arm64    LLVM-20.1.7-macOS-ARM64.tar.xz
 #   macos-x86_64   LLVM-20.1.7-macOS-X64.tar.xz
 #   linux-x86_64   LLVM-20.1.7-Linux-X64.tar.xz
-#   windows-x64    clang+llvm-20.1.7-x86_64-pc-windows-msvc.tar.xz   (the kit; LLVM-20.1.7-win64.exe is the
+#   windows-x86_64 clang+llvm-20.1.7-x86_64-pc-windows-msvc.tar.xz   (the kit; LLVM-20.1.7-win64.exe is the
 #                  same bits as an NSIS installer -- pinned too for a hand install, not fetched)
 6aa75de00575ad0663183b00f00f39992ded611b5136e57649ace1e6a53c0d16  LLVM-20.1.7-macOS-ARM64.tar.xz
 ccf82ffe7e136ee49659cb57157856a7963d0950fac3d05aabba0db75bfba26f  LLVM-20.1.7-macOS-X64.tar.xz

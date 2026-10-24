@@ -15,7 +15,7 @@
 #      --preset macos-dist): nativeee (the stub), the tools, the title's HLE library -- the bundle's source;
 #   2. the compiler kit: tools/toolchain/fetch_compiler.sh --smoke --pack (sha256-pinned official LLVM, cut, smoked);
 #   3. the engine bundle: tools/ci/stage_engine_bundle.sh (engine_bundle target when present, else the fallback shape),
-#      named per the manifest's release.bundle_folder, asset-scanned, zipped; then tools/ci/bundle_smoke.sh: the cut
+#      engine-bundle-<platform>.tar.xz (tools/prepare's name), asset-scanned; then tools/ci/bundle_smoke.sh: the cut
 #      compiler compiles a title TU out of the bundle against the bundle's headers (the pair works together);
 #   4. the launcher: tools/ci/release_launcher.sh (the real app/launcher when --launcher-engine has it and Qt is found;
 #      --stub-launcher otherwise, which release_index.py then REFUSES -- the dry run shows the refusal);
@@ -61,11 +61,10 @@ case "$(uname -s)-$(uname -m)" in
     Linux-x86_64) PLATFORM=linux-x86_64; PRESET=linux-dist ;;
     *) echo "release_local: unsupported host (D-B; Windows: the .ps1 twins by hand)" >&2; exit 2 ;;
 esac
-OTHERS="$(printf '%s\n' macos-arm64 macos-x86_64 linux-x86_64 windows-x64 | grep -v "^$PLATFORM$" | paste -sd, -)"
+OTHERS="$(printf '%s\n' macos-arm64 macos-x86_64 linux-x86_64 windows-x86_64 | grep -v "^$PLATFORM$" | paste -sd, -)"
 REL="$OUT/release"; mkdir -p "$REL"
 PRODUCT="$(python3 -c "import json;print(json.load(open('$MANIFEST'))['product'].lower())")"
-FOLDER="$(python3 -c "import json;m=json.load(open('$MANIFEST'));print(m.get('release',{}).get('bundle_folder','\${product}-\${platform}').replace('\${product}','$PRODUCT').replace('\${platform}','$PLATFORM'))")"
-BUNDLE_ZIP="$(python3 -c "import json;m=json.load(open('$MANIFEST'));print(m.get('release',{}).get('asset_pattern','\${product}-\${tag}-\${platform}.zip').replace('\${product}','$PRODUCT').replace('\${tag}','$TAG').replace('\${platform}','$PLATFORM'))")"
+FOLDER="engine-bundle-$PLATFORM"   # tools/prepare's contract: engine-bundle-<platform>.tar.xz, compiler-<platform>.tar.xz
 step() { echo; echo "=== $*"; echo "    ($(uptime | sed 's/.*load/load/'))"; }
 echo "release_local: $PRODUCT $TAG on $PLATFORM (preset $PRESET) -> $REL"
 T0=$(date +%s)
@@ -82,15 +81,15 @@ T1=$(date +%s)
 
 step "2. the compiler kit (fetch_compiler.sh --platform $PLATFORM --smoke --pack)"
 "$ENGINE/tools/toolchain/fetch_compiler.sh" --platform "$PLATFORM" --out "$OUT/compiler" --cache "$CACHE" --smoke --pack > "$OUT/compiler.log" 2>&1 || { tail -20 "$OUT/compiler.log"; exit 1; }
-grep -E "^(platform|cut size|smoke|zip)" "$OUT/compiler.log" || tail -5 "$OUT/compiler.log"
-cp "$OUT"/compiler/nativeee-compiler-*.zip "$REL/"
+grep -E "^(platform|cut size|smoke|archive)" "$OUT/compiler.log" || tail -5 "$OUT/compiler.log"
+cp "$OUT"/compiler/compiler-*.tar.xz "$REL/"
 T2=$(date +%s)
 
 step "3. the engine bundle (stage_engine_bundle.sh --name $FOLDER)"
 "$ENGINE/tools/ci/stage_engine_bundle.sh" --engine "$ENGINE" --games "$GAMES" --build-dir "$BUILD_DIR" --out "$OUT/bundle" \
     --platform "$PLATFORM" --version "$TAG" --name "$FOLDER" --compiler-json "$OUT/compiler/compiler/COMPILER.json" > "$OUT/bundle.log" 2>&1 || { tail -20 "$OUT/bundle.log"; exit 1; }
-grep -E "route|lib/:|bin/:|include/:|games/|BUNDLE.json|NOTE|CLEAN|zip:" "$OUT/bundle.log"
-cp "$OUT/bundle/$FOLDER.zip" "$REL/$BUNDLE_ZIP"
+grep -E "route|lib/:|bin/:|include/:|games/|BUNDLE.json|NOTE|CLEAN|archive:" "$OUT/bundle.log"
+cp "$OUT/bundle/$FOLDER.tar.xz" "$REL/"
 echo "--- bundle_smoke.sh (the cut compiler compiles a title TU against the bundle)"
 "$ENGINE/tools/ci/bundle_smoke.sh" --bundle "$OUT/bundle/$FOLDER" --compiler "$OUT/compiler/compiler" | tail -2
 T3=$(date +%s)
