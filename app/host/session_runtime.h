@@ -94,9 +94,16 @@ public:
     // Main thread before Run: the user-facing settings the in-game menu (the
     // title's added pages, MenuExtension) and the GUI share. `perf_overlay` is
     // the ui.perf_overlay seed; `persist` writes one `key=value` into the
-    // settings file after a change is applied (empty = nothing persisted).
+    // settings file after a change is applied (empty = nothing persisted);
+    // `reread` returns the file's (key, value) entries and is consulted every
+    // time the menu OPENS (SettingsResync): a value another writer -- the
+    // launcher's Settings page -- changed meanwhile is applied as if the row had
+    // been clicked (empty = no re-read).
     using Persist = std::function<void(const std::string& key, const std::string& value)>;
-    void ConfigureSettings(bool perf_overlay, Persist persist);
+    using Reread = std::function<std::vector<std::pair<std::string, std::string>>()>;
+    void ConfigureSettings(bool perf_overlay, Persist persist, Reread reread = {});
+    // The re-reads that submitted at least one request (census).
+    uint64_t SettingsResyncs() const { return settings_resyncs_; }
     // Any thread: the live user-facing values the in-game menu mirrors.
     bool PerfOverlay() const { return perf_overlay_.load(); }
     bool FullscreenState() const { return fullscreen_state_.load(); }
@@ -290,6 +297,9 @@ private:
     std::atomic<uint64_t> doubled_frames_{0};   // the pacer's doubled census, published for Publish()
     std::atomic<uint64_t> display_swaps_{0}, display_swap_max_us_{0}, display_swap_total_us_{0};
     Persist persist_;
+    Reread reread_;
+    bool menu_was_open_ = false;
+    uint64_t settings_resyncs_ = 0;
     std::string window_dump_dir_;
     std::string renderer_;
     int fps_cap_ = 60;

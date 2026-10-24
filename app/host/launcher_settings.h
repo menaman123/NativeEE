@@ -5,12 +5,12 @@
 // (RETAIL_BUGS toggles, default off, each with its decomp citation), and the
 // data page (disc image, open the data folder, re-extract). Every change is
 // applied to the Config the game is about to start with AND persisted through
-// SettingsFile (the one writer of ps2r.ini). The controller bindings are
-// held by ControlsBindings (keyboard rows, the gamepad-button remap rows,
-// deadzone / sensitivity / enable; press-to-bind), written as <user
-// data>/bindings.ini (the InputMapper's grammar); input.bindings_file points
-// at it. ImGui drawing; main thread; no SDL calls beyond the key / control
-// names and the controller list it is handed.
+// SettingsFile into the ONE settings file (nativeee.ini, ConfigStore). The
+// controller bindings are held by ControlsBindings (keyboard rows, the
+// gamepad-button remap rows, deadzone / sensitivity / enable; press-to-bind),
+// written as bindings.ini beside the settings file (the InputMapper's grammar).
+// ImGui drawing; main thread; no SDL calls beyond the key / control names and
+// the controller list it is handed.
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -37,6 +37,7 @@ public:
         std::string build_id;
         uint64_t bytes = 0;
     };
+    // `settings_file` = ConfigStore::ActivePath(); bindings.ini lives in its folder.
     LauncherSettings(Config& cfg, std::string settings_file, std::string user_data_root);
 
     // The pages; `controllers` = the detected SDL game controllers' names.

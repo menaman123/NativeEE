@@ -30,7 +30,7 @@ if(PS2R_PRODUCT_GUI)
         savestate_browser.cpp sound_section.cpp display_section.cpp controls_section.cpp triage_section.cpp)
     target_link_libraries(ps2r_session_gui PUBLIC ps2r_session_controls PRIVATE ps2r_imgui SDL2::SDL2)
     target_compile_options(ps2r_session_gui PRIVATE -Wall -Wextra -Werror)
-    add_library(ps2r_session_runtime STATIC ../host/session_runtime.cpp
+    add_library(ps2r_session_runtime STATIC ../host/session_runtime.cpp ../host/settings_resync.cpp
         ../host/session_runtime_restore.cpp ../host/session_window.cpp ../host/shutdown_census.cpp
         ../host/frame_pacer.cpp)
     target_link_libraries(ps2r_session_runtime PUBLIC ps2r_session_gui ps2r_gs_aspect PRIVATE SDL2::SDL2 OpenGL::GL)

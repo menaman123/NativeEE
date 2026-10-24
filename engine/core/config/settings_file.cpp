@@ -56,8 +56,22 @@ std::string SettingsFile::SetInText(const std::string& text, const std::string& 
     std::vector<std::string> lines = Lines(text);
     std::string section;
     bool replaced = false;
-    for (std::string& line : lines) {
-        if (LineKey(line, section) != key) continue;
+    // The key's own section and short name (a key without a dot has none).
+    const size_t dot = key.find('.');
+    const std::string key_section = dot == std::string::npos ? std::string() : key.substr(0, dot);
+    const std::string key_name = dot == std::string::npos ? key : key.substr(dot + 1);
+    // Pass 1: replace in place; remember where the key's section ends.
+    size_t section_end = lines.size();   // index AFTER the last key line of [key_section]
+    bool section_seen = false;
+    for (size_t i = 0; i < lines.size(); i++) {
+        std::string& line = lines[i];
+        const std::string k = LineKey(line, section);
+        if (!key_section.empty() && section == key_section) {
+            const std::string l = Trim(StripComment(line));
+            const bool header = k.empty() && !l.empty() && l.front() == '[';
+            if (header || !k.empty()) { section_seen = true; section_end = i + 1; }
+        }
+        if (k != key) continue;
         // Keep the line's own key spelling (a `[section]`-scoped short key stays short).
         const std::string head = line.substr(0, line.find('='));
         const std::string next = Trim(head) + " = " + value;
@@ -69,13 +83,33 @@ std::string SettingsFile::SetInText(const std::string& text, const std::string& 
         break;
     }
     if (!replaced) {
-        // A flat line appended at the end (outside any section, so the full key is written).
-        if (!lines.empty() && !section.empty()) lines.push_back("[]");
-        lines.push_back(key + " = " + value);
         if (changed) *changed = true;
+        if (!key_section.empty() && section_seen) {
+            lines.insert(lines.begin() + static_cast<long>(section_end), key_name + " = " + value);
+        } else if (!key_section.empty()) {
+            // A new [section] at the end, blank-line separated from what precedes it.
+            if (!lines.empty() && !Trim(lines.back()).empty()) lines.push_back("");
+            lines.push_back("[" + key_section + "]");
+            lines.push_back(key_name + " = " + value);
+        } else {
+            if (!lines.empty() && !section.empty()) lines.push_back("[]");
+            lines.push_back(key + " = " + value);
+        }
     }
     std::string out;
     for (const std::string& l : lines) out += l + "\n";
+    return out;
+}
+
+std::vector<std::pair<std::string, std::string>> SettingsFile::Entries(const std::string& text) {
+    std::vector<std::pair<std::string, std::string>> out;
+    std::string section;
+    for (const std::string& line : Lines(text)) {
+        const std::string k = LineKey(line, section);
+        if (k.empty()) continue;
+        const std::string l = Trim(StripComment(line));
+        out.emplace_back(k, Trim(l.substr(l.find('=') + 1)));
+    }
     return out;
 }
 

@@ -41,7 +41,8 @@ public:
     // windowed | fullscreen | borderless | scale1..scale4 | vsync | novsync |
     // aspect_auto | aspect_4_3 | aspect_16_9 | aspect_16_10 | aspect_21_9 |
     // filter_title | filter_point | filter_bilinear | filter_trilinear | aniso1|2|4|8|16 |
-    // overlay | nooverlay | rate60 | ratedisplay | capoff | cap30 | cap60 -- the Display page's rows).
+    // overlay | nooverlay | rate60 | ratedisplay | capoff | cap30 | cap60 -- the Display page's rows;
+    // kbm | nokbm (the Controls page's keyboard toggle) | volume0..volume100 (the Sound page's slider)).
     // Returns the number of items that did not parse (0 for a validated string).
     static int Parse(const std::string& text, std::vector<Step>& out);
     // One item's mode name -> action/value; false for an unknown name.

@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "app/host/platform_input.h"
+#include "app/host/settings_resync.h"
 #include "engine/platform/host/platform.h"
 
 namespace ps2r::app {
@@ -69,10 +70,11 @@ void SessionRuntime::ConfigureReproductions(std::string directory) {
     Publish();
 }
 
-void SessionRuntime::ConfigureSettings(bool perf_overlay, Persist persist) {
+void SessionRuntime::ConfigureSettings(bool perf_overlay, Persist persist, Reread reread) {
     if (std::this_thread::get_id() != main_thread_) return;
     perf_overlay_.store(perf_overlay);
     persist_ = std::move(persist);
+    reread_ = std::move(reread);
     capabilities_.perf_overlay = true;
     Publish();
 }
@@ -316,8 +318,9 @@ void SessionRuntime::ProcessCommands() {
                 detail = "Shutdown requested.";
                 break;
             case Action::SetVolume:
-                volume_.store(request.value);
+                volume_.store(std::clamp(request.value, 0, 100));
                 detail = "Output volume applied.";
+                if (persist_) persist_("audio.volume", std::to_string(volume_.load()));
                 break;
             case Action::SetFullscreen:
                 ok = TimedDisplaySwap([&] { return window_.SetFullscreen(request.value != 0, detail); });
@@ -460,6 +463,14 @@ void SessionRuntime::PumpMain() {
         }
     }
     ProcessCommands();
+    // The menu just opened: re-read the settings file and apply what another
+    // writer changed (SettingsResync), through the rows' own requests.
+    if (controls_.MenuOpen() && !menu_was_open_ && reread_) {
+        const auto plan = SettingsResync::Plan(reread_(), controls_.Read().runtime, controls_.Read().capabilities);
+        for (const auto& request : plan) controls_.Submit(request.first, request.second);
+        if (!plan.empty()) ++settings_resyncs_;
+    }
+    menu_was_open_ = controls_.MenuOpen();
     if (input_) {
         input_->SetUiCapture(controls_.MenuOpen());
         input_->ServicePending();

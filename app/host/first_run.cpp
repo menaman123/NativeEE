@@ -208,8 +208,7 @@ FirstRun::Result FirstRun::Run(const Plan& plan, const ProgressFn& progress, con
         std::ifstream probe(plan.settings_file);
         if (!probe.is_open()) {
             std::ofstream init(plan.settings_file);
-            init << "# ps2r.ini -- the title (NativeEE) settings. One `section.key = value` per line;\n"
-                    "# the in-game Options pages and the launcher write here. Keys: docs/filemap/settings_table.tsv\n";
+            init << "# nativeee.ini -- the game's settings. The launcher's Settings page and the in-game menu both edit this file.\n";
             if (!init) return fail(Stage::Settings, "cannot create " + plan.settings_file);
         }
     }

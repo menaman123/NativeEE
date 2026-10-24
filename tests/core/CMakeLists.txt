@@ -38,6 +38,14 @@ target_compile_options(test_settings_file PRIVATE -Wall -Wextra -Werror)
 add_test(NAME Coretest_settings_file COMMAND test_settings_file ${PS2R_TEST_SCRATCH})
 set_tests_properties(Coretest_settings_file PROPERTIES TIMEOUT 60)
 
+# ConfigStore: the ONE settings file (nativeee.ini) -- resolution order, the legacy
+# ps2r.ini / display.ini migration, the process-wide active store the writers use.
+add_executable(test_config_store test_config_store.cpp)
+target_link_libraries(test_config_store PRIVATE ps2r_core)
+target_compile_options(test_config_store PRIVATE -Wall -Wextra -Werror)
+add_test(NAME Coretest_config_store COMMAND test_config_store ${PS2R_TEST_SCRATCH})
+set_tests_properties(Coretest_config_store PROPERTIES TIMEOUT 60)
+
 # The schema table enumerated against the compiled Config: bijection with
 # Config::Keys(), peak + deterministic columns, value domains, fingerprint.
 add_executable(test_config_schema test_config_schema.cpp)

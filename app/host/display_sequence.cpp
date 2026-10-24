@@ -33,6 +33,14 @@ bool DisplaySequence::ModeOf(const std::string& mode, SessionControls::Action& a
     if (mode == "capoff") { action = Action::SetFrameCap; value = 0; return true; }
     if (mode == "cap30") { action = Action::SetFrameCap; value = 1; return true; }
     if (mode == "cap60") { action = Action::SetFrameCap; value = 2; return true; }
+    // The Controls and Sound pages' persisted rows (the settings judge drives every writer).
+    if (mode == "kbm") { action = Action::SetKeyboardInput; value = 1; return true; }
+    if (mode == "nokbm") { action = Action::SetKeyboardInput; value = 0; return true; }
+    if (mode.size() > 6 && mode.compare(0, 6, "volume") == 0) {
+        char* end = nullptr;
+        const long v = std::strtol(mode.c_str() + 6, &end, 10);
+        if (end && !*end && v >= 0 && v <= 100) { action = Action::SetVolume; value = static_cast<int>(v); return true; }
+    }
     return false;
 }
 

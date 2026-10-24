@@ -7,14 +7,14 @@
 //     drop a disc image on the window (or type its path) -> Verify (DiscVerify:
 //     ISO9660, SLUS_123.45 present, ELF SHA-256 == the build's; the exact
 //     refusal shown verbatim) -> Extract (FirstRun::Run on a worker thread with
-//     a progress bar: ELF, disc copy or reference, memcards, ps2r.ini, the
+//     a progress bar: ELF, disc copy or reference, memcards, nativeee.ini, the
 //     BUILD-ID stamp last) -> controller detection -> Play.
 //   afterwards: the settings screen (LauncherSettings pages: Display,
 //     Controls, Save states, Fixes, Data) with Play; `launcher.show=off` skips
 //     it on a plain start; `--launcher` brings it back.
 // The harness never sees it: a command line carrying --game-files / --profile /
 // --set / --iso / --headless / ... bypasses the launcher entirely (main.cpp).
-// Changes made here land in the Config the game starts with and in ps2r.ini.
+// Changes made here land in the Config the game starts with and in nativeee.ini (ConfigStore).
 #include <atomic>
 #include <memory>
 #include <mutex>

@@ -6,6 +6,7 @@
 #include <system_error>
 
 #include "engine/core/config/config.h"
+#include "engine/core/config/config_store.h"
 
 namespace ps2r::app {
 namespace fs = std::filesystem;
@@ -40,7 +41,8 @@ bool UserData::CarryOverLegacyRoot(const std::string& root, std::string* note) {
 }
 
 std::string UserData::SettingsFile(const Config& cfg) {
-    return cfg.paths.user_data.empty() ? std::string("ps2r.ini") : cfg.paths.user_data + "/ps2r.ini";
+    if (!ConfigStore::ActivePath().empty()) return ConfigStore::ActivePath();
+    return cfg.paths.user_data.empty() ? std::string(ConfigStore::kFileName) : cfg.paths.user_data + "/" + ConfigStore::kFileName;
 }
 
 namespace {

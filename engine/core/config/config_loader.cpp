@@ -6,6 +6,7 @@
 #include <fstream>
 #include <sstream>
 
+#include "engine/core/config/config_store.h"
 #include "engine/core/config/config_validator.h"
 #include "engine/core/config/deterministic_profile.h"
 
@@ -44,7 +45,8 @@ int Clamp(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
 const char* const kUsage =
     "nativeee [options]\n"
-    "  --config <file>       apply an ini file after ps2r.ini\n"
+    "  --config <file>       the settings file to use (read and written); default <executable dir>/nativeee.ini when\n"
+    "                        present, else <user data>/nativeee.ini\n"
     "  --set key=value       set one Config field (repeatable; ';' joins several). Every hle.* key is\n"
     "                        settable: `--set hle.<key>=off` turns one replacement back off per run and\n"
     "                        the keys that depend on it degrade with a `[config] ... disabled: requires ...`\n"
@@ -83,8 +85,8 @@ const char* const kUsage =
     "                        is asked for): the launcher -> game hand-off; the game then runs with the remaining flags\n"
     "  --launcher-disc <image> the scripted drop: the launcher verifies and extracts this image at open (first-run drill)\n"
     "  --launcher-page <name> the Ready page the launcher opens on: play | display | controls | saves | fixes | data\n"
-    "  --display-ini <path>  display.ini to honour (default: <search dir>/display.ini)\n"
-    "  --save-display        write display.ini back from the loaded values\n"
+    "  --display-ini <path>  a former display.ini to honour (compatibility; the settings file carries these keys now)\n"
+    "  --save-display        write that display.ini back from the loaded values\n"
     "  --harness-window      allow harness.* with a window\n"
     "  --vu1-library <name>  title (default) | none: none turns the VU1 HLE library consult off\n"
     "                        (every program runs on the engine.vu1_mode tier); a harness knob, not a Config key\n"
@@ -397,24 +399,47 @@ ConfigLoader::Result ConfigLoader::Load(int argc, char** argv, Config& out) {
     // line. harness.* needs no re-apply: the tiers refuse it (IsHarnessKey).
     const PathsConfig   cli_paths = out.paths;
 
-    // Tier: ps2r.ini + display.ini compatibility. The settings file lives in the
-    // user data root (C4) unless a search directory was named explicitly.
-    const std::string search_dir = !search_dir_.empty() ? search_dir_ : !user_data_root_.empty() ? user_data_root_ : std::string(".");
-    bool existed = false;
-    if (!ApplyIniFile(search_dir + "/ps2r.ini", out, &r.error, &existed)) return r;
-    if (existed) r.sources.push_back("ps2r.ini");
-    if (r.display_ini_path.empty()) r.display_ini_path = search_dir + "/display.ini";
-    if (ApplyDisplayIniFile(r.display_ini_path, out)) r.sources.push_back("display.ini");
-
-    // Tier: --config.
-    if (!config_file.empty()) {
-        if (!ApplyIniFile(config_file, out, &r.error, &existed)) return r;
-        if (!existed) {
-            r.error = "--config " + config_file + ": cannot open";
-            return r;
+    // Tier: the settings store (ConfigStore). The root the store lives under when
+    // no --config / executable-folder store applies: the search dir (tests), else
+    // `--set paths.user_data=` when the command line pins one (a leg's sandbox),
+    // else the platform's user data root (C4), else the cwd.
+    std::string root = search_dir_;
+    if (root.empty()) {
+        for (const std::string& blob : sets) {
+            Config probe;
+            std::string ignored;
+            ApplySetBlob(blob, probe, &ignored, nullptr);
+            if (!probe.paths.user_data.empty()) root = probe.paths.user_data;
         }
-        r.sources.push_back(config_file);
     }
+    if (root.empty()) root = user_data_root_;
+    if (root.empty()) root = ".";
+    ConfigStore::Resolution store = ConfigStore::Resolve(config_file, exe_dir_, root, migrate_legacy_);
+    ConfigStore::SetActive(store);
+    r.settings_file = store.path;
+    r.settings_source = store.source;
+    r.settings_migrated = store.migrated;
+    for (const std::string& n : store.notes) r.notes.push_back(n);
+    bool existed = false;
+    if (!config_file.empty() && !store.exists) {
+        r.error = "--config " + config_file + ": cannot open";
+        return r;
+    }
+    if (store.exists) {
+        if (!ApplyIniFile(store.path, out, &r.error, &existed)) return r;
+        if (existed) r.sources.push_back(store.path);
+    }
+    // Legacy files the migration left to read (a refused conversion), then an
+    // explicitly named display.ini (compatibility).
+    for (const std::string& legacy : store.legacy_in_place) {
+        if (legacy.size() >= 11 && legacy.compare(legacy.size() - 11, 11, "display.ini") == 0) {
+            if (ApplyDisplayIniFile(legacy, out)) r.sources.push_back(legacy);
+        } else {
+            if (!ApplyIniFile(legacy, out, &r.error, &existed)) return r;
+            if (existed) r.sources.push_back(legacy);
+        }
+    }
+    if (!r.display_ini_path.empty() && ApplyDisplayIniFile(r.display_ini_path, out)) r.sources.push_back(r.display_ini_path);
 
     // Tier: --set (repeatable).
     for (const std::string& s : sets) {

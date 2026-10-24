@@ -170,6 +170,7 @@ add_subdirectory(engine/pad)     # Phase 4E/4E': the pad -- PadProtocol, libpad 
 add_subdirectory(tools/vu1_replay)   # Phase 5: VU1 corpus replay tool
 add_subdirectory(tools/vif_replay)   # Phase 5: VIF chain replay + equivalence arms tool
 add_subdirectory(tools/vu1_aot_pack)  # the pre-built VU1 library pack builder / checker (perf60)
+add_subdirectory(tools/settings)      # nativeee_settings: the settings file (nativeee.ini) from the command line
 
 # --- the EE recompiler (DP-23: NEW owns it; P8.8-T transplanted OLD's recompiler_tool_v2
 # byte-identically and proved it regenerates games/<title>/recomp/ byte-for-byte). The

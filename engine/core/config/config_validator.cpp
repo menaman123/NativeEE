@@ -264,7 +264,7 @@ bool ConfigValidator::Validate(const Config& c, bool harness_window_requested, s
                                              "vsync", "novsync", "aspect_auto", "aspect_4_3", "aspect_16_9", "aspect_16_10",
                                              "aspect_21_9", "filter_title", "filter_point", "filter_bilinear", "filter_trilinear",
                                              "aniso1", "aniso2", "aniso4", "aniso8", "aniso16", "overlay", "nooverlay", "rate60",
-                                             "ratedisplay"};
+                                             "ratedisplay", "capoff", "cap30", "cap60", "kbm", "nokbm"};
         std::string rest = c.harness.display_sequence;
         while (!rest.empty()) {
             const size_t comma = rest.find(',');
@@ -277,12 +277,19 @@ bool ConfigValidator::Validate(const Config& c, bool harness_window_requested, s
                 const std::string mode = item.substr(colon + 1);
                 ok = false;
                 for (const char* name : kModes) ok = ok || mode == name;
+                // volume0..volume100: the Sound page's slider.
+                if (!ok && mode.size() > 6 && mode.size() <= 9 && mode.compare(0, 6, "volume") == 0) {
+                    ok = true;
+                    int v = 0;
+                    for (size_t i = 6; i < mode.size() && ok; ++i) { ok = mode[i] >= '0' && mode[i] <= '9'; v = v * 10 + (mode[i] - '0'); }
+                    ok = ok && v <= 100;
+                }
             }
             if (!ok)
                 return Refuse(err, "harness.display_sequence must be <frame>:<mode>[,...] with frame > 0 and mode one of "
                                    "windowed|fullscreen|borderless|scale1..scale4|vsync|novsync|aspect_<auto|4_3|16_9|16_10|21_9>|"
-                                   "filter_<title|point|bilinear|trilinear>|aniso<1|2|4|8|16>|overlay|nooverlay|rate60|ratedisplay "
-                                   "(e.g. 300:borderless,600:windowed)");
+                                   "filter_<title|point|bilinear|trilinear>|aniso<1|2|4|8|16>|overlay|nooverlay|rate60|ratedisplay|"
+                                   "capoff|cap30|cap60|kbm|nokbm|volume<0..100> (e.g. 300:borderless,600:windowed)");
         }
     }
     if (c.harness.live_pad_probe) {

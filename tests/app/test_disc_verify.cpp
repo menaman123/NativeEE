@@ -148,7 +148,7 @@ int main(int argc, char** argv) {
     plan.serial = kSerial;
     plan.disc_image_file = "example_title.rep/the title.iso";
     plan.mc_dir = S + "/data/memcards";
-    plan.settings_file = S + "/data/ps2r.ini";
+    plan.settings_file = S + "/data/nativeee.ini";
     plan.build_id = "TEST-BUILD-1";
     plan.expected_sha256 = hash;
     plan.copy_disc = true;
@@ -175,7 +175,7 @@ int main(int argc, char** argv) {
     {
         const std::vector<uint8_t> ini = ReadWhole(plan.settings_file);
         const std::string text(ini.begin(), ini.end());
-        CHECK(text.find("paths.iso = ") != std::string::npos && text.find("# ps2r.ini") == 0, "firstrun_settings_file");
+        CHECK(text.find("iso = ") != std::string::npos && text.find("# nativeee.ini") == 0, "firstrun_settings_file");
     }
     {
         const ps2r::app::GameFilesStamp::Check c = ps2r::app::GameFilesStamp::Verify(plan.game_files_dir, "TEST-BUILD-1");
@@ -191,12 +191,12 @@ int main(int argc, char** argv) {
         FirstRun::Plan ref = plan;
         ref.game_files_dir = S + "/ref/game_files";
         ref.mc_dir = S + "/ref/memcards";
-        ref.settings_file = S + "/ref/ps2r.ini";
+        ref.settings_file = S + "/ref/nativeee.ini";
         ref.copy_disc = false;
         const FirstRun::Result rr = FirstRun::Run(ref, nullptr);
         const std::vector<uint8_t> ini = ReadWhole(ref.settings_file);
         const std::string text(ini.begin(), ini.end());
-        CHECK(rr.ok && rr.disc_referenced && text.find("paths.iso = " + raw) != std::string::npos &&
+        CHECK(rr.ok && rr.disc_referenced && text.find("[paths]\niso = " + raw) != std::string::npos &&
               !Exists(ref.game_files_dir + "/" + plan.disc_image_file), "firstrun_reference_in_place");
     }
     // Refused: nothing laid down.
@@ -205,7 +205,7 @@ int main(int argc, char** argv) {
         bad.image = S + "/pal.iso";
         bad.game_files_dir = S + "/bad/game_files";
         bad.mc_dir = S + "/bad/memcards";
-        bad.settings_file = S + "/bad/ps2r.ini";
+        bad.settings_file = S + "/bad/nativeee.ini";
         const FirstRun::Result rb = FirstRun::Run(bad, nullptr);
         CHECK(!rb.ok && rb.verify.state == DiscVerify::State::WrongRegion && !Exists(S + "/bad"), "firstrun_refused_leaves_nothing");
     }
@@ -216,7 +216,7 @@ int main(int argc, char** argv) {
         FirstRun::Plan c = plan;
         c.game_files_dir = S + "/cancel/game_files";
         c.mc_dir = S + "/cancel/memcards";
-        c.settings_file = S + "/cancel/ps2r.ini";
+        c.settings_file = S + "/cancel/nativeee.ini";
         const std::string c_elf = c.game_files_dir + "/" + plan.elf_dir + "/" + kSerial;
         std::atomic<bool> cancel{false};
         bool elf_seen_written = false;
@@ -234,7 +234,7 @@ int main(int argc, char** argv) {
         FirstRun::Plan f = plan;
         f.game_files_dir = S + "/fail/game_files";
         f.mc_dir = S + "/fail/blocker/memcards";
-        f.settings_file = S + "/fail/ps2r.ini";
+        f.settings_file = S + "/fail/nativeee.ini";
         MakeDir((S + "/fail").c_str());
         if (std::FILE* b = std::fopen((S + "/fail/blocker").c_str(), "wb")) std::fclose(b);
         const FirstRun::Result rf = FirstRun::Run(f, nullptr);

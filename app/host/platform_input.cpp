@@ -8,6 +8,7 @@
 #include <filesystem>
 
 #include "engine/core/config/config.h"
+#include "engine/core/config/config_store.h"
 #include "engine/platform/sdl/input/gamepad_backend.h"
 #include "engine/platform/sdl/input/keyboard_mouse_backend.h"
 #include "engine/platform/sdl/input/pad_sample.h"
@@ -32,7 +33,14 @@ std::string PlatformInput::ResolveFile(const std::string& name, const std::strin
 
 ps2r::platform::sdl::InputSettings PlatformInput::SettingsFrom(const ps2r::Config& cfg, const std::string& exe_dir) {
     ps2r::platform::sdl::InputSettings s;
-    s.bindings_path = ResolveFile(cfg.input.bindings_file, exe_dir, cfg.paths.game_files);
+    // The player's own bindings.ini lives beside the settings file (the Controls pages write it
+    // there); when absent, input.bindings_file (the shipped default_bindings.ini) stands.
+    {
+        std::error_code ec;
+        const std::string dir = ps2r::ConfigStore::ActiveDir();
+        const std::string own = (dir.empty() ? std::string() : dir + "/") + "bindings.ini";
+        s.bindings_path = std::filesystem::is_regular_file(own, ec) ? own : ResolveFile(cfg.input.bindings_file, exe_dir, cfg.paths.game_files);
+    }
     s.device_config_path = ResolveFile(kDeviceConfigName, exe_dir, cfg.paths.game_files);
     s.gamecontrollerdb_path = ResolveFile(kGamepadDbName, exe_dir, cfg.paths.game_files);
     s.kbm_enabled = cfg.input.kbm_pad;

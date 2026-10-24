@@ -3,13 +3,12 @@
 #include <cstdio>
 
 #include "app/host/platform_input.h"
-#include "engine/core/config/settings_file.h"
 #include "engine/core/log/log.h"
 
 namespace ps2r::app {
 
-ControlsPageBinding::ControlsPageBinding(std::string user_data_root, std::string settings_file, PlatformInput* input)
-    : bindings_(std::move(user_data_root)), settings_file_(std::move(settings_file)), input_(input) {
+ControlsPageBinding::ControlsPageBinding(std::string bindings_dir, PlatformInput* input)
+    : bindings_(std::move(bindings_dir)), input_(input) {
     bindings_.Load();   // the launcher's / a previous session's file when present; the defaults otherwise
     status_ = "Bindings file: " + bindings_.Path();
 }
@@ -36,8 +35,8 @@ bool ControlsPageBinding::OfferKey(const std::string& key_name) {
     return true;
 }
 
-// Save bindings.ini, point the settings file at it, reload the live mapper. Every failure
-// is loud (stderr + the HOST log + the page's status line), never silent.
+// Save bindings.ini (beside the settings file, where the next start looks first) and reload
+// the live mapper. Every failure is loud (stderr + the HOST log + the page's status line).
 bool ControlsPageBinding::SaveAndApply() {
     std::string err;
     if (!bindings_.Save(&err)) {
@@ -46,12 +45,8 @@ bool ControlsPageBinding::SaveAndApply() {
         return false;
     }
     ++saves_;
-    std::string persist_err;
-    const bool persisted = SettingsFile::Set(settings_file_, "input.bindings_file", bindings_.Path(), &persist_err);
-    if (!persisted) std::fprintf(stderr, "nativeee: controls: input.bindings_file not saved to %s: %s\n",
-                                 settings_file_.c_str(), persist_err.c_str());
     const bool live = input_ ? input_->ReloadBindings(bindings_.Path()) : false;
-    status_ = "Saved " + bindings_.Path() + (persisted ? "" : " (settings file not updated)") +
+    status_ = "Saved " + bindings_.Path() +
               (input_ ? (live ? "; applied to the pad" : "; NOT applied: the mapper rejected the file") : "");
     PS2R_LOG(HOST, Info, "controls: %s", status_.c_str());
     return live || !input_;

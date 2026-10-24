@@ -1,7 +1,7 @@
 // tests/app/test_controls_page_binding.cpp -- ctest ControlsPageLiveRebind (Bernoulli): the
 // in-game Controls page's model (ControlsPageBinding over ControlsBindings + PlatformInput) under
 // SYNTHETIC key events, no window: arm the `cross` row, offer "J" (the key name SessionGui offers
-// from SDL_GetScancodeName) -> bindings.ini is written, ps2r.ini carries input.bindings_file, the
+// from SDL_GetScancodeName) -> bindings.ini is written beside the settings file, the
 // LIVE mapper is reloaded, and a J key press now samples as CROSS on the pad while Space (the
 // default) no longer does; Escape while armed cancels and binds nothing; a second binding of the
 // same key moves it off the row that had it. Scratch dir = argv[1].
@@ -99,7 +99,7 @@ int main(int argc, char** argv) {
     const std::string root = argv[1];
     ps2r::host::MakeDirectory(root.c_str());
     std::remove((root + "/bindings.ini").c_str());
-    std::remove((root + "/ps2r.ini").c_str());
+
     if (SDL_Init(SDL_INIT_VIDEO) != 0) { std::printf("SDL_Init failed: %s\n", SDL_GetError()); return 3; }
     {
         ps2r::platform::sdl::InputSettings settings;   // the baked-in defaults: cross = Space
@@ -107,7 +107,7 @@ int main(int argc, char** argv) {
         PlatformInput input(settings);
         ps2r::Park wake;
         input.BindMainWake(&wake);
-        ControlsPageBinding page(root, root + "/ps2r.ini", &input);
+        ControlsPageBinding page(root, &input);
         ControlsSection::Model m = page.Model();
         CHECK(RowValue(m, "cross") == "Space", "default row: cross = Space (got %s)", RowValue(m, "cross").c_str());
         CHECK(m.armed_row() == -1, "nothing armed at start");
@@ -127,7 +127,7 @@ int main(int argc, char** argv) {
         CHECK(RowValue(m, "cross") == "Space", "Escape bound nothing");
         CHECK(page.Saves() == 0, "Escape saved nothing");
 
-        // The rebind: cross = J. File written, settings file points at it, the live mapper reloaded.
+        // The rebind: cross = J. File written beside the settings file, the live mapper reloaded.
         m.arm(cross);
         CHECK(m.offer_key("J"), "J landed on the armed row");
         CHECK(RowValue(m, "cross") == "J", "cross = J (got %s)", RowValue(m, "cross").c_str());
@@ -136,9 +136,6 @@ int main(int argc, char** argv) {
               (unsigned long long)input.BindingsReloads(), (unsigned long long)input.BindingsReloadsOk());
         const std::string ini = ReadFile(root + "/bindings.ini");
         CHECK(ini.find("cross") != std::string::npos && ini.find("= J") != std::string::npos, "bindings.ini has cross = J:\n%s", ini.c_str());
-        const std::string settings_text = ReadFile(root + "/ps2r.ini");
-        CHECK(settings_text.find("input.bindings_file") != std::string::npos && settings_text.find(root + "/bindings.ini") != std::string::npos,
-              "ps2r.ini carries input.bindings_file = <root>/bindings.ini:\n%s", settings_text.c_str());
         CHECK(page.Status().find("applied to the pad") != std::string::npos, "status names the live apply: %s", page.Status().c_str());
 
         // The pad now: J -> CROSS, Space -> nothing (no restart, the same PlatformInput).
@@ -155,7 +152,7 @@ int main(int argc, char** argv) {
         CHECK((PressAndSample(input, wake, SDL_SCANCODE_J) & 0x8000) != 0, "after the move: J -> SQUARE");
 
         // A fresh page over the same root reads the file back (what the next start sees).
-        ControlsPageBinding again(root, root + "/ps2r.ini", nullptr);
+        ControlsPageBinding again(root, nullptr);
         CHECK(RowValue(again.Model(), "square") == "J", "the file persists: square = J on reload");
     }
     SDL_Quit();

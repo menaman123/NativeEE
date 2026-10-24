@@ -49,6 +49,7 @@ add_library(ps2r_app_host STATIC
     session_restart.cpp
     session_restore.cpp
     session_runtime.cpp
+    settings_resync.cpp
     session_runtime_restore.cpp
     session_window.cpp
     session_workers.cpp
