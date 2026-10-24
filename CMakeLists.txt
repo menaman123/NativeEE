@@ -243,6 +243,25 @@ if(TARGET nativeee)
 endif()
 add_subdirectory(tests)
 
+# --- the launcher (app/launcher: Qt 6 Widgets; a title ships it with its manifest) ------------------
+# Title-neutral: everything about a game comes from the title's launcher/title.json at run time. Built by default
+# when a Qt 6 is on CMAKE_PREFIX_PATH (brew: /opt/homebrew/opt/qt6); without one the option turns itself off with a
+# status line so a bare engine build is unchanged. -DPS2R_PRODUCT_LAUNCHER=OFF skips it even with Qt present.
+find_package(Qt6 6.5 QUIET COMPONENTS Core Gui Widgets Network Concurrent Test)
+if(Qt6_FOUND)
+    set(_ps2r_launcher_default ON)
+else()
+    set(_ps2r_launcher_default OFF)
+endif()
+option(PS2R_PRODUCT_LAUNCHER "Build the launcher (app/launcher; needs Qt 6 -- CMAKE_PREFIX_PATH at a Qt prefix)" ${_ps2r_launcher_default})
+if(PS2R_PRODUCT_LAUNCHER AND NOT Qt6_FOUND)
+    message(STATUS "nativeee: PS2R_PRODUCT_LAUNCHER requested but Qt 6 was not found -- the launcher is skipped")
+    set(PS2R_PRODUCT_LAUNCHER OFF)
+endif()
+if(PS2R_PRODUCT_LAUNCHER)
+    add_subdirectory(app/launcher)
+endif()
+
 message(STATUS "nativeee: build type ${CMAKE_BUILD_TYPE}, PS2R_DIAGNOSTICS=${PS2R_DIAGNOSTICS}, PS2R_SIMD=${PS2R_SIMD}, title ${PS2R_TITLE}")
 if(EXISTS "${PS2R_OG_ROOT}/host_app")
     message(STATUS "nativeee: frozen OLD tree found (read-only oracle available to tests/oracle)")
