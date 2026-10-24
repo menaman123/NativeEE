@@ -190,6 +190,7 @@ const std::vector<Field>& Fields() {
         INT_FIELD("engine.turbo", engine.turbo),
         BOOL_FIELD("engine.vu1_aot_codegen", engine.vu1_aot_codegen),
         STR_FIELD("engine.vu1_aot_compiler", engine.vu1_aot_compiler),
+        STR_FIELD("engine.vu1_aot_sysroot", engine.vu1_aot_sysroot),
         STR_FIELD("engine.vu1_aot_corpus", engine.vu1_aot_corpus),
         ENUM_FIELD("engine.vu1_aot_fallback", engine.vu1_aot_fallback, kVu1AotFb),
         INT_FIELD("engine.vu1_aot_opt", engine.vu1_aot_opt),
@@ -372,7 +373,7 @@ bool ExcludedFromFingerprint(const std::string& key) {
     return key.compare(0, 8, "harness.") == 0 || key.compare(0, 6, "paths.") == 0 || key.compare(0, 5, "diag.") == 0 ||
            key == "meta.profile" || key == "meta.source_fingerprint" || key == "save.restore_mode" ||
            key == "engine.mtvu_kick_drop" || key == "engine.mtvu_early_finish" || key == "engine.mtvu_wait_probe" || key == "engine.ee_yield_spin_gate" || key == "engine.ee_fast_dispatch" || key == "engine.cop0_count" || key == "engine.vu1_aot_corpus" || key == "engine.vu1_aot_codegen" || key == "engine.mtvu_depth_hold" || key == "video.capture_wait_ms" || key == "video.present_relax" ||
-           key == "engine.vu1_aot_compiler" || key == "engine.vu1_aot_prelude" || key == "engine.vu1_aot_opt" ||
+           key == "engine.vu1_aot_compiler" || key == "engine.vu1_aot_sysroot" || key == "engine.vu1_aot_prelude" || key == "engine.vu1_aot_opt" ||
            key == "engine.vu1_aot_pack" || key == "engine.vu1_aot_region_blocks" || key == "engine.vu1_aot_region_ops" ||
            key == "engine.vu1_aot_region_taken" || key == "engine.vu1_aot_chain" || key == "engine.vu1_aot_mac_acc";
 }

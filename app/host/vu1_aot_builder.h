@@ -70,6 +70,7 @@ public:
         std::string root;            // <user_data>/vu1_aot
         std::string build_id;        // g_build_id
         std::string compiler;        // engine.vu1_aot_compiler ("" = the search above; "none" = no compiler, loader only)
+        std::string sysroot;         // engine.vu1_aot_sysroot: -isysroot for a portable compiler ("" = none added)
         bool search_defaults = true; // false = try `compiler` only (the no-compiler test path)
         std::string prelude_dir;     // the staged prelude tree ("" = the build's)
         std::string pack_dir;        // engine.vu1_aot_pack ("" = next to the executable)
@@ -154,7 +155,8 @@ public:
     static bool FindCompiler(const std::string& preferred, bool search_defaults, std::string* path, std::string* version);
     // The compile line: `compiler` + the engine's VU semantic flags + -O<opt> + the include root.
     static std::vector<std::string> CompileCommand(const std::string& compiler, const std::string& include_dir, int opt,
-                                                   const std::string& src, const std::string& out);
+                                                   const std::string& src, const std::string& out,
+                                                   const std::string& sysroot = std::string());
     // Copy the staged prelude tree (MANIFEST.txt) into `include_dir` once.
     static bool StageInclude(const std::string& prelude_dir, const std::string& include_dir, std::string* err);
 

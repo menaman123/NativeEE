@@ -95,6 +95,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 find_package(Python3 3.8 COMPONENTS Interpreter REQUIRED)
+enable_testing()   # before every add_subdirectory: an add_test in a title module (games/<title>/recomp) must be recorded too
 
 # --- strict float semantics: ONE rule for GNU ----------------------------------------
 # The tree's float results are step-exact by contract: ps2_float / vu_float emulate the PS2's
@@ -189,6 +190,7 @@ endif()
 # are skipped (STATUS, not an error): PS2R_TITLE_RECOMP_AVAILABLE / PS2R_TITLE_IRX_AVAILABLE.
 add_subdirectory(tools/disc_extract)
 add_subdirectory(tools/elf_embedded)   # an IOP module embedded in the title ELF -> a build input (TitleInputs `<ELF>!<module>` rows)
+add_subdirectory(tools/prepare)        # ps2r_prepare + nativeee-prepare: the prepared-game pipeline (decision D-A), title-neutral
 # TitleInputs reads games/${PS2R_TITLE}/TITLE_INPUTS.sha256 and FATALs without it, so it is
 # only meaningful once a title is configured. With none, the generated-code variables stay
 # unset and every target that would consume them is skipped below.
@@ -231,7 +233,7 @@ add_subdirectory(tools/drawlist_tool)  # Phase 6
 add_subdirectory(tools/gs_replay)  # Phase 6
 
 # --- tests: lints are ctest targets from the first commit (ARCH section 13) -----
-enable_testing()
+# (enable_testing() itself runs before the title directories above, so a title's add_test is recorded.)
 add_subdirectory(app/gui)
 if(NOT TARGET ps2r_session_runtime)
     message(FATAL_ERROR "The game application requires PS2R_PRODUCT_GUI=ON for its session runtime")
@@ -260,3 +262,7 @@ add_subdirectory(engine/ipu)
 # tools/fmv_layout_ppm -- the FMV plane check's layout helper (verify/fmv_plane_check.py):
 # a decoded picture through the real FrameWriter strip layout.
 add_subdirectory(tools/fmv_layout_ppm)
+
+# --- the redistributable engine bundle (decision D-A: the player's disc is recompiled on the player's
+# machine against this bundle + a pinned compiler; tools/prepare drives it). `--target engine_bundle`.
+include(${CMAKE_SOURCE_DIR}/cmake/EngineBundle.cmake)
