@@ -200,6 +200,9 @@ struct EngineConfig {
     bool           vu1_aot_codegen = true;
     std::string    vu1_aot_compiler;
     std::string    vu1_aot_prelude;
+    // The SDK a PORTABLE compiler needs (-isysroot; the prepared-game pipeline's bundled
+    // clang has no built-in default): "" = the compiler's own default search.
+    std::string    vu1_aot_sysroot;
     int            vu1_aot_opt = 2;
     // The generator's REGION POLICY (Vu1AotBlockGen::Policy): blocks / ops a
     // region function holds at most, whether it grows over static branch

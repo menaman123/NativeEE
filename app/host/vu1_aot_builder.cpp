@@ -133,8 +133,14 @@ bool Vu1AotBuilder::CompilerChains(const std::string& version_line) {
 // root) plus the definitions this binary was built with, so the bodies compile
 // under the rules the engine's own instantiations saw.
 std::vector<std::string> Vu1AotBuilder::CompileCommand(const std::string& compiler, const std::string& include_dir, int opt,
-                                                       const std::string& src, const std::string& out) {
+                                                       const std::string& src, const std::string& out,
+                                                       const std::string& sysroot) {
     std::vector<std::string> cmd = {compiler};
+    // A portable compiler (the prepared game's bundled clang) knows no SDK: -isysroot names it.
+    if (!sysroot.empty()) {
+        cmd.push_back("-isysroot");
+        cmd.push_back(sysroot);
+    }
     // clang-cl (what built the engine on the windows-* presets) is clang with the cl command
     // line; --driver-mode=g++ as its first argument gives it this GNU one. (The image's link
     // against the executable's symbols is still open on Windows: app/host/CMakeLists.txt.)
@@ -378,7 +384,7 @@ Vu1AotBuilder::Built Vu1AotBuilder::BuildNow(const std::vector<const Vu1Case*>& 
 
 bool Vu1AotBuilder::Compile(const std::string& src, const std::string& out, std::string* log, uint64_t* ns) {
     const std::string tmp = out + ".tmp";
-    const std::vector<std::string> cmd = CompileCommand(compiler_, include_dir_, settings_.opt_level, src, tmp);
+    const std::vector<std::string> cmd = CompileCommand(compiler_, include_dir_, settings_.opt_level, src, tmp, settings_.sysroot);
     const uint64_t t0 = NowNs();
     const int rc = Run(cmd, /*search_path=*/true, log);
     *ns = NowNs() - t0;

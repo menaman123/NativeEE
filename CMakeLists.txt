@@ -189,6 +189,7 @@ endif()
 # are skipped (STATUS, not an error): PS2R_TITLE_RECOMP_AVAILABLE / PS2R_TITLE_IRX_AVAILABLE.
 add_subdirectory(tools/disc_extract)
 add_subdirectory(tools/elf_embedded)   # an IOP module embedded in the title ELF -> a build input (TitleInputs `<ELF>!<module>` rows)
+add_subdirectory(tools/prepare)        # ps2r_prepare + nativeee-prepare: the prepared-game pipeline (decision D-A), title-neutral
 # TitleInputs reads games/${PS2R_TITLE}/TITLE_INPUTS.sha256 and FATALs without it, so it is
 # only meaningful once a title is configured. With none, the generated-code variables stay
 # unset and every target that would consume them is skipped below.

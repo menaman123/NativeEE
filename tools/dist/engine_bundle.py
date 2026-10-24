@@ -384,7 +384,11 @@ def main(argv):
             if q in on_machine_archives:
                 tgt = os.path.basename(q)
                 link_out.append("${obj}/archives/" + tgt)
-                archives.append({"archive": "${obj}/archives/" + tgt, "on_machine": True})
+                members = []
+                for b in ninja.builds:
+                    if any(os.path.normpath(os.path.join(build, o)) == q for o in b["outputs"]):
+                        members = [T.map_path(os.path.join(build, i)) for i in b["inputs"] if i.endswith((".o", ".obj"))]
+                archives.append({"archive": "${obj}/archives/" + tgt, "objects": members})
             else:
                 put(q, "lib/" + os.path.basename(q))
                 link_out.append("${bundle}/lib/" + os.path.basename(q))
@@ -508,7 +512,8 @@ def main(argv):
         shutil.copytree(prelude, os.path.join(out, "vu1_aot_prelude"))
     for root_dir in (os.path.join(source, "engine"), os.path.join(source, "app"), os.path.join(games_dir, title)):
         for dp, dns, fns in os.walk(root_dir):
-            dns[:] = [d for d in dns if d not in (".git", "verify", "__pycache__")]
+            # the title's verify/ (judges, fixtures) is not a header tree; the engine's engine/core/verify is
+            dns[:] = [d for d in dns if d not in (".git", "__pycache__") and not (d == "verify" and dp == root_dir and root_dir.startswith(games_dir))]
             for fn in fns:
                 if fn.endswith(HEADER_EXT):
                     p = os.path.join(dp, fn)
@@ -594,6 +599,25 @@ def main(argv):
             "note": "engine.vu1_aot_compiler is the bundled compiler's C++ driver under <folder>/cache/compiler, written by the prepare tool"},
         "unresolved_paths": sorted(T.unresolved),
     }
+    # every include directory a template names must exist in the bundle (an anchor directory that holds
+    # no header -- engine/iop/abi/anchor -- would otherwise be dropped by the compiler and its "../host_app"
+    # includes would not resolve)
+    def include_dirs(obj):
+        if isinstance(obj, str):
+            for flag in ("-I", "-isystem", "-iframework"):
+                if obj.startswith(flag + "${bundle}/"):
+                    yield obj[len(flag) + len("${bundle}/"):]
+        elif isinstance(obj, dict):
+            for v in obj.values():
+                yield from include_dirs(v)
+        elif isinstance(obj, list):
+            for v in obj:
+                yield from include_dirs(v)
+    for rel in set(include_dirs(manifest)):
+        os.makedirs(os.path.join(out, rel), exist_ok=True)
+        keep = os.path.join(out, rel, ".keep")
+        if not os.listdir(os.path.join(out, rel)):
+            open(keep, "w").close()
     with open(os.path.join(out, "BUNDLE.json"), "w") as f:
         json.dump(manifest, f, indent=2, sort_keys=False)
         f.write("\n")
