@@ -5,7 +5,10 @@
 #
 #   release_local.sh --title-root DIR [--engine DIR] [--out DIR] [--tag TAG] [--repo OWNER/NAME]
 #                    [--build-dir DIR] [--launcher-build-dir DIR] [--launcher-engine DIR] [--qt PREFIX]
-#                    [--cache DIR] [--skip-build] [--stub-launcher] [--jobs N]
+#                    [--cache DIR] [--skip-build] [--stub-launcher] [--jobs N] [--elf FILE]
+#
+# --elf FILE: the title's extracted ELF from a LOCAL disc build (never in CI): step 5 then searches every release
+# file for live 64-byte windows of it as well -- the strongest form of the "zero game-derived bytes" proof.
 #
 # Steps (each prints "=== n. ..."; every artefact goes to <out>/release/ like the release job's folder):
 #   1. the NO-DISC build with the host's *-dist preset (static SDL2 + the LGPL FFmpeg recipe; build.sh --no-disc
@@ -22,7 +25,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENGINE="$(cd "$HERE/../.." && pwd)"
-TITLE_ROOT=""; OUT=""; TAG=""; REPO=""; BUILD_DIR=""; L_BUILD=""; L_ENGINE=""; QT=""; CACHE="${NATIVEEE_TOOLCHAIN_CACHE:-}"; SKIP_BUILD=0; STUB=0; JOBS="${JOBS:-4}"
+TITLE_ROOT=""; OUT=""; TAG=""; REPO=""; BUILD_DIR=""; L_BUILD=""; L_ENGINE=""; QT=""; CACHE="${NATIVEEE_TOOLCHAIN_CACHE:-}"; SKIP_BUILD=0; STUB=0; JOBS="${JOBS:-4}"; ELF=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --title-root) TITLE_ROOT="$2"; shift 2 ;;
@@ -38,6 +41,7 @@ while [ $# -gt 0 ]; do
         --skip-build) SKIP_BUILD=1; shift ;;
         --stub-launcher) STUB=1; shift ;;
         --jobs) JOBS="$2"; shift 2 ;;
+        --elf) ELF="$2"; shift 2 ;;
         -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "release_local: unknown argument $1" >&2; exit 2 ;;
     esac
@@ -103,10 +107,12 @@ cp "$OUT"/launcher/"$PRODUCT"-launcher-*.dmg "$OUT"/launcher/"$PRODUCT"-launcher
 cp "$OUT"/launcher/*.STUB "$REL/" 2>/dev/null || true
 T4=$(date +%s)
 
-step "5. the asset scan over every release file (the release job's last gate)"
+step "5. the asset scan over every release file (the release job's last gate$( [ -n "$ELF" ] && echo '; + live ELF windows' ))"
+SCAN_ARGS=(); [ -n "$ELF" ] && SCAN_ARGS=(--elf "$ELF")
 for f in "$REL"/*; do
     case "$f" in *.STUB|*/SHA256SUMS|*/release-index.json|*/NOTES.md) continue ;; esac
-    python3 "$ENGINE/tools/ci/asset_scan.py" "$f" | grep -E "asset_scan:" | sed "s|^|$(basename "$f"): |"
+    python3 "$ENGINE/tools/ci/asset_scan.py" "$f" ${SCAN_ARGS[@]+"${SCAN_ARGS[@]}"} | grep -E "asset_scan:|FINDINGS|^- " | sed "s|^|$(basename "$f"): |"
+    python3 "$ENGINE/tools/ci/asset_scan.py" "$f" ${SCAN_ARGS[@]+"${SCAN_ARGS[@]}"} > /dev/null || exit 1
 done
 T5=$(date +%s)
 
