@@ -1,0 +1,88 @@
+// app/launcher/launcher_app.h -- the launcher's model: the manifest, the app-data folder, the discs, the game folder,
+// the prepare runner and the running game, wired together; the window shows it and the test driver drives it through
+// the same methods the buttons call.
+#pragma once
+#include <QObject>
+#include <QStringList>
+#include "disc_identity.h"
+namespace ps2r::launcher {
+class AppData;
+class DiscScanner;
+class GameFolder;
+class GameLibrary;
+class GameProcess;
+class IniSettings;
+class PrepareRunner;
+class TitleManifest;
+
+class LauncherApp : public QObject {
+    Q_OBJECT
+public:
+    explicit LauncherApp(QObject* parent = nullptr);
+    ~LauncherApp() override;
+
+    // Finds the manifest: an explicit path, else PS2R_LAUNCHER_MANIFEST, else titles/*.json beside the application
+    // (Contents/Resources/titles on macOS). False with *error when none is found.
+    bool loadManifest(const QString& explicitPath, QString* error);
+    static QStringList manifestSearchPaths();
+
+    const TitleManifest* manifest() const { return manifest_; }
+    AppData* appData() const { return appData_; }
+    GameLibrary* library() const { return library_; }
+    GameFolder* gameFolder() const { return folder_; }
+    PrepareRunner* preparer() const { return preparer_; }
+    GameProcess* game() const { return game_; }
+    DiscScanner* scanner() const { return scanner_; }
+
+    // the game folder and its sub-folders
+    void chooseGameFolder(const QString& pickedOrFolder);
+    void setSubfolder(const QString& id, const QString& path);
+    QString settingsFilePath() const;
+    IniSettings* settings() const { return settings_; }
+    QString settingValue(const QString& key) const;   // the file's value or the manifest's default
+    bool setSettingValue(const QString& key, const QString& value, QString* error = nullptr);
+
+    // discs
+    void scan();
+    // Identifies a dropped / chosen file by its content; a recognised disc (supported or not) joins the library.
+    DiscIdentity addDisc(const QString& path);
+    // The supported disc to prepare / play: the one chosen for the first run, else the first supported one found.
+    QString currentDisc() const;
+    void setCurrentDisc(const QString& isoPath);
+
+    // what a card offers next
+    enum Action { Prepare, Play, Playing, Missing, Unsupported, NoFolder };
+    Action nextAction(const QString& isoPath) const;
+    QString hostTarget() const;
+    // Starts preparing `isoPath` for `targetId` (empty = this machine) into the game folder; false with *error when it
+    // cannot start. Progress / failed / finished come from preparer().
+    bool prepare(const QString& isoPath, const QString& targetId, QString* error);
+    bool preparing() const;
+    bool play(const QString& isoPath, QString* error, const QString& statePath = QString());
+    void stopGame();
+    // The first run is complete when a game folder is chosen and the game is prepared in it for this machine.
+    bool setupComplete() const;
+
+    QString version() const;
+    QString engineCommit() const;
+
+signals:
+    void foldersChanged();
+    void settingsChanged(const QString& key);
+    void stateChanged();   // anything a card shows
+    void prepared(const QString& binaryPath);
+
+private:
+    void openSettings();
+    TitleManifest* manifest_ = nullptr;
+    AppData* appData_ = nullptr;
+    GameLibrary* library_ = nullptr;
+    GameFolder* folder_ = nullptr;
+    PrepareRunner* preparer_ = nullptr;
+    GameProcess* game_ = nullptr;
+    DiscScanner* scanner_ = nullptr;
+    IniSettings* settings_ = nullptr;
+    QString playingIso_, preparingIso_, preparingTarget_, preparingSha_;
+};
+
+}  // namespace ps2r::launcher
