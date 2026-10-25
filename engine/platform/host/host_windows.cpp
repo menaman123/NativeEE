@@ -485,6 +485,20 @@ void PreciseSleepUntilNs(uint64_t deadline_ns) {
     }
 }
 
+namespace {
+// GetProcAddress's FARPROC as the export's real type. A function-pointer cast between the two is
+// -Wcast-function-type-mismatch on newer clang-cl (even through void(*)() with -strict); the bytes
+// are the same pointer, so they are copied instead of cast.
+template <class Fn>
+Fn ProcAddress(HMODULE module, const char* name) {
+    const FARPROC p = module ? GetProcAddress(module, name) : nullptr;
+    Fn fn = nullptr;
+    static_assert(sizeof fn == sizeof p, "a function pointer is a function pointer");
+    std::memcpy(&fn, &p, sizeof fn);
+    return fn;
+}
+}  // namespace
+
 void RequestFineTimerResolution() {
     static std::once_flag once;
     std::call_once(once, [] {
@@ -493,14 +507,14 @@ void RequestFineTimerResolution() {
         using BeginPeriodFn = UINT(WINAPI*)(UINT);   // MMRESULT (= UINT; <mmsystem.h> is behind WIN32_LEAN_AND_MEAN)
         HMODULE winmm = LoadLibraryW(L"winmm.dll");
         if (winmm) {
-            auto begin = reinterpret_cast<BeginPeriodFn>(GetProcAddress(winmm, "timeBeginPeriod"));
+            auto begin = ProcAddress<BeginPeriodFn>(winmm, "timeBeginPeriod");
             if (begin) begin(1);
         }
         // Windows 11 lowers the resolution of an unfocused / minimized process back to the
         // default unless told not to (PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION, SDK
         // 10.0.22000+; harmless where unknown: the call fails and the default applies).
         using SetProcInfoFn = BOOL(WINAPI*)(HANDLE, int, LPVOID, DWORD);
-        auto set_info = reinterpret_cast<SetProcInfoFn>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "SetProcessInformation"));
+        auto set_info = ProcAddress<SetProcInfoFn>(GetModuleHandleW(L"kernel32.dll"), "SetProcessInformation");
         if (set_info) {
             struct PowerThrottling { ULONG Version; ULONG ControlMask; ULONG StateMask; } pt{};
             pt.Version = 1;                   // PROCESS_POWER_THROTTLING_CURRENT_VERSION

@@ -9,6 +9,11 @@
 #include <fstream>
 #include <string>
 
+#if defined(_WIN32)
+#define popen _popen   // the UCRT's names; `shasum` is not on a stock Windows PATH, so the true case skips there
+#define pclose _pclose
+#endif
+
 #include "tools/prepare/prepare.h"
 #include "tools/prepare/ui_strings.h"
 

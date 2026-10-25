@@ -423,9 +423,9 @@ struct PrepareRunner::Impl {
     }
     // -isysroot for a portable compiler that does not know the SDK; -fuse-ld=lld when the bundle has lld
     std::vector<std::string> Toolchainise(std::vector<std::string> argv, bool link) const {
+#if defined(__APPLE__) || defined(__linux__)
         bool has_sysroot = false;
         for (const std::string& a : argv) if (a == "-isysroot" || StartsWith(a, "--sysroot")) has_sysroot = true;
-#if defined(__APPLE__) || defined(__linux__)
         if (!has_sysroot && !vars.at("sysroot").empty() && argv.size() > 1) {
             argv.insert(argv.begin() + 1, vars.at("sysroot"));
             argv.insert(argv.begin() + 1, "-isysroot");

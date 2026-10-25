@@ -4,6 +4,7 @@
 // and files), the process-wide Active store the writers use, and the reader /
 // writer round trip through ConfigLoader. argv[1] = a scratch directory.
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -45,8 +46,9 @@ static bool Exists(const std::string& path) {
 int main(int argc, char** argv) {
     const std::string dir = argc > 1 ? argv[1] : ".";
     const std::string root = dir + "/store_root", game = dir + "/store_game";
-    ::mkdir(root.c_str(), 0755);
-    ::mkdir(game.c_str(), 0755);
+    std::error_code ec;   // POSIX mkdir does not exist on Windows
+    std::filesystem::create_directories(root, ec);
+    std::filesystem::create_directories(game, ec);
     for (const char* n : {"nativeee.ini", "ps2r.ini", "display.ini", "ps2r.ini.migrated", "display.ini.migrated"}) {
         std::remove((root + "/" + n).c_str());
         std::remove((game + "/" + n).c_str());
