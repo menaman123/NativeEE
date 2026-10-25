@@ -183,7 +183,7 @@ bool Recompiler::fetch_program_word(uint32_t vram, uint32_t& word_out) const {
 
 bool Recompiler::recompile_to_files(const std::string& output_header, const std::string& output_cpp,
                                     int shard_count) {
-    std::ofstream header_file(output_header);
+    std::ofstream header_file(output_header, std::ios::binary);   // LF on every host: the text is sha256-pinned
     if (!header_file.is_open()) {
         std::cerr << "Error: Could not open header file for writing: " << output_header << std::endl;
         return false;
@@ -200,7 +200,7 @@ bool Recompiler::recompile_to_files(const std::string& output_header, const std:
                                        shard_count);
     }
 
-    std::ofstream cpp_file(output_cpp);
+    std::ofstream cpp_file(output_cpp, std::ios::binary);   // LF on every host: the text is sha256-pinned
     if (!cpp_file.is_open()) {
         std::cerr << "Error: Could not open C++ file for writing: " << output_cpp << std::endl;
         return false;
@@ -8994,7 +8994,7 @@ bool Recompiler::write_sharded_cpp_files(const std::string& output_cpp,
         char suffix[32];
         std::snprintf(suffix, sizeof(suffix), "_shard_%03d.cpp", s);
         const std::filesystem::path shard_path = dir / (stem + suffix);
-        std::ofstream shard(shard_path);
+        std::ofstream shard(shard_path, std::ios::binary);   // LF on every host: the text is sha256-pinned
         if (!shard.is_open()) {
             std::cerr << "Error: Could not open shard file for writing: "
                       << shard_path.string() << std::endl;
@@ -9029,7 +9029,7 @@ bool Recompiler::write_sharded_cpp_files(const std::string& output_cpp,
     }
 
     // Common TU: infra + resolver + init, no bodies.
-    std::ofstream cpp_file(output_cpp);
+    std::ofstream cpp_file(output_cpp, std::ios::binary);   // LF on every host: the text is sha256-pinned
     if (!cpp_file.is_open()) {
         std::cerr << "Error: Could not open C++ file for writing: " << output_cpp << std::endl;
         return false;
@@ -25812,7 +25812,7 @@ case rabbitizer::InstrId::UniqueId::r5900_pextlb:
 // ============================================================================
 bool Recompiler::emit_semantics_snippets(const std::vector<SnippetCase>& cases,
                                          const std::string& output_cpp) {
-    std::ofstream file(output_cpp);
+    std::ofstream file(output_cpp, std::ios::binary);   // LF on every host: the text is sha256-pinned
     if (!file.is_open()) {
         std::cerr << "[-] emit_semantics_snippets: cannot open " << output_cpp
                   << std::endl;

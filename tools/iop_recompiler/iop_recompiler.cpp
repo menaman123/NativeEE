@@ -260,7 +260,7 @@ bool IopRecompiler::recompile_to_files(const std::string& output_header,
         return false;
     }
 
-    std::ofstream header_file(output_header);
+    std::ofstream header_file(output_header, std::ios::binary);   // LF on every host: the text is sha256-pinned
     if (!header_file.is_open()) {
         std::cerr << "[IOP-RECOMP] Could not open header for writing: "
                   << output_header << std::endl;
@@ -270,7 +270,7 @@ bool IopRecompiler::recompile_to_files(const std::string& output_header,
     header_file.close();
     std::cout << "[IOP-RECOMP] Generated header: " << output_header << std::endl;
 
-    std::ofstream cpp_file(output_cpp);
+    std::ofstream cpp_file(output_cpp, std::ios::binary);   // LF on every host: the text is sha256-pinned
     if (!cpp_file.is_open()) {
         std::cerr << "[IOP-RECOMP] Could not open cpp for writing: "
                   << output_cpp << std::endl;
