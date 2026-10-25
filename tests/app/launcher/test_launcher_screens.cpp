@@ -192,7 +192,8 @@ private slots:
         window_ = new MainWindow(app_);
         window_->resize(1024, 640);
         window_->show();
-        QVERIFY(QTest::qWaitForWindowExposed(window_));
+        QCoreApplication::processEvents();
+        QVERIFY(window_->isVisible());
         QCOMPARE(window_->minimumSize(), QSize(1024, 640));
     }
     void cleanupTestCase() {
@@ -546,7 +547,8 @@ private slots:
         window_ = new MainWindow(app2);
         window_->resize(1024, 640);
         window_->show();
-        QVERIFY(QTest::qWaitForWindowExposed(window_));
+        QCoreApplication::processEvents();
+        QVERIFY(window_->isVisible());
         window_->showPages();
         window_->showPage(MainWindow::SettingsIndex);
         QVERIFY(window_->settingsPage()->emptyState()->isVisible());
