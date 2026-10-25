@@ -297,13 +297,13 @@ private slots:
         cap->segmented()->setCurrentIndex(cap->segmented()->values().indexOf("30"), true);
         QVERIFY(setup->settingsRow("video.vsync")->toggle()->isEnabled());
         const QStringList graphics = setup->settingsRow("video.backend")->segmented()->values();
-        QCOMPARE(graphics.contains("metal"), QString::fromLatin1(
+        const bool metalExpected =
 #ifdef Q_OS_MACOS
-                                                 "yes"
+            true;
 #else
-                                                 "no"
+            false;
 #endif
-                                                 ) == "yes");
+        QCOMPARE(graphics.contains("metal"), metalExpected);
         shot("05_setup_disc_chosen");
         // the folders chosen elsewhere (no game folder yet): the save states outside show the absolute path and the
         // note says so; the memory cards inside the suggested folder stay relative and follow it
@@ -473,13 +473,13 @@ private slots:
         QCOMPARE(s->folderRow("memcards")->shownText(), QStringLiteral("memcards"));
         // the platform-filtered choice: Metal only on macOS
         const QStringList graphics = s->row("video.backend")->segmented()->values();
-        QCOMPARE(graphics.contains("metal"), QString::fromLatin1(
+        const bool metalExpected =
 #ifdef Q_OS_MACOS
-                                                 "yes"
+            true;
 #else
-                                                 "no"
+            false;
 #endif
-                                                 ) == "yes");
+        QCOMPARE(graphics.contains("metal"), metalExpected);
         QCOMPARE(s->row("video.frame_cap")->value(), QStringLiteral("30"));   // the setup window's choice, from the file
         s->row("video.frame_cap")->segmented()->setCurrentIndex(s->row("video.frame_cap")->segmented()->values().indexOf("60"), true);
         IniSettings ini(app_->settingsFilePath());
