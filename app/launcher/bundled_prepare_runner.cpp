@@ -95,8 +95,8 @@ void BundledPrepareRunner::setReleaseTag(const QString& tag) { impl_->releaseTag
 void BundledPrepareRunner::setJobs(int jobs) { impl_->jobs = jobs; }
 
 QString BundledPrepareRunner::indexUrl() const {
-    if (!impl_->indexOverride.isEmpty()) return impl_->indexOverride;
-    return impl_->manifest->releaseIndexUrl();
+    // only a named index (--index): the launcher never goes online by itself; a release ships the game beside it
+    return impl_->indexOverride;
 }
 
 bool BundledPrepareRunner::running() const { return impl_->running.load(); }

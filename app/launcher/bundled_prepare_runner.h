@@ -4,8 +4,9 @@
 // Listener call is queued back to the Qt thread as the PrepareRunner signals. The pipeline's phase and failure texts are
 // the only words shown (tools/prepare/ui_strings.h); its own log is what Details opens.
 //
-// The release index comes from the manifest (`release.index_url`, default the GitHub Releases API of `release.repo`);
-// setIndexUrl() overrides it (the launcher's `--index`, which the cold-start judge uses with its offline fixture).
+// The release index is only the one setIndexUrl() names (the launcher's `--index`, which the cold-start judge uses with
+// its offline fixture): the launcher never downloads by itself. A player's release carries the game ready-made
+// (shipped_game_runner.h), which createDefault() prefers.
 #pragma once
 #include <memory>
 #include "prepare_runner.h"

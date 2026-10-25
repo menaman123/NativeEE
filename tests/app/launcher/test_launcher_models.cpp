@@ -20,6 +20,7 @@
 #endif
 #include "process_runner.h"
 #include "save_state_list.h"
+#include "shipped_game_runner.h"
 #include "title_manifest.h"
 using namespace ps2r::launcher;
 
@@ -423,7 +424,7 @@ private slots:
         QVERIFY(r.available(host, &why));
         QVERIFY(!r.available(host == "windows-x64" ? "linux-x86_64" : "windows-x64", &why));
         QVERIFY(why.contains("only be made on the computer"));
-        QCOMPARE(r.indexUrl(), QStringLiteral("https://api.github.com/repos/example/examplegame/releases"));
+        QVERIFY(r.indexUrl().isEmpty());   // never the manifest's repository by itself: only a named --index
         r.setIndexUrl(home_.path() + "/no-such-index/releases.json");   // lint: allow
         QCOMPARE(r.estimateText(host), QStringLiteral("about 1 to 2 minutes"));
         PrepareRequest req;
@@ -451,6 +452,48 @@ private slots:
         QVERIFY(QFileInfo::exists(req.logPath));
     }
 #endif
+
+    void shippedRunner() {
+        // the game shipped ready-made: copied into the game folder (sub-folders too), the player's options file left
+        // alone, finished() names the executable; nothing beside the test executable means no shipped game
+        QVERIFY(ShippedGameRunner::findShipped("examplegame").isEmpty());
+        const QString shipped = home_.path() + "/shipped_game";
+        QDir().mkpath(shipped + "/title/hle");
+        auto put = [](const QString& path, const QByteArray& bytes) {
+            QFile f(path);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write(bytes);
+        };
+        put(shipped + "/examplegame", "the game");
+        put(shipped + "/title/hle/table.tsv", "a\tb\n");
+        put(shipped + "/nativeee.ini", "paths.iso = nowhere\n");
+        const QString host = HostPlatform::targetId(manifest_);
+        ShippedGameRunner r(shipped, host, "nativeee.ini");
+        QString why;
+        QVERIFY(r.available(host, &why));
+        QVERIFY(!r.available(host == "windows-x64" ? "linux-x86_64" : "windows-x64", &why));
+        PrepareRequest req;
+        req.gameFolder = home_.path() + "/shipped_into";
+        req.binaryName = "examplegame";
+        req.targetId = host;
+        req.logPath = home_.path() + "/shipped.log";
+        QDir().mkpath(req.gameFolder);
+        put(req.gameFolder + "/nativeee.ini", "paths.mc_dir = mine\n");
+        QSignalSpy progress(&r, &PrepareRunner::progress);
+        QSignalSpy finished(&r, &PrepareRunner::finished);
+        QSignalSpy failed(&r, &PrepareRunner::failed);
+        QString err;
+        QVERIFY2(r.start(req, &err), qPrintable(err));
+        QTRY_VERIFY_WITH_TIMEOUT(finished.count() == 1, 30000);
+        QCOMPARE(failed.count(), 0);
+        QVERIFY(!r.running());
+        QCOMPARE(finished.first().at(0).toString(), req.gameFolder + "/examplegame");
+        QVERIFY(progress.count() >= 2);
+        QVERIFY(QFileInfo::exists(req.gameFolder + "/title/hle/table.tsv"));
+        QFile ini(req.gameFolder + "/nativeee.ini");
+        QVERIFY(ini.open(QIODevice::ReadOnly));
+        QCOMPARE(ini.readAll(), QByteArray("paths.mc_dir = mine\n"));
+    }
 
     void appDataPaths() {
         AppData data("ExampleGame");

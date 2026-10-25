@@ -29,7 +29,7 @@ endif()
 add_library(ps2r_launcher_lib STATIC
     launcher_theme.cpp launcher_style.cpp title_manifest.cpp app_data.cpp iso_fingerprint.cpp disc_identity.cpp disc_identifier.cpp
     game_library.cpp ini_settings.cpp process_runner.cpp game_process.cpp game_folder.cpp
-    host_platform.cpp prepare_runner.cpp fake_prepare_runner.cpp unavailable_prepare_runner.cpp save_state_list.cpp
+    host_platform.cpp prepare_runner.cpp fake_prepare_runner.cpp unavailable_prepare_runner.cpp shipped_game_runner.cpp save_state_list.cpp
     launcher_app.cpp main_window.cpp sidebar.cpp page_header.cpp flat_button.cpp segmented_control.cpp
     switch_control.cpp folder_row.cpp generated_artwork.cpp game_card.cpp disc_list.cpp games_page.cpp empty_state.cpp
     settings_row.cpp settings_page.cpp save_state_card.cpp save_states_page.cpp about_page.cpp

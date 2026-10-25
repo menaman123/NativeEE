@@ -11,8 +11,10 @@
 #include "engine/platform/windows/gl_loader.h"   // ps2r::glwin::Load / Count: the GENERATED entry-point table
 #endif
 
+#include <algorithm>
 #include <random>
 #include <string>
+#include <vector>
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -178,51 +180,131 @@ int64_t FileSeek64(std::FILE* f, int64_t offset, int whence) { return _fseeki64(
 int64_t FileTell64(std::FILE* f) { return _ftelli64(f); }
 
 int ProcessId() { return static_cast<int>(GetCurrentProcessId()); }
+
+namespace {
+// The narrow strings here are the ANSI code page's (the *A calls above take the same ones).
+std::wstring WidenAcp(const char* s) {
+    const int n = MultiByteToWideChar(CP_ACP, 0, s, -1, nullptr, 0);
+    std::wstring out(n > 0 ? n - 1 : 0, L'\0');
+    if (n > 1) MultiByteToWideChar(CP_ACP, 0, s, -1, out.data(), n);
+    return out;
+}
+
+// One argument the way the child's CRT / CommandLineToArgvW splits it back out (the MSVC rules:
+// quotes around anything with a space, backslashes doubled only before a quote). The CRT's
+// _spawnv joins argv with bare spaces, so a path like "Sly 2 Band of Thieves" arrived as four.
+void AppendQuoted(std::wstring* cmd, const std::wstring& arg) {
+    if (!arg.empty() && arg.find_first_of(L" \t\n\v\"") == std::wstring::npos) { *cmd += arg; return; }
+    cmd->push_back(L'"');
+    for (size_t i = 0;; ++i) {
+        size_t slashes = 0;
+        while (i < arg.size() && arg[i] == L'\\') { ++slashes; ++i; }
+        if (i == arg.size()) { cmd->append(slashes * 2, L'\\'); break; }
+        if (arg[i] == L'"') { cmd->append(slashes * 2 + 1, L'\\'); cmd->push_back(L'"'); }
+        else { cmd->append(slashes, L'\\'); cmd->push_back(arg[i]); }
+    }
+    cmd->push_back(L'"');
+}
+
+HANDLE InheritableCopy(HANDLE h) {
+    HANDLE dup = nullptr;
+    if (h == nullptr || h == INVALID_HANDLE_VALUE) return nullptr;
+    if (!DuplicateHandle(GetCurrentProcess(), h, GetCurrentProcess(), &dup, 0, TRUE, DUPLICATE_SAME_ACCESS)) return nullptr;
+    return dup;
+}
+
+// CreateProcessW over argv. stdin is NUL; stdout + stderr are `out` when given, else copies of this
+// process's own. The child inherits exactly those handles (PROC_THREAD_ATTRIBUTE_HANDLE_LIST): the
+// parallel compile spawns from several threads, and a sibling's pipe leaking into a long-lived child
+// would hold that sibling's reader open. No console window flashes up under the windowed launcher.
+// Returns the process handle, nullptr when the child could not be started.
+HANDLE Spawn(const char* image, char* const argv[], bool search_path, HANDLE out) {
+    std::wstring cmd;
+    for (char* const* a = argv; *a; ++a) {
+        if (!cmd.empty()) cmd.push_back(L' ');
+        AppendQuoted(&cmd, WidenAcp(*a));
+    }
+    const std::wstring app = search_path ? std::wstring() : WidenAcp(image);   // empty: CreateProcessW searches the PATH
+    SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, TRUE};
+    HANDLE in = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr);
+    if (in == INVALID_HANDLE_VALUE) in = nullptr;
+    HANDLE so = out ? out : InheritableCopy(GetStdHandle(STD_OUTPUT_HANDLE));
+    HANDLE se = out ? out : InheritableCopy(GetStdHandle(STD_ERROR_HANDLE));
+    std::vector<HANDLE> inherit;
+    for (HANDLE h : {in, so, se})
+        if (h && std::find(inherit.begin(), inherit.end(), h) == inherit.end()) inherit.push_back(h);
+    SIZE_T size = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &size);
+    std::vector<char> attr_buf(size);
+    auto* attrs = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attr_buf.data());
+    const bool have_attrs = InitializeProcThreadAttributeList(attrs, 1, 0, &size) &&
+                            (inherit.empty() || UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherit.data(),
+                                                                          inherit.size() * sizeof(HANDLE), nullptr, nullptr));
+    STARTUPINFOEXW si{};
+    si.StartupInfo.cb = sizeof si;
+    si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    si.StartupInfo.hStdInput = in;
+    si.StartupInfo.hStdOutput = so;
+    si.StartupInfo.hStdError = se;
+    si.lpAttributeList = have_attrs ? attrs : nullptr;
+    PROCESS_INFORMATION pi{};
+    const BOOL ok = have_attrs && CreateProcessW(app.empty() ? nullptr : app.c_str(), cmd.data(), nullptr, nullptr, !inherit.empty(),
+                                                 EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW, nullptr, nullptr, &si.StartupInfo, &pi);
+    if (have_attrs) DeleteProcThreadAttributeList(attrs);
+    if (in) CloseHandle(in);
+    if (!out) {
+        if (so) CloseHandle(so);
+        if (se) CloseHandle(se);
+    }
+    if (!ok) return nullptr;
+    CloseHandle(pi.hThread);
+    return pi.hProcess;
+}
+
+// The header's contract: 0..255, or -2 when the child died of an exception (an NTSTATUS, 0xC...).
+int WaitExitStatus(HANDLE proc) {
+    WaitForSingleObject(proc, INFINITE);
+    DWORD code = 0;
+    GetExitCodeProcess(proc, &code);
+    CloseHandle(proc);
+    if (code >= 0xC0000000u) return -2;
+    return static_cast<int>(code & 0xFF);
+}
+}  // namespace
+
 int ExecReplaceProcess(const char* image, char* const argv[]) {
     // No execv on Win32: run the new image to completion and exit with its status. The
     // caller's own pid survives only as the parent; the relaunch gate must not pin it.
     const char* exe = (image && *image) ? image : argv[0];
-    const intptr_t status = _spawnv(_P_WAIT, exe, const_cast<const char* const*>(argv));
-    if (status == -1) return -1;
-    std::exit(static_cast<int>(status));
+    HANDLE proc = Spawn(exe, argv, false, nullptr);
+    if (!proc) return -1;
+    const int status = WaitExitStatus(proc);
+    std::exit(status < 0 ? 1 : status);
 }
 
 int ProcessRun(const char* image, char* const argv[], bool search_path, std::string* output) {
-    // The CRT's spawn family: _P_WAIT returns the child's exit status; the PATH search is
-    // _spawnvp's. Output capture: the child's stdout/stderr are redirected into a temporary
-    // file through the inheritable handles of _dup2 (the CRT has no pipe-to-string spawn).
+    // CreateProcessW with each argument quoted; the output is read from a pipe that only this
+    // child holds (not the CRT's process-wide stdout, which every parallel spawn would share).
     const char* exe = (image && *image) ? image : argv[0];
-    int saved_out = -1, saved_err = -1, tmp_fd = -1;
-    char tmp_path[MAX_PATH] = {};
+    HANDLE read_end = nullptr, write_end = nullptr;
     if (output != nullptr) {
-        char tmp_dir[MAX_PATH] = {};
-        if (GetTempPathA(MAX_PATH, tmp_dir) == 0 || GetTempFileNameA(tmp_dir, "ps2", 0, tmp_path) == 0) return -1;
-        tmp_fd = _open(tmp_path, _O_RDWR | _O_BINARY, _S_IREAD | _S_IWRITE);
-        if (tmp_fd < 0) return -1;
-        saved_out = _dup(_fileno(stdout));
-        saved_err = _dup(_fileno(stderr));
-        _dup2(tmp_fd, _fileno(stdout));
-        _dup2(tmp_fd, _fileno(stderr));
+        SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, TRUE};
+        if (!CreatePipe(&read_end, &write_end, &sa, 0)) return -1;
+        SetHandleInformation(read_end, HANDLE_FLAG_INHERIT, 0);
     }
-    const intptr_t status = search_path ? _spawnvp(_P_WAIT, exe, const_cast<const char* const*>(argv))
-                                        : _spawnv(_P_WAIT, exe, const_cast<const char* const*>(argv));
+    HANDLE proc = Spawn(exe, argv, search_path, write_end);
+    if (write_end) CloseHandle(write_end);   // the child holds its own copy: the read ends when it exits
+    if (!proc) {
+        if (read_end) CloseHandle(read_end);
+        return -1;
+    }
     if (output != nullptr) {
-        _dup2(saved_out, _fileno(stdout));
-        _dup2(saved_err, _fileno(stderr));
-        _close(saved_out);
-        _close(saved_err);
-        _lseek(tmp_fd, 0, SEEK_SET);
         char buf[4096];
-        for (;;) {
-            const int n = _read(tmp_fd, buf, sizeof buf);
-            if (n <= 0) break;
-            output->append(buf, static_cast<size_t>(n));
-        }
-        _close(tmp_fd);
-        DeleteFileA(tmp_path);
+        DWORD n = 0;
+        while (ReadFile(read_end, buf, sizeof buf, &n, nullptr) && n > 0) output->append(buf, n);
+        CloseHandle(read_end);
     }
-    if (status == -1) return -1;
-    return static_cast<int>(status) & 0xFF;
+    return WaitExitStatus(proc);
 }
 
 bool DynamicLibraryOpen(DynamicLibrary* out, const char* path, std::string* err) {

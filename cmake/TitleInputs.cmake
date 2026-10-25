@@ -30,7 +30,8 @@
 # gated like every other input. They need no disc image beyond the ELF itself. A row whose
 # prefix is another disc file (`<sha256>  IOPRP300.IMG!<module name>`: a stock module inside
 # the IOP reboot image) extracts that container from the disc first (ungated: the module row
-# is the gate), then the module out of it.
+# is the gate), then the module out of it; with a loose ELF, a file of the container's name
+# beside it (IOPRP300.IMG next to SCUS_973.16) is used instead, so no disc image is needed.
 #
 # Variables for the rest of the tree (normal variables, root scope):
 #   PS2R_TITLE_GEN_ROOT        ${CMAKE_BINARY_DIR}/generated -- the generated tree mirrors the source layout
@@ -195,6 +196,10 @@ if(_ps2r_embedded_rows)
     else()
         set(PS2R_TITLE_EMBEDDED_AVAILABLE ON)
         set(_ps2r_containers "")
+        set(_ps2r_loose_dir "")
+        if(NOT _PS2R_NATIVEEE_TITLE_ELF STREQUAL "")
+            get_filename_component(_ps2r_loose_dir "${_PS2R_NATIVEEE_TITLE_ELF}" DIRECTORY)
+        endif()
         foreach(_er IN LISTS _ps2r_embedded_rows)
             string(REPLACE "|" ";" _parts "${_er}")
             list(GET _parts 0 _container)
@@ -204,6 +209,10 @@ if(_ps2r_embedded_rows)
             if(_container STREQUAL PS2R_TITLE_ELF_DISC_PATH)
                 set(_container_file "${PS2R_TITLE_ELF}")
                 set(_container_ready "${PS2R_TITLE_ELF_READY}")
+            elseif(NOT _PS2R_NATIVEEE_TITLE_ELF STREQUAL "" AND EXISTS "${_ps2r_loose_dir}/${_container}")
+                # a loose ELF's sibling: the container given as a file beside it (ungated: the module row is the gate)
+                set(_container_file "${_ps2r_loose_dir}/${_container}")
+                set(_container_ready "${_container_file}")
             elseif(NOT _PS2R_NATIVEEE_DISC STREQUAL "")
                 set(_container_file "${PS2R_TITLE_INPUTS_DIR}/${_container}")
                 set(_container_ready "${_container_file}")
