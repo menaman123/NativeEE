@@ -1,0 +1,8 @@
+# Bytes that must be the same on every OS. A Windows checkout (core.autocrlf=true, the default there and on the
+# GitHub Windows runners) otherwise turns these LF files into CRLF.
+# - shell scripts: bash reads a CR as part of the command
+*.sh text eol=lf
+# - the licence texts: sha256-pinned in tools/dist/licenses/PROVENANCE.md, and imgui's must stay byte-equal to the
+#   committed copy
+tools/dist/licenses/** -text
+app/gui/third_party/imgui/LICENSE.txt -text

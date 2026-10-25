@@ -43,7 +43,7 @@ TRANSPLANT_EXEMPT = {
     "tools/iop_recompiler/iop_recompiler.cpp": 1,
     "tools/recompiler_v2/host_app/memory.h": 2,
     "tools/recompiler_v2/recompiler_tool/corpus/recorder_gen.cpp": 2,
-    "tools/recompiler_v2/recompiler_tool/recompiler.cpp": 5,
+    "tools/recompiler_v2/recompiler_tool/recompiler.cpp": 4,
 }
 # Public-tree private-fixture contract (2026-10-14, cmake/Ps2rPrivateFixtures.cmake): the game-derived
 # test fixtures are outside the repository and TEST code finds them through NATIVEEE_PRIVATE_FIXTURES.
@@ -79,7 +79,7 @@ def main():
                 with open(path, errors="replace") as f:
                     code = strip_comments(f.read())
                 for m in GETENV_RE.finditer(code):
-                    sites.append((os.path.relpath(path, root), code.count("\n", 0, m.start()) + 1))
+                    sites.append((os.path.relpath(path, root).replace(os.sep, "/"), code.count("\n", 0, m.start()) + 1))
     # The generated TUs, where the build put them (the tree-relative key is kept for the report).
     generated_present = set()
     for rel_dir, env in GENERATED_DIRS.items():

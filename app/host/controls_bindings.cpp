@@ -3,6 +3,7 @@
 #include <SDL.h>   // SDL_CONTROLLER_* constants only
 
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 
@@ -89,7 +90,9 @@ bool ControlsBindings::Save(std::string* err) {
             return false;
         }
     }
-    if (std::rename(tmp.c_str(), Path().c_str()) != 0) {
+    std::error_code ec;   // std::filesystem::rename replaces an existing file on Windows too; std::rename does not
+    std::filesystem::rename(tmp, Path(), ec);
+    if (ec) {
         last_error_ = "could not replace " + Path();
         if (err) *err = last_error_;
         std::remove(tmp.c_str());

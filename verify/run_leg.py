@@ -246,7 +246,7 @@ def selftest():
     ok &= args.count("--set") == 2
     # --dump-frames is appended last, absolute, and absent when not requested
     dumped = new_leg_args("bin", "coldboot", 7, "/x/out", "/repo", sets=["a.b=1"], dump_frames="/x/frames")
-    ok &= dumped[-2:] == ["--dump-frames", "/x/frames"] and dumped[-4:-2] == ["--set", "a.b=1"]
+    ok &= dumped[-2:] == ["--dump-frames", os.path.abspath("/x/frames")] and dumped[-4:-2] == ["--set", "a.b=1"]   # C:\x\frames on Windows
     ok &= "--dump-frames" not in args
     plain = new_leg_args("bin", "/s.ps2st", 7, "/x/out", "/repo")
     ok &= "--set" not in plain and plain[plain.index("--load-state") + 1] == "/s.ps2st"

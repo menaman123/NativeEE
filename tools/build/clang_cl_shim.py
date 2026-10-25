@@ -148,6 +148,42 @@ def front_end(compiler):
     return "gnu"  # clang / gcc: the shim is a no-op
 
 
+def _split_windows(text):
+    """A response file the way the MSVC tools read it (CommandLineToArgvW's rules): quotes group and are dropped,
+    backslashes are literal except before a quote (2n -> n and the quote toggles, 2n+1 -> n and a literal quote).
+    shlex(posix=False) kept the quotes and split -DX="a b" in two."""
+    args, cur, quoted, have, i = [], [], False, False, 0
+    while i < len(text):
+        c = text[i]
+        if c == "\\":
+            j = i
+            while j < len(text) and text[j] == "\\":
+                j += 1
+            n = j - i
+            if j < len(text) and text[j] == '"':
+                cur.append("\\" * (n // 2))
+                if n % 2:
+                    cur.append('"')
+                    j += 1
+            else:
+                cur.append("\\" * n)
+            have, i = True, j
+            continue
+        if c == '"':
+            quoted, have = not quoted, True
+        elif c in " \t\r\n" and not quoted:
+            if have:
+                args.append("".join(cur))
+                cur, have = [], False
+        else:
+            cur.append(c)
+            have = True
+        i += 1
+    if have:
+        args.append("".join(cur))
+    return args
+
+
 def expand_rsp(args):
     """Expand @file arguments (one level); returns (flat args, [rsp paths])."""
     flat, rsps = [], []
@@ -156,7 +192,7 @@ def expand_rsp(args):
             rsps.append(a[1:])
             with open(a[1:], encoding="utf-8", errors="replace") as f:
                 text = f.read()
-            flat += shlex.split(text, posix=False) if os.name == "nt" else shlex.split(text)
+            flat += _split_windows(text) if os.name == "nt" else shlex.split(text)
         else:
             flat.append(a)
     return flat, rsps

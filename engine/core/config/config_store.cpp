@@ -2,6 +2,7 @@
 #include "engine/core/config/config_store.h"
 
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -45,7 +46,9 @@ bool WriteTextAtomic(const std::string& path, const std::string& text, std::stri
             return false;
         }
     }
-    if (std::rename(tmp.c_str(), path.c_str()) != 0) {
+    std::error_code ec;   // std::filesystem::rename replaces an existing file on Windows too; std::rename does not
+    std::filesystem::rename(tmp, path, ec);
+    if (ec) {
         if (err) *err = "cannot replace " + path;
         std::remove(tmp.c_str());
         return false;

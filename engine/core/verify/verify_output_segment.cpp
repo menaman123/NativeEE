@@ -111,7 +111,7 @@ bool VerifyHost::BeginOutputSegment(uint64_t restored_frame, uint64_t restored_t
             if (!file || std::fflush(file) != 0 || std::ferror(file)) {
                 abandon(); return fail("Cannot finish preceding output lanes.");
             }
-        meta_->Set("output_next", directory.string());
+        meta_->Set("output_next", directory.generic_string());
         meta_->Finalize();
         if (!meta_->Flush()) { abandon(); return fail("Cannot finish preceding output provenance."); }
         bool closed = true;
@@ -126,7 +126,7 @@ bool VerifyHost::BeginOutputSegment(uint64_t restored_frame, uint64_t restored_t
         files.fill(nullptr);
         meta_ = std::move(next_meta);
         audio_ = std::move(next_audio);
-        leg_dir_ = directory.string();
+        leg_dir_ = directory.generic_string();   // the host joins leg files with "/"
         output_segment_ = segment;
         segment_boundary_ = n_boundaries_;
         segment_restore_frame_ = static_cast<uint32_t>(restored_frame);

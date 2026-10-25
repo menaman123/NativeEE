@@ -4,6 +4,7 @@
 // file is absent) with its micro image hash pinned to the OLD catalog row.
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <string>
 
 #include "engine/vu/vu1_case.h"
@@ -76,7 +77,7 @@ static void FillSynthetic(Vu1Case& c) {
 }
 
 static void TestRoundTrip() {
-    const std::string tmp = "/tmp/ps2r_vu1_case_roundtrip.bin";
+    const std::string tmp = (std::filesystem::temp_directory_path() / "ps2r_vu1_case_roundtrip.bin").string();   // no /tmp on Windows
     Vu1Case a;
     FillSynthetic(a);
     CHECK(vu1_case::WriteCase(tmp.c_str(), a));

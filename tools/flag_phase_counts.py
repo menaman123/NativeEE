@@ -114,7 +114,7 @@ def phase_for(site):
 def parse_ledger(path):
     rows = []
     in_table = False
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         for line in f:
             if line.startswith("| var | default | A2 category"):
                 in_table = True
@@ -141,7 +141,7 @@ def main():
     a = ap.parse_args()
     out = render(parse_ledger(os.path.abspath(a.ledger)))
     if a.check:
-        with open(a.check) as f:
+        with open(a.check, encoding="utf-8") as f:
             want = f.read()
         if want != out:
             sys.stderr.write("FlagPhaseCounts: %s is STALE -- regenerate with\n"

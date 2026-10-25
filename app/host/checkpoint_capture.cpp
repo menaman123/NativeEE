@@ -1,6 +1,7 @@
 #include "app/host/checkpoint_capture.h"
 
 #include <cstdio>
+#include <filesystem>
 #include <stdexcept>
 
 #include "app/host/session_clock.h"
@@ -16,7 +17,9 @@ void WriteFile(const std::string& path, const uint8_t* data, size_t size) {
     if (!file) throw std::runtime_error("Cannot create boundary capture: " + path);
     const bool written = std::fwrite(data, 1, size, file) == size;
     const bool closed = std::fclose(file) == 0;
-    if (!written || !closed || std::rename(temporary.c_str(), path.c_str()) != 0) {
+    std::error_code ec;   // std::filesystem::rename replaces an existing file on Windows too; std::rename does not
+    if (written && closed) std::filesystem::rename(temporary, path, ec);
+    if (!written || !closed || ec) {
         std::remove(temporary.c_str());
         throw std::runtime_error("Cannot publish boundary capture: " + path);
     }

@@ -39,6 +39,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -60,6 +61,18 @@ HOST_ONLY_ARGS = ("--disable-x86asm",)
 REQUIRED_FF_FLAGS = ["--disable-gpl", "--disable-nonfree", "--disable-version3", "--disable-everything"]
 NOTICE_LIBS = ["SDL2", "FFmpeg", "LGPL", "ImGui", "OpenGL loader", "licenses/"]
 DEDICATION = "This is free and unencumbered software released into the public domain."
+
+
+def bash():
+    """The bash that runs the recipe: on Windows, Git's (CreateProcess finds System32's bash.exe, the WSL launcher, first)."""
+    if os.name == "nt" and shutil.which("git"):
+        d = os.path.dirname(shutil.which("git"))   # <Git>/cmd, <Git>/bin or <Git>/mingw64/bin
+        for _ in range(3):
+            d = os.path.dirname(d)
+            for rel in (("bin", "bash.exe"), ("usr", "bin", "bash.exe")):
+                if os.path.isfile(os.path.join(d, *rel)):
+                    return os.path.join(d, *rel)
+    return "bash"
 
 
 def sha256(path):
@@ -128,7 +141,7 @@ def lint_ffmpeg_recipe(lint, root, ff_tag):
     if not os.path.isfile(script):
         lint.check(False, "tools/ci/ffmpeg_static.sh missing")
         return
-    out = subprocess.run(["bash", script, "--print-configure"], capture_output=True, text=True)
+    out = subprocess.run([bash(), script, "--print-configure"], capture_output=True, text=True)
     lint.check(out.returncode == 0, "ffmpeg_static.sh --print-configure rc=%d" % out.returncode)
     text = out.stdout
     for flag in REQUIRED_FF_FLAGS:
@@ -235,7 +248,7 @@ def recipe_args(root):
     script = os.path.join(root, "tools", "ci", "ffmpeg_static.sh")
     if not os.path.isfile(script):
         return None
-    out = subprocess.run(["bash", script, "--print-args"], capture_output=True, text=True)
+    out = subprocess.run([bash(), script, "--print-args"], capture_output=True, text=True)
     if out.returncode != 0:
         return None
     return [l for l in out.stdout.splitlines() if l.strip()]
@@ -288,10 +301,10 @@ def selftest():
         texts = {n: ("text of %s\n" % n) for n in REQUIRED_COMMITTED}
         rows = []
         for n, t in texts.items():
-            with open(os.path.join(lic, n), "w") as f:
+            with open(os.path.join(lic, n), "w", newline="\n") as f:
                 f.write(t)
             rows.append("| `%s` | x | y | z | `%s` |" % (n, hashlib.sha256(t.encode()).hexdigest()))
-        with open(os.path.join(lic, "PROVENANCE.md"), "w") as f:
+        with open(os.path.join(lic, "PROVENANCE.md"), "w", newline="\n") as f:
             f.write("| `FFmpeg-LICENSE.md` | FFmpeg `n6.1.2` |\n" + "\n".join(rows) + "\n")
         l = Lint()
         ff_tag = lint_committed(l, root)
@@ -299,7 +312,7 @@ def selftest():
         if not committed_ok or ff_tag != "n6.1.2":
             print("selftest: committed set with matching pins must pass"); fails += 1
         # a tampered text fails
-        with open(os.path.join(lic, "SDL2-LICENSE.txt"), "a") as f:
+        with open(os.path.join(lic, "SDL2-LICENSE.txt"), "a", newline="\n") as f:
             f.write("tamper\n")
         l2 = Lint(); lint_committed(l2, root)
         if not any("SDL2-LICENSE.txt" in x for x in l2.fails):
@@ -308,7 +321,7 @@ def selftest():
         # embeds libavcodec's configuration string -- the lint reads WHAT WAS LINKED from the object
         recipe = ["--disable-everything", "--disable-gpl", "--disable-nonfree", "--disable-version3", "--enable-swscale"]
         os.makedirs(os.path.join(root, "tools", "ci"))
-        with open(os.path.join(root, "tools", "ci", "ffmpeg_static.sh"), "w") as f:
+        with open(os.path.join(root, "tools", "ci", "ffmpeg_static.sh"), "w", newline="\n") as f:
             f.write("#!/usr/bin/env bash\n[ \"$1\" = --print-args ] && printf '%s\\n' " + " ".join(recipe) + "\n")
         linked_ok = "--prefix=/x/third_party/ffmpeg " + " ".join(recipe)
 
@@ -317,20 +330,20 @@ def selftest():
                 f.write(b"\x7fELF" + (b"\x00junk\x00" + conf.encode() + b"\x00") * times + b"\x00tail")
 
         def write_generated(path, conf):
-            with open(path, "w") as f:
+            with open(path, "w", newline="\n") as f:
                 f.write("embedded:\n%s\nrecipe:\n%s\n" % (conf, "\n".join(recipe)))
 
         # a staged dist: static notices + complete set + binary == recipe == text passes
         dist = os.path.join(tmp, "dist", "linux-aarch64")
         os.makedirs(os.path.join(dist, "licenses"))
-        with open(os.path.join(lic, "SDL2-LICENSE.txt"), "w") as f:
+        with open(os.path.join(lic, "SDL2-LICENSE.txt"), "w", newline="\n") as f:
             f.write(texts["SDL2-LICENSE.txt"])
         for n in REQUIRED_COMMITTED:
-            with open(os.path.join(dist, "licenses", n), "w") as f:
+            with open(os.path.join(dist, "licenses", n), "w", newline="\n") as f:
                 f.write(texts[n])
         write_generated(os.path.join(dist, "licenses", GENERATED), linked_ok)
         write_binary(os.path.join(dist, "nativeee"), linked_ok)
-        with open(os.path.join(dist, "THIRD_PARTY_NOTICES.md"), "w") as f:
+        with open(os.path.join(dist, "THIRD_PARTY_NOTICES.md"), "w", newline="\n") as f:
             f.write("SDL2 FFmpeg LGPL ImGui OpenGL loader licenses/ Runtime Library Exception linked STATICALLY with ONLY\n")
         l3 = Lint(); lint_dist(l3, root, dist)
         if l3.fails:
@@ -362,7 +375,7 @@ def selftest():
             print("selftest: two distinct embedded configurations must fail: %s" % l3e.fails); fails += 1
         write_binary(os.path.join(dist, "nativeee"), linked_ok)
         # a GPL flag in the text file fails
-        with open(os.path.join(dist, "licenses", GENERATED), "w") as f:
+        with open(os.path.join(dist, "licenses", GENERATED), "w", newline="\n") as f:
             f.write("./configure --enable-gpl --enable-libx264\n")
         l4 = Lint(); lint_dist(l4, root, dist)
         if not any(GENERATED in x and "no GPL / non-free flag" in x for x in l4.fails):
@@ -377,13 +390,13 @@ def selftest():
         os.makedirs(os.path.join(mdist, "lib"))
         os.makedirs(os.path.join(mdist, "licenses"))
         for n in COMMON:
-            with open(os.path.join(mdist, "licenses", n), "w") as f:
+            with open(os.path.join(mdist, "licenses", n), "w", newline="\n") as f:
                 f.write(texts[n])
-        with open(os.path.join(mdist, "licenses", GENERATED), "w") as f:
+        with open(os.path.join(mdist, "licenses", GENERATED), "w", newline="\n") as f:
             f.write("configure line --disable-gpl\n")
         write_binary(os.path.join(mdist, "lib", "libavcodec.62.dylib"), "--prefix=/opt/homebrew/Cellar/ffmpeg/8.1.1 --enable-shared")
         write_binary(os.path.join(mdist, "nativeee"), "no string: the dynamic case reads the bundled libavcodec")
-        with open(os.path.join(mdist, "THIRD_PARTY_NOTICES.md"), "w") as f:
+        with open(os.path.join(mdist, "THIRD_PARTY_NOTICES.md"), "w", newline="\n") as f:
             f.write("SDL2 FFmpeg LGPL ImGui OpenGL loader licenses/ linked STATICALLY with ONLY\n")
         l6 = Lint(); lint_dist(l6, root, mdist)
         if not any("described as dynamic" in x or "bundled-libraries section" in x for x in l6.fails):

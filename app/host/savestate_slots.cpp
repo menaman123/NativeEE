@@ -29,7 +29,9 @@ bool WriteAtomically(const std::string& path, const std::string& text, std::stri
     }
     const bool written = std::fwrite(text.data(), 1, text.size(), file) == text.size();
     const bool closed = std::fclose(file) == 0;
-    if (!written || !closed || std::rename(temporary.c_str(), path.c_str()) != 0) {
+    std::error_code ec;   // std::filesystem::rename replaces an existing file on Windows too; std::rename does not
+    if (written && closed) std::filesystem::rename(temporary, path, ec);
+    if (!written || !closed || ec) {
         std::remove(temporary.c_str());
         if (err) *err = "cannot publish " + path;
         return false;
@@ -296,7 +298,7 @@ std::vector<std::string> SavestateSlots::RelaunchArguments(const std::vector<std
         }
         if (a == "--harness-out" && takes_value(i)) {
             out.push_back(a);
-            out.push_back((std::filesystem::path(argv[i + 1]) / "restores" / suffix).string());
+            out.push_back((std::filesystem::path(argv[i + 1]) / "restores" / suffix).generic_string());   // one separator on every host
             ++i;
             continue;
         }
@@ -305,7 +307,7 @@ std::vector<std::string> SavestateSlots::RelaunchArguments(const std::vector<std
             const std::string stem = recording.stem().string();
             const std::string extension = recording.has_extension() ? recording.extension().string() : ".padlog";
             out.push_back(a);
-            out.push_back((recording.parent_path() / (stem + "-r" + suffix + extension)).string());
+            out.push_back((recording.parent_path() / (stem + "-r" + suffix + extension)).generic_string());
             ++i;
             continue;
         }

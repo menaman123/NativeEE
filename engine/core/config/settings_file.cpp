@@ -1,6 +1,7 @@
 #include "engine/core/config/settings_file.h"
 
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 
@@ -154,7 +155,9 @@ bool SettingsFile::Set(const std::string& path, const std::string& key, const st
             return false;
         }
     }
-    if (std::rename(tmp.c_str(), path.c_str()) != 0) {
+    std::error_code ec;   // std::filesystem::rename replaces an existing file on Windows too; std::rename does not
+    std::filesystem::rename(tmp, path, ec);
+    if (ec) {
         if (err) *err = "cannot replace " + path;
         std::remove(tmp.c_str());
         return false;

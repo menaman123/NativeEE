@@ -360,13 +360,6 @@ void vif_scan_equivalence() {
             if (s.tte) rig.vif.SetTteFeed(1, false);
             rig.arbiter.drain();
             found += scan.Feed(s.bytes.data(), s.bytes.size(), s.tte);
-            if (std::getenv("EF_DEBUG") && seed == static_cast<uint32_t>(std::atoi(std::getenv("EF_DEBUG")))) {
-                const VifUnitState& u = rig.vif.unit(1);
-                std::fprintf(stderr, "span %zu bytes tte=%d reset=%d: vif state=%d pend=%u widx=%d fifo=%zu dbuf=%zu | scan=%u parser=%llu\n",
-                             s.bytes.size(), s.tte ? 1 : 0, s.reset_latch_before ? 1 : 0, static_cast<int>(u.state), u.pending_bytes,
-                             u.word_index, u.fifo.size(), u.direct_buffer.size(), found, (unsigned long long)rig.sink.finishes);
-                for (size_t w = 0; w < s.bytes.size() / 4; ++w) { uint32_t x; std::memcpy(&x, s.bytes.data() + w * 4, 4); std::fprintf(stderr, " %08x", x); if (w % 4 == 3) std::fprintf(stderr, "\n"); }
-            }
         }
         if (found != rig.sink.finishes)
             std::fprintf(stderr, "seed %u: scan %u vs parser %llu FINISH writes\n", seed, found,

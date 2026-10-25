@@ -150,7 +150,7 @@ def main():
                 if not (name.endswith(CXX_EXT) or name.endswith(SCRIPT_EXT) or name == "CMakeLists.txt"):
                     continue
                 path = os.path.join(dp, name)
-                rel = os.path.relpath(path, root)
+                rel = os.path.relpath(path, root).replace(os.sep, "/")   # the allowlists are written with /
                 if any(re.search(p, "/" + rel) for p in EXEMPT_PATH_PATTERNS):
                     continue
                 files += 1

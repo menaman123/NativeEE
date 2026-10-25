@@ -267,7 +267,7 @@ void RunningImageResolves() {
     std::string err;
     const std::string image = SavestateSlots::RunningImage(&err);
     CHECK(!image.empty());
-    CHECK(!image.empty() && image.front() == '/');
+    CHECK(!image.empty() && fs::path(image).is_absolute());   // '/...' on POSIX, 'C:\...' on Windows
     CHECK(fs::exists(image));
     CHECK(fs::path(image).filename().string().find("test_savestate_slots") != std::string::npos);
     if (image.empty()) std::printf("  RunningImage: %s\n", err.c_str());

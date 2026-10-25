@@ -212,7 +212,7 @@ def selftest():
     p, e = effective_probe(leg, 120, ents)
     check(p.endswith("rebased/new_b120.ps2st") and e["window"] == "b120", "the probe reference at a re-based boundary is the rebased image")
     p2, e2 = effective_probe(leg, 60, ents)
-    check(p2.endswith("probe/old_b60.ps2st") and e2 is None, "a boundary without a row keeps the frozen probe")
+    check(p2.replace(os.sep, "/").endswith("probe/old_b60.ps2st") and e2 is None, "a boundary without a row keeps the frozen probe")
     for bad in ("foo\tb1\tP9-X\tc\tp\to\t1,0x1\t-\n", "mem\tW1\tP9-X\tc\tp\to\t1,0x1\t-\n", "mem\tb1\t\tc\tp\to\t1,0x1\t-\n",
                 "mem\tb1\tP9-X\tc\tp\to\t2,0x1\t-\n", "mem\tb1\tP9-X\tc\n", "mem\tb1\tbad id\tc\tp\to\t1,0x1\t-\n"):
         with open(os.path.join(leg, MANIFEST), "w") as f:

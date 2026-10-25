@@ -110,7 +110,7 @@ void AbiKey() {
     Check(Vu1AotAbiKey::Compute(ps2r::app::kVu1AotPreludeStageDir, other, &err) != k, "other definitions give another key");
     Check(std::string(Vu1AotPack::PlatformToken()) != "unknown", "the platform token names this host");
     const std::string d = Vu1AotPack::DefaultDir();
-    Check(d.size() > 13 && d.compare(d.size() - 13, 13, "/vu1_aot_pack") == 0, "DefaultDir = <exe dir>/vu1_aot_pack");
+    Check(!d.empty() && std::filesystem::path(d).filename() == "vu1_aot_pack", "DefaultDir = <exe dir>/vu1_aot_pack");   // either separator
 }
 
 int RoundTrip(Images& images) {
