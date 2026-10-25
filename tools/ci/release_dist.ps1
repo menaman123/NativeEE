@@ -157,6 +157,32 @@ Copy-Item $Bin (Join-Path $Dist "nativeee.exe")
 if (Test-Path $Replay) { Copy-Item $Replay (Join-Path $Dist "gs_replay.exe") }
 # Every DLL vcpkg's applocal deployment placed beside the built exe (SDL2, avcodec, avutil, swscale and their closure).
 Get-ChildItem -Path (Split-Path $Bin) -Filter "*.dll" -File | ForEach-Object { Copy-Item $_.FullName (Join-Path $Dist $_.Name) }
+# Then the import closure as the loader will resolve it (dumpbin /DEPENDENTS, recursively): a vcpkg DLL the exe or one of
+# its DLLs imports that applocal did not place is copied from vcpkg_installed, so the zip never misses one. The set also
+# tells the FFmpeg check below whether FFmpeg is linked at all.
+$vcpkgBin = Join-Path $BuildDir "vcpkg_installed\x64-windows\bin"
+# The MSVC C++ runtime (msvcp140 / vcruntime140*) beside the exe too: Microsoft supports this app-local deployment, and
+# a machine without the Visual C++ Redistributable then still starts the game.
+$crtDir = Get-ChildItem -Path (Join-Path $env:VCToolsRedistDir "x64") -Directory -Filter "Microsoft.VC*.CRT" -ErrorAction SilentlyContinue | Select-Object -First 1
+$sources = @($vcpkgBin) + @(if ($crtDir) { $crtDir.FullName })
+$imported = @{}
+$pending = @(Join-Path $Dist "nativeee.exe")
+while ($pending.Count -gt 0) {
+    $file = $pending[0]
+    $pending = @($pending | Select-Object -Skip 1)
+    foreach ($line in (& dumpbin /NOLOGO /DEPENDENTS $file)) {
+        if ($line -notmatch '^\s+(\S+\.dll)\s*$') { continue }
+        $dll = $Matches[1]
+        if ($imported.ContainsKey($dll.ToLower())) { continue }
+        $imported[$dll.ToLower()] = $true
+        $src = @($sources | ForEach-Object { Join-Path $_ $dll } | Where-Object { Test-Path $_ }) | Select-Object -First 1
+        $dst = Join-Path $Dist $dll
+        if ($src -and -not (Test-Path $dst)) { Copy-Item $src $dst; Write-Host "deployed $dll from $(Split-Path $src) (imported; applocal did not place it)" }
+        if (Test-Path $dst) { $pending += $dst }
+    }
+}
+Write-Host "imports: $(($imported.Keys | Sort-Object) -join ' ')"
+$ffmpegImported = @($imported.Keys | Where-Object { $_ -like "avcodec*" }).Count -gt 0
 foreach ($pdb in @((Join-Path $BuildDir "app\host\nativeee.pdb"), (Join-Path $BuildDir "tools\gs_replay\gs_replay.pdb"))) {
     if (Test-Path $pdb) { Copy-Item $pdb (Join-Path $Dist (Split-Path -Leaf $pdb)) }
 }
@@ -202,13 +228,20 @@ $ffObject = if ($avcodec) { $avcodec } else { Get-Item (Join-Path $Dist "nativee
 $bytes = [System.IO.File]::ReadAllBytes($ffObject.FullName)
 $text = [System.Text.Encoding]::ASCII.GetString($bytes)
 $conf = @([regex]::Matches($text, '--prefix=[\x20-\x7e]{0,4000}') | ForEach-Object { $_.Value } | Sort-Object -Unique)
-if ($conf.Count -ne 1) { Remove-Item -Recurse -Force $Dist; throw "release_dist.ps1: REFUSING to ship -- $($ffObject.Name) embeds $($conf.Count) FFmpeg configuration strings, expected 1" }
-if ($conf[0] -match '--enable-gpl|--enable-nonfree|--enable-libx26|--enable-version3') {
-    Remove-Item -Recurse -Force $Dist
-    throw "release_dist.ps1: REFUSING to ship -- the FFmpeg in $($ffObject.Name) is a GPL/non-free/LGPLv3 build: $($conf[0])"
+if ($conf.Count -eq 0 -and -not $avcodec -and -not $ffmpegImported) {
+    # The linker kept no FFmpeg code: the exe neither imports avcodec nor embeds its configuration. Nothing of FFmpeg ships.
+    Write-Host "FFmpeg: not linked into nativeee.exe (no avcodec import, no embedded configuration)"
+    @("FFmpeg is not linked into this build: nativeee.exe neither imports libavcodec nor embeds its configuration string.") |
+        Set-Content -Encoding UTF8 (Join-Path $Dist "licenses\FFmpeg-BUILD-CONFIGURATION.txt")
+} else {
+    if ($conf.Count -ne 1) { Remove-Item -Recurse -Force $Dist; throw "release_dist.ps1: REFUSING to ship -- $($ffObject.Name) embeds $($conf.Count) FFmpeg configuration strings, expected 1" }
+    if ($conf[0] -match '--enable-gpl|--enable-nonfree|--enable-libx26|--enable-version3') {
+        Remove-Item -Recurse -Force $Dist
+        throw "release_dist.ps1: REFUSING to ship -- the FFmpeg in $($ffObject.Name) is a GPL/non-free/LGPLv3 build: $($conf[0])"
+    }
+    @("FFmpeg as linked ($(if ($avcodec) { "dynamic, $($avcodec.Name)" } else { 'static, nativeee.exe' })).", "", "libavcodec's configuration string embedded in the shipped binary (avcodec_configuration()):", $conf[0]) |
+        Set-Content -Encoding UTF8 (Join-Path $Dist "licenses\FFmpeg-BUILD-CONFIGURATION.txt")
 }
-@("FFmpeg as linked ($(if ($avcodec) { "dynamic, $($avcodec.Name)" } else { 'static, nativeee.exe' })).", "", "libavcodec's configuration string embedded in the shipped binary (avcodec_configuration()):", $conf[0]) |
-    Set-Content -Encoding UTF8 (Join-Path $Dist "licenses\FFmpeg-BUILD-CONFIGURATION.txt")
 @(
     "# NativeEE -- third-party notices -- $((Get-Content (Join-Path $Dist 'BUILD-ID'))[0])",
     "",
