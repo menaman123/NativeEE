@@ -333,7 +333,7 @@ void SetupPage::open(const QString& isoPath) {
     else { disc_ = DiscIdentity(); discField_->clear(); refreshDisc(); }
     refreshFolder();
     refreshSettingsRows();
-    if (targets_->currentIndex() < 0) targets_->setCurrentValue(app_->hostTarget());
+    targets_->setCurrentValue(app_->hostTarget());
     refreshTarget();
     refreshButtons();
 }
