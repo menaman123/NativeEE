@@ -126,8 +126,10 @@ def main():
     if not clang:
         print("clang_cl_contract: no clang that compiles the probe in cl driver mode on this host -> probe SKIP (77)")
         return 77
-    from importlib.machinery import SourceFileLoader
-    mod = SourceFileLoader("clang_cl_shim", shim).load_module()
+    import importlib.util   # SourceFileLoader.load_module() is gone in newer Pythons
+    spec = importlib.util.spec_from_file_location("clang_cl_shim", shim)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
     raw_fail = 0
     raw_dropped = 0
     mapped_fail = []

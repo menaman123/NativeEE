@@ -300,7 +300,7 @@ if [ "$IMAGE" = 1 ]; then
     (cd "$DIST_ROOT" && sha256_file "$(basename "$OUT")" > "$(basename "$OUT").sha256" && cat "$(basename "$OUT").sha256")
     # a stub leaves a marker beside its image: tools/ci/release_index.py refuses a folder that has one
     if [ "$STUB" = 1 ]; then echo "STUB -- not a launcher build; a pipeline dry run ($(date -u +%Y-%m-%dT%H:%M:%SZ))" > "$OUT.STUB"; fi
-    echo "image: $OUT ($(( $(stat -f %z "$OUT" 2>/dev/null || stat -c %s "$OUT") / 1048576 )) MB)"
+    echo "image: $OUT ($(( $(stat -c %s "$OUT" 2>/dev/null || stat -f %z "$OUT") / 1048576 )) MB)"
 fi
 echo "staged: $STAGED ($(du -sh "$STAGED" | cut -f1))"
 echo; echo "release_launcher: OK -> $STAGED$( [ "$STUB" = 1 ] && echo " (STUB)" )"
