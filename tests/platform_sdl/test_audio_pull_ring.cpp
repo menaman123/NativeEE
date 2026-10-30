@@ -385,6 +385,52 @@ void TestPadResumesAtPhase() {
                 (unsigned long long)ring.padded(), (unsigned long long)ring.relatches());
 }
 
+// A stall longer than kPadHoldFrames: the pad repeats the tail at full level for kPadHoldFrames, fades
+// to silence over kPadFadeFrames and stays silent; the audio after it ramps up from silence over
+// kCrossFadeFrames, then plays at full level. A pad shorter than the hold is untouched (the tests above).
+void TestLongPadFades() {
+    AudioPullRing ring;
+    ring.SetPadWithTail(true);
+    ring.Prime();
+    std::vector<float> q(static_cast<size_t>(kQ) * kCh, 0.5f), chunk;
+    auto pull = [&](int frames) {
+        chunk.assign(static_cast<size_t>(frames) * kCh, 12345.0f);
+        ring.Pull(chunk.data(), frames);
+    };
+    ring.Push(q.data(), kQ);
+    pull(AudioPullRing::kLeadQuanta * kQ + kQ);   // the lead and the pushed quantum: the ring is empty
+    const int stall = AudioPullRing::kPadHoldFrames + AudioPullRing::kPadFadeFrames + 4 * kQ;
+    pull(stall);
+    bool hold_ok = true, fade_ok = true, silent_ok = true;
+    for (int i = AudioPullRing::kCrossFadeFrames; i < AudioPullRing::kPadHoldFrames; ++i)
+        if (chunk[static_cast<size_t>(i) * kCh] != 0.5f) hold_ok = false;
+    float last = 0.5f;
+    for (int i = AudioPullRing::kPadHoldFrames; i < AudioPullRing::kPadHoldFrames + AudioPullRing::kPadFadeFrames; ++i) {
+        const float v = chunk[static_cast<size_t>(i) * kCh];
+        if (v > last || v < 0.0f) fade_ok = false;
+        last = v;
+    }
+    for (int i = AudioPullRing::kPadHoldFrames + AudioPullRing::kPadFadeFrames; i < stall; ++i)
+        if (chunk[static_cast<size_t>(i) * kCh] != 0.0f || chunk[static_cast<size_t>(i) * kCh + 1] != 0.0f) silent_ok = false;
+    CHECK(hold_ok);
+    CHECK(fade_ok);
+    CHECK(silent_ok);
+    CHECK(ring.padded() == static_cast<uint64_t>(stall));
+    // The producer resumes: the first frames out ramp up, the rest are at full level.
+    for (int k = 0; k < 3; ++k) ring.Push(q.data(), kQ);
+    const int resumed = ring.Available();
+    pull(resumed);
+    CHECK(chunk[0] > 0.0f && chunk[0] < 0.05f);
+    bool ramp_ok = true, full_ok = true;
+    for (int i = 1; i < AudioPullRing::kCrossFadeFrames; ++i)
+        if (chunk[static_cast<size_t>(i) * kCh] < chunk[static_cast<size_t>(i - 1) * kCh]) ramp_ok = false;
+    for (int i = AudioPullRing::kCrossFadeFrames; i < resumed; ++i)
+        if (chunk[static_cast<size_t>(i) * kCh] != 0.5f) full_ok = false;
+    CHECK(ramp_ok);
+    CHECK(full_ok);
+    std::printf("long pad fades: stall %d frames, padded=%llu, resumed %d frames\n", stall, (unsigned long long)ring.padded(), resumed);
+}
+
 }  // namespace
 
 int main() {
@@ -396,10 +442,11 @@ int main() {
     TestSpsc();
     TestPadWithTail();
     TestPadResumesAtPhase();
+    TestLongPadFades();
     if (g_failures != 0) {
         std::fprintf(stderr, "test_audio_pull_ring: %d failure(s)\n", g_failures);
         return 1;
     }
-    std::printf("test_audio_pull_ring: PASS (arithmetic, order, underrun, overrun, no-drift, spsc, pad-with-tail)\n");
+    std::printf("test_audio_pull_ring: PASS (arithmetic, order, underrun, overrun, no-drift, spsc, pad-with-tail, long pad fades)\n");
     return 0;
 }

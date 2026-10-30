@@ -53,11 +53,22 @@ void AudioPullRing::Prime() {
 // quantum's last frames (what the device just played) into its first. The
 // frames handed out are counted in pad_phase_: the producer's re-latch pushes
 // only the quantum's UNPLAYED remainder, so the stream resumes where the pad
-// left it (one seam per pad event, not two).
+// left it (one seam per pad event, not two). Past kPadHoldFrames the repeat
+// fades to silence.
 void AudioPullRing::PadFromTail(float* dst, int frames, uint64_t write_pos) {
     const uint64_t tail_start = write_pos - static_cast<uint64_t>(kQuantumFrames);
     if (!in_pad_) { in_pad_ = true; pad_phase_ = 0; }
     for (int i = 0; i < frames; ++i) {
+        if (pad_phase_ >= static_cast<uint64_t>(kPadHoldFrames)) {
+            pad_faded_ = true;
+            const uint64_t into = pad_phase_ - static_cast<uint64_t>(kPadHoldFrames);
+            if (into >= static_cast<uint64_t>(kPadFadeFrames)) {
+                dst[static_cast<size_t>(i) * kChannels] = 0.0f;
+                dst[static_cast<size_t>(i) * kChannels + 1] = 0.0f;
+                ++pad_phase_;
+                continue;
+            }
+        }
         const uint64_t phase = pad_phase_ % static_cast<uint64_t>(kQuantumFrames);
         const float* src = &samples_[static_cast<size_t>(Slot(tail_start + phase)) * kChannels];
         float l = src[0], r = src[1];
@@ -67,6 +78,11 @@ void AudioPullRing::PadFromTail(float* dst, int frames, uint64_t write_pos) {
             const float* out_src = &samples_[static_cast<size_t>(Slot(write_pos - static_cast<uint64_t>(kCrossFadeFrames) + pad_phase_)) * kChannels];
             l = out_src[0] * (1.0f - t) + l * t;
             r = out_src[1] * (1.0f - t) + r * t;
+        }
+        if (pad_faded_) {
+            const float g = 1.0f - static_cast<float>(pad_phase_ - static_cast<uint64_t>(kPadHoldFrames)) / static_cast<float>(kPadFadeFrames);
+            l *= g;
+            r *= g;
         }
         dst[static_cast<size_t>(i) * kChannels]     = l;
         dst[static_cast<size_t>(i) * kChannels + 1] = r;
@@ -190,6 +206,15 @@ void AudioPullRing::PullInto(float* out, int frames) {
         }
     }
 
+    if (got > 0 && pad_faded_) {
+        pad_faded_ = false;   // audio after a faded pad ramps up from silence
+        fade_in_ = 0;
+    }
+    for (int i = 0; i < got && fade_in_ < kCrossFadeFrames; ++i, ++fade_in_) {
+        const float g = static_cast<float>(fade_in_ + 1) / static_cast<float>(kCrossFadeFrames + 1);
+        out[static_cast<size_t>(i) * kChannels] *= g;
+        out[static_cast<size_t>(i) * kChannels + 1] *= g;
+    }
     if (got == frames) {
         in_pad_ = false;   // the pad event (if any) ended: the next one restarts at the quantum's first frame
         return;
