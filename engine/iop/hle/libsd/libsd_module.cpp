@@ -35,7 +35,17 @@ void LibsdModule::Call(int ordinal, IopContext& ctx) {
     case 6:  v0 = core_.GetAddr(a0); break;                  // SdGetAddr(entry) -> byte_addr (NAX)
     case 7:  core_.SetCoreAttr(a0, a1); break;               // SdSetCoreAttr(entry, value) -> 0
     case 8:  ProcBatch(a0, a1, a2); break;                   // SdProcBatch(batch, rets, num) -> 0
-    case 9:  VoiceTrans(ctx); return;                        // SdVoiceTrans -> bytes moved
+    case 9:                                                  // SdVoiceTrans -> bytes moved
+        VoiceTrans(ctx);
+        if (op_tracer_) {
+            OpEvent ev;
+            ev.ordinal = 9;
+            ev.a0 = a0; ev.a1 = a1; ev.a2 = a2; ev.a3 = ctx.gpr[7];
+            ev.extra = mem_.Read<uint32_t>(ctx.gpr[29] + 0x10);
+            ev.v0 = ctx.gpr[2];
+            op_tracer_(ev);
+        }
+        return;
     case 10: core_.NoteUnmodelled(10, a0); break;            // SdBlockTrans: no autodma model -> 0
     case 11:                                                 // SdVoiceTransStatus(chan, flag) -> 1 idle
         RetireTransCompletion(static_cast<int>(a0 & 1));     // the poll delivers a pending completion
@@ -59,6 +69,13 @@ void LibsdModule::Call(int ordinal, IopContext& ctx) {
     default: break;
     }
     ctx.gpr[2] = v0;
+    if (op_tracer_) {
+        OpEvent ev;
+        ev.ordinal = ordinal;
+        ev.a0 = a0; ev.a1 = a1; ev.a2 = a2; ev.a3 = ctx.gpr[7];
+        ev.v0 = v0;
+        op_tracer_(ev);
+    }
 }
 
 // The batch: `num` 8-byte records {u16 func, u16 entry, u32 value} at `batch`;

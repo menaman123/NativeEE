@@ -33,6 +33,7 @@ public:
     // round trip with the request bytes as the module received them and the reply
     // bytes as the client received them (nullptr / 0 when a copy did not happen).
     struct TraceEvent {
+        bool begin = false;   // true: the request is about to be dispatched (send copied, nothing ran yet)
         uint32_t sid = 0, fno = 0;
         const uint8_t* send = nullptr; uint32_t send_size = 0;
         const uint8_t* recv = nullptr; uint32_t recv_size = 0;
