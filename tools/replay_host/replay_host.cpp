@@ -21,6 +21,11 @@
 // are attributed to the callee (probe depth), as the tracer did. Kernel syscalls reached inside a callee's body have
 // no effect here and are listed per record.
 //
+// The candidate library is THE ONE candidate format tier 1 and tier 2 share (recomp-agent docs/VERIFY.md): it exports
+// `extern "C" void recomp_candidate(CpuContext&, uint32_t entry)` (--symbol overrides the name) and, when built for
+// one function, `extern "C" const uint32_t recomp_candidate_addr`; a library whose recomp_candidate_addr is another
+// address than --fn is refused (exit 2), exactly as the live FnSwap refuses it. The same file is what fn.swap loads.
+//
 // Without --candidate the ORIGINAL generated body is replayed (the identity run: the harness's own first gate).
 // The report is one JSON document on stdout (or --report FILE); exit status 0 = every record passed, 1 = a failure,
 // 2 = a usage / load error.
@@ -183,7 +188,7 @@ struct Options {
     std::string corpus;
     uint32_t fn = 0;
     std::string candidate;        // path of the candidate shared object; empty = identity (the generated body)
-    std::string symbol = "ps2r_candidate";
+    std::string symbol = "recomp_candidate";   // FnSwap::kDefaultSymbol: the one candidate format
     CalleeMode callees = CalleeMode::Auto;
     size_t max_records = 0;       // 0 = all
     uint32_t frame = 0x4000;      // the function's own stack frame below sp (excluded from the comparison)
@@ -381,6 +386,14 @@ struct Driver {
         if (!candidate_lib) { *err = std::string("dlopen: ") + dlerror(); return false; }
         void* sym = dlsym(candidate_lib, opt.symbol.c_str());
         if (!sym) { *err = "the candidate library has no symbol " + opt.symbol; return false; }
+        if (const void* ap = dlsym(candidate_lib, "recomp_candidate_addr")) {
+            uint32_t built_for = 0;
+            std::memcpy(&built_for, ap, sizeof(built_for));
+            if (built_for != opt.fn) {
+                *err = "the candidate library is built for " + Hex8(built_for) + " (recomp_candidate_addr), not " + Hex8(opt.fn);
+                return false;
+            }
+        }
         candidate = reinterpret_cast<void (*)(CpuContext&, uint32_t)>(sym);
         void (*cand)(CpuContext&, uint32_t) = candidate;
         if (!update_function_impl(opt.fn, [cand](CpuContext& ctx, uint32_t entry) { cand(ctx, entry); })) {

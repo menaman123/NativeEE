@@ -38,6 +38,9 @@ class FnSwap {
 public:
     using Body = void (*)(CpuContext&, uint32_t);
     static constexpr const char* kDefaultSymbol = "recomp_candidate";
+    // The candidate format's second export: `extern "C" const uint32_t recomp_candidate_addr`, the function
+    // the library was built (and tier-1 verified) for. Install refuses a library whose value is another address.
+    static constexpr const char* kAddrSymbol = "recomp_candidate_addr";
 
     struct Info {
         uint32_t addr = 0;

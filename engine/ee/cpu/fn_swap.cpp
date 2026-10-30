@@ -1,6 +1,8 @@
 #include "engine/ee/cpu/fn_swap.h"
 
 #include <atomic>
+#include <cstdio>
+#include <cstring>
 #include <dlfcn.h>
 #include <map>
 #include <memory>
@@ -98,6 +100,23 @@ bool FnSwap::Install(uint32_t addr, const std::string& library, const std::strin
         return false;
     }
     Body body = reinterpret_cast<Body>(p);
+    // The one candidate format (recomp-agent docs/VERIFY.md): a library built for ONE function also
+    // exports `const uint32_t recomp_candidate_addr`, the entry it was verified for. A swap of it under
+    // another address is refused; a library without the symbol (a hand-made module) is taken as is.
+    dlerror();
+    if (const void* ap = dlsym(handle, kAddrSymbol)) {
+        uint32_t built_for = 0;
+        std::memcpy(&built_for, ap, sizeof(built_for));
+        if (built_for != addr) {
+            if (err) {
+                char buf[96];
+                std::snprintf(buf, sizeof(buf), "the candidate library is built for 0x%08x (%s), not 0x%08x",
+                              built_for, kAddrSymbol, addr);
+                *err = std::string(buf) + ": " + library;
+            }
+            return false;
+        }
+    }
     return InstallBody(addr, body, inherit_proof, previous, err, library, sym);
 }
 

@@ -1,10 +1,14 @@
 #pragma once
 // replay_abi.h -- the prologue of a tier-1 CANDIDATE translation unit (precompiled: <build>/tools/replay_host/
 // replay_abi.pch). A candidate is one C++ file defining `void fn_<addr>(CpuContext& ctx, uint32_t addr)` (or
-// `FUN_<addr>`, the generated spelling), compiled against this header exactly as the generated shards are compiled
-// (same compiler, -std=c++17 -O2 -fno-strict-aliasing -fwrapv -ffp-contract=off, PS2R_TRACE_ACCESS so every load and
-// store is observed), linked as a shared object with unresolved symbols left to the host, and dlopen'd by
-// ps2r_replay_host. tools/tier1.py in recomp-agent drives that from the recipe CMake writes next to the PCH.
+// `FUN_<addr>`, the generated spelling, or `extern "C" recomp_candidate` directly), compiled against this header
+// exactly as the generated shards are compiled (same compiler, -std=c++17 -O2 -fno-strict-aliasing -fwrapv
+// -ffp-contract=off, PS2R_TRACE_ACCESS so every load and store is observed), linked as a shared object with
+// unresolved symbols left to the host, and dlopen'd by ps2r_replay_host. tools/tier1.py in recomp-agent drives that
+// from the recipe CMake writes next to the PCH, and wraps the body in THE ONE candidate format tier 2 loads too:
+// `extern "C" void recomp_candidate(CpuContext&, uint32_t)` + `extern "C" const uint32_t recomp_candidate_addr`.
+// Everything below is header-only (inline) or resolves against the loading executable -- the replay host and
+// nativeee both export the generated surface -- so the same .dylib runs in both.
 //
 // What a candidate body sees (all of it is what a generated body sees; see engine/ee/recomp_abi/host_app/):
 //   CpuContext ctx            ctx.cpuRegs.GPR.r[n].UD[0] / SD[0] / UL[0] / SL[0] (n: 4..7 = a0..a3, 2..3 = v0/v1,

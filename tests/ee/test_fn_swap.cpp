@@ -143,6 +143,11 @@ int main(int argc, char** argv) {
     } else {
         CHECK(!FnSwap::Install(TestFnSwap::kFn, candidate, "no_such_symbol", true, &prev, &err) && err.find("dlsym") == 0,
               "a missing symbol is refused with the dlsym error");
+        // The format's address export: the module says recomp_candidate_addr = 0x001ae150; another generated
+        // entry (memset, 0x2333b4) must refuse it before anything is installed.
+        CHECK(!FnSwap::Install(0x002333b4u, candidate, FnSwap::kDefaultSymbol, true, &prev, &err) &&
+                  err.find("built for 0x001ae150") != std::string::npos && !FnSwap::IsSwapped(0x002333b4u),
+              "a library built for another address is refused by recomp_candidate_addr");
         std::vector<uint64_t> h_wrong;
         std::vector<uint32_t> v0_wrong;
         memory::write<uint8_t>(TestFnSwap::kExtraByte, 0);

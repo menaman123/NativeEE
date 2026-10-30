@@ -67,3 +67,12 @@ Addresses in the corpus are the tracer's normalised form (scratchpad kept as 0x7
 replay_abi.pch`): the generated header, the eleven ABI forwarders, the standard headers, plus `ps2r_call(addr, ctx)`
 and register helpers. `replay_toolchain.json` beside it is the recipe (compiler, flags, defines, includes, pch, host,
 generated dir) a driver follows: clang refuses a PCH whose options differ from the TU's, so the flags are spelled out.
+
+## The candidate library (one format for tier 1 and tier 2)
+
+A candidate shared object exports `extern "C" void recomp_candidate(CpuContext& ctx, uint32_t entry)` (the body;
+`--symbol` overrides the name, default `recomp_candidate` = `FnSwap::kDefaultSymbol`) and `extern "C" const uint32_t
+recomp_candidate_addr` (the function it is built for). Both the host and the live `fn.swap` (engine/ee/cpu/fn_swap.cpp)
+refuse a library whose `recomp_candidate_addr` is another address, so a tier-1-verified file goes straight into tier 2.
+The driver (recomp-agent `protocol/tier1.py`) emits the two exports around a body spelled `fn_<addr>` / `FUN_<addr>`
+or takes them verbatim from a body that defines `recomp_candidate` itself.
