@@ -7,6 +7,7 @@
 #include <thread>
 
 #include "engine/core/image/png.h"
+#include "engine/ee/cpu/access_tracer.h"
 #include "engine/ee/cpu/cpu_state.h"
 
 namespace ps2r::app {
@@ -19,12 +20,12 @@ constexpr uint32_t kMaxSearchHits = 100000;
 
 const char* const kFeatures[] = {
     "session.info", "run.step", "run.resume", "run.pause", "run.until", "pad.set", "pad.press", "state.save", "state.load",
-    "screen.grab", "gs.frame", "vram.read", "mem.read", "mem.write", "mem.search", "mem.watch.add", "mem.watch.remove",
-    "cpu.regs", "knobs.set",
+    "state.probe", "screen.grab", "gs.frame", "vram.read", "mem.read", "mem.write", "mem.search", "mem.watch.add",
+    "mem.watch.remove", "cpu.regs", "cpu.stack", "fn.break.add", "fn.break.remove", "fn.trace", "fn.census", "fn.calls.recent",
+    "corpus.record", "knobs.set",
 };
-const char* const kTraceOps[] = {
-    "cpu.stack", "fn.break.add", "fn.break.remove", "fn.trace", "fn.census", "fn.calls.recent", "corpus.record", "alloc.log",
-};
+const char* const kUnavailableOps[] = {"alloc.log"};
+constexpr uint64_t kSaveMaxFramesDefault = 300;
 
 struct ButtonName { const char* name; uint16_t bit; };
 const ButtonName kButtons[] = {
@@ -68,6 +69,12 @@ bool AgentServer::Open(const std::string& socket_path, int tcp_port, std::string
 
 void AgentServer::Close() {
     if (!open_.exchange(false)) return;
+    if (observer_slot_ != UINT32_MAX) {
+        FnHooks::RemoveObserver(observer_slot_);
+        observer_slot_ = UINT32_MAX;
+    }
+    for (const auto& [id, b] : breaks_) FnHooks::Disarm(b.addr, FnHooks::kBreak);
+    breaks_.clear();
     channel_.Close();
 }
 
@@ -224,21 +231,28 @@ void AgentServer::FinishRun(const char* reason, const AgentJson* detail) {
     run_ = Run{};
     press_.active = false;
     paused_ = true;
-    if (run.kind != RunKind::Resume) {
-        Request r;
-        r.connection = run.connection;
-        r.id = run.id;
-        r.has_id = true;
+    if (run.fn_armed) DisarmBreakIfUnused(run.fn_target);
+    Request r;
+    r.connection = run.connection;
+    r.id = run.id;
+    r.has_id = true;
+    if (run.kind == RunKind::Save) {
+        // The deferred save did not reach an admissible boundary.
+        Fail(r, std::string("state.save: ") + reason + " at frame " + std::to_string(frame_) + " before an admissible boundary (requested at frame " +
+                    std::to_string(run.save_requested) + "; the refusal there: " + run.save_why + ")");
+    } else if (run.kind != RunKind::Resume) {
         AgentJson body = AgentJson::Object();
         body.Set("frame", AgentJson::UInt(frame_));
         body.Set("reason", AgentJson::String(reason));
         if (run.kind == RunKind::Until) body.Set("detail", detail ? *detail : AgentJson::Null());
+        if (mid_frame_) body.Set("mid_frame", AgentJson::Bool(true));
         Reply(r, body);
     }
     AgentJson ev = AgentJson::Object();
     ev.Set("event", AgentJson::String("stopped"));
     ev.Set("frame", AgentJson::UInt(frame_));
     ev.Set("reason", AgentJson::String(reason));
+    if (mid_frame_) ev.Set("mid_frame", AgentJson::Bool(true));
     Event(ev);
     for (const Request& p : pause_requests_) {
         AgentJson body = AgentJson::Object();
@@ -267,7 +281,10 @@ bool AgentServer::OnBoundary(uint64_t frame) {
     }
     // Requests that arrived while the frame ran (a run.pause among them stops the run here).
     if (!DrainQueue(false)) return false;
-    if (run_.kind != RunKind::None) {
+    if (run_.kind == RunKind::Save) {
+        if (pause_requested_) FinishRun("paused", nullptr);
+        else TrySave();
+    } else if (run_.kind != RunKind::None) {
         if (stop_reason_) FinishRun(stop_reason_, &stop_detail_);
         else if (pause_requested_) FinishRun("paused", nullptr);
         else if (run_.has_target && frame_ >= run_.target) FinishRun(run_.target_reason, nullptr);
@@ -399,13 +416,17 @@ bool AgentServer::Handle(const Request& r) {
         return true;
     }
     if (op == "run.until") {
-        if (body.Has("fn_enter") || body.Has("fn_exit")) {
-            Fail(r, "not available in this build: run.until fn_enter/fn_exit needs the trace hooks");
-            return true;
-        }
         bool has_target = false;
         uint64_t target = 0, watch = 0;
+        uint32_t fn_target = 0;
+        bool fn_exit = false;
         const char* reason = "frame";
+        if (body.Has("fn_enter") || body.Has("fn_exit")) {
+            if (body.Has("fn_enter") && body.Has("fn_exit")) { Fail(r, "run.until takes fn_enter or fn_exit, not both"); return true; }
+            fn_exit = body.Has("fn_exit");
+            if (!GetU32(body, fn_exit ? "fn_exit" : "fn_enter", &fn_target, true, &err)) { Fail(r, err); return true; }
+            if (FnHooks::IdOf(fn_target) == UINT32_MAX) { Fail(r, Hex(fn_target) + " is not a recompiled function's entry"); return true; }
+        }
         if (const AgentJson* f = body.Get("frame")) {
             if (!f->AsUInt64(&target)) { Fail(r, "frame must be an integer"); return true; }
             has_target = true;
@@ -420,7 +441,7 @@ bool AgentServer::Handle(const Request& r) {
         if (const AgentJson* w = body.Get("watch")) {
             if (!w->AsUInt64(&watch) || watches_.find(watch) == watches_.end()) { Fail(r, "no such watch (mem.watch.add first)"); return true; }
         }
-        if (!has_target && watch == 0) { Fail(r, "run.until needs frame, max_frames or watch"); return true; }
+        if (!has_target && watch == 0 && fn_target == 0) { Fail(r, "run.until needs frame, max_frames, watch, fn_enter or fn_exit"); return true; }
         if (has_target && target <= frame_) {
             // Already there: answer at once without advancing.
             AgentJson out = AgentJson::Object();
@@ -430,7 +451,12 @@ bool AgentServer::Handle(const Request& r) {
             Reply(r, out);
             return true;
         }
-        StartRun(r, RunKind::Until, has_target, target, reason, watch);
+        if (StartRun(r, RunKind::Until, has_target, target, reason, watch) && fn_target) {
+            run_.fn_target = fn_target;
+            run_.fn_exit = fn_exit;
+            run_.fn_armed = true;
+            ArmBreak(fn_target);
+        }
         return true;
     }
     if (op == "pad.set") { OpPadSet(r); return true; }
@@ -451,7 +477,15 @@ bool AgentServer::Handle(const Request& r) {
         return true;
     }
     if (op == "state.save") { OpStateSave(r); return true; }
+    if (op == "state.probe") { OpStateProbe(r); return true; }
     if (op == "state.load") return OpStateLoad(r);
+    if (op == "cpu.stack") { OpCpuStack(r); return true; }
+    if (op == "fn.break.add") { OpBreakAdd(r); return true; }
+    if (op == "fn.break.remove") { OpBreakRemove(r); return true; }
+    if (op == "fn.trace") { OpFnTrace(r); return true; }
+    if (op == "fn.census") { OpFnCensus(r); return true; }
+    if (op == "fn.calls.recent") { OpCallsRecent(r); return true; }
+    if (op == "corpus.record") { OpCorpusRecord(r); return true; }
     if (op == "screen.grab") { OpScreenGrab(r); return true; }
     if (op == "gs.frame") { OpGsFrame(r); return true; }
     if (op == "vram.read") { OpVramRead(r); return true; }
@@ -462,8 +496,8 @@ bool AgentServer::Handle(const Request& r) {
     if (op == "mem.watch.remove") { OpWatchRemove(r); return true; }
     if (op == "cpu.regs") { OpCpuRegs(r); return true; }
     if (op == "knobs.set") { OpKnobsSet(r); return true; }
-    for (const char* t : kTraceOps)
-        if (op == t) { Fail(r, "not available in this build: " + op + " needs the trace hooks"); return true; }
+    for (const char* t : kUnavailableOps)
+        if (op == t) { Fail(r, "not available in this build: " + op + " needs a named allocator hook (none is)"); return true; }
     Fail(r, "unknown op '" + op + "'");
     return true;
 }
@@ -506,20 +540,96 @@ void AgentServer::OpPadSet(const Request& r) {
 
 void AgentServer::OpStateSave(const Request& r) {
     if (!b_.state_save) { Fail(r, "not available in this build: state.save has no savestate owner"); return; }
-    std::string path, out_path, err;
+    if (mid_frame_) { Fail(r, "state.save needs a frame boundary: the game is stopped inside a function hook (run.step first)"); return; }
+    if (run_.kind != RunKind::None) { Fail(r, "the game is running; run.pause first"); return; }
+    if (load_pending_) { Fail(r, "a state.load is in flight"); return; }
+    std::string path, out_path, err, why;
     int slot = -1;
     if (const AgentJson* p = r.body.Get("path")) { if (p->IsString()) path = p->AsString(); }
     if (const AgentJson* s = r.body.Get("slot")) { int64_t v = 0; if (s->AsInt64(&v)) slot = static_cast<int>(v); }
-    if (!b_.state_save(path, slot, &out_path, &err)) { Fail(r, "state.save: " + err); return; }
-    ++saves_;
+    uint64_t max_frames = kSaveMaxFramesDefault;
+    if (const AgentJson* m = r.body.Get("max_frames")) { if (!m->AsUInt64(&max_frames)) { Fail(r, "max_frames must be an integer"); return; } }
+    const bool admissible = !b_.state_save_admissible || b_.state_save_admissible(&why);
+    if (admissible) {
+        if (!b_.state_save(path, slot, &out_path, &err)) { Fail(r, "state.save: " + err); return; }
+        ++saves_;
+        AgentJson out = AgentJson::Object();
+        out.Set("path", AgentJson::String(out_path));
+        out.Set("frame", AgentJson::UInt(frame_));
+        out.Set("requested_frame", AgentJson::UInt(frame_));
+        Reply(r, out);
+        return;
+    }
+    if (max_frames == 0) { Fail(r, "state.save: this boundary is not admissible (" + why + ") and max_frames is 0"); return; }
+    // Drive the game to the next admissible boundary (TrySave at every OnBoundary).
+    if (!StartRun(r, RunKind::Save, true, frame_ + max_frames, "max_frames", 0)) return;
+    run_.save_path = path;
+    run_.save_slot = slot;
+    run_.save_requested = frame_;
+    run_.save_why = why;
+    ++save_deferrals_;
+}
+
+bool AgentServer::TrySave() {
+    std::string why, out_path, err;
+    const Run run = run_;
+    if (b_.state_save_admissible && !b_.state_save_admissible(&why)) {
+        if (frame_ >= run.target) { FinishRun("max_frames", nullptr); return true; }
+        return false;   // keep stepping
+    }
+    run_ = Run{};
+    paused_ = true;
+    Request r;
+    r.connection = run.connection;
+    r.id = run.id;
+    r.has_id = true;
+    if (!b_.state_save(run.save_path, run.save_slot, &out_path, &err)) {
+        Fail(r, "state.save: " + err + " (at frame " + std::to_string(frame_) + ", deferred from " + std::to_string(run.save_requested) + ")");
+    } else {
+        ++saves_;
+        AgentJson out = AgentJson::Object();
+        out.Set("path", AgentJson::String(out_path));
+        out.Set("frame", AgentJson::UInt(frame_));
+        out.Set("requested_frame", AgentJson::UInt(run.save_requested));
+        out.Set("deferred_from", AgentJson::String(run.save_why));
+        Reply(r, out);
+    }
+    AgentJson ev = AgentJson::Object();
+    ev.Set("event", AgentJson::String("stopped"));
+    ev.Set("frame", AgentJson::UInt(frame_));
+    ev.Set("reason", AgentJson::String("save"));
+    Event(ev);
+    for (const Request& p : pause_requests_) {
+        AgentJson body = AgentJson::Object();
+        body.Set("frame", AgentJson::UInt(frame_));
+        Reply(p, body);
+    }
+    pause_requests_.clear();
+    pause_requested_ = false;
+    return true;
+}
+
+void AgentServer::OpStateProbe(const Request& r) {
     AgentJson out = AgentJson::Object();
-    out.Set("path", AgentJson::String(out_path));
     out.Set("frame", AgentJson::UInt(frame_));
+    if (mid_frame_) {
+        out.Set("admissible", AgentJson::Bool(false));
+        out.Set("reason", AgentJson::String("stopped inside a function hook, not at a boundary"));
+    } else if (!b_.state_save_admissible) {
+        out.Set("admissible", AgentJson::Bool(true));
+        out.Set("reason", AgentJson::Null());
+    } else {
+        std::string why;
+        const bool ok = b_.state_save_admissible(&why);
+        out.Set("admissible", AgentJson::Bool(ok));
+        out.Set("reason", ok ? AgentJson::Null() : AgentJson::String(why));
+    }
     Reply(r, out);
 }
 
 bool AgentServer::OpStateLoad(const Request& r) {
     if (!b_.state_load_prepare) { Fail(r, "not available in this build: state.load has no restore owner"); return true; }
+    if (mid_frame_) { Fail(r, "state.load needs a frame boundary: the game is stopped inside a function hook (run.step first)"); return true; }
     if (run_.kind != RunKind::None) { Fail(r, "the game is running; run.pause first"); return true; }
     std::string path, resolved, err;
     int slot = -1;
@@ -733,6 +843,11 @@ void AgentServer::OpWatchRemove(const Request& r) {
 }
 
 void AgentServer::OpCpuRegs(const Request& r) {
+    if (mid_frame_) {
+        Fail(r, "cpu.regs: stopped inside a function hook; the hook carries a0..a3/t0..t3/sp/ra only (see the break event); "
+                "the boundary owner's register file is available at the next boundary (run.step)");
+        return;
+    }
     if (!ctx_) { Fail(r, "cpu.regs: no boundary register file yet (step one frame first)"); return; }
     const EmotionEngineState& c = *ctx_;
     AgentJson out = AgentJson::Object();
@@ -767,11 +882,314 @@ void AgentServer::OpKnobsSet(const Request& r) {
     Reply(r, out);
 }
 
+// --- function hooks (FnHooks, the trace branch) --------------------------------------------------------
+
+AgentJson AgentServer::CallJson(const FnHooks::Call& call, bool with_ret) {
+    AgentJson o = AgentJson::Object();
+    // The control plane's frame = the last completed boundary before the call (g_vsync_frame counts
+    // completed boundaries: the call ran during frame+1's work).
+    o.Set("frame", AgentJson::UInt(call.frame ? call.frame - 1 : 0));
+    AgentJson args = AgentJson::Array();
+    for (uint32_t i = 0; i < FnHooks::kArgs; ++i) args.Push(AgentJson::String(Hex(call.args[i])));
+    o.Set("args", args);
+    AgentJson ret = AgentJson::Array();
+    if (with_ret && !call.unwound) {
+        ret.Push(AgentJson::String(Hex(call.ret[0])));
+        ret.Push(AgentJson::String(Hex(call.ret[1])));
+    }
+    o.Set("ret", ret);
+    o.Set("sp", AgentJson::UInt(call.sp));
+    o.Set("ra", AgentJson::UInt(call.ra));
+    o.Set("caller", call.caller ? AgentJson::UInt(call.caller) : AgentJson::Null());
+    o.Set("fn", AgentJson::UInt(call.fn));
+    o.Set("id", AgentJson::UInt(call.id));
+    o.Set("seq", AgentJson::UInt(call.seq));
+    o.Set("depth", AgentJson::UInt(call.depth));
+    if (call.unwound) o.Set("unwound", AgentJson::Bool(true));
+    return o;
+}
+
+AgentJson AgentServer::StackJson(const std::vector<FnHooks::Frame>& frames) {
+    AgentJson arr = AgentJson::Array();
+    for (const FnHooks::Frame& f : frames) {
+        AgentJson o = AgentJson::Object();
+        o.Set("fn", AgentJson::UInt(f.fn));
+        o.Set("id", AgentJson::UInt(f.id));
+        o.Set("ra", AgentJson::UInt(f.ra));
+        arr.Push(o);
+    }
+    return arr;
+}
+
+void AgentServer::ArmBreak(uint32_t fn) {
+    if (observer_slot_ == UINT32_MAX) observer_slot_ = FnHooks::AddObserver(FnHooks::kBreak, &AgentServer::ProbeObserver, this);
+    FnHooks::Arm(fn, FnHooks::kBreak);
+}
+
+void AgentServer::DisarmBreakIfUnused(uint32_t fn) {
+    for (const auto& [id, b] : breaks_)
+        if (b.addr == fn) return;
+    if (run_.fn_armed && run_.fn_target == fn) return;
+    FnHooks::Disarm(fn, FnHooks::kBreak);
+}
+
+void AgentServer::ProbeObserver(void* user, const FnHooks::Call& call, bool exit) {
+    static_cast<AgentServer*>(user)->ProbeHit(call, exit);
+}
+
+void AgentServer::ProbeHit(const FnHooks::Call& call, bool exit) {
+    if (!open_.load() || mid_frame_) return;
+    // The breakpoints on this function and edge.
+    std::vector<std::pair<uint64_t, Break>> hits;
+    for (const auto& [id, b] : breaks_)
+        if (b.addr == call.fn && b.on_exit == exit) hits.emplace_back(id, b);
+    const bool run_target = run_.kind != RunKind::None && run_.fn_target == call.fn && run_.fn_exit == exit;
+    if (hits.empty() && !run_target) return;
+    ++breaks_hit_;
+    mid_frame_ = true;
+    mid_call_ = call;
+    mid_exit_ = exit;
+    std::vector<FnHooks::Frame> stack;
+    bool have_stack = false;
+    AgentJson detail = AgentJson::Object();
+    detail.Set("addr", AgentJson::UInt(call.fn));
+    detail.Set("on", AgentJson::String(exit ? "exit" : "enter"));
+    detail.Set("call", CallJson(call, exit));
+    for (const auto& [id, b] : hits) {
+        AgentJson ev = AgentJson::Object();
+        ev.Set("event", AgentJson::String("break"));
+        ev.Set("id", AgentJson::UInt(id));
+        ev.Set("addr", AgentJson::UInt(call.fn));
+        ev.Set("on", AgentJson::String(exit ? "exit" : "enter"));
+        ev.Set("frame", AgentJson::UInt(frame_));
+        if (b.cap_args) {
+            AgentJson args = AgentJson::Array();
+            for (uint32_t i = 0; i < FnHooks::kArgs; ++i) args.Push(AgentJson::String(Hex(call.args[i])));
+            ev.Set("args", args);
+        }
+        if (b.cap_ret && exit && !call.unwound) {
+            AgentJson ret = AgentJson::Array();
+            ret.Push(AgentJson::String(Hex(call.ret[0])));
+            ret.Push(AgentJson::String(Hex(call.ret[1])));
+            ev.Set("ret", ret);
+        }
+        if (b.cap_stack) {
+            if (!have_stack) { stack = FnHooks::Stack(); have_stack = true; }
+            ev.Set("stack", StackJson(stack));
+        }
+        ev.Set("sp", AgentJson::UInt(call.sp));
+        ev.Set("ra", AgentJson::UInt(call.ra));
+        ev.Set("caller", call.caller ? AgentJson::UInt(call.caller) : AgentJson::Null());
+        Event(ev);
+        if (b.once) {
+            breaks_.erase(id);
+            DisarmBreakIfUnused(call.fn);
+        }
+    }
+    AgentJson ids = AgentJson::Array();
+    for (const auto& [id, b] : hits) ids.Push(AgentJson::UInt(id));
+    detail.Set("break_ids", ids);
+    if (run_.kind != RunKind::None) {
+        if (run_target) FinishRun(exit ? "fn_exit" : "fn_enter", &detail);
+        else FinishRun("break", &detail);
+    }
+    // Stopped mid-frame: serve requests here until a run op continues the game.
+    while (paused_ && open_.load()) {
+        ++mid_frame_waits_;
+        DrainQueue(true);   // state.load is refused mid-frame, so no unwind can be admitted here
+    }
+    mid_frame_ = false;
+}
+
+void AgentServer::OpCpuStack(const Request& r) {
+    AgentJson out = AgentJson::Object();
+    out.Set("frames", StackJson(FnHooks::Stack()));
+    out.Set("frame", AgentJson::UInt(frame_));
+    out.Set("thread", AgentJson::String(mid_frame_ ? "the guest thread stopped in the hook (mid-frame)" : "the boundary owner at the completed boundary"));
+    if (mid_frame_) out.Set("mid_frame", AgentJson::Bool(true));
+    Reply(r, out);
+}
+
+void AgentServer::OpBreakAdd(const Request& r) {
+    std::string err;
+    uint32_t addr = 0;
+    if (!GetU32(r.body, "addr", &addr, true, &err)) { Fail(r, err); return; }
+    if (FnHooks::IdOf(addr) == UINT32_MAX) { Fail(r, Hex(addr) + " is not a recompiled function's entry"); return; }
+    Break b;
+    if (const AgentJson* on = r.body.Get("on")) {
+        if (!on->IsString() || (on->AsString() != "enter" && on->AsString() != "exit")) { Fail(r, "on must be \"enter\" or \"exit\""); return; }
+        b.on_exit = on->AsString() == "exit";
+    }
+    if (const AgentJson* cap = r.body.Get("capture")) {
+        if (!cap->IsArray()) { Fail(r, "capture must be an array of args|ret|stack"); return; }
+        b.cap_args = b.cap_ret = b.cap_stack = false;
+        for (const AgentJson& c : cap->Items()) {
+            if (!c.IsString()) { Fail(r, "capture must be an array of args|ret|stack"); return; }
+            if (c.AsString() == "args") b.cap_args = true;
+            else if (c.AsString() == "ret") b.cap_ret = true;
+            else if (c.AsString() == "stack") b.cap_stack = true;
+            else { Fail(r, "unknown capture '" + c.AsString() + "'"); return; }
+        }
+    }
+    if (const AgentJson* once = r.body.Get("once")) { if (once->IsBool()) b.once = once->AsBool(); }
+    b.addr = addr;
+    const uint64_t id = next_break_++;
+    breaks_[id] = b;
+    ArmBreak(addr);
+    AgentJson out = AgentJson::Object();
+    out.Set("break_id", AgentJson::UInt(id));
+    out.Set("addr", AgentJson::UInt(addr));
+    out.Set("fn_id", AgentJson::UInt(FnHooks::IdOf(addr)));
+    Reply(r, out);
+}
+
+void AgentServer::OpBreakRemove(const Request& r) {
+    uint64_t id = 0;
+    const AgentJson* b = r.body.Get("break_id");
+    if (!b || !b->AsUInt64(&id)) { Fail(r, "break_id must be an integer"); return; }
+    auto it = breaks_.find(id);
+    if (it == breaks_.end()) { Fail(r, "no such breakpoint"); return; }
+    const uint32_t fn = it->second.addr;
+    breaks_.erase(it);
+    DisarmBreakIfUnused(fn);
+    Reply(r, AgentJson::Object());
+}
+
+void AgentServer::OpFnTrace(const Request& r) {
+    const AgentJson* addrs = r.body.Get("addrs");
+    if (!addrs || !addrs->IsArray()) { Fail(r, "addrs must be an array of function addresses"); return; }
+    bool on = true;
+    if (const AgentJson* o = r.body.Get("on")) { if (o->IsBool()) on = o->AsBool(); }
+    std::vector<uint32_t> fns;
+    for (const AgentJson& a : addrs->Items()) {
+        uint64_t v = 0;
+        if (!a.AsUInt64(&v) || v > 0xFFFFFFFFull) { Fail(r, "addrs must be integers (or 0x hex strings)"); return; }
+        if (FnHooks::IdOf(static_cast<uint32_t>(v)) == UINT32_MAX) { Fail(r, Hex(v) + " is not a recompiled function's entry"); return; }
+        fns.push_back(static_cast<uint32_t>(v));
+    }
+    for (const uint32_t fn : fns) {
+        if (on) {
+            FnHooks::Arm(fn, FnHooks::kRing);
+            if (std::find(traced_.begin(), traced_.end(), fn) == traced_.end()) traced_.push_back(fn);
+        } else {
+            FnHooks::Disarm(fn, FnHooks::kRing);
+            traced_.erase(std::remove(traced_.begin(), traced_.end(), fn), traced_.end());
+        }
+    }
+    AgentJson out = AgentJson::Object();
+    AgentJson tracing = AgentJson::Array();
+    for (const uint32_t fn : traced_) tracing.Push(AgentJson::UInt(fn));
+    out.Set("tracing", tracing);
+    out.Set("ring", AgentJson::UInt(FnHooks::kRingDefault));
+    Reply(r, out);
+}
+
+void AgentServer::OpFnCensus(const Request& r) {
+    const AgentJson* action = r.body.Get("action");
+    const std::string a = action && action->IsString() ? action->AsString() : "";
+    AgentJson out = AgentJson::Object();
+    out.Set("frame", AgentJson::UInt(frame_));
+    if (a == "reset") {
+        FnHooks::ArmAll(FnHooks::kCount);
+        FnHooks::ResetCounts();
+        census_armed_ = true;
+        out.Set("calls", AgentJson::Object());
+        out.Set("armed", AgentJson::Bool(true));
+        Reply(r, out);
+        return;
+    }
+    if (a == "off") {
+        FnHooks::DisarmAll(FnHooks::kCount);
+        census_armed_ = false;
+        out.Set("calls", AgentJson::Object());
+        out.Set("armed", AgentJson::Bool(false));
+        Reply(r, out);
+        return;
+    }
+    if (a != "get") { Fail(r, "action must be \"reset\", \"get\" or \"off\""); return; }
+    AgentJson calls = AgentJson::Object();
+    for (const auto& [id, n] : FnHooks::Counts()) calls.Set(Hex(FnHooks::AddressOfId(id)), AgentJson::UInt(n));
+    out.Set("calls", calls);
+    out.Set("armed", AgentJson::Bool(census_armed_));
+    if (!census_armed_) out.Set("note", AgentJson::String("the census counts only after fn.census {action:\"reset\"} armed it"));
+    Reply(r, out);
+}
+
+void AgentServer::OpCallsRecent(const Request& r) {
+    std::string err;
+    uint32_t addr = 0, n = 16;
+    if (!GetU32(r.body, "addr", &addr, true, &err) || !GetU32(r.body, "n", &n, false, &err)) { Fail(r, err); return; }
+    if (FnHooks::IdOf(addr) == UINT32_MAX) { Fail(r, Hex(addr) + " is not a recompiled function's entry"); return; }
+    if (n == 0 || n > 4096) n = 4096;
+    std::vector<FnHooks::Call> recent = FnHooks::Recent(addr, n);   // newest first
+    AgentJson calls = AgentJson::Array();
+    for (auto it = recent.rbegin(); it != recent.rend(); ++it) calls.Push(CallJson(*it, true));   // newest last
+    AgentJson out = AgentJson::Object();
+    out.Set("calls", calls);
+    out.Set("traced", AgentJson::Bool((FnHooks::Flags(FnHooks::IdOf(addr)) & FnHooks::kRing) != 0));
+    Reply(r, out);
+}
+
+void AgentServer::OpCorpusRecord(const Request& r) {
+    const AgentJson* on = r.body.Get("on");
+    if (!on || !on->IsBool()) { Fail(r, "corpus.record needs on:true|false"); return; }
+    if (!AccessTracer::Available()) {
+        Fail(r, "not available in this build: corpus.record needs the tracing build (CMake PS2R_TRACE_ACCESS=ON)");
+        return;
+    }
+    std::string err;
+    if (on->AsBool()) {
+        if (AccessTracer::Active()) { Fail(r, "a recording is already running (" + corpus_path_ + "); stop it first"); return; }
+        const AgentJson* p = r.body.Get("path");
+        if (!p || !p->IsString() || p->AsString().empty()) { Fail(r, "corpus.record on needs a path"); return; }
+        std::vector<uint32_t> fns;
+        if (const AgentJson* f = r.body.Get("functions")) {
+            if (f->IsArray()) {
+                for (const AgentJson& a : f->Items()) {
+                    uint64_t v = 0;
+                    if (!a.AsUInt64(&v) || v > 0xFFFFFFFFull) { Fail(r, "functions must be \"all\" or an array of addresses"); return; }
+                    fns.push_back(static_cast<uint32_t>(v));
+                }
+            } else if (!f->IsString() || f->AsString() != "all") { Fail(r, "functions must be \"all\" or an array of addresses"); return; }
+        }
+        uint64_t max_distinct = 200000;
+        if (const AgentJson* m = r.body.Get("max_distinct")) m->AsUInt64(&max_distinct);
+        std::vector<std::pair<std::string, std::string>> meta;
+        meta.emplace_back("control_plane_frame", std::to_string(frame_));
+        if (!AccessTracer::Start(p->AsString(), fns, meta, max_distinct, &err)) { Fail(r, "corpus.record: " + err); return; }
+        corpus_path_ = p->AsString();
+        corpus_on_ = true;
+        AgentJson out = AgentJson::Object();
+        out.Set("on", AgentJson::Bool(true));
+        out.Set("path", AgentJson::String(corpus_path_));
+        out.Set("records", AgentJson::UInt(0));
+        out.Set("frame", AgentJson::UInt(frame_));
+        Reply(r, out);
+        return;
+    }
+    if (!AccessTracer::Active()) { Fail(r, "no recording is running"); return; }
+    const AccessTracer::Stats st = AccessTracer::CurrentStats();
+    if (!AccessTracer::Stop(&err)) { Fail(r, "corpus.record stop: " + err); return; }
+    corpus_on_ = false;
+    AgentJson out = AgentJson::Object();
+    out.Set("on", AgentJson::Bool(false));
+    out.Set("path", AgentJson::String(corpus_path_));
+    out.Set("records", AgentJson::UInt(st.calls));
+    out.Set("distinct", AgentJson::UInt(st.distinct));
+    out.Set("dropped", AgentJson::UInt(st.dropped));
+    out.Set("truncated", AgentJson::Bool(st.truncated));
+    out.Set("frame", AgentJson::UInt(frame_));
+    Reply(r, out);
+}
+
 std::string AgentServer::Census() const {
     return "on:requests=" + std::to_string(requests_) + ":replies=" + std::to_string(replies_) + ":errors=" + std::to_string(errors_) +
            ":events=" + std::to_string(events_) + ":boundaries=" + std::to_string(boundaries_) + ":waits=" + std::to_string(waits_) +
-           ":saves=" + std::to_string(saves_) + ":loads=" + std::to_string(loads_) + ":connections=" + std::to_string(channel_.Accepted()) +
-           ":watches=" + std::to_string(watches_.size());
+           ":saves=" + std::to_string(saves_) + ":save_deferrals=" + std::to_string(save_deferrals_) + ":loads=" + std::to_string(loads_) +
+           ":connections=" + std::to_string(channel_.Accepted()) + ":watches=" + std::to_string(watches_.size()) +
+           ":breaks=" + std::to_string(breaks_.size()) + ":breaks_hit=" + std::to_string(breaks_hit_) +
+           ":mid_frame_waits=" + std::to_string(mid_frame_waits_) + ":traced=" + std::to_string(traced_.size()) +
+           ":census_armed=" + (census_armed_ ? "1" : "0") + ":probed_calls=" + std::to_string(FnHooks::ProbedCalls());
 }
 
 }  // namespace ps2r::app

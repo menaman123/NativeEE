@@ -20,11 +20,32 @@
 // restores and relaunches, and the relaunched boundary owner calls OnRestored(frame) before its first
 // instruction: the load is answered there and the server waits paused at the restored frame.
 //
-// Ops this build answers: session.info, run.step/resume/pause/until (frame | watch | max_frames),
-// pad.set/press, state.save/load, screen.grab, gs.frame, vram.read, mem.read/write/search,
-// mem.watch.add/remove (boundary-granular: the bytes are compared at every boundary, pc/fn null),
-// cpu.regs, knobs.set. cpu.stack, fn.*, corpus.record, alloc.log, run.until fn_enter/fn_exit answer
-// "not available in this build" until the trace hooks land.
+// Savestate admissibility (state.save): the engine's capture (ThreadCapture::CollectBoundary) admits a
+// boundary only when every guest thread other than the boundary owner is PARKED in a kernel wait
+// (WaitSema / WaitEventFlag / SleepThread) whose body is proven restartable. A thread that is READY
+// (preempted, or woken and queued for the run token) makes the boundary inadmissible; which boundaries
+// are admissible is a property of the guest's schedule. state.save therefore probes first
+// (Bindings::state_save_admissible) and, refused, DRIVES the game one boundary at a time (at most
+// `max_frames`, default 300) until an admissible one, captures there and replies with the frame
+// actually saved (`frame`), the one asked for (`requested_frame`) and the refusal seen (`deferred_from`).
+// state.probe {} answers the admissibility of the current boundary without saving.
+//
+// Function hooks (the trace branch's FnHooks): fn.break.add arms kBreak on the function; a hit runs on the
+// guest thread that dispatches, sends the "break" event and STOPS THE GAME THERE, MID-FRAME (the run op
+// in flight replies reason "break" / "fn_enter" / "fn_exit" with `mid_frame:true`; `frame` stays the last
+// completed boundary). Paused mid-frame the server answers requests from the hooked thread (mem.*,
+// gs.frame, screen.grab, cpu.stack = that thread's shadow stack, fn.*); state.save/load and cpu.regs need
+// a boundary and are refused until the next run op reaches one. run.until fn_enter/fn_exit is a
+// one-shot breakpoint. fn.trace arms kRing (fn.calls.recent reads the ring, newest last); fn.census
+// "reset" arms kCount on every function and zeroes the counts, "get" reads them, "off" disarms.
+// corpus.record drives AccessTracer (a tracing build; refused otherwise).
+//
+// Ops this build answers: session.info, run.step/resume/pause/until (frame | watch | max_frames |
+// fn_enter | fn_exit), pad.set/press, state.save/load/probe, screen.grab, gs.frame, vram.read,
+// mem.read/write/search, mem.watch.add/remove (boundary-granular: the bytes are compared at every
+// boundary, pc/fn null), cpu.regs, cpu.stack, fn.break.add/remove, fn.trace, fn.census,
+// fn.calls.recent, corpus.record, knobs.set. alloc.log answers "not available in this build" (no
+// allocator hook is named).
 #pragma once
 
 #include <atomic>
@@ -37,6 +58,7 @@
 
 #include "app/host/agent_channel.h"
 #include "app/host/agent_json.h"
+#include "engine/ee/cpu/fn_hooks.h"
 
 struct EmotionEngineState;
 
@@ -69,6 +91,8 @@ public:
         std::function<AgentJson()> draws;
         // On the completed boundary: capture to `path` (empty = slot) and wait for the file; *out_path names it.
         std::function<bool(const std::string& path, int slot, std::string* out_path, std::string* err)> state_save;
+        // On the completed boundary: would a capture be admitted now? False + why (no file is written).
+        std::function<bool(std::string* why)> state_save_admissible;
         // On the completed boundary: validate and prepare the live restore of `path` (empty = slot). True =
         // admitted: the caller unwinds the boundary owner and the supervisor restarts. *resolved names the file.
         std::function<bool(const std::string& path, int slot, std::string* resolved, std::string* err)> state_load_prepare;
@@ -113,7 +137,7 @@ private:
         std::string op;
         AgentJson body;
     };
-    enum class RunKind { None, Step, Until, Press, Resume };
+    enum class RunKind { None, Step, Until, Press, Resume, Save };
     struct Run {
         RunKind kind = RunKind::None;
         uint64_t connection = 0;
@@ -122,6 +146,20 @@ private:
         uint64_t target = 0;
         const char* target_reason = "step";   // the reply's reason when the target is reached
         uint64_t watch = 0;                   // run.until {watch}: stop when this watch fires (0 = none)
+        uint32_t fn_target = 0;               // run.until {fn_enter|fn_exit}: the function (0 = none)
+        bool fn_exit = false;
+        bool fn_armed = false;                // kBreak was armed by this run (disarmed when it ends)
+        // RunKind::Save: the deferred state.save.
+        std::string save_path;
+        int save_slot = -1;
+        uint64_t save_requested = 0;
+        std::string save_why;                 // the refusal at the requested boundary
+    };
+    struct Break {
+        uint32_t addr = 0;
+        bool on_exit = false;
+        bool cap_args = true, cap_ret = false, cap_stack = false;
+        bool once = false;
     };
     struct Watch {
         uint32_t addr = 0;
@@ -137,6 +175,15 @@ private:
 
     // The boundary's work, shared by OnBoundary and OnRestored.
     void CheckWatches(uint64_t frame);
+    // RunKind::Save at a boundary: probe, capture when admitted, give up at the bound. True = the run ended.
+    bool TrySave();
+    // The FnHooks observer (kBreak): the guest thread that dispatched a hooked function.
+    static void ProbeObserver(void* user, const FnHooks::Call& call, bool exit);
+    void ProbeHit(const FnHooks::Call& call, bool exit);
+    void ArmBreak(uint32_t fn);
+    void DisarmBreakIfUnused(uint32_t fn);
+    static AgentJson CallJson(const FnHooks::Call& call, bool with_ret);
+    static AgentJson StackJson(const std::vector<FnHooks::Frame>& frames);
     bool DrainQueue(bool block);           // false: a load was admitted
     void FinishRun(const char* reason, const AgentJson* detail);
     void Reply(const Request& r, AgentJson body);
@@ -149,7 +196,15 @@ private:
     void OpSessionInfo(const Request& r);
     void OpPadSet(const Request& r);
     void OpStateSave(const Request& r);
+    void OpStateProbe(const Request& r);
     bool OpStateLoad(const Request& r);
+    void OpCpuStack(const Request& r);
+    void OpBreakAdd(const Request& r);
+    void OpBreakRemove(const Request& r);
+    void OpFnTrace(const Request& r);
+    void OpFnCensus(const Request& r);
+    void OpCallsRecent(const Request& r);
+    void OpCorpusRecord(const Request& r);
     void OpScreenGrab(const Request& r);
     void OpGsFrame(const Request& r);
     void OpVramRead(const Request& r);
@@ -188,8 +243,20 @@ private:
     bool load_pending_ = false;
     Request load_request_;
     std::string load_path_;
+    // Function hooks.
+    uint32_t observer_slot_ = UINT32_MAX;
+    std::map<uint64_t, Break> breaks_;
+    uint64_t next_break_ = 1;
+    std::vector<uint32_t> traced_;          // fn.trace's functions (kRing armed)
+    bool census_armed_ = false;
+    bool mid_frame_ = false;                // paused inside a hook (ProbeHit), not at a boundary
+    FnHooks::Call mid_call_;
+    bool mid_exit_ = false;
+    std::string corpus_path_;
+    bool corpus_on_ = false;
     // Census.
     uint64_t requests_ = 0, replies_ = 0, errors_ = 0, events_ = 0, boundaries_ = 0, waits_ = 0, saves_ = 0, loads_ = 0;
+    uint64_t save_deferrals_ = 0, breaks_hit_ = 0, mid_frame_waits_ = 0;
 };
 
 }  // namespace ps2r::app
