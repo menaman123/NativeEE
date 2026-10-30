@@ -293,11 +293,31 @@ void EeRunToken::IdleRelease(int tid) {
 bool EeRunToken::CurrentThreadIdling() const { return t_idle; }
 
 void EeRunToken::NoteFieldElapsed() {
+    bool readied = false;
     {
         std::lock_guard<std::mutex> lk(mu_);
         ++field_gen_;
+        if (vblank_wake_sync_) {
+            // READY now, from the holder's side (the header): the sleeper's own wake finds
+            // its slot (SlotFor returns it, the seq assigned here is kept) and its
+            // BlockEnd's MakeReady is the idempotent no-op.
+            for (const auto& w : vblank_waiter_) {
+                if (w.tid == kNone) continue;
+                Ready* r = SlotFor(w.tid);
+                if (!r) continue;
+                r->prio = w.prio;
+                if (r->seq == 0) r->seq = NextSeq();
+                readied = true;
+            }
+        }
     }
+    if (readied) field_wakes_.fetch_add(1, std::memory_order_relaxed);
     cv_.notify_all();
+}
+
+void EeRunToken::SetVblankWakeSync(bool on) {
+    std::lock_guard<std::mutex> lk(mu_);
+    vblank_wake_sync_ = on;
 }
 
 void EeRunToken::MakeReady(int tid, int prio) {
@@ -522,6 +542,8 @@ void EeRunToken::ResetForTest() {
     t_preempt_deferred = false;
     t_idle = false;
     vblank_waiters_ = 0;
+    vblank_wake_sync_ = true;
+    field_wakes_.store(0, std::memory_order_relaxed);
 }
 
 EeRunToken::HostGate::HostGate() {
