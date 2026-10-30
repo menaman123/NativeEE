@@ -244,6 +244,9 @@ add_subdirectory(app/host)
 
 add_subdirectory(tools/drawlist_tool)  # Phase 6
 add_subdirectory(tools/gs_replay)  # Phase 6
+# tools/replay_host -- recomp-agent's tier-1 harness: the generated bodies + the engine's memory objects as a
+# replay process for recorded calls (needs the title's generated code and PS2R_TRACE_ACCESS=ON; skipped otherwise).
+add_subdirectory(tools/replay_host)
 
 # --- tests: lints are ctest targets from the first commit (ARCH section 13) -----
 # (enable_testing() itself runs before the title directories above, so a title's add_test is recorded.)
