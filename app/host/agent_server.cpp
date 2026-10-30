@@ -1298,7 +1298,7 @@ void AgentServer::OpFnSwap(const Request& r) {
     ++swaps_;
     AgentJson out = AgentJson::Object();
     out.Set("addr", AgentJson::UInt(addr));
-    out.Set("id", AgentJson::UInt(FnHooks::IdOf(addr)));
+    out.Set("fn_id", AgentJson::UInt(FnHooks::IdOf(addr)));   // never "id": the envelope's key
     out.Set("previous", AgentJson::String(previous));
     out.Set("symbol", AgentJson::String(symbol));
     out.Set("library_path", AgentJson::String(lib->AsString()));
@@ -1326,7 +1326,7 @@ void AgentServer::OpFnSwapList(const Request& r) {
     for (const FnSwap::Info& i : FnSwap::List()) {
         AgentJson o = AgentJson::Object();
         o.Set("addr", AgentJson::UInt(i.addr));
-        o.Set("id", AgentJson::UInt(i.id));
+        o.Set("fn_id", AgentJson::UInt(i.id));
         o.Set("library_path", AgentJson::String(i.library));
         o.Set("symbol", AgentJson::String(i.symbol));
         o.Set("inherit_proof", AgentJson::Bool(i.inherit_proof));
