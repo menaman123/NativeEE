@@ -103,6 +103,7 @@ bool VerifyHost::BeginOutputSegment(uint64_t restored_frame, uint64_t restored_t
             if (std::fprintf(audio_f_, "%llu,0x%016llx\n",
                     static_cast<unsigned long long>(window), static_cast<unsigned long long>(hash)) < 0 ||
                 std::fflush(audio_f_) != 0) throw std::runtime_error("Cannot write restored audio hash lane.");
+            KeepRow("audio", n_boundaries_ ? n_boundaries_ - 1 : 0, window, hash);   // the live reader's row (run.hashes)
         });
         completing_previous = true;
         audio_->Finish();

@@ -40,6 +40,15 @@
 // "reset" arms kCount on every function and zeroes the counts, "get" reads them, "off" disarms.
 // corpus.record drives AccessTracer (a tracing build; refused otherwise).
 //
+// Hot swap (tier 2, FnSwap): fn.swap {addr, library_path, symbol?, inherit_proof?} dlopens the candidate
+// and installs it as the dispatched body of the generated function at addr (reply {addr, previous:
+// "generated"|"swapped", id, symbol}); fn.swap.remove {addr} restores the generated body; fn.swap.list {}.
+// Both refuse mid-frame and while the function is on the boundary thread's shadow stack. run.hashes
+// {from, to} returns the harness's lane rows (frames.fhash / audio.ahash / mem.mhash, as the files get
+// them) labelled with the control-plane frame they were emitted at, so a client compares two runs
+// without reading the leg directories; mem.hash {} returns the mem lane's FNV-1a64 of guest memory at
+// the current boundary (the same function and spans as mem.mhash's rows), on demand at any frame.
+//
 // Ops this build answers: session.info, run.step/resume/pause/until (frame | watch | max_frames |
 // fn_enter | fn_exit), pad.set/press, state.save/load/probe, screen.grab, gs.frame, vram.read,
 // mem.read/write/search, mem.watch.add/remove (boundary-granular: the bytes are compared at every
@@ -82,9 +91,19 @@ public:
         std::vector<uint8_t> rgba;      // top row first
         int w = 0, h = 0;
     };
+    // One harness lane row (run.hashes): lane = frames|audio|mem, key = the lane file's line key.
+    struct LaneRow {
+        const char* lane = "";
+        uint64_t key = 0;
+        uint64_t hash = 0;
+    };
     struct Bindings {
         std::string title, elf_sha256, build;
         Memory memory;
+        // The lane rows emitted since the last call (FIFO; empty when the harness is not armed).
+        std::function<void(std::vector<LaneRow>*)> lane_rows;
+        // The mem lane's hash of guest memory now (mem.hash). Null: refused.
+        std::function<uint64_t()> mem_hash;
         // The last presented frame (false + reason when none yet).
         std::function<bool(Grab*, std::string*)> grab;
         // The draw list of the last presented frame as the schema's array (empty array when unknown).
@@ -218,6 +237,13 @@ private:
     void OpWatchRemove(const Request& r);
     void OpCpuRegs(const Request& r);
     void OpKnobsSet(const Request& r);
+    void OpFnSwap(const Request& r);
+    void OpFnSwapRemove(const Request& r);
+    void OpFnSwapList(const Request& r);
+    void OpRunHashes(const Request& r);
+    void OpMemHash(const Request& r);
+    // Pull the harness's new lane rows and label them with `frame`.
+    void CollectHashRows(uint64_t frame);
 
     // Guest address -> host pointer over `len` bytes (nullptr when outside RAM / scratchpad).
     uint8_t* Resolve(uint32_t addr, uint32_t len) const;
@@ -257,6 +283,16 @@ private:
     bool mid_exit_ = false;
     std::string corpus_path_;
     bool corpus_on_ = false;
+    // run.hashes: the lane rows seen, labelled with the frame they completed.
+    struct HashRow {
+        uint64_t frame = 0;
+        const char* lane = "";
+        uint64_t key = 0;
+        uint64_t hash = 0;
+    };
+    static constexpr size_t kHashRowCap = 1 << 18;
+    std::vector<HashRow> hash_rows_;
+    uint64_t swaps_ = 0, mem_hashes_ = 0;
     // Census.
     uint64_t requests_ = 0, replies_ = 0, errors_ = 0, events_ = 0, boundaries_ = 0, waits_ = 0, saves_ = 0, loads_ = 0;
     uint64_t save_deferrals_ = 0, breaks_hit_ = 0, mid_frame_waits_ = 0;

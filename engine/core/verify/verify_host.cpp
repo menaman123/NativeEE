@@ -105,6 +105,7 @@ bool VerifyHost::Arm(const Config& cfg, const std::string& build_id, const std::
             std::fprintf(audio_f_, "%llu,0x%016llx\n", (unsigned long long)win, (unsigned long long)h);
             std::fflush(audio_f_);
         }
+        KeepRow("audio", n_boundaries_ ? n_boundaries_ - 1 : 0, win, h);
     });
     armed_ = true;
     return true;
@@ -126,6 +127,7 @@ void VerifyHost::OnPresentHashed(uint32_t vf, uint64_t hash, const char* rendere
         std::fprintf(frames_f_, "%u,0x%016llx\n", vf, (unsigned long long)hash);
         std::fflush(frames_f_);
     }
+    KeepRow("frames", n_boundaries_ ? n_boundaries_ - 1 : 0, vf, hash);
 }
 
 uint64_t VerifyHost::OnBoundary(const float* mix, int mix_frames, const std::vector<MemorySpan>& spans) {
@@ -135,11 +137,26 @@ uint64_t VerifyHost::OnBoundary(const float* mix, int mix_frames, const std::vec
     if (mix && mix_frames > 0) audio_->Push(mix, mix_frames);
     uint64_t mh = 0;
     const uint64_t local = n - segment_boundary_;
-    if (mem_lane_ && mem_.MaybeHash((uint32_t)local, spans, &mh) && mem_f_) {
-        std::fprintf(mem_f_, "%llu,0x%016llx\n", (unsigned long long)local, (unsigned long long)mh);
-        std::fflush(mem_f_);
+    if (mem_lane_ && mem_.MaybeHash((uint32_t)local, spans, &mh)) {
+        if (mem_f_) {
+            std::fprintf(mem_f_, "%llu,0x%016llx\n", (unsigned long long)local, (unsigned long long)mh);
+            std::fflush(mem_f_);
+        }
+        KeepRow("mem", n, local, mh);
     }
     return n;
+}
+
+void VerifyHost::KeepRow(const char* lane, uint64_t boundary, uint64_t key, uint64_t hash) {
+    std::lock_guard<std::mutex> lk(rows_mu_);
+    if (rows_.size() >= kRowCap) rows_.erase(rows_.begin(), rows_.begin() + static_cast<std::ptrdiff_t>(rows_.size() / 2));
+    rows_.push_back(LaneRow{lane, boundary, key, hash});
+}
+
+void VerifyHost::DrainRows(std::vector<LaneRow>* out) {
+    std::lock_guard<std::mutex> lk(rows_mu_);
+    if (out) out->insert(out->end(), rows_.begin(), rows_.end());
+    rows_.clear();
 }
 
 void VerifyHost::SetMemLane(bool on) {
