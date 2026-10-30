@@ -22,7 +22,7 @@ const char* const kFeatures[] = {
     "session.info", "run.step", "run.resume", "run.pause", "run.until", "pad.set", "pad.press", "state.save", "state.load",
     "state.probe", "screen.grab", "gs.frame", "vram.read", "mem.read", "mem.write", "mem.search", "mem.watch.add",
     "mem.watch.remove", "cpu.regs", "cpu.stack", "fn.break.add", "fn.break.remove", "fn.trace", "fn.census", "fn.calls.recent",
-    "corpus.record", "knobs.set",
+    "corpus.record", "knobs.set", "session.quit",
 };
 const char* const kUnavailableOps[] = {"alloc.log"};
 constexpr uint64_t kSaveMaxFramesDefault = 300;
@@ -294,6 +294,10 @@ bool AgentServer::OnBoundary(uint64_t frame) {
         ++waits_;
         if (!DrainQueue(true)) return false;
     }
+    if (quit_pending_) {
+        quit_pending_ = false;
+        b_.quit();   // never returns
+    }
     return true;
 }
 
@@ -324,6 +328,10 @@ void AgentServer::OnRestored(uint64_t frame, const EmotionEngineState* ctx) {
         ++waits_;
         // A second load admitted right here (before any instruction) would restart again; allowed.
         if (!DrainQueue(true)) return;
+    }
+    if (quit_pending_) {
+        quit_pending_ = false;
+        b_.quit();
     }
 }
 
@@ -395,6 +403,17 @@ bool AgentServer::Handle(const Request& r) {
     const AgentJson& body = r.body;
     std::string err;
     if (op == "session.info") { OpSessionInfo(r); return true; }
+    if (op == "session.quit") {
+        if (!b_.quit) { Fail(r, "not available in this build: session.quit has no leg closer"); return true; }
+        if (mid_frame_) { Fail(r, "session.quit needs a frame boundary: the game is stopped inside a function hook (run.step first)"); return true; }
+        if (run_.kind != RunKind::None) { Fail(r, "the game is running; run.pause first"); return true; }
+        AgentJson out = AgentJson::Object();
+        out.Set("frame", AgentJson::UInt(frame_));
+        Reply(r, out);
+        quit_pending_ = true;
+        paused_ = false;   // leave the wait; OnBoundary ends the leg
+        return true;
+    }
     if (op == "run.step") {
         uint64_t n = 1;
         if (const AgentJson* f = body.Get("frames")) {

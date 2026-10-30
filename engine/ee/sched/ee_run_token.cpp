@@ -264,6 +264,7 @@ bool EeRunToken::TryIdleAcquire(int tid) {
     {
         std::lock_guard<std::mutex> lk(mu_);
         if (shutdown_ || hold_election_ || owner_ != kNone || vblank_waiters_ != 0) return false;
+        if (relaunch_quiet_.load(std::memory_order_acquire)) return false;   // the re-park phase: no field, no idle ISR
         for (const auto& r : ready_)
             if (r.valid) return false;   // something to schedule: not idle
         owner_ = tid;

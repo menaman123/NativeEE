@@ -100,6 +100,8 @@ public:
         std::function<bool(const std::string& name, const AgentJson& value, std::string* err)> knob_set;
         // Optional rows added to session.info.
         std::function<void(AgentJson*)> extra_info;
+        // session.quit: end the leg cleanly from the completed boundary (the census is written). Never returns.
+        std::function<void()> quit;
     };
 
     explicit AgentServer(Bindings bindings);
@@ -185,6 +187,7 @@ private:
     static AgentJson CallJson(const FnHooks::Call& call, bool with_ret);
     static AgentJson StackJson(const std::vector<FnHooks::Frame>& frames);
     bool DrainQueue(bool block);           // false: a load was admitted
+    bool quit_pending_ = false;
     void FinishRun(const char* reason, const AgentJson* detail);
     void Reply(const Request& r, AgentJson body);
     void Fail(const Request& r, const std::string& error);

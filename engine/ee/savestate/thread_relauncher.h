@@ -22,6 +22,15 @@
 // every resumed thread is readied at its restored current priority in file
 // order, EndRelaunch runs ONE election, so the first post-load runner is the
 // thbase winner, never the first host thread to arrive (RelaunchOrder).
+// TWO PHASES (the savestate proof of the agent control plane): the parked
+// WAITERS relaunch first, under EeRunToken::SetRelaunchQuiet (no idle grant,
+// no syscall-entry interrupt dispatch), and run their wait bodies back to
+// their parks; only when every one is parked and the token is free is the
+// BOUNDARY thread started and elected. Readying all of them at once made the
+// waiters READY while the boundary thread resumed: its first syscall entry
+// then saw "another thread is READY" and deferred the pending interrupt to a
+// waiter's re-executed syscall -- a schedule the uninterrupted run never had
+// (the frame counter diverged within ten frames of the load).
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -44,6 +53,8 @@ public:
     // workers started; -1 (with `err`) when a worker could not be created
     // (the table is then partially relaunched: the caller treats it as fatal).
     int Relaunch(const std::vector<ThreadSection::Record>& records, std::string* err);
+    // Census: waiters that had not parked when the quiet phase gave up (should stay 0).
+    static uint64_t UnparkedWaiters();
 
     // The chain walk one relaunched worker runs (public for the unit test).
     void WalkChain(const ThreadSection::Record& record, CpuContext& ctx) const;

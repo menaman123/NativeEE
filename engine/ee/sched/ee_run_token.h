@@ -187,6 +187,13 @@ public:
     // Savestate relaunch handoff (header comment).
     void BeginRelaunch();
     void EndRelaunch();
+    // The quiet re-park phase of a relaunch (ThreadRelauncher): the parked waiters re-execute their wait
+    // bodies and park again while nothing else may happen -- no idle grant (TryIdleAcquire refuses: no
+    // field of time, no idle ISR), and the composition's syscall-entry interrupt dispatch checks
+    // RelaunchQuiet() and stays off. Ends before the boundary thread is readied, so the first guest
+    // instruction after a load sees what the save saw: every other thread parked, nobody READY.
+    void SetRelaunchQuiet(bool on) { relaunch_quiet_.store(on, std::memory_order_release); }
+    bool RelaunchQuiet() const { return relaunch_quiet_.load(std::memory_order_acquire); }
 
     // True iff the CALLING host thread holds the token.
     bool CurrentThreadHoldsToken() const;
@@ -265,6 +272,7 @@ private:
     bool owner_running_ = false;  // elected thread is inside its grant
     bool shutdown_ = false;
     bool hold_election_ = false;  // BeginRelaunch .. EndRelaunch
+    std::atomic<bool> relaunch_quiet_{false};   // SetRelaunchQuiet (the re-park phase)
     uint32_t attached_guests_ = 0, attached_hosts_ = 0;
     std::mutex host_gate_mu_;     // serialises concurrent HostGate users
     void (*post_acquire_)() = nullptr;
