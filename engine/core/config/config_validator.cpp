@@ -135,6 +135,8 @@ bool ConfigValidator::Validate(const Config& c, bool harness_window_requested, s
         return Refuse(err, "engine.mtvu_depth_hold must be 0 (off) or 1..engine.mtvu_depth");
     if (!InRange(c.video.scale, 0, 4))
         return Refuse(err, "video.scale must be in 0..4 (0 = native window)");
+    if (c.video.frame_limit != 0 && !InRange(c.video.frame_limit, 60, 1000))
+        return Refuse(err, "video.frame_limit must be 60 (the console's pacing), 61..1000 or 0 (unlimited)");
     if (c.video.anisotropy != 1 && c.video.anisotropy != 2 && c.video.anisotropy != 4 &&
         c.video.anisotropy != 8 && c.video.anisotropy != 16)
         return Refuse(err, "video.anisotropy must be one of 1, 2, 4, 8, 16");
@@ -262,9 +264,10 @@ bool ConfigValidator::Validate(const Config& c, bool harness_window_requested, s
         // page's requests (the composition root's DisplaySequence names the same set).
         static const char* const kModes[] = {"windowed", "fullscreen", "borderless", "scale1", "scale2", "scale3", "scale4",
                                              "vsync", "novsync", "aspect_auto", "aspect_4_3", "aspect_16_9", "aspect_16_10",
-                                             "aspect_21_9", "filter_title", "filter_point", "filter_bilinear", "filter_trilinear",
+                                             "aspect_21_9", "aspect_32_9", "filter_title", "filter_point", "filter_bilinear", "filter_trilinear",
                                              "aniso1", "aniso2", "aniso4", "aniso8", "aniso16", "overlay", "nooverlay", "rate60",
-                                             "ratedisplay", "capoff", "cap30", "cap60", "kbm", "nokbm"};
+                                             "ratedisplay", "capoff", "cap30", "cap60", "kbm", "nokbm", "fpsunlimited",
+                                             "invertx", "noinvertx", "inverty", "noinverty", "blur", "noblur"};
         std::string rest = c.harness.display_sequence;
         while (!rest.empty()) {
             const size_t comma = rest.find(',');
@@ -277,6 +280,13 @@ bool ConfigValidator::Validate(const Config& c, bool harness_window_requested, s
                 const std::string mode = item.substr(colon + 1);
                 ok = false;
                 for (const char* name : kModes) ok = ok || mode == name;
+                // fps60..fps1000: the Display page's frame-rate limit.
+                if (!ok && mode.size() > 3 && mode.size() <= 7 && mode.compare(0, 3, "fps") == 0) {
+                    ok = true;
+                    int v = 0;
+                    for (size_t i = 3; i < mode.size() && ok; ++i) { ok = mode[i] >= '0' && mode[i] <= '9'; v = v * 10 + (mode[i] - '0'); }
+                    ok = ok && v >= 60 && v <= 1000;
+                }
                 // volume0..volume100: the Sound page's slider.
                 if (!ok && mode.size() > 6 && mode.size() <= 9 && mode.compare(0, 6, "volume") == 0) {
                     ok = true;
@@ -287,9 +297,10 @@ bool ConfigValidator::Validate(const Config& c, bool harness_window_requested, s
             }
             if (!ok)
                 return Refuse(err, "harness.display_sequence must be <frame>:<mode>[,...] with frame > 0 and mode one of "
-                                   "windowed|fullscreen|borderless|scale1..scale4|vsync|novsync|aspect_<auto|4_3|16_9|16_10|21_9>|"
+                                   "windowed|fullscreen|borderless|scale1..scale4|vsync|novsync|aspect_<auto|4_3|16_9|16_10|21_9|32_9>|"
                                    "filter_<title|point|bilinear|trilinear>|aniso<1|2|4|8|16>|overlay|nooverlay|rate60|ratedisplay|"
-                                   "capoff|cap30|cap60|kbm|nokbm|volume<0..100> (e.g. 300:borderless,600:windowed)");
+                                   "capoff|cap30|cap60|kbm|nokbm|fps<60..1000>|fpsunlimited|[no]invertx|[no]inverty|[no]blur|volume<0..100> "
+                                   "(e.g. 300:borderless,600:windowed)");
         }
     }
     if (c.harness.live_pad_probe) {

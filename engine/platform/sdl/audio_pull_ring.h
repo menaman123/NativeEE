@@ -21,7 +21,10 @@
 //     -- and marks a RE-LATCH: the next Push first re-pushes the UNPLAYED
 //     remainder of that quantum (`relatches`; the stream resumes exactly
 //     where the pad left it, so the lead is rebuilt by one quantum with a
-//     single seam per pad event), then the new audio. The lead is bounded the other way: a Push that
+//     single seam per pad event), then the new audio. A pad event longer than kPadHoldFrames (a
+//     stall, not a late tick) fades the repeated quantum to silence over kPadFadeFrames instead of
+//     looping it for the whole stall, and the audio after it fades back in over kCrossFadeFrames.
+//     The lead is bounded the other way: a Push that
 //     leaves more than TrimFrames() in the ring (a late game thread catching
 //     up in a burst) discards the OLDEST frames down to the standing lead
 //     (`trimmed`: the late audio the pad already stood in for), so latency
@@ -79,6 +82,8 @@ public:
     static constexpr int kTrimSlackQuanta = 2;                             // trim a push that leaves more than lead + this
     static constexpr int kDecayPushes = 600;                               // pushes without a pad before the lead steps down
     static constexpr int kCrossFadeFrames = 64;                            // the pad seam's cross-fade (1.3 ms)
+    static constexpr int kPadHoldFrames = 6 * kQuantumFrames;              // a pad repeats the tail this long (100 ms)
+    static constexpr int kPadFadeFrames = kQuantumFrames;                  // then fades to silence (17 ms)
     void SetPadWithTail(bool on) { pad_with_tail_.store(on, std::memory_order_release); }
     bool PadWithTail() const { return pad_with_tail_.load(std::memory_order_acquire); }
     // Producer side, once before the stream (and after a restore's discard):
@@ -142,6 +147,8 @@ private:
     void*                 tap_ctx_ = nullptr;
     uint64_t              pad_phase_ = 0;  // consumer-owned: frames handed out by the current pad event
     bool                  in_pad_ = false; // consumer-owned: the last pull ended short (a pad event is open)
+    bool                  pad_faded_ = false;   // consumer-owned: the open pad event reached its fade
+    int                   fade_in_ = kCrossFadeFrames;   // consumer-owned: frames of the post-fade ramp already applied
     std::atomic<uint32_t> pad_phase_published_{0};   // consumer -> producer: the pad's phase inside the quantum (the re-latch's resume point)
     float                 last_quantum_[kQuantumFrames * kChannels] = {};   // producer-owned: the previous push
     int                   last_quantum_frames_ = 0;

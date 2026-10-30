@@ -33,13 +33,14 @@ add_library(ps2r_launcher_lib STATIC
     launcher_app.cpp main_window.cpp sidebar.cpp page_header.cpp flat_button.cpp segmented_control.cpp
     switch_control.cpp folder_row.cpp generated_artwork.cpp game_card.cpp disc_list.cpp games_page.cpp empty_state.cpp
     settings_row.cpp settings_page.cpp save_state_card.cpp save_states_page.cpp about_page.cpp
-    progress_panel.cpp details_sheet.cpp sheet_overlay.cpp setup_page.cpp
+    progress_panel.cpp details_sheet.cpp sheet_overlay.cpp setup_page.cpp self_updater.cpp
     launcher_theme.h launcher_style.h title_manifest.h app_data.h iso_fingerprint.h disc_identity.h disc_identifier.h
     game_library.h ini_settings.h process_runner.h game_process.h game_folder.h host_platform.h prepare_runner.h
     fake_prepare_runner.h unavailable_prepare_runner.h save_state_list.h
     launcher_app.h main_window.h sidebar.h page_header.h flat_button.h segmented_control.h switch_control.h
     folder_row.h generated_artwork.h game_card.h disc_list.h games_page.h empty_state.h settings_row.h settings_page.h
-    save_state_card.h save_states_page.h about_page.h progress_panel.h details_sheet.h sheet_overlay.h setup_page.h)
+    save_state_card.h save_states_page.h about_page.h progress_panel.h details_sheet.h sheet_overlay.h setup_page.h
+    self_updater.h)
 target_include_directories(ps2r_launcher_lib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(ps2r_launcher_lib PUBLIC Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Concurrent)
 target_compile_options(ps2r_launcher_lib PRIVATE ${PS2R_LAUNCHER_WARNINGS})

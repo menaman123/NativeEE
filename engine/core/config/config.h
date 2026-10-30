@@ -21,9 +21,9 @@ enum class FitMode : uint8_t { Stretch = 0, Fit, Fill, Integer, Custom };
 // video.aspect: the display shape the title renders FOR (the projection, culling
 // frustum, HUD fit and movie picture take the ratio -- TR renderer.cpp's
 // g_WidescreenTv term -- and the presenter fits the anamorphic frame at it).
-// `auto` snaps the window's shape to the nearest of the four; 4:3 is the console's
+// `auto` snaps the window's shape to the nearest supported one; 4:3 is the console's
 // TV and the deterministic lanes' identity (no model body installed).
-enum class AspectSel : uint8_t { Auto = 0, R4_3, R16_9, R16_10, R21_9 };
+enum class AspectSel : uint8_t { Auto = 0, R4_3, R16_9, R16_10, R21_9, R32_9 };
 // video.fullscreen: the session window's mode -- a resizable window, the
 // display's own mode (exclusive fullscreen) or a borderless window covering the
 // desktop. Applied live from the title's Display page; persisted (Charter 2 A2).
@@ -105,6 +105,17 @@ struct VideoConfig {
                                           // in 448-line steps, 1..4; play mode only -- a leg reads 1)
     bool         interp = true;           // present interpolation (1 frame)
     int          fps_cap = 60;            // 0 = uncapped
+    // video.frame_limit: the game's frame rate in play. 60 = the console's pacing (one
+    // frame per 60 Hz field at most); 61..1000 = uncapped, the pacer's edges at that
+    // rate rounded to a multiple of 60 (TickSource Turbo), 0 = unlimited (960 Hz edges),
+    // for a title whose clock measures real time (its play composition installs the
+    // policy; others stay at 60). No frame is interpolated. Applied live from the
+    // Display page; persisted. Play only: the deterministic lanes are unpaced anyway.
+    int          frame_limit = 60;
+    // video.motion_blur: the title's own full-screen motion blur (a blend of the previous
+    // picture), for a title whose play composition can switch it; off draws each picture
+    // sharp. Applied live from the Display page; persisted.
+    bool         motion_blur = true;
     bool         vsync = false;
     FullscreenMode fullscreen = FullscreenMode::Windowed;
     RenderRate   render_rate = RenderRate::Tick60;
@@ -170,6 +181,10 @@ struct InputConfig {
     // The title's actuator requests reach the game controller (play mode).
     // Off: the pad reports its motors but no rumble is queued (CHARTER 2 A5).
     bool        rumble = true;
+    // The right stick's axes inverted (the camera in most titles), from every device:
+    // gamepad, mouse and keys. Applied live from the Controls page; persisted.
+    bool        invert_camera_x = false;
+    bool        invert_camera_y = false;
 };
 
 struct CdvdConfig {

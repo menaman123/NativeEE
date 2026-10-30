@@ -5,15 +5,21 @@
 // an offline copy for a judge); `--prepare --index URL --iso IMAGE --folder DIR [--jobs N] [--release TAG]
 // [--json REPORT] [--subfolder memcards=DIR] [--subfolder saves=DIR]` is the headless Build: no window, progress on
 // stderr, the game's path on stdout, the same report the command-line tool writes, exit 0 when the game is ready; `--iso IMAGE` alone opens the setup window on that disc. The
-// launcher never looks for disc images by itself (D-L10).
+// launcher never looks for disc images by itself (D-L10). With a window it first looks for a newer release of itself
+// (SelfUpdater; `--no-update` skips that) and refreshes the game folder after an update (LauncherApp::refreshGame).
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QFile>
 #include <QFileInfo>
 #include <QLabel>
+#include <QMessageBox>
+#include <QProgressDialog>
 #include <QTextStream>
+#include <QTimer>
 #include <QVBoxLayout>
+#include <functional>
 #include <memory>
+#include "app_data.h"
 #include "disc_identifier.h"
 #include "game_folder.h"
 #include "launcher_app.h"
@@ -21,6 +27,7 @@
 #include "launcher_theme.h"
 #include "main_window.h"
 #include "prepare_runner.h"
+#include "self_updater.h"
 #include "title_manifest.h"
 #ifdef PS2R_LAUNCHER_HAS_PREPARE
 #include "bundled_prepare_runner.h"
@@ -108,6 +115,68 @@ int runHeadless(ps2r::launcher::LauncherApp& launcher, const QString& iso, const
     return 1;
 #endif
 }
+
+// The start-up update (SelfUpdater): a newer release is downloaded and installed behind a progress window, then the
+// launcher closes and the copy script opens the new one. Otherwise -- no newer release, no network, the player's
+// "Not now", a failure -- `carryOn` runs: the usual start.
+void checkForUpdate(ps2r::launcher::LauncherApp& launcher, QWidget* window, bool allowed, const std::function<void()>& carryOn) {
+    using ps2r::launcher::SelfUpdater;
+    auto* updater = new SelfUpdater(launcher.manifest(), launcher.version(), launcher.hostTarget(), launcher.appData()->root() + "/update",
+                                    launcher.appData()->logPath("update"), window);
+    QString why;
+    if (!allowed || !updater->enabled(&why)) {
+        delete updater;
+        carryOn();
+        return;
+    }
+    QObject::connect(updater, &SelfUpdater::noUpdate, window, [updater, carryOn] { updater->deleteLater(); carryOn(); });
+    QObject::connect(updater, &SelfUpdater::updateAvailable, window, [updater, window, carryOn](const QString& tag) {
+        auto* dialog = new QProgressDialog(window);
+        dialog->setWindowTitle(QStringLiteral("Updating"));
+        dialog->setLabelText(QStringLiteral("A new version (%1) is out. Getting it…").arg(tag));
+        dialog->setCancelButtonText(QStringLiteral("Not now"));
+        dialog->setRange(0, 0);
+        dialog->setMinimumDuration(0);
+        dialog->setAutoClose(false);
+        dialog->setAutoReset(false);
+        dialog->setMinimumWidth(440);
+        dialog->setWindowModality(Qt::WindowModal);
+        auto over = std::make_shared<bool>(false);
+        QObject::connect(updater, &SelfUpdater::progress, dialog, [dialog, tag](qint64 done, qint64 total, const QString& phase) {
+            if (total > 0 && done >= 0) {
+                dialog->setRange(0, 1000);
+                dialog->setValue(int(done * 1000 / total));
+                dialog->setLabelText(QStringLiteral("%1 (%2)\n%3 of %4 MB").arg(phase, tag).arg(done >> 20).arg(total >> 20));
+            } else {
+                dialog->setRange(0, 0);
+                dialog->setLabelText(QStringLiteral("%1 (%2)").arg(phase, tag));
+            }
+        });
+        QObject::connect(dialog, &QProgressDialog::canceled, window, [updater, dialog, carryOn, over] {
+            if (*over) return;
+            *over = true;
+            updater->cancel();
+            dialog->deleteLater();
+            updater->deleteLater();
+            carryOn();
+        });
+        QObject::connect(updater, &SelfUpdater::failed, window, [updater, dialog, window, carryOn, over](const QString& text) {
+            if (*over) return;
+            *over = true;
+            dialog->deleteLater();
+            updater->deleteLater();
+            QMessageBox::information(window, QStringLiteral("Update"), text);
+            carryOn();
+        });
+        QObject::connect(updater, &SelfUpdater::restartRequired, window, [over] {
+            *over = true;
+            QTimer::singleShot(400, qApp, &QCoreApplication::quit);
+        });
+        dialog->show();
+        updater->install();
+    });
+    updater->check();
+}
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -129,7 +198,8 @@ int main(int argc, char** argv) {
     const QCommandLineOption jobsOpt("jobs", "How many things to do at once (--prepare).", "n");
     const QCommandLineOption jsonOpt("json", "Write the report here (--prepare).", "report");   // lint: allow
     const QCommandLineOption subfolderOpt("subfolder", "Where the memory cards or save states go (--prepare), e.g. memcards=DIR; else inside the game folder.", "id=dir");
-    parser.addOptions({manifestOpt, identifyOpt, indexOpt, releaseOpt, prepareOpt, isoOpt, folderOpt, jobsOpt, jsonOpt, subfolderOpt});
+    const QCommandLineOption noUpdateOpt("no-update", "Do not look for a newer version of the launcher at start.");
+    parser.addOptions({manifestOpt, identifyOpt, indexOpt, releaseOpt, prepareOpt, isoOpt, folderOpt, jobsOpt, jsonOpt, subfolderOpt, noUpdateOpt});
     parser.process(*app);
 
     ps2r::launcher::LauncherApp launcher;
@@ -177,7 +247,12 @@ int main(int argc, char** argv) {
 #endif
     ps2r::launcher::MainWindow window(&launcher);
     window.show();
-    if (parser.isSet(isoOpt)) window.showSetup(QFileInfo(parser.value(isoOpt)).absoluteFilePath());   // a disc named on the command line
-    else window.startSetupIfNeeded();
+    const bool discNamed = parser.isSet(isoOpt);
+    if (discNamed) window.showSetup(QFileInfo(parser.value(isoOpt)).absoluteFilePath());   // a disc named on the command line
+    checkForUpdate(launcher, &window, !parser.isSet(noUpdateOpt), [&launcher, &window, discNamed] {
+        if (discNamed) return;
+        // a launcher newer than the game in the game folder copies its game in; else the first run's setup if due
+        if (!launcher.refreshGame()) window.startSetupIfNeeded();
+    });
     return app->exec();
 }

@@ -214,6 +214,10 @@ void PlatformInput::Execute(Work& work) {
             keyboard_enabled_.store(system_.KbmEnabled());
             work.ok = true;
             break;
+        case Operation::CameraInvert:
+            system_.SetCameraInvert(work.first != 0, work.second != 0);
+            work.ok = true;
+            break;
         case Operation::VirtualPad: {
             auto* joystick = static_cast<SDL_Joystick*>(virtual_joystick_);
             switch (static_cast<VirtualPad>(work.first)) {
@@ -392,3 +396,9 @@ void PlatformInput::VirtualPadAction(VirtualPad action) { Request(Operation::Vir
 void PlatformInput::ResetPending() { Request(Operation::Reset); }
 void PlatformInput::SetUiCapture(bool captured) { Request(Operation::Capture, captured); }
 void PlatformInput::SetKeyboardEnabled(bool enabled) { Request(Operation::Keyboard, enabled); }
+
+void PlatformInput::SetCameraInvert(bool x, bool y) {
+    invert_x_.store(x);
+    invert_y_.store(y);
+    Request(Operation::CameraInvert, x, y);
+}

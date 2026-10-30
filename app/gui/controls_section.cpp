@@ -19,6 +19,19 @@ void ControlsSection::Draw(SessionControls& controls, const SessionControls::Sna
             controls.Submit(Action::SetKeyboardInput, keyboard ? 1 : 0);
         ImGui::EndDisabled();
     }
+    if (snapshot.capabilities.camera_invert) {
+        const auto busy = [&](Action a) {
+            return std::any_of(snapshot.pending.begin(), snapshot.pending.end(),
+                               [a](const auto& result) { return result.request.action == a; });
+        };
+        bool invert_x = snapshot.runtime.invert_camera_x, invert_y = snapshot.runtime.invert_camera_y;
+        ImGui::BeginDisabled(busy(Action::SetInvertCameraX) || snapshot.closing);
+        if (ImGui::Checkbox("Invert camera X (left / right)", &invert_x)) controls.Submit(Action::SetInvertCameraX, invert_x ? 1 : 0);
+        ImGui::EndDisabled();
+        ImGui::BeginDisabled(busy(Action::SetInvertCameraY) || snapshot.closing);
+        if (ImGui::Checkbox("Invert camera Y (up / down)", &invert_y)) controls.Submit(Action::SetInvertCameraY, invert_y ? 1 : 0);
+        ImGui::EndDisabled();
+    }
     if (!HasModel()) {
         ImGui::TextDisabled("Key bindings are configured when the session starts (the launcher's Controls page).");
         return;

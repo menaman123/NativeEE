@@ -1,8 +1,9 @@
 # engine/sound -- the SPU2 half (PHASE4_PLAN section 2.7). Stage 4E': the ADPCM
 # block decoder (VagDecoder); 4E'': Voice, SpuCore, CommandRing, Mixer (the
 # tick-clocked pump); Phase 7 integration: FmvPcmInput (the mixer's FMV PCM
-# source, the sound module's FmvPcmSink). The libsd bodies live in
-# engine/iop/hle/libsd over SpuCore.
+# source, the sound module's FmvPcmSink); TimeStretch (the play host's rate
+# match to the audio device). The libsd bodies live in engine/iop/hle/libsd
+# over SpuCore.
 add_library(ps2r_sound STATIC
     vag_decoder.cpp
     voice.cpp
@@ -12,6 +13,7 @@ add_library(ps2r_sound STATIC
     audio_mixer.cpp
     fmv_pcm_input.cpp
     voice_trace.cpp
+    time_stretch.cpp
 )
 # The libsdr surface (4E''): the SDRDRV face and the EE rows over SpuCore. Links
 # the manifest (ps2r_ee) and the RPC router (ps2r_sif); ps2r_sound itself stays

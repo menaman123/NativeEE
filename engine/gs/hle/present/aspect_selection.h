@@ -3,8 +3,8 @@
 // game thread: the projection, the culling frustum, the HUD fit and the movie
 // picture read it per call) and the presenter (the main thread fits the
 // anamorphic frame into the window at the same ratio). `auto` follows the
-// window: its drawable size is snapped to the nearest of the four supported
-// shapes (4:3, 16:10, 16:9, 21:9) at the geometric midpoints, and a session
+// window: its drawable size is snapped to the nearest of the supported
+// shapes (4:3, 16:10, 16:9, 21:9, 32:9) at the geometric midpoints, and a session
 // without a window (headless) is 4:3 -- the console's TV, the deterministic
 // lanes' identity. Lock-free: one atomic per field. Its own tiny library
 // (ps2r_gs_aspect): the session presenter links no other GS library.
@@ -18,14 +18,15 @@ namespace gs {
 
 class AspectSelection {
 public:
-    // The selectable shapes, in video.aspect's order (auto|4:3|16:9|16:10|21:9);
+    // The selectable shapes, in video.aspect's order (auto|4:3|16:9|16:10|21:9|32:9);
     // the composition root maps the Config enum onto this one (this layer
     // includes no Config).
-    enum class Shape : uint8_t { Auto = 0, Narrow, Wide16_9, Wide16_10, Wide21_9 };
+    enum class Shape : uint8_t { Auto = 0, Narrow, Wide16_9, Wide16_10, Wide21_9, Wide32_9 };
     static constexpr double kNarrow = 4.0 / 3.0;   // the title's NarrowAspect (0x3faaaaab)
     static constexpr double kWide = 16.0 / 9.0;    // the title's WideAspect (0x3fe38e39)
     static constexpr double kWide16_10 = 16.0 / 10.0;
     static constexpr double kWide21_9 = 21.0 / 9.0;
+    static constexpr double kWide32_9 = 32.0 / 9.0;
 
     explicit AspectSelection(Shape selection = Shape::Auto) : selection_(selection) {}
 
@@ -43,7 +44,7 @@ public:
     // The nearest supported shape for a window ratio (<= 0 = 4:3).
     static double Snap(double window_ratio);
     static double RatioOf(Shape selection);
-    // "4:3" | "16:9" | "16:10" | "21:9" for a supported ratio.
+    // "4:3" | "16:9" | "16:10" | "21:9" | "32:9" for a supported ratio.
     static const char* Name(double ratio);
     static bool IsNarrow(double ratio) { return ratio <= kNarrow + 1e-6; }
     // Whether the model needs to be composed at all: without a window only an

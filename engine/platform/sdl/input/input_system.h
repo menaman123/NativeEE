@@ -61,6 +61,10 @@ public:
     bool UiCaptured() const { return ui_capture_; }
     void SetKbmEnabled(bool enabled);
     bool KbmEnabled() const { return kbm_enabled_; }
+    // Inverts the mapped right stick's axes (every device: gamepad, mouse, keys) from the next Frame.
+    void SetCameraInvert(bool x, bool y);
+    bool CameraInvertX() const { return invert_x_; }
+    bool CameraInvertY() const { return invert_y_; }
 
     // Device-selection INI at settings.device_config_path:
     //   pad = auto | none | guid:<SDL joystick GUID>
@@ -99,6 +103,7 @@ private:
     PadSample last_;
     bool ui_capture_ = false;
     bool kbm_enabled_ = true;
+    bool invert_x_ = false, invert_y_ = false;
     bool initialized_ = false;
 };
 

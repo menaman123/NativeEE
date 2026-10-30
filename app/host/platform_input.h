@@ -87,6 +87,10 @@ public:
     void ResetPending();
     void SetUiCapture(bool captured);
     void SetKeyboardEnabled(bool enabled);
+    // The right stick's inverted axes (InputSystem::SetCameraInvert), from the next Sample.
+    void SetCameraInvert(bool x, bool y);
+    bool CameraInvertX() const { return invert_x_.load(); }
+    bool CameraInvertY() const { return invert_y_.load(); }
     // Any thread: the harness's HELD key (harness.inject_key "<KEY>@N-M"): while
     // held, every main-side Sample re-arms the kbm backend's injection overlay
     // for the scancode (SDL's keyboard-state array ignores pushed events; the
@@ -126,7 +130,7 @@ public:
     uint64_t Edges() const { return edges_.load(); }   // input edges stamped (census)
 
 private:
-    enum class Operation { Sample, Reset, Capture, Keyboard, VirtualPad };
+    enum class Operation { Sample, Reset, Capture, Keyboard, VirtualPad, CameraInvert };
     struct Work {
         Operation operation = Operation::Sample;
         unsigned first = 0, second = 0;
@@ -149,7 +153,7 @@ private:
     const std::atomic<bool>* owner_busy_ = nullptr;
     bool stopped_ = false;
     bool accepted_connected_ = false;
-    std::atomic<bool> gamepad_active_{false}, keyboard_enabled_{true};
+    std::atomic<bool> gamepad_active_{false}, keyboard_enabled_{true}, invert_x_{false}, invert_y_{false};
     std::atomic<uint64_t> samples_{0}, drains_{0}, bindings_reloads_{0}, bindings_reloads_ok_{0};
     // The game owner's Sample state (that thread's alone: no lock).
     std::shared_ptr<Work> outstanding_;   // a posted Sample main has not answered yet

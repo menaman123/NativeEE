@@ -17,8 +17,8 @@ bool DisplaySequence::ModeOf(const std::string& mode, SessionControls::Action& a
     if (mode == "vsync") { action = Action::SetVSync; value = 1; return true; }
     if (mode == "novsync") { action = Action::SetVSync; value = 0; return true; }
     // The Display page's other rows (the same AspectSel / TextureFilterSel orders as the settings file).
-    static const char* const kAspects[] = {"aspect_auto", "aspect_4_3", "aspect_16_9", "aspect_16_10", "aspect_21_9"};
-    for (int i = 0; i < 5; ++i)
+    static const char* const kAspects[] = {"aspect_auto", "aspect_4_3", "aspect_16_9", "aspect_16_10", "aspect_21_9", "aspect_32_9"};
+    for (int i = 0; i < 6; ++i)
         if (mode == kAspects[i]) { action = Action::SetAspect; value = i; return true; }
     static const char* const kFilters[] = {"filter_title", "filter_point", "filter_bilinear", "filter_trilinear"};
     for (int i = 0; i < 4; ++i)
@@ -33,6 +33,19 @@ bool DisplaySequence::ModeOf(const std::string& mode, SessionControls::Action& a
     if (mode == "capoff") { action = Action::SetFrameCap; value = 0; return true; }
     if (mode == "cap30") { action = Action::SetFrameCap; value = 1; return true; }
     if (mode == "cap60") { action = Action::SetFrameCap; value = 2; return true; }
+    // The frame-rate limit: fps<n> (60 = the console's pacing) or fpsunlimited.
+    if (mode == "fpsunlimited") { action = Action::SetFrameLimit; value = 0; return true; }
+    if (mode.size() > 3 && mode.compare(0, 3, "fps") == 0) {
+        char* end = nullptr;
+        const long v = std::strtol(mode.c_str() + 3, &end, 10);
+        if (end && !*end && v >= 60 && v <= 1000) { action = Action::SetFrameLimit; value = static_cast<int>(v); return true; }
+    }
+    if (mode == "invertx") { action = Action::SetInvertCameraX; value = 1; return true; }
+    if (mode == "noinvertx") { action = Action::SetInvertCameraX; value = 0; return true; }
+    if (mode == "inverty") { action = Action::SetInvertCameraY; value = 1; return true; }
+    if (mode == "noinverty") { action = Action::SetInvertCameraY; value = 0; return true; }
+    if (mode == "blur") { action = Action::SetMotionBlur; value = 1; return true; }
+    if (mode == "noblur") { action = Action::SetMotionBlur; value = 0; return true; }
     // The Controls and Sound pages' persisted rows (the settings judge drives every writer).
     if (mode == "kbm") { action = Action::SetKeyboardInput; value = 1; return true; }
     if (mode == "nokbm") { action = Action::SetKeyboardInput; value = 0; return true; }

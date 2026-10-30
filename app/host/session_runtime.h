@@ -142,6 +142,16 @@ public:
     // since the last take (1..4; 0 = none pending). The caller applies it on
     // the backend owner between frames (VideoStack::ApplyScale).
     int TakeScaleRequest() { return scale_request_.exchange(0); }
+    // Main thread before Run: the title supports an uncapped frame rate; `seed` is video.frame_limit
+    // (60 = the console's pacing, 0 = unlimited, 61..1000 = the limit). Off the console's pacing the
+    // presenter shows every picture as it arrives (frame cap off) so the extra frames reach the window.
+    void ConfigureFrameLimit(int seed);
+    // Game owner, at its frame boundary: the frame-rate limit in force.
+    int FrameLimitSetting() const { return frame_limit_.load(); }
+    // Main thread before Run: the title can switch its motion blur; `seed` is video.motion_blur.
+    void ConfigureMotionBlur(bool seed);
+    // Game owner, at its frame boundary: the motion blur in force.
+    bool MotionBlurSetting() const { return motion_blur_.load(); }
     // Main thread before Run: the pause-menu shape -- Escape opens the menu and
     // pauses the game (hooks.pause must exist for the pause), the panel's Resume /
     // Quit; off, Escape is the window close (the first title's shape).
@@ -279,10 +289,11 @@ private:
     SessionControls::Capabilities capabilities_;
     SessionControls::RuntimeState status_;
     std::atomic<int> volume_{100};
-    std::atomic<bool> perf_overlay_{false}, fullscreen_state_{false}, keyboard_state_{true}, vsync_state_{false};
+    std::atomic<bool> perf_overlay_{false}, fullscreen_state_{false}, keyboard_state_{true}, vsync_state_{false},
+        motion_blur_{true};
     bool display_rows_ = false;
     std::atomic<int> scale_setting_{1}, effective_scale_{1}, scale_request_{0}, aspect_setting_{0}, render_rate_{0},
-        display_mode_{0}, frame_cap_{2};
+        display_mode_{0}, frame_cap_{2}, frame_limit_{60};
     // The presented-frame cadence (video.frame_cap): the pacer admits the OLDEST waiting
     // picture at its edges (at once when the edge stood open); the one behind it waits
     // its turn (main-thread only). A third arrival drops the oldest (Supersede).
