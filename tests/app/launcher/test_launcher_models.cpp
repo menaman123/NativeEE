@@ -4,6 +4,9 @@
 // card's relative times, the Build rule (LauncherApp::canPrepare: a chosen, present, supported disc and nothing being
 // prepared) and the pipeline's platform id of a manifest target.
 #include <QtTest/QtTest>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTemporaryDir>
 #include "app_data.h"
 #include "disc_identifier.h"
@@ -20,6 +23,7 @@
 #endif
 #include "process_runner.h"
 #include "save_state_list.h"
+#include "self_updater.h"
 #include "shipped_game_runner.h"
 #include "title_manifest.h"
 using namespace ps2r::launcher;
@@ -508,6 +512,33 @@ private slots:
         QVERIFY(data.save(&err));
         AppData again("ExampleGame");
         QCOMPARE(again.value("k").toInt(), 1);
+    }
+
+    // The start-up update's choice: the newest release ahead of this one that carries this computer's download.
+    void updatePick() {
+        auto release = [](const QString& tag, const QStringList& assets, bool draft = false) {
+            QJsonArray a;
+            for (const QString& n : assets)
+                a.append(QJsonObject{{"name", n}, {"size", 42}, {"browser_download_url", "https://example.invalid/" + n}});
+            return QJsonObject{{"tag_name", tag}, {"draft", draft}, {"html_url", "https://example.invalid/tag/" + tag}, {"assets", a}};
+        };
+        auto asset = [this](const QString& tag) { return manifest_.releaseAsset(tag, "windows-x64"); };
+        const QJsonArray listing{
+            release("v4", {}, true),                                                       // a draft: never
+            release("v3", {manifest_.releaseAsset("v3", "linux-x86_64")}),                 // other computers only
+            release("v2", {asset("v2"), asset("v2") + ".sha256"}),   // lint: allow
+            release("v1", {asset("v1")}),
+        };
+        const QByteArray bytes = QJsonDocument(listing).toJson();
+        const SelfUpdater::Pick p = SelfUpdater::pickUpdate(bytes, "v1", asset);
+        QVERIFY(p.valid());
+        QCOMPARE(p.tag, QStringLiteral("v2"));
+        QCOMPARE(p.assetUrl, "https://example.invalid/" + asset("v2"));
+        QCOMPARE(p.checksumUrl, "https://example.invalid/" + asset("v2") + ".sha256");   // lint: allow
+        QCOMPARE(p.size, qint64(42));
+        QVERIFY(!SelfUpdater::pickUpdate(bytes, "v2", asset).valid());       // the newest for this computer
+        QVERIFY(!SelfUpdater::pickUpdate(bytes, "0.1", asset).valid());      // a development build
+        QVERIFY(!SelfUpdater::pickUpdate("not a listing", "v1", asset).valid());
     }
 };
 

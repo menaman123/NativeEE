@@ -66,6 +66,10 @@ public:
     void stopGame();
     // The first run is complete when a game folder is chosen and the game is prepared in it for this machine.
     bool setupComplete() const;
+    // After the launcher was updated: the game folder holds the game an older launcher put there. When this
+    // launcher carries the game ready-made, it is copied in again for the same disc and computer (a few seconds,
+    // shown on the disc's card); true when that started. A rebuild by the prepare pipeline stays the player's choice.
+    bool refreshGame();
 
     QString version() const;
     QString engineCommit() const;

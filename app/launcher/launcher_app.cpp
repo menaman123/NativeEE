@@ -13,6 +13,7 @@
 #include "host_platform.h"
 #include "ini_settings.h"
 #include "prepare_runner.h"
+#include "shipped_game_runner.h"
 #include "title_manifest.h"
 namespace ps2r::launcher {
 
@@ -224,6 +225,16 @@ bool LauncherApp::setupComplete() const {
     if (disc.isEmpty()) return false;
     const GameEntry* g = library_->game(disc);
     return g && folder_->upToDate(g->identity.sha256, version());
+}
+
+bool LauncherApp::refreshGame() {
+    if (!qobject_cast<ShippedGameRunner*>(preparer_) || preparer_->running() || game_->running()) return false;
+    const PreparedRecord r = folder_->prepared();
+    if (!r.ok || !folder_->chosen() || folder_->upToDate(r.discSha256, version())) return false;
+    const GameEntry* g = library_->game(r.discPath);
+    if (!g || g->missing || !g->identity.playable() || g->identity.sha256 != r.discSha256) return false;
+    QString err;
+    return prepare(r.discPath, r.targetId, &err);
 }
 
 QString LauncherApp::version() const {
