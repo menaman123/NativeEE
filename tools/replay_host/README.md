@@ -41,10 +41,16 @@ link engine libraries of its own (it would carry a second, unbound `g_bound_memo
 4. Run: `recomp_call(id, fn, ctx)`. The candidate is installed with `update_function_impl` (hooked -> the map);
    without `--candidate` the generated body runs (identity). Every id's probe byte is set, so each call is bracketed
    (depth 1 = the candidate, 2+ = callees); accesses at depth 1 are the candidate's.
-5. Callees (`--callees`): `recorded` = the callee's own record from the same corpus (caller == fn, a0..a3 equal; sp
-   then ra break ties; several records with different effects = ambiguous) applied without running it; `original` =
-   the generated body on the image; `auto` = recorded when unambiguous, else original. Installed as stubs through
-   `update_function_impl` on every callee address the records name.
+5. Callees (`--callees`): `recorded` = the callee's own record from the same corpus applied without running it
+   (caller == fn; a0..a3 equal, falling back to a0..a2 / a0..a1 / a0 when a callee takes fewer arguments and the rest
+   is pass-through garbage -- counted as `loose_args`; then the same frame, sp, ra narrow the set; several records
+   with different effects left = ambiguous, nothing applied); `original` = the generated body on the image; `auto` =
+   recorded when unambiguous, else original. Installed as stubs through `update_function_impl` on every callee address
+   the records name. Before the run the recorded callees' OWN read sets (same frame) are seeded too, so a callee body
+   that runs for real sees the game's bytes (`--no-seed-callee-reads` turns it off). `PS2R_REPLAY_DEBUG=1` prints
+   every routing decision on stderr. Known limit: a callee called several times in one frame with different results
+   (scePadGetState under pad_update) stays ambiguous -- the corpus has no call ordinal to link the callee's record
+   to the exact caller invocation.
 6. Compare: v0, v1 (`--ignore-v1` skips it), the recorded write set byte for byte outside `[sp - frame, sp)`
    (`--frame`, default 0x4000), extra stores by the candidate outside that frame, the callee sequence
    (`--lenient-callees` makes a difference a note).

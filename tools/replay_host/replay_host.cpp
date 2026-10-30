@@ -194,6 +194,7 @@ struct Options {
     // in the register at entry (a pass-through then passes; a wrong computation still fails); `zero` leaves 0.
     bool seed_v1 = true;
     bool seed_v0 = false;
+    bool seed_callee_reads = true;   // seed the recorded callees' own read sets (same frame) before the run
     size_t verbose = 0;           // per-record lines to include (failures first)
     std::string report;
     uint64_t max_trips = 200000;
@@ -275,7 +276,7 @@ struct Driver {
     void* candidate_lib = nullptr;
     uint32_t target_id = 0xFFFFFFFFu;
     // census of how callees were served
-    uint64_t callee_recorded = 0, callee_original = 0, callee_ambiguous = 0, callee_unmatched = 0;
+    uint64_t callee_recorded = 0, callee_original = 0, callee_ambiguous = 0, callee_unmatched = 0, callee_loose = 0;
     std::set<uint32_t> callee_addrs_installed;
 
     void IndexCallees() {
@@ -285,18 +286,33 @@ struct Driver {
 
     // Serve one call of callee `cfn` from inside the candidate: the recorded form when it is unambiguous.
     // Returns true when served from the recording (the body must not run).
+    uint32_t current_frame = 0;   // the frame of the record under replay (a tie-breaker for callee records)
+    bool debug = std::getenv("PS2R_REPLAY_DEBUG") != nullptr;   // callee routing decisions on stderr
+
     bool ServeRecorded(uint32_t cfn, CpuContext& ctx) {
         auto it = callees.by_fn.find(cfn);
-        if (it == callees.by_fn.end()) { ++callee_unmatched; S().callees_unmatched.push_back(cfn); return false; }
+        if (it == callees.by_fn.end()) { ++callee_unmatched; S().callees_unmatched.push_back(cfn); if (debug) std::fprintf(stderr, "[callee %s] no records with caller %s\n", Hex8(cfn).c_str(), Hex8(opt.fn).c_str()); return false; }
         const uint64_t a0 = ctx.cpuRegs.GPR.r[4].UD[0], a1 = ctx.cpuRegs.GPR.r[5].UD[0];
         const uint64_t a2 = ctx.cpuRegs.GPR.r[6].UD[0], a3 = ctx.cpuRegs.GPR.r[7].UD[0];
         const uint32_t sp = ctx.cpuRegs.GPR.r[29].UL[0], ra = ctx.cpuRegs.GPR.r[31].UL[0];
+        // Match on a0..a3 first; a callee that takes fewer arguments sees pass-through garbage in the rest, which the
+        // replay cannot reproduce (the record holds no entry value for the other registers), so fall back to a0..a2,
+        // a0..a1, a0 -- each level only when it leaves exactly one distinct effect. Counted as `loose`.
         std::vector<const racorp::Record*> m;
-        for (const auto* r : it->second) {
-            if (r->args.size() < 4) continue;
-            if (r->args[0] == a0 && r->args[1] == a1 && r->args[2] == a2 && r->args[3] == a3) m.push_back(r);
+        int level = 4;
+        const uint64_t want[4] = {a0, a1, a2, a3};
+        for (; level >= 1; --level) {
+            m.clear();
+            for (const auto* r : it->second) {
+                if (r->args.size() < 4) continue;
+                bool ok = true;
+                for (int k = 0; k < level; ++k) if (r->args[k] != want[k]) { ok = false; break; }
+                if (ok) m.push_back(r);
+            }
+            if (!m.empty()) break;
         }
-        if (m.empty()) { ++callee_unmatched; S().callees_unmatched.push_back(cfn); return false; }
+        if (level < 4 && !m.empty()) ++callee_loose;
+        if (m.empty()) { ++callee_unmatched; S().callees_unmatched.push_back(cfn); if (debug) std::fprintf(stderr, "[callee %s] frame %u a0..a3 %llx %llx %llx %llx: no record with these args (%zu records)\n", Hex8(cfn).c_str(), current_frame, (unsigned long long)a0, (unsigned long long)a1, (unsigned long long)a2, (unsigned long long)a3, it->second.size()); return false; }
         // Collapse records with identical effects (the same ret and write set), then break ties on sp, then ra.
         auto same_effect = [](const racorp::Record* x, const racorp::Record* y) {
             if (x->v0 != y->v0 || x->v1 != y->v1 || x->writes.size() != y->writes.size()) return false;
@@ -313,17 +329,21 @@ struct Driver {
             }
             return d;
         };
+        // Narrow step by step while the effects stay ambiguous: the same frame boundary as the call under replay,
+        // then the same sp, then the same ra. A step that leaves nothing is skipped.
         std::vector<const racorp::Record*> d = distinct(m);
-        if (d.size() > 1) {
-            std::vector<const racorp::Record*> by_sp;
-            for (const auto* r : m) if (r->sp == sp) by_sp.push_back(r);
-            if (!by_sp.empty()) d = distinct(by_sp);
-            if (d.size() > 1) {
-                std::vector<const racorp::Record*> by_ra;
-                for (const auto* r : by_sp.empty() ? m : by_sp) if (r->ra == ra) by_ra.push_back(r);
-                if (!by_ra.empty()) d = distinct(by_ra);
-            }
-        }
+        auto narrow = [&](auto pred) {
+            if (d.size() <= 1) return;
+            std::vector<const racorp::Record*> n;
+            for (const auto* r : m) if (pred(r)) n.push_back(r);
+            if (!n.empty()) { m = n; d = distinct(m); }
+        };
+        narrow([&](const racorp::Record* r) { return r->frame == current_frame; });
+        narrow([&](const racorp::Record* r) { return r->sp == sp; });
+        narrow([&](const racorp::Record* r) { return r->ra == ra; });
+        if (debug) std::fprintf(stderr, "[callee %s] frame %u a0..a3 %llx %llx %llx %llx sp %x ra %x: %zu records (matched on %d args), %zu distinct effects\n",
+                                Hex8(cfn).c_str(), current_frame, (unsigned long long)a0, (unsigned long long)a1,
+                                (unsigned long long)a2, (unsigned long long)a3, sp, ra, m.size(), level, d.size());
         if (d.size() != 1) { ++callee_ambiguous; return false; }
         const racorp::Record* r = d[0];
         auto& s = S();
@@ -379,9 +399,29 @@ struct Driver {
         res.args = r.args;
         s.Reset();
         s.target_fn = opt.fn;
+        current_frame = r.frame;
         s.max_trips = opt.max_trips;
         // 1. seed the image: the read set (first-seen values), then the stack arguments
         for (const auto& run : r.reads) s.Poke(run.addr, run.bytes.data(), static_cast<uint32_t>(run.bytes.size()), kSeeded);
+        // 1a. the callees' own read sets (the records of each recorded callee made from this function in the same
+        //     frame): a callee body that runs for real then sees the game's bytes, not zeros. Known bytes are kept.
+        if (opt.seed_callee_reads) {
+            for (uint32_t cfn : r.callees) {
+                auto it = callees.by_fn.find(cfn);
+                if (it == callees.by_fn.end()) continue;
+                for (const auto* cr : it->second) {
+                    if (cr->frame != r.frame) continue;
+                    for (const auto& run : cr->reads)
+                        for (size_t i = 0; i < run.bytes.size(); ++i) {
+                            const uint32_t a = run.addr + static_cast<uint32_t>(i);
+                            const uint8_t* st = s.StatePtr(a);
+                            const uint8_t cur = st ? *st : [&] { auto q = s.mmio_handler.state.find(a); return q == s.mmio_handler.state.end() ? uint8_t(0) : q->second; }();
+                            if (cur) continue;
+                            s.Poke(a, &run.bytes[i], 1, kWritten);   // known, but not the function's own read: not "covered"
+                        }
+                }
+            }
+        }
         // 1b. poison the recorded-write bytes the function did not read: a store the candidate forgets then differs
         {
             std::vector<uint8_t> poison;
@@ -560,6 +600,7 @@ int main(int argc, char** argv) {
         else if (a == "--frame") { if (!ParseU32(next("--frame"), &opt.frame)) return Usage("--frame: bad size"); }
         else if (a == "--lenient-callees") opt.lenient_callees = true;
         else if (a == "--ignore-v1") opt.ignore_v1 = true;
+        else if (a == "--no-seed-callee-reads") opt.seed_callee_reads = false;
         else if (a == "--v1-entry") { std::string m = next("--v1-entry"); if (m == "seed") opt.seed_v1 = true; else if (m == "zero") opt.seed_v1 = false; else return Usage("--v1-entry: seed | zero"); }
         else if (a == "--v0-entry") { std::string m = next("--v0-entry"); if (m == "seed") opt.seed_v0 = true; else if (m == "zero") opt.seed_v0 = false; else return Usage("--v0-entry: seed | zero"); }
         else if (a == "--verbose") opt.verbose = std::strtoull(next("--verbose"), nullptr, 0);
@@ -683,7 +724,8 @@ int main(int argc, char** argv) {
     }
     o += "],\n";
     o += "    \"callee_calls\": {\"recorded\": " + std::to_string(d.callee_recorded) + ", \"original\": " + std::to_string(d.callee_original) +
-         ", \"ambiguous\": " + std::to_string(d.callee_ambiguous) + ", \"unmatched\": " + std::to_string(d.callee_unmatched) + "}\n";
+         ", \"ambiguous\": " + std::to_string(d.callee_ambiguous) + ", \"unmatched\": " + std::to_string(d.callee_unmatched) +
+         ", \"loose_args\": " + std::to_string(d.callee_loose) + "}\n";
     o += "  },\n";
     if (opt.verbose) {
         o += "  \"per_record\": [\n";
