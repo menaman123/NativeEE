@@ -95,6 +95,168 @@ static bool vu_macro_op_sets_mac_flags(const rabbitizer::InstructionR5900& instr
     }
 }
 
+// ---- --vu0-native (Recompiler::set_vu0_native) -----------------------------
+// File-scope mirrors of the member flag for the static helpers below, set by
+// recompile_to_files. s_vu0_fold_open: a straight-line run of FMAC ops has
+// lane flags pending in the function locals `_vu0_fl` (the last op's) /
+// `_vu0_fo` (the OR over the run); vu0_fold_close emits the one commit.
+static bool s_vu0_native = false;
+static bool s_vu0_fold_open = false;
+
+static void vu0_fold_close(std::ofstream& file) {
+    if (!s_vu0_fold_open) return;
+    file << "    vu0n::Commit(ctx.vuRegs, _vu0_fl, _vu0_fo);\n";
+    s_vu0_fold_open = false;
+}
+
+// The instructions whose emission (or whose host callee) may READ or WRITE the
+// COP2 MAC / STATUS registers, or hand the register block to another observer:
+// the fold must be committed before them. Control flow (branches, jumps,
+// calls, the yield point) is closed by generate_block_code itself.
+static bool vu0_fold_must_close_before(const rabbitizer::InstructionR5900& instr) {
+    switch (instr.getUniqueId()) {
+        case rabbitizer::InstrId::UniqueId::r5900_cfc2_ni:
+        case rabbitizer::InstrId::UniqueId::r5900_cfc2_i:
+        case rabbitizer::InstrId::UniqueId::r5900_ctc2_ni:
+        case rabbitizer::InstrId::UniqueId::r5900_ctc2_i:
+        case rabbitizer::InstrId::UniqueId::r5900_vcallms:
+        case rabbitizer::InstrId::UniqueId::r5900_vcallmsr:
+        case rabbitizer::InstrId::UniqueId::cpu_syscall:
+        case rabbitizer::InstrId::UniqueId::cpu_break:
+        case rabbitizer::InstrId::UniqueId::cpu_eret:
+        case rabbitizer::InstrId::UniqueId::cpu_mtc0:
+        case rabbitizer::InstrId::UniqueId::cpu_mfc0:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// Rewrite one FMAC result expression of the scalar emission into the vector
+// kernels. Grammar of the strings the sites build (and nothing else):
+//   atom      := ctx.vuRegs.VF[n] | ctx.vuRegs.ACC | VR_reg{E, E, E, E} (a broadcast: E repeated)
+//   expr      := atom | atom OP atom | atom OP ( atom * atom )      with OP in {+, -, *}
+// Broadcasts become vu0n::Bc<lane>(base) when E is `base.x|y|z|w`, else vu0n::Splat(E).
+// Returns false (and leaves `out` untouched) for anything outside the grammar
+// -- the caller then emits the scalar form for that op, so a new site cannot
+// silently take a wrong kernel.
+static bool vu0_rewrite_broadcasts(std::string& e) {
+    std::string out;
+    size_t i = 0;
+    while (i < e.size()) {
+        const size_t at = e.find("VR_reg{", i);
+        if (at == std::string::npos) { out += e.substr(i); break; }
+        out += e.substr(i, at - i);
+        // the matching close brace (the items are atoms: no nested braces expected, but keep a depth)
+        size_t j = at + 7, depth = 1;
+        while (j < e.size() && depth > 0) {
+            if (e[j] == '{') ++depth;
+            else if (e[j] == '}') --depth;
+            ++j;
+        }
+        if (depth != 0) return false;
+        const std::string inner = e.substr(at + 7, j - at - 8);
+        // split on top-level ", "
+        std::vector<std::string> items;
+        {
+            size_t k = 0, start = 0; int d = 0;
+            for (; k < inner.size(); ++k) {
+                if (inner[k] == '(' || inner[k] == '{' || inner[k] == '[') ++d;
+                else if (inner[k] == ')' || inner[k] == '}' || inner[k] == ']') --d;
+                else if (d == 0 && inner[k] == ',' ) { items.push_back(inner.substr(start, k - start)); start = k + 1; }
+            }
+            items.push_back(inner.substr(start));
+            for (auto& it : items) {
+                while (!it.empty() && it.front() == ' ') it.erase(it.begin());
+                while (!it.empty() && it.back() == ' ') it.pop_back();
+            }
+        }
+        if (items.size() != 4 || !(items[0] == items[1] && items[1] == items[2] && items[2] == items[3])) {
+            return false;  // not a broadcast (a min/max/abs/mr32 list): not this grammar
+        }
+        const std::string& it = items[0];
+        if (it.size() > 2 && it[it.size() - 2] == '.' && std::string("xyzw").find(it.back()) != std::string::npos &&
+            it.rfind("ctx.vuRegs.", 0) == 0) {
+            const int lane = static_cast<int>(std::string("xyzw").find(it.back()));
+            out += "vu0n::Bc<" + std::to_string(lane) + ">(" + it.substr(0, it.size() - 2) + ")";
+        } else {
+            out += "vu0n::Splat(" + it + ")";
+        }
+        i = j;
+    }
+    e = out;
+    return true;
+}
+
+static bool vu0_is_atom(const std::string& t) {
+    if (t.rfind("ctx.vuRegs.VF[", 0) == 0 && t.back() == ']') return true;
+    if (t == "ctx.vuRegs.ACC") return true;
+    if (t.rfind("vu0n::Bc<", 0) == 0 && t.back() == ')') return true;
+    if (t.rfind("vu0n::Splat(", 0) == 0 && t.back() == ')') return true;
+    return false;
+}
+
+static const char* vu0_kernel_of(char op) {
+    return op == '+' ? "vu0n::Add" : op == '-' ? "vu0n::Sub" : "vu0n::Mul";
+}
+
+static bool vu0_rewrite_expr(const std::string& in, std::string& out) {
+    std::string e = in;
+    if (!vu0_rewrite_broadcasts(e)) return false;
+    // tokenise at the top level: atoms, operators, one parenthesised group
+    std::vector<std::string> tok;
+    size_t i = 0;
+    while (i < e.size()) {
+        if (e[i] == ' ') { ++i; continue; }
+        if (e[i] == '(') {
+            size_t j = i, d = 0;
+            for (; j < e.size(); ++j) { if (e[j] == '(') ++d; else if (e[j] == ')') { if (--d == 0) break; } }
+            if (j >= e.size()) return false;
+            tok.push_back(e.substr(i, j - i + 1));
+            i = j + 1;
+            continue;
+        }
+        if (e[i] == '+' || e[i] == '-' || e[i] == '*') { tok.push_back(std::string(1, e[i])); ++i; continue; }
+        // an atom: runs to the next top-level space
+        size_t j = i; int d = 0;
+        for (; j < e.size(); ++j) {
+            if (e[j] == '(' || e[j] == '[' || e[j] == '<') ++d;
+            else if (e[j] == ')' || e[j] == ']' || e[j] == '>') --d;
+            else if (e[j] == ' ' && d == 0) break;
+        }
+        tok.push_back(e.substr(i, j - i));
+        i = j;
+    }
+    if (tok.size() == 1) {
+        if (!vu0_is_atom(tok[0])) return false;
+        out = tok[0];
+        return true;
+    }
+    if (tok.size() != 3 || tok[1].size() != 1 || !vu0_is_atom(tok[0])) return false;
+    const char op = tok[1][0];
+    if (vu0_is_atom(tok[2])) {
+        out = std::string(vu0_kernel_of(op)) + "(" + tok[0] + ", " + tok[2] + ")";
+        return true;
+    }
+    // the ACC +/- (fs * ft) forms: the group is exactly `(atom * atom)`
+    const std::string& g = tok[2];
+    if (g.size() < 2 || g.front() != '(' || g.back() != ')') return false;
+    std::string inner_out;
+    if (!vu0_rewrite_expr(g.substr(1, g.size() - 2), inner_out)) return false;
+    if (inner_out.rfind("vu0n::Mul(", 0) != 0) return false;
+    out = std::string(vu0_kernel_of(op)) + "(" + tok[0] + ", " + inner_out + ")";
+    return true;
+}
+
+// The flag side of one FMAC op under --vu0-native: `res` is the VR_reg lvalue
+// holding the full (unmasked) result; the run's locals take its lane flags.
+static void vu0_emit_fold_step(std::ofstream& file, const std::string& res, unsigned mask, const char* indent) {
+    file << indent << "_vu0_fl = vu0n::LaneFlags<0x" << std::hex << mask << std::dec << ">(" << res << ");\n";
+    if (s_vu0_fold_open) file << indent << "_vu0_fo = vu0n::Or(_vu0_fo, _vu0_fl);\n";
+    else file << indent << "_vu0_fo = _vu0_fl;\n";
+    s_vu0_fold_open = true;
+}
+
 static void emit_vu_masked_write(std::ofstream& file,
                                  const rabbitizer::InstructionR5900& instr,
                                  const std::string& dest_expr,
@@ -105,6 +267,29 @@ static void emit_vu_masked_write(std::ofstream& file,
     bool mw = instr.GetR5900_xyzw_w();
     const bool flags = vu_macro_op_sets_mac_flags(instr);
     const unsigned mask = (mx ? 8u : 0u) | (my ? 4u : 0u) | (mz ? 2u : 0u) | (mw ? 1u : 0u);
+    if (s_vu0_native) {
+        std::string native;
+        if (vu0_rewrite_expr(result_expr, native)) {
+            file << "    {\n";
+            file << "        const VR_reg _vu_res = " << native << ";\n";
+            if (mask == 0xFu) file << "        " << dest_expr << " = _vu_res;\n";
+            else if (mask != 0u) file << "        " << dest_expr << " = vu0n::Blend<0x" << std::hex << mask << std::dec << ">(" << dest_expr << ", _vu_res);\n";
+            if (flags) vu0_emit_fold_step(file, "_vu_res", mask, "        ");
+            file << "    }\n";
+            return;
+        }
+        // Outside the vector grammar (min/max/abs/mr32 lists, move): the scalar
+        // form below, with the flag step folded all the same.
+        if (flags) {
+            file << "    {\n";
+            file << "        const VR_reg _vu_res = " << result_expr << ";\n";
+            if (mask == 0xFu) file << "        " << dest_expr << " = _vu_res;\n";
+            else if (mask != 0u) file << "        " << dest_expr << " = vu0n::Blend<0x" << std::hex << mask << std::dec << ">(" << dest_expr << ", _vu_res);\n";
+            vu0_emit_fold_step(file, "_vu_res", mask, "        ");
+            file << "    }\n";
+            return;
+        }
+    }
     // Fast path: all 4 fields selected -> single assignment, avoids a temp.
     if (mx && my && mz && mw) {
         file << "    " << dest_expr << " = " << result_expr << ";\n";
@@ -120,6 +305,16 @@ static void emit_vu_masked_write(std::ofstream& file,
     if (mw) file << "        " << dest_expr << ".w = _vu_res.w;\n";
     if (flags) file << "        VuMacroCommitFlags(ctx.vuRegs, _vu_res, 0x" << std::hex << mask << std::dec << ");\n";
     file << "    }\n";
+}
+
+// A flag commit outside emit_vu_masked_write (OPMULA / OPMSUB / MULi): `res`
+// is a VR_reg expression naming the full result, `mask` the dest lanes.
+static void emit_vu_flag_commit(std::ofstream& file, const std::string& res, unsigned mask, const char* indent) {
+    if (s_vu0_native) {
+        vu0_emit_fold_step(file, res, mask, indent);
+        return;
+    }
+    file << indent << "VuMacroCommitFlags(ctx.vuRegs, " << res << ", 0x" << std::hex << mask << std::dec << ");\n";
 }
 
 // Broadcast-scalar variant: `broadcast_lane_expr` is a scalar (float) that
@@ -183,6 +378,8 @@ bool Recompiler::fetch_program_word(uint32_t vram, uint32_t& word_out) const {
 
 bool Recompiler::recompile_to_files(const std::string& output_header, const std::string& output_cpp,
                                     int shard_count) {
+    s_vu0_native = m_vu0_native;   // the static helpers' mirror (--vu0-native)
+    s_vu0_fold_open = false;
     std::ofstream header_file(output_header, std::ios::binary);   // LF on every host: the text is sha256-pinned
     if (!header_file.is_open()) {
         std::cerr << "Error: Could not open header file for writing: " << output_header << std::endl;
@@ -422,6 +619,7 @@ void Recompiler::write_cpp_includes(std::ofstream& file, const std::string& outp
     file << "#include \"../host_app/cdvd_stream.h\"\n\n";
     file << "#include \"../host_app/timer_hle.h\"\n\n";
     file << "#include \"../host_app/vu.h\"\n\n";
+    if (m_vu0_native) file << "#include \"../host_app/vu0_native.h\"  // --vu0-native: the COP2 lane kernels\n\n";
     file << "#include \"../host_app/sif_rpc_handlers.h\"\n\n";  // [POLL-COMPLETE] StreamPollCompleteMarker
     file << "#include <iostream>\n";
     file << "#include <iomanip>\n";
@@ -19903,6 +20101,12 @@ if (legacy_title_addr(func, 0x00202ef0)) {
     file << "void " << func.name << "(CpuContext& ctx, uint32_t addr) {\n";
     file << "bool branch_taken;\n";
     file << "bool cond;\n";
+    if (m_vu0_native) {
+        // --vu0-native: the folded MAC/STATUS lane flags of the open FMAC run
+        // (the last op's / the OR over the run); vu0n::Commit at the run's end.
+        file << "VR_reg _vu0_fl{}; VR_reg _vu0_fo{}; (void)_vu0_fl; (void)_vu0_fo;\n";
+        s_vu0_fold_open = false;
+    }
 
     // [E620SRC] Camera re-orthonormalization round-trip probe.
     // FUN_00186900 = matrix->quaternion (param_1=a0=out quat, param_2=a1=in matrix).
@@ -21947,6 +22151,7 @@ if (legacy_title_addr(func, 0x00202ef0)) {
 // helper function to generate block code
 void Recompiler::generate_block_code(const Function& func, const Block& block, size_t block_idx, std::ofstream& file) {
     bool has_terminator = false;
+    s_vu0_fold_open = false;   // --vu0-native: a block label is an entry; no run spans it
     
     // Process each instruction in the block
     log_file <<  "[PROCESSING FUNCTION BLOCK] Function: " << func.name << std::endl;
@@ -22099,6 +22304,7 @@ void Recompiler::generate_block_code(const Function& func, const Block& block, s
                 }
             }
             // Handle the branch/jump - CHANGE: New function for control flow
+            vu0_fold_close(file);   // --vu0-native: commit the run before any transfer / call / yield
             file << "    ";
             disasm_string = instr.disassemble(0, "");
             
@@ -22118,6 +22324,7 @@ void Recompiler::generate_block_code(const Function& func, const Block& block, s
     }
     
     // Handle fall-through if no explicit branch
+    vu0_fold_close(file);   // --vu0-native: the block's end is a run's end
     if (!has_terminator) {
         uint32_t fall_through_addr = block.end_address;
         file << "// This BLOCK HAS NO BRANCH SO GO TO NEXT BLOCK AFTER THIS, CURRENT BLOCK ENDS AT: 0x" << std::hex << block.end_address << "\n";
@@ -22314,6 +22521,7 @@ void Recompiler::translate_control_flow(const rabbitizer::InstructionR5900& inst
                 
                 file << "        // Delay Slot (Likely)\n        ";
                 translate_instruction(delay_slot_instr, file);
+                vu0_fold_close(file);   // --vu0-native: a delay-slot FMAC run ends before the transfer
             }
             
             // 4. JUMP TO TARGET
@@ -22340,6 +22548,7 @@ void Recompiler::translate_control_flow(const rabbitizer::InstructionR5900& inst
                 rabbitizer::InstructionR5900 delay_slot_instr(delay_word, delay_vram);
                 file << "        ";
                 translate_instruction(delay_slot_instr, file);
+                vu0_fold_close(file);   // --vu0-native: a delay-slot FMAC run ends before the transfer
             }
             
             emit_branch_target(target_addr, func, file, "        ");
@@ -22370,6 +22579,7 @@ void Recompiler::translate_control_flow(const rabbitizer::InstructionR5900& inst
                  rabbitizer::InstructionR5900 delay_slot_instr(delay_slot_struct.getCPtr()->word, delay_slot_struct.getCPtr()->vram);
                  file << "        ";
                  translate_instruction(delay_slot_instr, file);
+                 vu0_fold_close(file);   // --vu0-native: a delay-slot FMAC run ends before the transfer
              }
              
              emit_branch_target(target_addr, func, file, "        ");
@@ -22394,6 +22604,7 @@ void Recompiler::translate_control_flow(const rabbitizer::InstructionR5900& inst
                 rabbitizer::InstructionR5900 delay_slot_instr(delay_word, delay_vram);
                 file << "        ";
                 translate_instruction(delay_slot_instr, file);
+                vu0_fold_close(file);   // --vu0-native: a delay-slot FMAC run ends before the transfer
             }
             
             emit_branch_target(target_addr, func, file, "        ");
@@ -22418,6 +22629,7 @@ void Recompiler::translate_control_flow(const rabbitizer::InstructionR5900& inst
                 rabbitizer::InstructionR5900 delay_slot_instr(delay_word, delay_vram);
                 file << "        ";
                 translate_instruction(delay_slot_instr, file);
+                vu0_fold_close(file);   // --vu0-native: a delay-slot FMAC run ends before the transfer
             }
             
             emit_branch_target(target_addr, func, file, "        ");
@@ -22442,6 +22654,7 @@ void Recompiler::translate_control_flow(const rabbitizer::InstructionR5900& inst
                 rabbitizer::InstructionR5900 delay_slot_instr(delay_word, delay_vram);
                 file << "        ";
                 translate_instruction(delay_slot_instr, file);
+                vu0_fold_close(file);   // --vu0-native: a delay-slot FMAC run ends before the transfer
             }
             
             emit_branch_target(target_addr, func, file, "        ");
@@ -22470,6 +22683,7 @@ void Recompiler::translate_control_flow(const rabbitizer::InstructionR5900& inst
                 file << "        // Delay Slot (Likely)\n";
                 file << "        ";
                 translate_instruction(delay_slot_instr, file);
+                vu0_fold_close(file);   // --vu0-native: a delay-slot FMAC run ends before the transfer
             }
             
             // 4. JUMP TO TARGET
@@ -22501,6 +22715,7 @@ void Recompiler::translate_control_flow(const rabbitizer::InstructionR5900& inst
                 file << "        // Delay Slot (Likely)\n";
                 file << "        ";
                 translate_instruction(delay_slot_instr, file);
+                vu0_fold_close(file);   // --vu0-native: a delay-slot FMAC run ends before the transfer
             }
             
             // 4. JUMP TO TARGET
@@ -22659,6 +22874,7 @@ void Recompiler::translate_control_flow(const rabbitizer::InstructionR5900& inst
                 file << "        // Delay Slot (Likely)\n";
                 file << "        ";
                 translate_instruction(delay_slot_instr, file);
+                vu0_fold_close(file);   // --vu0-native: a delay-slot FMAC run ends before the transfer
             }
             emit_branch_target(target_addr, func, file, "        ");
             file << "    } else {\n";
@@ -22681,6 +22897,7 @@ void Recompiler::translate_control_flow(const rabbitizer::InstructionR5900& inst
                 file << "        // Delay Slot (Likely)\n";
                 file << "        ";
                 translate_instruction(delay_slot_instr, file);
+                vu0_fold_close(file);   // --vu0-native: a delay-slot FMAC run ends before the transfer
             }
             emit_branch_target(target_addr, func, file, "        ");
             file << "    } else {\n";
@@ -23129,6 +23346,9 @@ void Recompiler::emit_branch_target(uint32_t target_addr, const Function& func, 
 
 // ALL INSTRUCTION TRANSLATIONS BELOW ARE UNCHANGED - PRESERVED EXACTLY
 void Recompiler::translate_instruction(const rabbitizer::InstructionR5900& instr, std::ofstream& file) {
+    // --vu0-native: an instruction that reads / writes the COP2 flag registers
+    // or hands the block to another observer ends the folded FMAC run first.
+    if (s_vu0_fold_open && vu0_fold_must_close_before(instr)) vu0_fold_close(file);
     // =====================================================================
     // [PGST-DESER] per-PC probe at 0x1cd6dc inside FUN_001ccf80 (the SOLE
     // explicit writer of stateword bit 59 = page-state nibble LSB; static
@@ -23255,7 +23475,8 @@ void Recompiler::translate_instruction(const rabbitizer::InstructionR5900& instr
                 file << "    ctx.vuRegs.ACC.x = " << fs << ".y * " << ft << ".z;\n";
                 file << "    ctx.vuRegs.ACC.y = " << fs << ".z * " << ft << ".x;\n";
                 file << "    ctx.vuRegs.ACC.z = " << fs << ".x * " << ft << ".y;\n";
-                file << "    VuMacroCommitFlags(ctx.vuRegs, ctx.vuRegs.ACC, 0xE);\n";
+                if (s_vu0_native) emit_vu_flag_commit(file, "ctx.vuRegs.ACC", 0xE, "    ");
+                else file << "    VuMacroCommitFlags(ctx.vuRegs, ctx.vuRegs.ACC, 0xE);\n";
             }
             break;
 
@@ -23285,7 +23506,12 @@ void Recompiler::translate_instruction(const rabbitizer::InstructionR5900& instr
                 file << "        " << fd << ".x = _nx;\n";
                 file << "        " << fd << ".y = _ny;\n";
                 file << "        " << fd << ".z = _nz;\n";
-                file << "        VuMacroCommitFlags(ctx.vuRegs, VR_reg{_nx, _ny, _nz, 0.0f}, 0xE);\n";
+                if (s_vu0_native) {
+                    file << "        const VR_reg _vu_res = VR_reg{_nx, _ny, _nz, 0.0f};\n";
+                    emit_vu_flag_commit(file, "_vu_res", 0xE, "        ");
+                } else {
+                    file << "        VuMacroCommitFlags(ctx.vuRegs, VR_reg{_nx, _ny, _nz, 0.0f}, 0xE);\n";
+                }
                 file << "    }\n";
             }
             break;
@@ -24028,7 +24254,14 @@ void Recompiler::translate_instruction(const rabbitizer::InstructionR5900& instr
                 bool mz = instr.GetR5900_xyzw_z();
                 bool mw = instr.GetR5900_xyzw_w();
                 const unsigned mask = (mx ? 8u : 0u) | (my ? 4u : 0u) | (mz ? 2u : 0u) | (mw ? 1u : 0u);
-                if (mx && my && mz && mw) {
+                if (s_vu0_native) {
+                    std::string native;
+                    if (!vu0_rewrite_expr(result, native)) native = result;
+                    file << "        const VR_reg _vu_res = " << native << ";\n";
+                    if (mask == 0xFu) file << "        " << fd << " = _vu_res;\n";
+                    else if (mask != 0u) file << "        " << fd << " = vu0n::Blend<0x" << std::hex << mask << std::dec << ">(" << fd << ", _vu_res);\n";
+                    emit_vu_flag_commit(file, "_vu_res", mask, "        ");
+                } else if (mx && my && mz && mw) {
                     file << "        " << fd << " = " << result << ";\n";
                     file << "        VuMacroCommitFlags(ctx.vuRegs, " << fd << ", 0xF);\n";
                 } else {

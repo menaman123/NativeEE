@@ -82,6 +82,15 @@ public:
     // owns the budget and what the yield does). Default OFF: no emission change.
     void set_yield_backedges(bool enabled) { m_yield_backedges = enabled; }
 
+    // --vu0-native: the COP2 (VU0 macro-mode) FMAC ops are emitted through the
+    // host vector kernels of recomp_abi/host_app/vu0_native.h (NEON / SSE2 /
+    // scalar, bit-identical to the scalar VR_reg operators they replace) with a
+    // lane-select blend for the dest mask and the MAC/STATUS flag commit FOLDED
+    // over a straight-line run (committed once at the run's end, before any
+    // reader: CFC2/CTC2/VCALLMS/syscall/control flow/block end). Default OFF: no
+    // emission change.
+    void set_vu0_native(bool enabled) { m_vu0_native = enabled; }
+
     // [RECOMP-P3a] v2 emission mode (RECOMP_P0_DESIGN.md §6-§8). When enabled,
     // unpinned functions take the general emission path with the v2 deltas:
     // the body-time special-case chain is bypassed, jr sites emit ELF-read
@@ -130,6 +139,7 @@ private:
     int m_init_parts = 0;
     bool m_legacy_title_stubs = false;
     bool m_yield_backedges = false;
+    bool m_vu0_native = false;
     // The pc of the branch translate_control_flow is emitting (0 outside it):
     // emit_branch_target compares the target against it to recognise a back-edge.
     uint32_t m_branch_from_pc = 0;

@@ -233,6 +233,10 @@ std::string StripPrologueTokens(const std::string& text) {
         if (StartsWith(text, i, "initialize_recompiled_functions();")) {
             i += std::strlen("initialize_recompiled_functions();"); continue;
         }
+        // --vu0-native: the folded COP2 flag locals (inert initialisation).
+        if (StartsWith(text, i, "VR_reg _vu0_fl{}; VR_reg _vu0_fo{}; (void)_vu0_fl; (void)_vu0_fo;")) {
+            i += std::strlen("VR_reg _vu0_fl{}; VR_reg _vu0_fo{}; (void)_vu0_fl; (void)_vu0_fo;"); continue;
+        }
         out.push_back(text[i]);
         ++i;
     }
