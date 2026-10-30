@@ -30,7 +30,9 @@ std::string EeYieldPoint::Census::Format() const {
            ":idle_wakes=" + std::to_string(idle_wakes) + ":wall_wakes=" + std::to_string(wall_wakes) +
            ":deferred_collects=" + std::to_string(deferred_collects) + ":idle_first=" + std::to_string(idle_first_tick) +
            "@tid" + std::to_string(idle_first_tid) + ":spin_trips=" + std::to_string(spin_trips) +
-           ":sched_trips=" + std::to_string(sched_trips) + ":due_fields=" + std::to_string(due_fields);
+           ":sched_trips=" + std::to_string(sched_trips) + ":due_fields=" + std::to_string(due_fields) +
+           ":budget_restores=" + std::to_string(budget_restores) + ":budget_absent=" + std::to_string(budget_absent) +
+           ":restored_remaining=" + std::to_string(last_restored_remaining);
 }
 
 void EeYieldPoint::Bind(Deps deps) {
@@ -191,8 +193,31 @@ uint64_t EeYieldPoint::IdleWhileBlocked(CpuContext& ctx) {
     return fields;
 }
 
+uint32_t EeYieldPoint::BudgetRemaining() const { return g_ee_backedge_budget; }
+
+void EeYieldPoint::ReloadBudget() { g_ee_backedge_budget = budget_; }
+
+void EeYieldPoint::StageRestoredBudget(uint32_t remaining) {
+    restore_staged_ = true;
+    restore_remaining_ = remaining;
+}
+
+bool EeYieldPoint::ApplyRestoredBudget() {
+    if (!restore_staged_) return false;
+    restore_staged_ = false;
+    // 0 would be the already-tripped state the generated code never leaves standing
+    // (a trip reloads at once): clamp to the next back-edge.
+    const uint32_t remaining = restore_remaining_ ? restore_remaining_ : 1u;
+    g_ee_backedge_budget = remaining;
+    ++census_.budget_restores;
+    census_.last_restored_remaining = remaining;
+    return true;
+}
+
 void EeYieldPoint::ResetForTest() {
     Unbind();
     in_trip_ = false;
     census_ = Census{};
+    restore_staged_ = false;
+    restore_remaining_ = 0;
 }

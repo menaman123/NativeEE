@@ -11,6 +11,7 @@
 #include "engine/ee/cpu/guest_park.h"
 #include "engine/ee/hle/thread_manager.h"
 #include "engine/ee/sched/ee_run_token.h"
+#include "engine/ee/sched/ee_yield_point.h"
 #include "engine/ee/savestate/thread_capture.h"
 
 ThreadRelauncher::ThreadRelauncher(ThreadManager& threads, EnterFn enter)
@@ -64,7 +65,10 @@ int ThreadRelauncher::Relaunch(const std::vector<ThreadSection::Record>& records
             return -1;
         }
     }
-    // Phase 1: the waiters re-park quietly.
+    // Phase 1: the waiters re-park quietly. Their re-executed wait bodies run on a
+    // full back-edge budget: the process's residual (the boot's, or the unwound
+    // session's) must not trip a field under a re-parking waiter.
+    EeYieldPoint::Instance().ReloadBudget();
     token.BeginRelaunch();
     token.SetRelaunchQuiet(true);
     int relaunched = 0;
@@ -94,6 +98,13 @@ int ThreadRelauncher::Relaunch(const std::vector<ThreadSection::Record>& records
         }
         std::this_thread::sleep_for(std::chrono::microseconds(50));
     }
+    // The back-edge budget the save saw (the YLDP section, staged by its restore) is
+    // seated now: the waiters' re-executed wait bodies have parked (their back-edges
+    // were never in the saved run), and the boundary thread -- the saved run's
+    // holder -- is the next guest code to run. Nothing staged = a pre-v5 image.
+    if (EeYieldPoint::Instance().ApplyRestoredBudget())
+        PS2R_LOG(SAVE, Info, "relaunch: back-edge budget remaining re-seated at %u",
+                 EeYieldPoint::Instance().Stats().last_restored_remaining);
     // Phase 2: the boundary thread, alone, as the save saw it.
     token.BeginRelaunch();
     token.SetRelaunchQuiet(false);

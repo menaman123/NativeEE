@@ -109,6 +109,11 @@ set_tests_properties(ThreadManagerThbase EeRunTokenAndEventQueue RelaunchOrder P
 # equal one (R1); nested / in-dispatch / non-holder trips are refused; unbound = reload only.
 ps2r_ee_test(test_ee_yield_point EeYieldPointBackedge)
 set_tests_properties(EeYieldPointBackedge PROPERTIES TIMEOUT 120)
+# The YLDP savestate section: the back-edge budget remaining at the captured boundary rides the
+# image, is STAGED by the section restore and seated once by the relaunch before the boundary
+# thread resumes (an exact splice: the next trip's field lands where the saved run's did).
+ps2r_ee_test(test_yield_section YieldSectionBudgetRestore)
+set_tests_properties(YieldSectionBudgetRestore PROPERTIES TIMEOUT 60)
 # The kernel's idle (EeYieldPoint::IdleWhileBlocked over EeRunToken's idle grant): two guest
 # threads blocked on ISR-signalled semaphores; the last blocker advances fields under the grant
 # until the handler readies it; a READY thread / a holder refuses the grant; PreemptPoint is a
