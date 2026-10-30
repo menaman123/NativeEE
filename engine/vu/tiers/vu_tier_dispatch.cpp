@@ -19,6 +19,11 @@ void VuTierDispatch::SetMtvuHook(MtvuHook fn, void* user) {
     mtvu_user_ = user;
 }
 
+void VuTierDispatch::SetVu0Hook(Vu0Hook fn, void* user) {
+    vu0_ = fn;
+    vu0_user_ = user;
+}
+
 void VuTierDispatch::set_cycle_cap(uint64_t cap) {
     interp_.set_cycle_cap(cap);
     cached_.set_cycle_cap(cap);
@@ -37,6 +42,8 @@ void VuTierDispatch::Execute(VuUnit& unit, uint32_t start_pc) {
             lockstep_->Run(*this, unit, start_pc);
             return;
         }
+    } else if (vu0_ != nullptr && vu0_(vu0_user_, unit, start_pc, unit.micro_generation())) {
+        return;
     }
     RunTier(unit, start_pc);
 }
