@@ -568,6 +568,27 @@ struct TriageConfig {
     int  ring_period_s = 10;    // 0 = ring off (TRIAGE_CAPTURE section 3)
 };
 
+// title.native.* (STAGE NATIVE, 2026-10-30): a generic namespace the CONFIGURED TITLE
+// interprets -- one bool per PS2 unit whose per-frame MODEL the title may replace by
+// native host code for ITS specific use of that unit (the title tree's native/ module,
+// selected through the engine's seams: the VU1 AOT registry, DrawIrSink, the VIF unpack
+// span, the DMAC chain walker, the IOP module table, the SPU2 driver, the COP2 emit).
+// The engine itself reads none of them; its generic models stay the fallback and the
+// oracle. Default off = the modelled path. Guest-observable in principle (a native path
+// that diverges changes RAM), so the keys are in the fingerprint: `on` shows in env_ps2 /
+// env_hash while the default leaves both unchanged vs builds that predate the keys. The
+// deterministic profile does NOT pin them (the lane is the oracle for either value).
+struct TitleNativeConfig {
+    bool vu1 = false;    // the VU1 microprograms (kick handlers keyed by image hash + entry)
+    bool gif = false;    // the GIF packet -> DrawIR parse
+    bool vif = false;    // the VIF unpack into VU1 memory
+    bool dmac = false;   // the DMAC chain walks (VIF1 / GIF paths)
+    bool iop = false;    // the hosted IOP modules (SIF RPC servers)
+    bool spu = false;    // the SPU2 driver path (989snd -> the mixer)
+    bool gs = false;     // the GS register-state model
+    bool vu0 = false;    // VU0 macro mode (the COP2 ops / VCALLMS micros)
+};
+
 struct HarnessConfig {
     std::string out_dir;                   // empty = harness off
     bool        headless = false;
@@ -708,6 +729,7 @@ public:
     DiagConfig    diag;
     TriageConfig  triage;
     HarnessConfig harness;
+    TitleNativeConfig title_native;        // "title.native.*"
     PathsConfig   paths;
     MetaConfig    meta;
 
