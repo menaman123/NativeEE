@@ -27,7 +27,7 @@
 
 using replay::S;
 
-// ---- the probe bracket (recompiled.h [RECOMP-PROBE]; every id is armed by the host) -------------------------
+// ---- the probe bracket (recompiled.h's RECOMP-PROBE marker; every id is armed by the host) -------------------------
 extern "C" void recomp_probe_enter(uint32_t /*id*/, uint32_t entry, CpuContext& /*ctx*/, uint32_t /*entry_ra*/) {
     auto& s = S();
     if (s.depth == 1) s.callee_seq.push_back(entry);
