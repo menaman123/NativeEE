@@ -12,6 +12,9 @@
 # The title-neutral host services. A static library so the tests can link the pieces they
 # exercise without pulling in a composition root.
 add_library(ps2r_app_host STATIC
+    agent_channel.cpp
+    agent_json.cpp
+    agent_server.cpp
     user_data.cpp
     game_files_stamp.cpp
     disc_verify.cpp
