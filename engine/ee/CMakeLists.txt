@@ -62,6 +62,7 @@ add_library(ps2r_ee STATIC
     savestate/heap_section.cpp
     savestate/intc_section.cpp
     savestate/timer_section.cpp
+    savestate/yield_section.cpp
     timing/frame_rendezvous.cpp
     timing/boundary_sequencer.cpp
     timing/boundary_completion.cpp

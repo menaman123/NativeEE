@@ -31,14 +31,16 @@ constexpr char kMagic[8] = {'P', 'S', '2', 'S', 'A', 'V', 'E', '1'};
 // File versions. The FILE version says which OPTIONAL sections are present so
 // an older reader rejects the file outright instead of half-restoring it:
 //   1  original; 2  GSST section v2 (latched GS vertex state);
-//   3  TIMR (live EE timer state) present;  4  SNDC (host sound core) present.
+//   3  TIMR (live EE timer state) present;  4  SNDC (host sound core) present;
+//   5  YLDP (the EE yield point's back-edge budget remaining at the boundary) present.
 // A writer stamps the LOWEST version that covers the sections it includes,
-// so a file without TIMR/SNDC stays a byte-identical v2 file.
+// so a file without TIMR/SNDC/YLDP stays a byte-identical v2 file.
 constexpr uint32_t kFileVersion     = 2;
 constexpr uint32_t kFileVersionTimr = 3;
 constexpr uint32_t kFileVersionSnd  = 4;
+constexpr uint32_t kFileVersionYldp = 5;
 constexpr uint32_t kMinFileVersion  = 1;
-constexpr uint32_t kMaxFileVersion  = 4;
+constexpr uint32_t kMaxFileVersion  = 5;
 
 // Section flag: a reader MUST reject the file if it does not know this tag.
 constexpr uint32_t kSectionRequired = 0x1;
@@ -85,6 +87,7 @@ constexpr uint32_t TAG_MCHL = Tag('M', 'C', 'H', 'L');  // memory-card HLE stati
 constexpr uint32_t TAG_IOPM = Tag('I', 'O', 'P', 'M');  // IOP RAM (2 MB) + IOP statics
 constexpr uint32_t TAG_SNDC = Tag('S', 'N', 'D', 'C');  // host sound core (SPU RAM + voices)
 constexpr uint32_t TAG_IOPH = Tag('I', 'O', 'P', 'H');  // a hosted IOP: RAM + kernel tables + module/library/RPC records
+constexpr uint32_t TAG_YLDP = Tag('Y', 'L', 'D', 'P');  // the EE yield point: back-edge budget remaining at the boundary
 
 #pragma pack(push, 1)
 struct FileHeader {

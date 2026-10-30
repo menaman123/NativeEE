@@ -153,6 +153,9 @@ public:
         uint64_t spin_trips = 0;   // E432: trips that passed a field (spun: no scheduling point since the previous trip)
         uint64_t sched_trips = 0;  // E432: trips of scheduling code (no field of their own)
         uint64_t due_fields = 0;   // E432: sched trips that found a wall field due and fired it
+        uint64_t budget_restores = 0;   // savestate restores that re-seated the back-edge budget (YLDP section)
+        uint64_t budget_absent = 0;     // restores whose image carried no YLDP section (the budget kept the process's value)
+        uint32_t last_restored_remaining = 0;   // the remaining back-edges the last restore seated
         std::string Format() const;
     };
 
@@ -191,6 +194,24 @@ public:
     const Census& Stats() const { return census_; }
     void ResetForTest();
 
+    // SAVESTATE (the YLDP section, engine/ee/savestate/yield_section.*). The budget
+    // is one global counter reloaded only by a trip, so the back-edges remaining at
+    // the boundary decide WHEN the next trip's field passes -- which point of the
+    // main loop the next vblank lands on (a vblank sleeper readied mid-frame). A
+    // restore that leaves the process's own residual in place lands the next
+    // trip elsewhere than the saved run's: a one-frame main-loop phase slip a few
+    // frames after the load. Capture reads the residual on the boundary owner
+    // (the only holder; no guest code runs between the boundary and the capture);
+    // the restore STAGES it, and ThreadRelauncher seats it right before the
+    // boundary thread resumes -- after the waiters' re-executed wait bodies have
+    // parked (their back-edges were never in the saved run).
+    uint32_t BudgetRemaining() const;
+    void ReloadBudget();   // the live counter back to the full budget (no guest code may be running)
+    void StageRestoredBudget(uint32_t remaining);
+    // Seats the staged value into the live counter (once); false when nothing was staged.
+    bool ApplyRestoredBudget();
+    void NoteBudgetAbsent() { ++census_.budget_absent; }
+
 private:
     EeYieldPoint() = default;
     // Steps 1-4b on the token holder `ctx` runs on (Trip's body before the preemption point).
@@ -203,4 +224,6 @@ private:
     Census census_;
     std::atomic<uint64_t> sched_gen_{0};   // NoteSchedulingPoint count
     uint64_t sched_gen_at_trip_ = 0;       // ... as read by the previous trip (holder only)
+    bool restore_staged_ = false;          // YLDP restore pending its seat (ApplyRestoredBudget)
+    uint32_t restore_remaining_ = 0;
 };

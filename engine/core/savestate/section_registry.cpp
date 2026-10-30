@@ -53,6 +53,7 @@ uint32_t SectionRegistry::FileVersionFor(const std::vector<Blob>& sections) {
     for (const Blob& b : sections) {
         if (b.tag == TAG_TIMR && v < kFileVersionTimr) v = kFileVersionTimr;
         if (b.tag == TAG_SNDC && v < kFileVersionSnd) v = kFileVersionSnd;
+        if (b.tag == TAG_YLDP && v < kFileVersionYldp) v = kFileVersionYldp;
     }
     return v;
 }
