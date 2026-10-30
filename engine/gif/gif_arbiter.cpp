@@ -6,6 +6,7 @@
 #include <exception>
 #include <utility>
 
+#include "engine/gif/draw_attribution.h"
 #include "engine/gif/gif_boundary_hook.h"
 #include "engine/gif/gif_drain_thread.h"
 #include "engine/gif/gif_marker_owner.h"
@@ -149,10 +150,12 @@ void GifArbiter::PushInboxSlot(GifArbiterPacket&& pkt) {
 // straight to the drain owner's queue.
 void GifArbiter::Enqueue(GifArbiterPacket&& pkt) {
     pending_bytes_.fetch_add(pkt.data.size(), std::memory_order_relaxed);
+    if (!pkt.submit_fn) pkt.submit_fn = DrawAttribution::SubmitterFn();
     if (WorkerRunning()) {
         if (owner_->OnWorkerThread()) {
             std::shared_ptr<GifMtvuMarker> m = owner_->ActiveMarker();
             if (m) {
+                if (!pkt.submit_fn) pkt.submit_fn = m->open_fn;
                 m->filled.push_back(std::move(pkt));
                 return;
             }
@@ -262,6 +265,7 @@ size_t GifArbiter::Path1PoolSize() const {
 std::shared_ptr<GifMtvuMarker> GifArbiter::openMarker() {
     auto m = std::make_shared<GifMtvuMarker>();
     m->filled.reserve(kMarkerReservePackets);
+    m->open_fn = DrawAttribution::SubmitterFn();
     std::lock_guard<std::mutex> lock(mtvu_mtx_);
     inbox_.push_back(InboxSlot{GifArbiterPacket{}, m});
     inbox_slots_.fetch_add(1, std::memory_order_relaxed);
@@ -328,6 +332,7 @@ bool GifArbiter::dispatchBoundaryInline(GifArbiterPacket& pkt) {
     if (pkt.boundary_seq == 0) return false;
     bnd_delivered_.fetch_add(1, std::memory_order_relaxed);
     if (boundary_hook_) boundary_hook_->OnBoundary(pkt.boundary_seq, pkt.bnd_enq_ns);
+    if (DrawAttribution::Enabled()) DrawAttribution::FrameBoundary(pkt.boundary_seq);
     return true;
 }
 
@@ -365,6 +370,7 @@ bool GifArbiter::DrainPassDelivered() {
             GifArbiterPacket& pkt = queue_[i];
             if (drain_observer_) drain_observer_(drain_observer_user_, pkt);
             if (dispatchBoundaryInline(pkt)) continue;
+            DrawAttribution::SetCurrent(pkt.submit_fn, pkt.path, static_cast<uint32_t>(pkt.data.size()));
             if (pkt.ordered) {
                 pkt.ordered();
                 continue;
@@ -386,6 +392,7 @@ bool GifArbiter::DrainPassDelivered() {
         throw;
     }
     if (had_path3) parser_.FinishPath3();
+    DrawAttribution::EndPass();
     SettleDeliveredQueue();
     if (pass_end_) pass_end_(pass_end_user_);
     return true;

@@ -13,6 +13,7 @@ add_library(ps2r_gif STATIC
     gif_register_dispatch.cpp
     gif_parser.cpp
     gif_arbiter.cpp
+    draw_attribution.cpp
     gif_finish_scan.cpp
     gif_drain_thread.cpp
     savestate/gifs_section.cpp)

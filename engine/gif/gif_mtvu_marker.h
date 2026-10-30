@@ -33,6 +33,10 @@ struct GifArbiterPacket {
     std::function<void()> ordered;
     uint32_t boundary_seq = 0;
     uint64_t bnd_enq_ns = 0;
+    // The generated function that submitted the packet (DrawAttribution::SubmitterFn
+    // on the submitting thread; a worker-produced packet inherits its marker's
+    // open_fn). 0 = unknown.
+    uint32_t submit_fn = 0;
 };
 
 inline uint64_t GifArbPayloadBytes(const GifArbiterPacket& p) { return p.data.size(); }
@@ -41,4 +45,5 @@ struct GifMtvuMarker {
     std::vector<GifArbiterPacket> filled;  // worker-produced packets, in production order
     bool sealed = false;                   // the span completed; every packet is in
     bool detached = false;                 // clear() dropped its inbox slot while the worker still owned it
+    uint32_t open_fn = 0;                  // the EE function that opened the marker (DrawAttribution)
 };

@@ -21,6 +21,8 @@ add_library(ps2r_ee STATIC
     cpu/seams.cpp
     cpu/dispatch_table.cpp
     cpu/shadow_call_stack.cpp
+    cpu/fn_hooks.cpp
+    cpu/access_tracer.cpp
     recomp_abi/recomp_abi.cpp
     hle/thread_manager.cpp
     hle/semaphores.cpp
@@ -78,5 +80,14 @@ add_library(ps2r_ee STATIC
     mem/elf_loader.cpp
     mem/data_map_applier.cpp)
 target_include_directories(ps2r_ee PUBLIC ${CMAKE_SOURCE_DIR})
+# PS2R_TRACE_ACCESS (root option): the per-call read/write-set corpus. The
+# recorder (access_tracer.cpp's real body) and the RACORP1 writer (zlib) are
+# compiled only in the tracing build; the accessors in recomp_abi/host_app/memory.h
+# report every generated load and store to it.
+if(PS2R_TRACE_ACCESS)
+    find_package(ZLIB REQUIRED)
+    target_sources(ps2r_ee PRIVATE cpu/corpus_writer.cpp)
+    target_link_libraries(ps2r_ee PUBLIC ZLIB::ZLIB)
+endif()
 target_compile_options(ps2r_ee PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(ps2r_ee PUBLIC ps2r_core)

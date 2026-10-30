@@ -59,6 +59,11 @@ if(PS2R_SIMD AND NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64|ARM64)$")
     set(PS2R_SIMD OFF)
 endif()
 option(PS2R_DIAGNOSTICS "Compile the core/diag mechanism in (harness/dev builds); OFF = Release contains no probes" OFF)
+option(PS2R_TRACE_ACCESS "Tracing build: the generated code's memory accessors feed the per-call read/write-set corpus (engine/ee/cpu/access_tracer); OFF = the plain forwarders" OFF)
+if(PS2R_TRACE_ACCESS)
+    add_compile_definitions(PS2R_TRACE_ACCESS=1)
+    message(STATUS "nativeee: PS2R_TRACE_ACCESS=ON -- tracing build (slow; the corpus recorder is compiled into every generated accessor)")
+endif()
 set(PS2R_OG_ROOT "$ENV{PS2R_OLD_ROOT}" CACHE PATH
     "Frozen ORIGINAL tree (read-only oracle; default: $PS2R_OLD_ROOT, else empty). Used ONLY by tests/oracle differential tests; may be absent.")
 set(PS2R_TITLE "" CACHE STRING
