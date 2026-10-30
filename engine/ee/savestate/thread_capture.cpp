@@ -195,7 +195,10 @@ bool ThreadCapture::CollectBoundary(int tid, const CpuContext& completed_context
                     found->second->identity.lock() != info ||
                     found->second->incarnation != info->capture_incarnation ||
                     found->second->revision != info->capture_revision)
-                    return fail(prefix + "no immutable park for this worker incarnation.");
+                    return fail(prefix + "no immutable park for this worker incarnation" +
+                                (!info->capture_parked ? " (not marked parked)" : found == parked_.end() ? " (no park record)" :
+                                 found->second->identity.lock() != info ? " (stale identity)" :
+                                 found->second->incarnation != info->capture_incarnation ? " (other incarnation)" : " (other revision)") + ".");
                 const auto& parked = *found->second;
                 if (!parked.error.empty()) return fail(prefix + parked.error);
                 if (info->capture_suspended || record.suspend_count ||
