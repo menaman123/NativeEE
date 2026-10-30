@@ -1,6 +1,7 @@
 // platform/sdl/input/input_system.cpp
 #include "engine/platform/sdl/input/input_system.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -134,6 +135,11 @@ void InputSystem::SetKbmEnabled(bool enabled) {
     if (!enabled) mapper_.ResetMouseAccum();
 }
 
+void InputSystem::SetCameraInvert(bool x, bool y) {
+    invert_x_ = x;
+    invert_y_ = y;
+}
+
 PadSample InputSystem::Frame(float dt_seconds) {
     if (!initialized_) return PadSample{};   // neutral: no buttons, sticks 0x80
 
@@ -155,6 +161,10 @@ PadSample InputSystem::Frame(float dt_seconds) {
     }
 
     PadSample mapped = mapper_.Map(merged, dt_seconds);
+    // Mirror about the centre 0x80 (0x00 -> 0xff, 0xff -> 0x01).
+    const auto invert = [](uint8_t v) { return static_cast<uint8_t>(std::min(0x100 - v, 0xff)); };
+    if (invert_x_) mapped.rx = invert(mapped.rx);
+    if (invert_y_) mapped.ry = invert(mapped.ry);
     last_ = mapped;
     if (ui_capture_) {
         mapper_.ResetMouseAccum();   // no stale camera momentum when the UI closes

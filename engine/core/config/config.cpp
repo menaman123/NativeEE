@@ -73,7 +73,7 @@ bool EnumParse(const EnumTable& t, const std::string& v, int* out) {
 
 const char* const kBackendNames[]   = {"gl", "soft", "metal", "auto"};
 const char* const kFitNames[]       = {"stretch", "fit", "fill", "integer", "custom"};
-const char* const kAspectNames[]    = {"auto", "4:3", "16:9", "16:10", "21:9"};
+const char* const kAspectNames[]    = {"auto", "4:3", "16:9", "16:10", "21:9", "32:9"};
 const char* const kTextureFilterNames[] = {"title", "point", "bilinear", "trilinear"};
 const char* const kLatencyNames[]   = {"instant", "modelled"};
 const char* const kInterpNames[]    = {"linear", "gaussian"};
@@ -94,7 +94,7 @@ const char* const kFrameCapNames[] = {"off", "30", "60"};
 
 const EnumTable kBackend{kBackendNames, 4};
 const EnumTable kFit{kFitNames, 5};
-const EnumTable kAspect{kAspectNames, 5};
+const EnumTable kAspect{kAspectNames, 6};
 const EnumTable kTextureFilter{kTextureFilterNames, 4};
 const EnumTable kLatency{kLatencyNames, 2};
 const EnumTable kInterp{kInterpNames, 2};
@@ -261,6 +261,8 @@ const std::vector<Field>& Fields() {
         STR_FIELD("input.device", input.device),
         BOOL_FIELD("input.kbm_pad", input.kbm_pad),
         BOOL_FIELD("input.rumble", input.rumble),
+        BOOL_FIELD("input.invert_camera_x", input.invert_camera_x),
+        BOOL_FIELD("input.invert_camera_y", input.invert_camera_y),
         ENUM_FIELD("iop.dispatch", iop.dispatch, kIop),
         ENUM_FIELD("iop.restored_timer_due", iop.restored_timer_due, kTimerDue),
         BOOL_FIELD("loader.ring_cache", loader.ring_cache),
@@ -305,6 +307,8 @@ const std::vector<Field>& Fields() {
         INT_FIELD("video.custom_scale_pct", video.custom_scale_pct),
         ENUM_FIELD("video.fit_mode", video.fit_mode, kFit),
         INT_FIELD("video.fps_cap", video.fps_cap),
+        INT_FIELD("video.frame_limit", video.frame_limit),
+        BOOL_FIELD("video.motion_blur", video.motion_blur),
         INT_FIELD("video.capture_wait_ms", video.capture_wait_ms),
         BOOL_FIELD("video.present_relax", video.present_relax),
         ENUM_FIELD("video.frame_cap", video.frame_cap, kFrameCap),

@@ -37,6 +37,9 @@ bool SessionControls::Supported(Action action) const {
         case Action::SetFrameCap:
             return capabilities_.display_rows;
         case Action::SetTextureFilter: case Action::SetAnisotropy: return capabilities_.texture_filter;
+        case Action::SetFrameLimit: return capabilities_.frame_limit;
+        case Action::SetInvertCameraX: case Action::SetInvertCameraY: return capabilities_.camera_invert;
+        case Action::SetMotionBlur: return capabilities_.motion_blur;
     }
     return false;
 }
@@ -94,14 +97,18 @@ uint64_t SessionControls::SubmitLocked(Action action, int value, std::string pat
         return refuse("Volume must be between 0 and 100.");
     if ((action == Action::SetFullscreen || action == Action::SetKeyboardInput ||
          action == Action::SetRecording || action == Action::SetPerfOverlay || action == Action::SetVSync ||
-         action == Action::SetRenderRate) && value != 0 && value != 1)
+         action == Action::SetRenderRate || action == Action::SetInvertCameraX || action == Action::SetInvertCameraY ||
+         action == Action::SetMotionBlur) &&
+        value != 0 && value != 1)
         return refuse("This setting must be on or off.");
     if (action == Action::SetDisplayMode && (value < 0 || value > 2))
         return refuse("The display mode must be windowed, fullscreen or borderless.");
     if (action == Action::SetScale && (value < 0 || value > 4))
         return refuse("The internal scale must be native or 1..4.");
-    if (action == Action::SetAspect && (value < 0 || value > 4))
-        return refuse("The aspect selection must be one of the five shapes.");
+    if (action == Action::SetAspect && (value < 0 || value > 5))
+        return refuse("The aspect selection must be one of the six shapes.");
+    if (action == Action::SetFrameLimit && value != 0 && (value < 60 || value > 1000))
+        return refuse("The frame-rate limit must be 60..1000 or 0 (unlimited).");
     if (action == Action::SetFrameCap && (value < 0 || value > 2))
         return refuse("The frame cap must be off, 30 or 60 (0..2).");
     if (action == Action::SetTextureFilter && (value < 0 || value > 3))
@@ -297,6 +304,10 @@ const char* SessionControls::ActionLabel(Action action) {
         case Action::SetFrameCap: return "Frame cap";
         case Action::SetTextureFilter: return "Texture filter";
         case Action::SetAnisotropy: return "Anisotropic filtering";
+        case Action::SetFrameLimit: return "Frame rate";
+        case Action::SetInvertCameraX: return "Invert camera X";
+        case Action::SetInvertCameraY: return "Invert camera Y";
+        case Action::SetMotionBlur: return "Motion blur";
     }
     return "Unknown action";
 }

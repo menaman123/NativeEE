@@ -24,14 +24,25 @@ public:
         // presenter / the video stack and persisted in the settings file:
         // video.fullscreen (0 windowed, 1 fullscreen, 2 borderless), video.scale
         // (0 = native window, 1..4), video.vsync (0/1), video.aspect (the
-        // AspectSel order: 0 auto, 1 4:3, 2 16:9, 3 16:10, 4 21:9) and
+        // AspectSel order: 0 auto, 1 4:3, 2 16:9, 3 16:10, 4 21:9, 5 32:9) and
         // video.render_rate (0 = 60, 1 = display) and video.frame_cap (the presented-
         // frame cadence: 0 off, 1 30, 2 60 -- FramePacer).
         SetDisplayMode, SetScale, SetVSync, SetAspect, SetRenderRate, SetFrameCap,
         // The Display page's texture filtering rows (video.texture_filter: the
         // mode's index title|point|bilinear|trilinear; video.anisotropy: 1|2|4|8|16):
         // applied to the owned textures' samplers from the next draw, persisted.
-        SetTextureFilter, SetAnisotropy
+        SetTextureFilter, SetAnisotropy,
+        // The Display page's frame-rate limit (video.frame_limit: 60 = the console's
+        // pacing; 0 = unlimited or 61..1000 = uncapped near that rate), applied by the
+        // title at its next boundary (FrameLimitSetting); persisted.
+        SetFrameLimit,
+        // The Controls page's camera inversion (input.invert_camera_x / _y: the
+        // right stick's axes, from every device), applied to the next pad sample.
+        SetInvertCameraX, SetInvertCameraY,
+        // The Display page's motion blur (video.motion_blur: the title's own blend of the
+        // previous picture), applied by the title at its next boundary
+        // (MotionBlurSetting); persisted.
+        SetMotionBlur
     };
     enum class Phase { Queued, Working, Waiting, Succeeded, Refused, Failed, Cancelled };
     struct Capabilities {
@@ -46,6 +57,9 @@ public:
         bool perf_overlay = false;
         bool display_rows = false;   // the A2/A3 rows (a live video stack)
         bool texture_filter = false;
+        bool frame_limit = false;    // the title supports an uncapped frame rate
+        bool camera_invert = false;  // live input: the right stick can be inverted
+        bool motion_blur = false;    // the title can switch its motion blur
     };
     struct RuntimeState {
         uint64_t frame = 0;
@@ -80,6 +94,10 @@ public:
         // video.texture_filter (the mode index) and video.anisotropy in force.
         int texture_filter = 0;
         int anisotropy = 1;
+        int frame_limit = 60;   // video.frame_limit (0 = unlimited)
+        bool invert_camera_x = false;
+        bool invert_camera_y = false;
+        bool motion_blur = true;   // video.motion_blur
         std::string input_name;
         std::string renderer;   // the video backend in force ("metal (auto): Apple M4"), from the title's leg
         std::string recording_path;

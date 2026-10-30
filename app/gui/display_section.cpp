@@ -32,27 +32,40 @@ void DisplaySection::Draw(SessionControls& controls, const SessionControls::Snap
     if (!ImGui::CollapsingHeader("Display", ImGuiTreeNodeFlags_DefaultOpen)) return;
     const auto& caps = snapshot.capabilities;
     const auto& r = snapshot.runtime;
-    if (!caps.display_rows && !caps.fullscreen && !caps.texture_filter && !caps.perf_overlay) {
+    if (!caps.display_rows && !caps.fullscreen && !caps.texture_filter && !caps.perf_overlay && !caps.frame_limit &&
+        !caps.motion_blur) {
         ImGui::TextDisabled("No display settings are available in this session.");
         return;
     }
     static const char* const kModes[] = {"Windowed", "Fullscreen", "Borderless"};
-    static const char* const kAspects[] = {"Auto (window)", "4:3", "16:9", "16:10", "21:9"};
+    static const char* const kAspects[] = {"Auto (window)", "4:3", "16:9", "16:10", "21:9", "32:9"};
     static const char* const kRates[] = {"60 (one frame per game tick)", "Display rate"};
     static const char* const kCaps[] = {"Off (as the game produces)", "30 (every other field, steady)", "60 (every field)"};
     static const char* const kScales[] = {"Native window", "1x", "2x", "3x", "4x"};
     static const char* const kFilters[] = {"Title (as the game set it)", "Point", "Bilinear", "Trilinear"};
     static const char* const kAniso[] = {"Off", "2x", "4x", "8x", "16x"};
     static const int kAnisoValues[] = {1, 2, 4, 8, 16};
+    static const char* const kLimits[] = {"60 (console)", "120", "180", "240", "360", "Unlimited"};
+    static const int kLimitValues[] = {60, 120, 180, 240, 360, 0};
     if (caps.fullscreen) Combo(controls, snapshot, Action::SetDisplayMode, "Display mode", kModes, 3, r.display_mode);
     if (caps.display_rows) {
-        Combo(controls, snapshot, Action::SetAspect, "Aspect ratio", kAspects, 5, r.aspect);
+        Combo(controls, snapshot, Action::SetAspect, "Aspect ratio", kAspects, 6, r.aspect);
         Combo(controls, snapshot, Action::SetScale, "Internal scale", kScales, 5, r.scale);
         Combo(controls, snapshot, Action::SetRenderRate, "Render rate", kRates, 2, r.render_rate);
+        if (caps.frame_limit)
+            Combo(controls, snapshot, Action::SetFrameLimit, "Frame rate", kLimits, 6, r.frame_limit, kLimitValues);
+        ImGui::BeginDisabled(caps.frame_limit && r.frame_limit != 60);
         Combo(controls, snapshot, Action::SetFrameCap, "Frame cap", kCaps, 3, r.frame_cap);
+        ImGui::EndDisabled();
         bool vsync = r.vsync;
         ImGui::BeginDisabled(Busy(snapshot, Action::SetVSync) || snapshot.closing);
         if (ImGui::Checkbox("VSync", &vsync)) controls.Submit(Action::SetVSync, vsync ? 1 : 0);
+        ImGui::EndDisabled();
+    }
+    if (caps.motion_blur) {
+        bool blur = r.motion_blur;
+        ImGui::BeginDisabled(Busy(snapshot, Action::SetMotionBlur) || snapshot.closing);
+        if (ImGui::Checkbox("Motion blur", &blur)) controls.Submit(Action::SetMotionBlur, blur ? 1 : 0);
         ImGui::EndDisabled();
     }
     if (caps.texture_filter) {

@@ -810,6 +810,28 @@
       "help": "auto uses the first controller found; none turns controllers off."
     },
     {
+      "key": "input.invert_camera_x",
+      "section": "input",
+      "name": "invert_camera_x",
+      "type": "bool",
+      "default": "off",
+      "kind": "switch",
+      "user_facing": true,
+      "label": "Invert camera left/right",
+      "help": "Turns the camera the other way when you push the camera stick or move the mouse sideways."
+    },
+    {
+      "key": "input.invert_camera_y",
+      "section": "input",
+      "name": "invert_camera_y",
+      "type": "bool",
+      "default": "off",
+      "kind": "switch",
+      "user_facing": true,
+      "label": "Invert camera up/down",
+      "help": "Tilts the camera the other way when you push the camera stick or move the mouse up and down."
+    },
+    {
       "key": "input.kbm_pad",
       "section": "input",
       "name": "kbm_pad",
@@ -1219,7 +1241,8 @@
         "4:3",
         "16:9",
         "16:10",
-        "21:9"
+        "21:9",
+        "32:9"
       ],
       "label": "Aspect ratio",
       "help": "The shape the game draws for. Auto follows the window; 4:3 is the original television.",
@@ -1243,6 +1266,10 @@
         {
           "value": "21:9",
           "label": "21:9"
+        },
+        {
+          "value": "32:9",
+          "label": "32:9"
         }
       ]
     },
@@ -1373,6 +1400,43 @@
       ]
     },
     {
+      "key": "video.frame_limit",
+      "section": "video",
+      "name": "frame_limit",
+      "type": "int",
+      "default": "60",
+      "kind": "choice",
+      "user_facing": true,
+      "label": "Frame rate",
+      "help": "How many frames a second the game runs at. 60 is the original; above it every frame is a real game frame, and the game keeps its normal speed.",
+      "choices": [
+        {
+          "value": "60",
+          "label": "60 (original)"
+        },
+        {
+          "value": "120",
+          "label": "120"
+        },
+        {
+          "value": "180",
+          "label": "180"
+        },
+        {
+          "value": "240",
+          "label": "240"
+        },
+        {
+          "value": "360",
+          "label": "360"
+        },
+        {
+          "value": "0",
+          "label": "Unlimited"
+        }
+      ]
+    },
+    {
       "key": "video.fullscreen",
       "section": "video",
       "name": "fullscreen",
@@ -1410,6 +1474,17 @@
       "default": "on",
       "kind": "switch",
       "user_facing": false
+    },
+    {
+      "key": "video.motion_blur",
+      "section": "video",
+      "name": "motion_blur",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": true,
+      "label": "Motion blur",
+      "help": "The game's own blur of fast movement. Off draws every picture sharp."
     },
     {
       "key": "video.present_relax",

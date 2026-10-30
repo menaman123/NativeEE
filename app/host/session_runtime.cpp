@@ -84,10 +84,13 @@ void SessionRuntime::ConfigureDisplayRows(const DisplaySettings& seed) {
     display_rows_ = true;
     scale_setting_.store(std::clamp(seed.scale, 0, 4));
     effective_scale_.store(std::clamp(seed.scale, 1, 4));   // 0 (native) resolves on the first Publish
-    aspect_setting_.store(std::clamp(seed.aspect, 0, 4));
+    aspect_setting_.store(std::clamp(seed.aspect, 0, 5));
     render_rate_.store(seed.render_rate != 0 ? 1 : 0);
     FramePacer::Cap cap = FramePacer::Cap::Hz60;
-    if (FramePacer::CapOf(seed.frame_cap, cap)) { pacer_.SetCap(cap); frame_cap_.store(seed.frame_cap); }
+    if (FramePacer::CapOf(seed.frame_cap, cap)) {
+        if (frame_limit_.load() == 60) pacer_.SetCap(cap);
+        frame_cap_.store(seed.frame_cap);
+    }
     pacer_.SetRelax(seed.present_relax);
     display_hz_ = std::clamp(seed.display_hz, 0, 1000);
     display_mode_.store(std::clamp(seed.display_mode, 0, 2));
@@ -97,6 +100,21 @@ void SessionRuntime::ConfigureDisplayRows(const DisplaySettings& seed) {
             std::fprintf(stderr, "nativeee: video.fullscreen: %s\n", error.c_str());
     }
     capabilities_.display_rows = true;
+    Publish();
+}
+
+void SessionRuntime::ConfigureFrameLimit(int seed) {
+    if (std::this_thread::get_id() != main_thread_) return;
+    frame_limit_.store(seed == 0 ? 0 : std::clamp(seed, 60, 1000));
+    if (frame_limit_.load() != 60) pacer_.SetCap(FramePacer::Cap::Off);
+    capabilities_.frame_limit = true;
+    Publish();
+}
+
+void SessionRuntime::ConfigureMotionBlur(bool seed) {
+    if (std::this_thread::get_id() != main_thread_) return;
+    motion_blur_.store(seed);
+    capabilities_.motion_blur = true;
     Publish();
 }
 
@@ -183,6 +201,11 @@ void SessionRuntime::Publish() {
     status_.aspect = aspect_setting_.load();
     status_.render_rate = render_rate_.load();
     status_.frame_cap = frame_cap_.load();
+    status_.frame_limit = frame_limit_.load();
+    status_.motion_blur = motion_blur_.load();
+    capabilities_.camera_invert = input_ != nullptr;
+    status_.invert_camera_x = input_ && input_->CameraInvertX();
+    status_.invert_camera_y = input_ && input_->CameraInvertY();
     if (aspect_) {
         aspect_->SetWindow(status_.window_width, status_.window_height);
         window_.SetPictureAspect(aspect_->Ratio());
@@ -364,7 +387,7 @@ void SessionRuntime::ProcessCommands() {
                 if (ok && persist_) persist_("video.vsync", request.value != 0 ? "on" : "off");
                 break;
             case Action::SetAspect: {
-                static const char* const kAspects[] = {"auto", "4:3", "16:9", "16:10", "21:9"};
+                static const char* const kAspects[] = {"auto", "4:3", "16:9", "16:10", "21:9", "32:9"};
                 aspect_setting_.store(request.value);
                 if (aspect_) aspect_->SetSelection(static_cast<gs::AspectSelection::Shape>(request.value));
                 detail = "Aspect ratio applied.";
@@ -375,7 +398,7 @@ void SessionRuntime::ProcessCommands() {
                 FramePacer::Cap cap = FramePacer::Cap::Hz60;
                 ok = FramePacer::CapOf(request.value, cap);
                 if (ok) {
-                    pacer_.SetCap(cap);
+                    if (frame_limit_.load() == 60) pacer_.SetCap(cap);   // uncapped keeps every picture
                     frame_cap_.store(request.value);
                     detail = std::string("Frame cap applied: ") + FramePacer::CapName(cap) + ".";
                     if (persist_) persist_("video.frame_cap", FramePacer::CapName(cap));
@@ -402,6 +425,32 @@ void SessionRuntime::ProcessCommands() {
                     if (persist_) persist_("video.anisotropy", std::to_string(texture_filter_->Anisotropy()));
                 } else { ok = false; detail = "Texture filtering is unavailable in this session."; }
                 break;
+            case Action::SetFrameLimit: {
+                frame_limit_.store(request.value);
+                FramePacer::Cap cap = FramePacer::Cap::Hz60;
+                if (request.value != 60) pacer_.SetCap(FramePacer::Cap::Off);
+                else if (FramePacer::CapOf(frame_cap_.load(), cap)) pacer_.SetCap(cap);
+                detail = request.value == 60 ? "Frame rate: 60 (console)." :
+                         request.value == 0 ? "Frame rate: unlimited." : "Frame rate limit: " + std::to_string(request.value) + ".";
+                if (persist_) persist_("video.frame_limit", std::to_string(request.value));
+                break;
+            }
+            case Action::SetMotionBlur:
+                motion_blur_.store(request.value != 0);
+                detail = request.value != 0 ? "Motion blur on." : "Motion blur off.";
+                if (persist_) persist_("video.motion_blur", request.value != 0 ? "on" : "off");
+                break;
+            case Action::SetInvertCameraX: case Action::SetInvertCameraY: {
+                if (!input_) { ok = false; detail = "Live input is unavailable."; break; }
+                const bool x = request.action == Action::SetInvertCameraX ? request.value != 0 : input_->CameraInvertX();
+                const bool y = request.action == Action::SetInvertCameraY ? request.value != 0 : input_->CameraInvertY();
+                input_->SetCameraInvert(x, y);
+                detail = "Camera inversion applied.";
+                if (persist_)
+                    persist_(request.action == Action::SetInvertCameraX ? "input.invert_camera_x" : "input.invert_camera_y",
+                             request.value != 0 ? "on" : "off");
+                break;
+            }
             case Action::TogglePause: case Action::Step: case Action::SaveReproduction:
             case Action::RestoreReproduction: {
                 std::lock_guard<std::mutex> lock(mutex_);

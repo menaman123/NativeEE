@@ -36,7 +36,7 @@ std::vector<SettingsResync::Request> SettingsResync::Plan(const std::vector<Entr
     // The same name tables as the settings file's enums (config.h) and the
     // writers in SessionRuntime::ProcessCommands.
     static const char* const kModes[] = {"windowed", "fullscreen", "borderless"};
-    static const char* const kAspects[] = {"auto", "4:3", "16:9", "16:10", "21:9"};
+    static const char* const kAspects[] = {"auto", "4:3", "16:9", "16:10", "21:9", "32:9"};
     static const char* const kCaps[] = {"off", "30", "60"};
     static const char* const kRates[] = {"60", "display"};
     static const char* const kFilters[] = {"title", "point", "bilinear", "trilinear"};
@@ -52,7 +52,15 @@ std::vector<SettingsResync::Request> SettingsResync::Plan(const std::vector<Entr
         } else if (k == "video.vsync" && caps.display_rows) {
             if ((n = OnOff(v)) >= 0 && (n != 0) != r.vsync) out.emplace_back(Action::SetVSync, n);
         } else if (k == "video.aspect" && caps.display_rows) {
-            if ((n = IndexOf(v, kAspects, 5)) >= 0 && n != r.aspect) out.emplace_back(Action::SetAspect, n);
+            if ((n = IndexOf(v, kAspects, 6)) >= 0 && n != r.aspect) out.emplace_back(Action::SetAspect, n);
+        } else if (k == "video.frame_limit" && caps.frame_limit) {
+            if (Int(v, 0, 1000, &n) && n != r.frame_limit) out.emplace_back(Action::SetFrameLimit, n);
+        } else if (k == "video.motion_blur" && caps.motion_blur) {
+            if ((n = OnOff(v)) >= 0 && (n != 0) != r.motion_blur) out.emplace_back(Action::SetMotionBlur, n);
+        } else if (k == "input.invert_camera_x" && caps.camera_invert) {
+            if ((n = OnOff(v)) >= 0 && (n != 0) != r.invert_camera_x) out.emplace_back(Action::SetInvertCameraX, n);
+        } else if (k == "input.invert_camera_y" && caps.camera_invert) {
+            if ((n = OnOff(v)) >= 0 && (n != 0) != r.invert_camera_y) out.emplace_back(Action::SetInvertCameraY, n);
         } else if (k == "video.frame_cap" && caps.display_rows) {
             if ((n = IndexOf(v, kCaps, 3)) >= 0 && n != r.frame_cap) out.emplace_back(Action::SetFrameCap, n);
         } else if (k == "video.render_rate" && caps.display_rows) {

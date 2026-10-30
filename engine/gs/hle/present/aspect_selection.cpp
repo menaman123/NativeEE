@@ -17,6 +17,7 @@ double AspectSelection::RatioOf(Shape selection) {
         case Shape::Wide16_9: return kWide;
         case Shape::Wide16_10: return kWide16_10;
         case Shape::Wide21_9: return kWide21_9;
+        case Shape::Wide32_9: return kWide32_9;
         case Shape::Narrow:
         case Shape::Auto:
         default: return kNarrow;
@@ -29,7 +30,8 @@ double AspectSelection::Snap(double window_ratio) {
     if (window_ratio < std::sqrt(kNarrow * kWide16_10)) return kNarrow;
     if (window_ratio < std::sqrt(kWide16_10 * kWide)) return kWide16_10;
     if (window_ratio < std::sqrt(kWide * kWide21_9)) return kWide;
-    return kWide21_9;
+    if (window_ratio < std::sqrt(kWide21_9 * kWide32_9)) return kWide21_9;
+    return kWide32_9;
 }
 
 double AspectSelection::Ratio() const {
@@ -46,7 +48,8 @@ const char* AspectSelection::Name(double ratio) {
     if (IsNarrow(ratio)) return "4:3";
     if (ratio < std::sqrt(kWide16_10 * kWide)) return "16:10";
     if (ratio < std::sqrt(kWide * kWide21_9)) return "16:9";
-    return "21:9";
+    if (ratio < std::sqrt(kWide21_9 * kWide32_9)) return "21:9";
+    return "32:9";
 }
 
 bool AspectSelection::Live(Shape selection, bool has_window) {
