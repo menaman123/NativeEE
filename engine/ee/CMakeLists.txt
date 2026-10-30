@@ -21,6 +21,7 @@ add_library(ps2r_ee STATIC
     cpu/seams.cpp
     cpu/dispatch_table.cpp
     cpu/shadow_call_stack.cpp
+    cpu/fn_hooks.cpp
     recomp_abi/recomp_abi.cpp
     hle/thread_manager.cpp
     hle/semaphores.cpp
