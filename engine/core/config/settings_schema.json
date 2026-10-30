@@ -1113,6 +1113,78 @@
       "user_facing": false
     },
     {
+      "key": "title.native.dmac",
+      "section": "title",
+      "name": "native.dmac",
+      "type": "bool",
+      "default": "off",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "title.native.gif",
+      "section": "title",
+      "name": "native.gif",
+      "type": "bool",
+      "default": "off",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "title.native.gs",
+      "section": "title",
+      "name": "native.gs",
+      "type": "bool",
+      "default": "off",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "title.native.iop",
+      "section": "title",
+      "name": "native.iop",
+      "type": "bool",
+      "default": "off",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "title.native.spu",
+      "section": "title",
+      "name": "native.spu",
+      "type": "bool",
+      "default": "off",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "title.native.vif",
+      "section": "title",
+      "name": "native.vif",
+      "type": "bool",
+      "default": "off",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "title.native.vu0",
+      "section": "title",
+      "name": "native.vu0",
+      "type": "bool",
+      "default": "off",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
+      "key": "title.native.vu1",
+      "section": "title",
+      "name": "native.vu1",
+      "type": "bool",
+      "default": "off",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
       "key": "triage.disk_budget_mb",
       "section": "triage",
       "name": "disk_budget_mb",

@@ -5,7 +5,14 @@
 #  linked PE32+ is test_host_platform.exe (the host arm's run on a Windows machine) where Twinsanity links te_fiber_test.exe.]
 #
 #   tools/ci/win_cross_smoke.sh --xwin <xwin splat root> [--clang <clang++>] [--gl-include DIR] [--sdl-include DIR]
-#                               [--lld-link <lld-link>] [--out DIR] [--objects]
+#                               [--lld-link <lld-link>] [--out DIR] [--objects] [--tu-dir DIR]... [--include DIR]...
+#
+# --tu-dir DIR    also compile every .cpp directly under DIR (repeatable): a TITLE's portable TUs that live outside this
+#                 tree -- the Sly 2 native module games/<title>/native/ (its contract: no POSIX, no _WIN32/__APPLE__, host
+#                 code only through engine/platform, SIMD behind native_simd.h) is listed this way from the title's
+#                 checkout, e.g. `--tu-dir ../games/scus_97316_sly2_band_of_thieves/native --include ..` (the title's
+#                 includes are rooted at the games/ parent: --include adds -I DIR, repeatable). The row names the TU by its
+#                 absolute path's tail.
 #
 # What it does: the Windows arm (engine/platform/host/host_windows.cpp, engine/platform/host/platform.cpp,
 # engine/platform/windows/*.cpp -- the GENERATED GL loader among them), the SDL window / context TUs
@@ -25,8 +32,11 @@
 set -u
 XWIN="${PS2R_XWIN_ROOT:-}"; CLANG="${CLANG:-/opt/homebrew/opt/llvm/bin/clang++}"; OUT="/tmp/ps2r_win_cross_smoke"; OBJECTS=0
 GL_INCLUDE="${PS2R_GLCOREARB_INCLUDE_DIR:-}"; SDL_INCLUDE="${PS2R_WIN_SDL2_INCLUDE:-}"; LLD_LINK="${PS2R_WIN_LLD_LINK:-}"
+TU_DIRS=(); EXTRA_INCLUDES=()
 while [ $# -gt 0 ]; do
     case "$1" in
+        --tu-dir) TU_DIRS+=("$(cd "$2" && pwd)"); shift 2 ;;
+        --include) EXTRA_INCLUDES+=("$(cd "$2" && pwd)"); shift 2 ;;
         --xwin) XWIN="$2"; shift 2 ;;
         --clang) CLANG="$2"; shift 2 ;;
         --gl-include) GL_INCLUDE="$2"; shift 2 ;;
@@ -52,6 +62,7 @@ COMMON=(--target=x86_64-pc-windows-msvc -fms-compatibility-version=19.37 -fsynta
         -DSDL_MAIN_HANDLED -D__PRFCHWINTRIN_H -DPS2R_HAS_METAL=0
         -I"$HERE"
         -isystem "$XWIN/crt/include" -isystem "$XWIN/sdk/include/ucrt" -isystem "$XWIN/sdk/include/um" -isystem "$XWIN/sdk/include/shared")
+for d in "${EXTRA_INCLUDES[@]+"${EXTRA_INCLUDES[@]}"}"; do COMMON+=(-I"$d"); done
 [ -n "$GL_INCLUDE" ] && COMMON+=(-isystem "$GL_INCLUDE")
 [ -n "$SDL_INCLUDE" ] && COMMON+=(-isystem "$SDL_INCLUDE")
 if [ "$OBJECTS" = 1 ]; then COMMON=("${COMMON[@]/-fsyntax-only/-c}"); fi
@@ -61,10 +72,14 @@ for f in "$HERE"/engine/platform/host/host_windows.cpp "$HERE"/engine/platform/h
          "$HERE"/engine/platform/sdl/*.cpp "$HERE"/engine/render/backends/gl/*.cpp "$HERE"/tests/platform/*.cpp; do
     [ -f "$f" ] && TUS+=("$f")
 done
+for d in "${TU_DIRS[@]+"${TU_DIRS[@]}"}"; do
+    for f in "$d"/*.cpp; do [ -f "$f" ] && TUS+=("$f"); done
+done
 printf 'tu\tstatus\terrors\tseconds\n' > "$OUT/SUMMARY.tsv"
 fail=0; ok=0; skip=0
 for f in "${TUS[@]}"; do
     rel="${f#$HERE/}"
+    case "$rel" in /*) rel="$(basename "$(dirname "$f")")/$(basename "$f")" ;; esac   # an out-of-tree TU (--tu-dir): <dir>/<file>
     needs_gl=0; needs_sdl=0
     case "$rel" in engine/platform/windows/gl_loader.cpp|engine/render/backends/gl/*|engine/platform/sdl/gl_context.cpp|tests/platform/test_gl_*) needs_gl=1 ;; esac
     case "$rel" in engine/platform/sdl/*|tests/platform/test_sdl_*|tests/platform/test_gl_*) needs_sdl=1 ;; esac
