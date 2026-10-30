@@ -2,7 +2,10 @@
 // ShadowCallStack: a NO-STORAGE view of the EE shadow call stack the generated
 // common TU owns (thread_local g_ee_call_stack / g_ee_call_stack_depth, with
 // the extern "C" push/pop/depth/top accessors -- PHASE3_PLAN 3.4 row 8). The
-// THRD savestate harvest and the park-site dump read it through this class.
+// THRD savestate harvest, the park-site dump and the GIF's DrawAttribution read
+// it through this class. shadow_call_stack.cpp carries WEAK defaults of the four
+// accessors (the empty stack), so a library that only reads the chain links
+// without the generated TU; the title's strong definitions win in the game binary.
 #include <cstdint>
 
 class ShadowCallStack {

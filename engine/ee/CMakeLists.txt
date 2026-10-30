@@ -3,8 +3,10 @@
 # map, fastmem, MMIO router/sink, ELF loader, data-map applier).
 # Stage 3B: the generated-code ABI (recomp_abi/), the seam providers (cpu/seams.cpp,
 # cpu/guest_park), and the wrappers over the generated dispatch surface (dispatch_table,
-# shadow_call_stack). The wrappers reference symbols the generated common TU defines,
-# so ps2r_ee is only complete when linked together with ps2r_title_recomp.
+# shadow_call_stack). dispatch_table references symbols only the generated common TU
+# defines, so ps2r_ee is only complete when linked together with ps2r_title_recomp;
+# shadow_call_stack carries weak empty-stack defaults of its four accessors so the
+# readers of the chain (ps2r_gif's DrawAttribution, park_site_dump) link standalone.
 # Stage 3C2: the syscall table, dyn-interp tripwire, boot env, libc, SDK binding manifest
 # and the libkernl families (kernl_boot/timer/file_io/sif_rpc, libscf, libdev).
 # Stage 3C1: the kernel objects (hle/thread_manager, semaphores, event_flags, alarms,
