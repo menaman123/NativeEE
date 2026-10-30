@@ -9,6 +9,7 @@
 #include "engine/core/image/png.h"
 #include "engine/ee/cpu/access_tracer.h"
 #include "engine/ee/cpu/cpu_state.h"
+#include "engine/ee/cpu/fn_swap.h"
 
 namespace ps2r::app {
 
@@ -22,7 +23,7 @@ const char* const kFeatures[] = {
     "session.info", "run.step", "run.resume", "run.pause", "run.until", "pad.set", "pad.press", "state.save", "state.load",
     "state.probe", "screen.grab", "gs.frame", "vram.read", "mem.read", "mem.write", "mem.search", "mem.watch.add",
     "mem.watch.remove", "cpu.regs", "cpu.stack", "fn.break.add", "fn.break.remove", "fn.trace", "fn.census", "fn.calls.recent",
-    "corpus.record", "knobs.set", "session.quit",
+    "corpus.record", "knobs.set", "session.quit", "fn.swap", "fn.swap.remove", "fn.swap.list", "run.hashes", "mem.hash",
 };
 const char* const kUnavailableOps[] = {"alloc.log"};
 constexpr uint64_t kSaveMaxFramesDefault = 300;
@@ -268,6 +269,7 @@ bool AgentServer::OnBoundary(uint64_t frame) {
     ++boundaries_;
     frame_ = frame;
     stop_reason_ = nullptr;
+    CollectHashRows(frame);
     CheckWatches(frame);
     if (!started_) {
         // The first boundary: paused here until the first run op.
@@ -306,6 +308,11 @@ void AgentServer::OnRestored(uint64_t frame, const EmotionEngineState* ctx) {
     ctx_ = ctx;
     frame_ = frame;
     stop_reason_ = nullptr;
+    // The rows the restore itself emitted (the restored image's checkpoint) belong to no completed frame.
+    if (b_.lane_rows) { std::vector<LaneRow> drop; b_.lane_rows(&drop); }
+    // The restored frame starts a new history: rows of frames past it are from the run being left.
+    hash_rows_.erase(std::remove_if(hash_rows_.begin(), hash_rows_.end(), [frame](const HashRow& h) { return h.frame > frame; }),
+                     hash_rows_.end());
     run_ = Run{};
     press_.active = false;
     paused_ = true;
@@ -515,6 +522,11 @@ bool AgentServer::Handle(const Request& r) {
     if (op == "mem.watch.remove") { OpWatchRemove(r); return true; }
     if (op == "cpu.regs") { OpCpuRegs(r); return true; }
     if (op == "knobs.set") { OpKnobsSet(r); return true; }
+    if (op == "fn.swap") { OpFnSwap(r); return true; }
+    if (op == "fn.swap.remove") { OpFnSwapRemove(r); return true; }
+    if (op == "fn.swap.list") { OpFnSwapList(r); return true; }
+    if (op == "run.hashes") { OpRunHashes(r); return true; }
+    if (op == "mem.hash") { OpMemHash(r); return true; }
     for (const char* t : kUnavailableOps)
         if (op == t) { Fail(r, "not available in this build: " + op + " needs a named allocator hook (none is)"); return true; }
     Fail(r, "unknown op '" + op + "'");
@@ -1208,7 +1220,123 @@ std::string AgentServer::Census() const {
            ":connections=" + std::to_string(channel_.Accepted()) + ":watches=" + std::to_string(watches_.size()) +
            ":breaks=" + std::to_string(breaks_.size()) + ":breaks_hit=" + std::to_string(breaks_hit_) +
            ":mid_frame_waits=" + std::to_string(mid_frame_waits_) + ":traced=" + std::to_string(traced_.size()) +
-           ":census_armed=" + (census_armed_ ? "1" : "0") + ":probed_calls=" + std::to_string(FnHooks::ProbedCalls());
+           ":census_armed=" + (census_armed_ ? "1" : "0") + ":probed_calls=" + std::to_string(FnHooks::ProbedCalls()) +
+           ":swaps=" + std::to_string(swaps_) + ":swapped=" + std::to_string(FnSwap::List().size()) + ":mem_hashes=" + std::to_string(mem_hashes_) +
+           ":hash_rows=" + std::to_string(hash_rows_.size());
+}
+
+// --- tier 2: hot swap + the hash lanes ----------------------------------------------------------------
+
+void AgentServer::CollectHashRows(uint64_t frame) {
+    if (!b_.lane_rows) return;
+    std::vector<LaneRow> rows;
+    b_.lane_rows(&rows);
+    if (rows.empty()) return;
+    if (hash_rows_.size() + rows.size() > kHashRowCap)
+        hash_rows_.erase(hash_rows_.begin(), hash_rows_.begin() + static_cast<std::ptrdiff_t>(std::min(hash_rows_.size(), hash_rows_.size() / 2 + rows.size())));
+    for (const LaneRow& r : rows) hash_rows_.push_back(HashRow{frame, r.lane, r.key, r.hash});
+}
+
+void AgentServer::OpRunHashes(const Request& r) {
+    uint64_t from = 0, to = UINT64_MAX;
+    if (const AgentJson* f = r.body.Get("from")) { if (!f->AsUInt64(&from)) { Fail(r, "from must be a non-negative integer"); return; } }
+    if (const AgentJson* t = r.body.Get("to")) { if (!t->AsUInt64(&to)) { Fail(r, "to must be a non-negative integer"); return; } }
+    if (to < from) { Fail(r, "to must be >= from"); return; }
+    std::string lane_filter;
+    if (const AgentJson* l = r.body.Get("lane")) { if (l->IsString()) lane_filter = l->AsString(); }
+    AgentJson rows = AgentJson::Array();
+    uint64_t n = 0, first = UINT64_MAX, last = 0;
+    for (const HashRow& h : hash_rows_) {
+        if (h.frame < from || h.frame > to) continue;
+        if (!lane_filter.empty() && lane_filter != h.lane) continue;
+        AgentJson row = AgentJson::Object();
+        row.Set("frame", AgentJson::UInt(h.frame));
+        row.Set("lane", AgentJson::String(h.lane));
+        row.Set("key", AgentJson::UInt(h.key));
+        row.Set("hash", AgentJson::String(Hex(h.hash)));
+        rows.Push(row);
+        ++n;
+        first = std::min(first, h.frame);
+        last = std::max(last, h.frame);
+    }
+    AgentJson out = AgentJson::Object();
+    out.Set("rows", rows);
+    out.Set("count", AgentJson::UInt(n));
+    out.Set("frame", AgentJson::UInt(frame_));
+    if (n) { out.Set("first", AgentJson::UInt(first)); out.Set("last", AgentJson::UInt(last)); }
+    out.Set("note", AgentJson::String(b_.lane_rows ? "frames: one row per presented frame (video stack armed); audio: one row per 6 boundaries (window); mem: one row per 60 boundaries (segment-local key)"
+                                                   : "no harness in this run (--harness-out not set): no rows"));
+    Reply(r, out);
+}
+
+void AgentServer::OpMemHash(const Request& r) {
+    if (!b_.mem_hash) { Fail(r, "not available in this build: mem.hash has no memory spans bound"); return; }
+    if (mid_frame_) { Fail(r, "mem.hash needs a frame boundary: the game is stopped inside a function hook (run.step first)"); return; }
+    ++mem_hashes_;
+    AgentJson out = AgentJson::Object();
+    out.Set("frame", AgentJson::UInt(frame_));
+    out.Set("hash", AgentJson::String(Hex(b_.mem_hash())));
+    out.Set("algorithm", AgentJson::String("fnv1a64 over main RAM then scratchpad (= mem.mhash's spans)"));
+    Reply(r, out);
+}
+
+void AgentServer::OpFnSwap(const Request& r) {
+    std::string err;
+    uint32_t addr = 0;
+    if (!GetU32(r.body, "addr", &addr, true, &err)) { Fail(r, err); return; }
+    if (FnHooks::IdOf(addr) == UINT32_MAX) { Fail(r, Hex(addr) + " is not a recompiled function's entry"); return; }
+    if (mid_frame_) { Fail(r, "fn.swap needs a frame boundary: the game is stopped inside a function hook (run.step first)"); return; }
+    if (run_.kind != RunKind::None) { Fail(r, "the game is running; run.pause first"); return; }
+    const AgentJson* lib = r.body.Get("library_path");
+    if (!lib || !lib->IsString() || lib->AsString().empty()) { Fail(r, "library_path must be the path of a shared library"); return; }
+    std::string symbol = FnSwap::kDefaultSymbol;
+    if (const AgentJson* sym = r.body.Get("symbol")) { if (sym->IsString() && !sym->AsString().empty()) symbol = sym->AsString(); }
+    bool inherit = true;
+    if (const AgentJson* ip = r.body.Get("inherit_proof")) { if (ip->IsBool()) inherit = ip->AsBool(); }
+    std::string previous;
+    if (!FnSwap::Install(addr, lib->AsString(), symbol, inherit, &previous, &err)) { Fail(r, "fn.swap: " + err); return; }
+    ++swaps_;
+    AgentJson out = AgentJson::Object();
+    out.Set("addr", AgentJson::UInt(addr));
+    out.Set("id", AgentJson::UInt(FnHooks::IdOf(addr)));
+    out.Set("previous", AgentJson::String(previous));
+    out.Set("symbol", AgentJson::String(symbol));
+    out.Set("library_path", AgentJson::String(lib->AsString()));
+    out.Set("inherit_proof", AgentJson::Bool(inherit));
+    out.Set("frame", AgentJson::UInt(frame_));
+    Reply(r, out);
+}
+
+void AgentServer::OpFnSwapRemove(const Request& r) {
+    std::string err;
+    uint32_t addr = 0;
+    if (!GetU32(r.body, "addr", &addr, true, &err)) { Fail(r, err); return; }
+    if (mid_frame_) { Fail(r, "fn.swap.remove needs a frame boundary: the game is stopped inside a function hook (run.step first)"); return; }
+    if (run_.kind != RunKind::None) { Fail(r, "the game is running; run.pause first"); return; }
+    if (!FnSwap::Remove(addr, &err)) { Fail(r, "fn.swap.remove: " + err); return; }
+    AgentJson out = AgentJson::Object();
+    out.Set("addr", AgentJson::UInt(addr));
+    out.Set("restored", AgentJson::String("generated"));
+    out.Set("frame", AgentJson::UInt(frame_));
+    Reply(r, out);
+}
+
+void AgentServer::OpFnSwapList(const Request& r) {
+    AgentJson arr = AgentJson::Array();
+    for (const FnSwap::Info& i : FnSwap::List()) {
+        AgentJson o = AgentJson::Object();
+        o.Set("addr", AgentJson::UInt(i.addr));
+        o.Set("id", AgentJson::UInt(i.id));
+        o.Set("library_path", AgentJson::String(i.library));
+        o.Set("symbol", AgentJson::String(i.symbol));
+        o.Set("inherit_proof", AgentJson::Bool(i.inherit_proof));
+        o.Set("calls", AgentJson::UInt(i.calls));
+        arr.Push(o);
+    }
+    AgentJson out = AgentJson::Object();
+    out.Set("swaps", arr);
+    out.Set("frame", AgentJson::UInt(frame_));
+    Reply(r, out);
 }
 
 }  // namespace ps2r::app

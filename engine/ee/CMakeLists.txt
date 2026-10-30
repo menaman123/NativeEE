@@ -22,6 +22,7 @@ add_library(ps2r_ee STATIC
     cpu/dispatch_table.cpp
     cpu/shadow_call_stack.cpp
     cpu/fn_hooks.cpp
+    cpu/fn_swap.cpp
     cpu/access_tracer.cpp
     recomp_abi/recomp_abi.cpp
     hle/thread_manager.cpp

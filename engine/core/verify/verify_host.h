@@ -106,6 +106,21 @@ public:
     RunMeta* Meta() { return meta_.get(); }
     uint64_t Boundaries() const { return n_boundaries_; }
 
+    // The lane rows, as written, kept in memory for a live reader (the agent control plane's
+    // run.hashes): lane = the file's name, key = the line's key (frames: the present key; audio: the
+    // window; mem: the segment-local boundary), hash = the line's value; `boundary` = the lifetime
+    // boundary count when the row was emitted (OnBoundary's label for mem/audio; the completed boundary
+    // for the present that follows it). DrainRows moves the rows out (FIFO). Armed only: disarmed, no
+    // row is kept. Bounded (kRowCap): the oldest rows go when a reader never drains.
+    struct LaneRow {
+        const char* lane = "";
+        uint64_t boundary = 0;
+        uint64_t key = 0;
+        uint64_t hash = 0;
+    };
+    static constexpr size_t kRowCap = 1 << 16;
+    void DrainRows(std::vector<LaneRow>* out);
+
 private:
     std::FILE* OpenLeg(const char* name) const;
     // The current recording segment's file: an explicit `--record-input <file>`
@@ -138,6 +153,9 @@ private:
     bool                         pad_seen_ = false;
     uint64_t                     n_boundaries_ = 0;
     uint64_t                     output_segment_ = 0, segment_boundary_ = 0;
+    std::mutex                   rows_mu_;
+    std::vector<LaneRow>         rows_;
+    void                         KeepRow(const char* lane, uint64_t boundary, uint64_t key, uint64_t hash);
     uint32_t                     segment_restore_frame_ = 0;
 };
 

@@ -67,6 +67,29 @@ if(TARGET ps2r_title_recomp)
     target_compile_options(test_bug072_sp_balance PRIVATE -Wall -Wextra -Werror)
     add_test(NAME Bug072SpBalance COMMAND test_bug072_sp_balance)
     set_tests_properties(Bug072SpBalance PROPERTIES TIMEOUT 60)
+    # Tier 2 (the recomp-agent program): FnSwap over the generated leaf 0x1ae150 -- the generated body
+    # through the swap = identical per-call memory hashes; a dlopened candidate that writes one byte
+    # differently = the first differing "frame" reported. The candidate is a MODULE library whose
+    # generated-ABI symbols resolve against the test executable at load (-undefined dynamic_lookup on
+    # macOS, the executable's exports on Linux via -rdynamic), the same shape the live fn.swap loads.
+    add_library(fn_swap_candidate MODULE fn_swap_candidate.cpp)
+    # Headers only, NO library: linking ps2r_ee into the module would give it its own (null) copy of the ABI's
+    # bound-memory pointer; every symbol must resolve against the executable that loads it.
+    target_include_directories(fn_swap_candidate PRIVATE $<TARGET_PROPERTY:ps2r_ee,INTERFACE_INCLUDE_DIRECTORIES>)
+    target_compile_definitions(fn_swap_candidate PRIVATE $<TARGET_PROPERTY:ps2r_ee,INTERFACE_COMPILE_DEFINITIONS>)
+    target_compile_options(fn_swap_candidate PRIVATE -Wall -Wextra -Werror)
+    if(APPLE)
+        target_link_options(fn_swap_candidate PRIVATE -undefined dynamic_lookup)
+    endif()
+    add_executable(test_fn_swap test_fn_swap.cpp)
+    target_link_libraries(test_fn_swap PRIVATE ps2r_title_recomp ps2r_title_hle ps2r_vu ps2r_gs_sync ps2r_ee)
+    target_compile_options(test_fn_swap PRIVATE -Wall -Wextra -Werror)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_link_options(test_fn_swap PRIVATE -rdynamic)
+    endif()
+    add_dependencies(test_fn_swap fn_swap_candidate)
+    add_test(NAME FnSwapHotSwap COMMAND test_fn_swap $<TARGET_FILE:fn_swap_candidate>)
+    set_tests_properties(FnSwapHotSwap PROPERTIES TIMEOUT 120)
     # The symbol census walks the whole recompiled TU (~100 s idle; measured 158-276 s and once
     # past 300 s under the full suite's -j8 load beside the 1500-frame root legs): the own
     # TIMEOUT bounds it at 600 s -- a real wait on the host's CPU, not a guest wait.
