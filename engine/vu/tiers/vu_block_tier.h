@@ -191,6 +191,11 @@ public:
     // Bundles retired across every run of this tier (the catalog's exec count).
     uint64_t bundles() const { return bundles_; }
     size_t table_size() const { return table_.size(); }
+    // The program table for a census (hash, exec_count, bundles, native): every decoded image this
+    // tier holds, in table order. Read on the thread that runs the unit (or after it stopped).
+    void ForEachProgram(void (*fn)(void* user, const VuBlockProgram& prog), void* user) const {
+        for (const auto& p : table_) fn(user, *p);
+    }
     const Stats& stats() const { return stats_; }
 
     // The per-op facts from a decoded slot (the block builder's step; public
