@@ -184,6 +184,7 @@ const std::vector<Field>& Fields() {
         BOOL_FIELD("engine.mtvu_early_finish", engine.mtvu_early_finish),
         BOOL_FIELD("engine.mtvu_wait_probe", engine.mtvu_wait_probe),
         BOOL_FIELD("engine.ee_yield_spin_gate", engine.ee_yield_spin_gate),
+        BOOL_FIELD("engine.vblank_wake_sync", engine.vblank_wake_sync),
         ENUM_FIELD("engine.pacing", engine.pacing, kPacing),
         INT_FIELD("engine.shutdown_wait_s", engine.shutdown_wait_s),
         INT_FIELD("engine.time_regime_pin", engine.time_regime_pin),
