@@ -311,6 +311,15 @@
       "user_facing": false
     },
     {
+      "key": "engine.vblank_wake_sync",
+      "section": "engine",
+      "name": "vblank_wake_sync",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
       "key": "engine.vu1_aot_chain",
       "section": "engine",
       "name": "vu1_aot_chain",

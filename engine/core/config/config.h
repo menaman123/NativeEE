@@ -281,6 +281,20 @@ struct EngineConfig {
     // the deterministic profile pins it off. Census ee_yield= spin_trips /
     // sched_trips / due_fields.
     bool    ee_yield_spin_gate = true;
+    // The vblank sleeper's READY edge (EeRunToken::NoteFieldElapsed): on = a thread
+    // sleeping in sceGsSyncV's WaitVblank is made READY by the HOLDER at the yield
+    // trip that passes the field, so the holder's next scheduling decision sees it
+    // at once (the console's vblank interrupt readies the waiter there and then).
+    // off = the pre-2026-10-30 path: the sleeper re-entered the ready set on its own
+    // host thread when it woke -- whether the holder saw it at the trip's preemption
+    // point, at its next SignalSema or only at its next blocking syscall was host
+    // wake latency, the last host-scheduling term in the headless deterministic
+    // lane (run-to-run drift of domain_tick / syscall_count / mem.mhash from
+    // boundary 60 on; the interrupt-site census ee_yield isrs vs
+    // syscall_entry_isrs moving by +-2 between reps). Guest-observable (it fixes
+    // the schedule): the deterministic profile pins it on; kept as a knob so the
+    // legacy schedule stays measurable.
+    bool    vblank_wake_sync = true;
     // The generated dispatch's raw fast path (eecode round 4): a guest call to
     // a function whose table entry still holds its init-time body skips the
     // double ObservedBody / std::function chain and runs shadow-frame push ->

@@ -98,7 +98,21 @@ public:
     // only ever signalled while the renderer sleeps on the vblank is never
     // seen non-zero (a second title's frame pacer spins; its main thread starves).
     void WaitVblank();
+    // A field of emulated time passed on the HOLDER (a yield trip's advance_field):
+    // every thread sleeping in WaitVblank wakes. With `wake_sync` (SetVblankWakeSync,
+    // Config engine.vblank_wake_sync, the default) the sleepers are made READY HERE,
+    // from the holder's side, exactly as WakeVblankWaitersForWallTick does: the
+    // holder's very next PreemptPoint / AnyReadyBesides sees them. Without it the
+    // sleeper re-entered the ready set on its OWN host thread when it woke, so whether
+    // the holder saw it at the trip's PreemptPoint, at its next SignalSema or only at
+    // its next blocking syscall was host wake latency -- the one self-readying wake
+    // of the token (every other kernel wait is readied by the holder's MakeReady);
+    // measured as run-to-run drift of the interrupt delivery site (ee_yield isrs vs
+    // syscall_entry_isrs) and of the whole schedule from there on.
     void NoteFieldElapsed();
+    void SetVblankWakeSync(bool on);
+    bool VblankWakeSync() const { return vblank_wake_sync_; }
+    uint64_t FieldWakes() const { return field_wakes_.load(std::memory_order_relaxed); }
     // (c) a WALL field is due: the composition's pacer noted a tick no boundary
     // has consumed while a thread ran past it (the console's vblank interrupt
     // lands whatever the EE is doing; here it lands at the running holder's
@@ -264,6 +278,8 @@ private:
     };
     VblankWaiter vblank_waiter_[kMaxVblankWaiters];   // the sleepers' tid / prio (under mu_)
     std::atomic<uint64_t> wall_tick_wakes_{0};
+    std::atomic<uint64_t> field_wakes_{0};     // NoteFieldElapsed calls that readied >= 1 vblank sleeper (wake_sync)
+    bool vblank_wake_sync_ = true;             // SetVblankWakeSync (under mu_ when read by NoteFieldElapsed)
     std::atomic<uint64_t> vblank_waits_{0}, vblank_waits_idle_{0};
     std::atomic<uint64_t> idle_grants_{0};
 

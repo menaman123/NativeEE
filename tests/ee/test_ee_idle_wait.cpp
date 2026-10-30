@@ -250,6 +250,77 @@ static void TestVblankWakeNoIdleGap() {
     TM().JoinAll();
 }
 
+// --- 4: a field passed by the holder readies the vblank sleeper from the holder's side ---
+// tid 3 sleeps in WaitVblank while tid 1 (the holder) runs. tid 1 passes a field
+// (NoteFieldElapsed, what a yield trip does). With engine.vblank_wake_sync (the
+// default) tid 3 is READY the moment NoteFieldElapsed returns -- AnyReadyBesides
+// holds on the holder with no wait for tid 3's host thread -- so the holder's
+// next PreemptPoint / syscall entry sees it deterministically. With it off the
+// sleeper readied itself when its host thread woke: the same probe is a race
+// (the determinism track's run-to-run drift, 2026-10-30).
+static void TestFieldReadiesVblankSleeperSynchronously() {
+    std::printf("[4] a holder's field readies the vblank sleeper synchronously (wake_sync)\n");
+    for (int arm = 0; arm < 2; ++arm) {
+        TestEeIdleWait rig;
+        const bool sync = arm == 0;
+        TOK().SetVblankWakeSync(sync);
+        constexpr int kVsyncTid = 3, kVsyncPrio = 2, kIters = 300;
+        std::atomic<bool> entered{false}, done{false};
+        std::atomic<int> sleeping{0};
+        std::thread vsync([&] {
+            TOK().GuestEnter(kVsyncTid, kVsyncPrio);
+            entered.store(true);
+            for (int i = 0; i < kIters; ++i) {
+                TOK().MakeReady(kMainTid, kMainPrio);
+                sleeping.fetch_add(1);
+                TOK().WaitVblank();      // tid 1 READY: a real sleep until a field passes
+                TOK().BlockBegin(kVsyncTid);   // hand back to tid 1 for the next round
+                TOK().BlockEnd(kVsyncTid);
+            }
+            done.store(true);
+            TOK().MakeReady(kMainTid, kMainPrio);
+            TOK().GuestExit(kVsyncTid);
+        });
+        while (!entered.load()) std::this_thread::yield();
+        TOK().GuestEnter(kMainTid, kMainPrio);
+        int seen_at_once = 0, rounds = 0;
+        // Driven by `done`, not by kIters: in the OFF arm vblank_waiters_ stays 1 after a field
+        // until tid 3's HOST thread wakes (the decrement is under the lock that ends its wait),
+        // so tid 1 can pass two fields against one sleep -- rounds > kIters there (the race
+        // itself); a fixed count would leave tid 1 holding the token with tid 3 waiting for it.
+        for (;;) {
+            // tid 1 holds the token here; wait until tid 3 is inside WaitVblank (vblank_waiters_ == 1).
+            // The PreemptPoint matters in the OFF arm: tid 3 may have readied itself (its own host
+            // thread) and be waiting for the token tid 1 holds -- without a scheduling point here
+            // tid 1 would spin on it forever.
+            while (TOK().VblankWaiters() == 0 && !done.load()) {
+                TOK().PreemptPoint();
+                std::this_thread::yield();
+            }
+            if (done.load()) break;
+            ++rounds;
+            TOK().NoteFieldElapsed();                      // the trip's field
+            if (TOK().AnyReadyBesides(kMainTid)) ++seen_at_once;   // the probe: READY now, or only when its host thread wakes?
+            TOK().PreemptPoint();                          // tid 3 (prio 2 < 5) runs when READY; otherwise at the next point
+            TOK().BlockBegin(kMainTid);                    // give tid 3 its turn in every case
+            TOK().BlockEnd(kMainTid);
+        }
+        vsync.join();
+        TOK().GuestExit(kMainTid);
+        TM().JoinAll();
+        std::printf("    wake_sync=%s: readied-at-once %d / %d rounds (%d sleeps), field_wakes=%llu\n", sync ? "on" : "off", seen_at_once,
+                    rounds, kIters, (unsigned long long)TOK().FieldWakes());
+        if (sync) {
+            CHECK(rounds == kIters && seen_at_once == rounds,
+                  "4a: wake_sync on: the sleeper is READY when NoteFieldElapsed returns, every round; one field per sleep");
+            CHECK(TOK().FieldWakes() >= (uint64_t)rounds, "4b: wake_sync on: every field with a sleeper is counted (field_wakes)");
+        } else {
+            CHECK(TOK().FieldWakes() == 0, "4c: wake_sync off: no holder-side wake is counted");
+        }
+        TOK().SetVblankWakeSync(true);
+    }
+}
+
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("EeIdleWait\n");
@@ -257,6 +328,7 @@ int main() {
     TestIdleReadiesWaiter();
     TestGrantGuards();
     TestVblankWakeNoIdleGap();
+    TestFieldReadiesVblankSleeperSynchronously();
     if (g_fail) std::printf("FAILURES: %d (%d passed)\n", g_fail, g_pass);
     else std::printf("ALL PASS (%d)\n", g_pass);
     return g_fail ? 1 : 0;

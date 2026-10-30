@@ -49,6 +49,7 @@ void DeterministicProfile::Apply(Config& c) {
     c.engine.mtvu_early_finish = false;   // the parser-raised FINISH: the oracle lanes' schedule (inert without a worker anyway)
     c.engine.mtvu_wait_probe = false;     // the observation point idles on the worker unconditionally (inert without a worker)
     c.engine.ee_yield_spin_gate = false;   // every trip a field: the frozen oracles' field schedule (E432 pinned off)
+    c.engine.vblank_wake_sync = true;      // the vblank sleeper is readied by the holder at the field (the last host-wake term, 2026-10-30)
     c.engine.cop0_count = true;            // the COP0 Count register advances as on the console: the oracle bases are frozen with it (gsc_h600_cop0, finalize5)
     c.engine.pacing = Pacing::Freerun;
     c.engine.time_regime_pin = 1;
