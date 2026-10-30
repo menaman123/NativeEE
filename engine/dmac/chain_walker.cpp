@@ -46,6 +46,15 @@ void ChainWalker::FlushVif1StagedFeed() {
     FlushStaged(static_cast<int>(DmacChannelId::Vif1));
 }
 
+void ChainWalker::SetVifChainExecutor(ChainExecutor fn, void* user) {
+    chain_exec_ = fn;
+    chain_exec_user_ = user;
+}
+
+void ChainWalker::ObserveVif1Tag(uint32_t base, bool from_spr, bool first) {
+    if (tag_observer_) tag_observer_(base, from_spr, first);
+}
+
 uint64_t ChainWalker::ReadTagWord(uint32_t tadr, bool from_spr) const {
     if (from_spr) return Load64(spad_.Pointer(Scratchpad::Offset(tadr), 8));
     return Load64(ram_.Pointer(tadr & kRamMask, 8));
@@ -133,6 +142,23 @@ DmacVifWalkResult ChainWalker::WalkVifChain(int ch, DmacChannelRegs& regs) {
 
     bool tag_end = false;
     int tag_count = 0;
+    if (!staged && chain_exec_) {
+        // The title's native executor takes the head of the chain (zero or more
+        // tags); the generic loop resumes where it stopped.
+        const NativeChainStep step = chain_exec_(chain_exec_user_, ch, regs, res);
+        tag_count = step.tags;
+        if (step.ended) {
+            FlushStaged(ch);
+            if (v == 1 && walk_end_observer_) walk_end_observer_();
+            res.completed = true;
+            res.tag_count = tag_count;
+            return res;
+        }
+        if (step.tags > 0) {
+            tadr = regs.tadr & kTadrMask;
+            from_spr = step.next_from_spr;
+        }
+    }
     while (!tag_end && tag_count < kMaxTags) {
         const uint32_t prev_tadr = tadr;
         const uint32_t base = from_spr ? Scratchpad::Offset(tadr) : (tadr & kRamMask);
