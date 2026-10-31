@@ -213,6 +213,7 @@ ROWS = [
     ("title.native.gif", "bool", "on", "=", "-"),
     ("title.native.gs", "bool", "off", "=", "-"),
     ("title.native.iop", "bool", "off", "=", "-"),
+    ("title.native.iopsys", "bool", "off", "=", "-"),
     ("title.native.spu", "bool", "off", "=", "-"),
     ("title.native.vif", "bool", "on", "=", "-"),
     ("title.native.vu0", "bool", "on", "=", "-"),

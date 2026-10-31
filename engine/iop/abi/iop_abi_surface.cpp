@@ -3,6 +3,7 @@
 
 #include <cstdio>
 
+#include "engine/iop/abi/host_app/iop_seam.h"
 #include "engine/iop/abi/host_app/iop_stubs.h"
 #include "engine/iop/iop_library_table.h"
 #include "engine/iop/iop_memory.h"
@@ -22,7 +23,14 @@ void IopAbiSurface::RegisterImportStub(uint32_t addr, std::string_view lib, uint
     stub_thunks_[addr] = [name, index](IopContext& ctx) { ImportCall(name.c_str(), index, ctx); };
 }
 
+void IopAbiSurface::BindSeamTrace(iop_seam::TraceFn fn, iop_seam::ImportTraceFn imports) {
+    iop_seam::trace = fn;
+    iop_seam::import_trace = imports;
+}
+
 void IopAbiSurface::Unbind() {
+    iop_seam::trace = nullptr;
+    iop_seam::import_trace = nullptr;
     memory_ = nullptr;
     libs_ = nullptr;
     resolver_ = nullptr;
@@ -32,6 +40,16 @@ void IopAbiSurface::Unbind() {
 
 void IopAbiSurface::ImportCall(const char* lib, uint32_t index, IopContext& ctx) {
     import_calls_++;
+    if (iop_seam::import_trace) {
+        iop_seam::import_trace(lib, index, true, ctx);
+        ImportCallBody(lib, index, ctx);
+        iop_seam::import_trace(lib, index, false, ctx);
+        return;
+    }
+    ImportCallBody(lib, index, ctx);
+}
+
+void IopAbiSurface::ImportCallBody(const char* lib, uint32_t index, IopContext& ctx) {
     const IopLibraryTable::Entry* e = libs_ ? libs_->FindEntry(lib, index) : nullptr;
     if (e) {
         if (e->hle) {
@@ -70,6 +88,13 @@ const IopAbiSurface::GuestFunction* IopAbiSurface::Resolve(uint32_t addr) {
 }
 
 }  // namespace ps2r::iop
+
+namespace iop_seam {
+
+TraceFn trace = nullptr;
+ImportTraceFn import_trace = nullptr;
+
+}  // namespace iop_seam
 
 namespace iop_stubs {
 

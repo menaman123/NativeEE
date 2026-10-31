@@ -288,6 +288,7 @@ const std::vector<Field>& Fields() {
         BOOL_FIELD("title.native.gif", title_native.gif),
         BOOL_FIELD("title.native.gs", title_native.gs),
         BOOL_FIELD("title.native.iop", title_native.iop),
+        BOOL_FIELD("title.native.iopsys", title_native.iopsys),
         BOOL_FIELD("title.native.spu", title_native.spu),
         BOOL_FIELD("title.native.vif", title_native.vif),
         BOOL_FIELD("title.native.vu0", title_native.vu0),

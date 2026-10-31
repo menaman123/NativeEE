@@ -92,9 +92,38 @@ bool IopKernel::StartThread(int tid, ThreadBody body) {
     return true;
 }
 
+bool IopKernel::StartStepThread(int tid, StepBody step) {
+    if (tid <= 0 || tid >= kMaxThreads || !step) return false;
+    Thread& t = threads_[tid];
+    if (!t.registered || t.state != State::Dormant) return false;
+    t.body = nullptr;
+    t.step = std::move(step);
+    t.resume = Resume{};
+    t.priority = t.initial_priority;
+    t.wait = WaitKind::None;
+    t.wakeup_pending = 0;
+    MakeReady(&t);
+    Trace("start_step", tid, (int64_t)t.priority);
+    PokeWakeHook();
+    return true;
+}
+
+bool IopKernel::ThreadIsStep(int tid) const {
+    if (tid <= 0 || tid >= kMaxThreads) return false;
+    return static_cast<bool>(threads_[tid].step);
+}
+
 void IopKernel::ExitThread() {
     Thread* self = current_;
     if (!self) return;
+    if (self->step) {   // a step body's Exit park is applied by RunStepThread; a direct call is the same
+        self->state = State::Dormant;
+        self->wait = WaitKind::None;
+        self->step = nullptr;
+        unparked_.fetch_sub(1, std::memory_order_acq_rel);
+        Trace("exit", self->tid, 0);
+        return;
+    }
     self->state = State::Dormant;
     self->wait = WaitKind::None;
     unparked_.fetch_sub(1, std::memory_order_acq_rel);
@@ -111,6 +140,7 @@ void IopKernel::TerminateThread(int tid) {
     t.state = State::Dormant;
     t.wait = WaitKind::None;
     t.body = nullptr;
+    t.step = nullptr;
     t.wakeup_pending = 0;
     // A terminated continuation must not resume at its old Sleep/Wait/Delay
     // call on a later StartThread. Never free the running stack itself.
@@ -650,19 +680,173 @@ std::optional<uint64_t> IopKernel::NextDueUs() const {
 }
 
 void IopKernel::RunThread(Thread* t) {
+    if (t->step) {
+        RunStepThread(t);
+        return;
+    }
     IopKernel* previous = running_kernel;
     current_ = t;
     t->state = State::Run;
     Trace("run", t->tid, (int64_t)t->priority);
     if (run_pre_) run_pre_(t->tid);
     running_kernel = this;
+    coro_switches_++;
     t->coro.SwitchTo();
     running_kernel = previous;
     if (run_post_) run_post_(t->tid);
     current_ = nullptr;
 }
 
-void IopKernel::LeaveThread() { IopCoroutine::SwitchToContext(dispatch_ctx_); }
+void IopKernel::RunStepThread(Thread* t) {
+    IopKernel* previous = running_kernel;
+    current_ = t;
+    t->state = State::Run;
+    Trace("run_step", t->tid, (int64_t)t->priority);
+    if (run_pre_) run_pre_(t->tid);
+    running_kernel = this;
+    auto leave = [&] {
+        running_kernel = previous;
+        if (run_post_) run_post_(t->tid);
+        current_ = nullptr;
+    };
+    // Resuming after a park the scheduler released: the wait's result as the coroutine form's
+    // blocking call would have returned it.
+    if (!t->resume.first) {
+        switch (t->step_park.kind) {
+            case Park::Kind::Sema: t->resume.result = t->wait_result; break;
+            case Park::Kind::Rpc: t->resume.result = t->rpc_woken ? 1 : 0; break;
+            case Park::Kind::Mbx: {
+                // ReceiveMbx re-waits when a poller took the message first.
+                const int id = t->step_park.id;
+                if (id >= 0 && id < (int)mbxs_.size() && !mbxs_[id].messages.empty()) {
+                    t->resume.message = mbxs_[id].messages.front();
+                    mbxs_[id].messages.pop();
+                    t->resume.result = 0;
+                } else if (!ApplyPark(t, t->step_park)) {
+                    leave();
+                    return;
+                }
+                break;
+            }
+            default: break;
+        }
+    }
+    // The body runs to its park; a park satisfied at once continues the body without a reschedule
+    // (the coroutine form's WaitSema-with-count returns inline), as long as the thread stays Run.
+    for (;;) {
+        step_runs_++;
+        const Resume r = t->resume;
+        t->resume = Resume{};
+        t->resume.first = false;
+        const Park p = t->step ? t->step(r) : Park::Exit();
+        if (!t->step || t->state != State::Run) break;   // exited / terminated from inside the body
+        t->step_park = p;
+        if (!ApplyPark(t, p)) break;
+    }
+    leave();
+}
+
+bool IopKernel::ApplyPark(Thread* t, const Park& p) {
+    switch (p.kind) {
+        case Park::Kind::Exit:
+            t->state = State::Dormant;
+            t->wait = WaitKind::None;
+            t->step = nullptr;
+            unparked_.fetch_sub(1, std::memory_order_acq_rel);
+            Trace("exit", t->tid, 0);
+            return false;
+        case Park::Kind::Yield:
+            t->state = State::Ready;
+            t->wait = WaitKind::None;
+            t->ready_seq = ready_seq_++;
+            return false;
+        case Park::Kind::Sleep:
+            if (t->wakeup_pending > 0) {
+                t->wakeup_pending--;
+                return true;
+            }
+            Trace("sleep", t->tid, 0);
+            SetWaiting(t, WaitKind::Sleep);
+            return false;
+        case Park::Kind::Delay:
+            t->wait_due_us = clock_.NowUs() + p.usec;
+            Trace("delay", t->tid, (int64_t)p.usec);
+            SetWaiting(t, WaitKind::Delay);
+            return false;
+        case Park::Kind::Rpc:
+            t->rpc_woken = false;
+            t->wait_due_us = clock_.NowUs() + p.usec;
+            Trace("rpc_wait", t->tid, (int64_t)p.usec);
+            SetWaiting(t, WaitKind::Rpc);
+            return false;
+        case Park::Kind::Sema: {
+            if (!SemaActive(p.id)) {
+                t->resume.result = IopError::UnknownSemid;
+                return true;
+            }
+            Sema& s = semas_[p.id];
+            if (s.count > 0) {
+                s.count--;
+                Trace("sema_take", p.id, t->tid);
+                t->resume.result = IopError::Ok;
+                return true;
+            }
+            Trace("sema_wait", p.id, t->tid);
+            t->wait_result = IopError::Ok;
+            s.waiters.push_back(t);
+            SetWaiting(t, WaitKind::Sema);
+            return false;
+        }
+        case Park::Kind::EventFlag: {
+            if (p.id < 0 || p.id >= (int)event_flags_.size()) {
+                t->resume.result = -1;
+                return true;
+            }
+            EventFlagRec& ef = event_flags_[p.id];
+            if (EventFlagMatch(ef.value, p.pattern, p.mode)) {
+                if (p.mode & 0x10) ef.value = 0;
+                t->resume.result = 0;
+                return true;
+            }
+            if (!ef.multi && !ef.waiters.empty()) {
+                t->resume.result = -1;
+                return true;
+            }
+            ef.waiters.push_back({t, p.pattern, p.mode});
+            SetWaiting(t, WaitKind::EventFlag);
+            return false;
+        }
+        case Park::Kind::Mbx: {
+            if (p.id < 0 || p.id >= (int)mbxs_.size()) {
+                t->resume.result = -1;
+                return true;
+            }
+            MbxRec& m = mbxs_[p.id];
+            if (!m.messages.empty()) {
+                t->resume.message = m.messages.front();
+                m.messages.pop();
+                t->resume.result = 0;
+                return true;
+            }
+            m.waiters.push_back(t);
+            SetWaiting(t, WaitKind::Mbx);
+            return false;
+        }
+    }
+    return false;
+}
+
+void IopKernel::LeaveThread() {
+    if (current_ && current_->step) {
+        // No coroutine to switch from. A yield (ChangePriority / RotateThreadReadyQueue left the thread Ready)
+        // takes effect when the body returns: RunStepThread sees the state and reschedules. A blocking call
+        // (the caller parked the thread) is a step body's programming error: reported, never switched.
+        if (current_->state == State::Wait)
+            std::fprintf(stderr, "iop: blocking kernel call from step thread %d (the body must return a Park)\n", current_->tid);
+        return;
+    }
+    IopCoroutine::SwitchToContext(dispatch_ctx_);
+}
 
 IopKernel::DispatchResult IopKernel::Dispatch() {
     std::lock_guard<std::recursive_mutex> lk(dispatch_mutex_);

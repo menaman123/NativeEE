@@ -18,6 +18,7 @@
 #include <functional>
 
 #include "engine/iop/iop_context.h"
+#include "engine/iop/iop_kernel.h"
 #include "engine/iop/iop_memory.h"
 
 namespace ps2r::iop {
@@ -62,6 +63,12 @@ public:
     using StackAlloc = std::function<uint32_t(uint32_t size)>;
     using StackFree = std::function<void(uint32_t addr)>;
     void SetStackAllocator(StackAlloc alloc, StackFree free);
+    // A native STEP body for a thread entry (IopKernel::StartStepThread: no coroutine): asked at every
+    // arm with the entry address and the thread's initial IopContext ($sp/$gp/$a0 set); an empty result
+    // = the coroutine body from the resolver. The composition binds it (the native IOP frame).
+    using StepProvider = std::function<IopKernel::StepBody(uint32_t entry, const IopContext& initial)>;
+    void SetStepProvider(StepProvider p) { step_provider_ = std::move(p); }
+    uint64_t StepThreadsArmed() const { return step_armed_; }
 
     // int CreateThread(ThreadParam*) -> tid; param +0x08 entry, +0x0C stack size, +0x10 priority.
     void CreateThread(IopContext& ctx);
@@ -138,6 +145,8 @@ private:
     ThreadLayout layout_;
     StackAlloc stack_alloc_;
     StackFree stack_free_;
+    StepProvider step_provider_;
+    uint64_t step_armed_ = 0;
     int next_tid_ = 1;
     uint32_t entry_[kMaxThreads] = {};
     uint32_t gp_[kMaxThreads] = {};           // the creating thread's $gp (layout gp == 0)

@@ -27,9 +27,9 @@ public:
         bool legacy_title_stubs = false;   // the first title's probe arms / RPC thunk
         std::string ns;                    // wrap the TU in namespace <ns>; indirect calls via iop_stubs::iop_resolve
         bool import_call = false;          // imports -> iop_stubs::import_call("lib", idx, ctx)
-        bool override_table = false;       // per-function override seam: every body's prologue consults
-                                           // iop_override_table[i] (a host body for function i, or null) and
-                                           // counts the call in iop_override_calls / iop_recompiled_calls
+        bool seam = false;                 // every function = iop_body_<addr> + an iop_func_<addr> wrapper through
+                                           // iop_seam::Call(iop_fn_slots[k], ...) (abi/host_app/iop_seam.h): a native host
+                                           // body installed in the slot replaces the recompiled one per function
         uint32_t base = 0;                 // the relocation base (recorded in the TU)
         uint32_t entry = 0;                // the relocated module entry (recorded in the TU)
         uint32_t load_extent = 0;          // module-relative end of the allocated sections
@@ -68,7 +68,6 @@ public:
 private:
     std::map<uint32_t, IopFunction> m_functions;
     std::map<uint32_t, std::string> m_import_stubs; // stub addr → stub name
-    std::map<uint32_t, uint32_t> m_override_index;  // --override-table: function addr -> table index
     Options m_opts;
     Census m_census;
 
@@ -89,6 +88,8 @@ private:
     // The call expression for an import stub ("lib_idx"): the named forwarder, or
     // iop_stubs::import_call("lib", idx, iop_ctx) under Options::import_call.
     std::string import_call_expr(const std::string& raw_name);
+    // The body's name under Options::seam (the wrapper keeps `name`).
+    std::string body_name(const IopFunction& func) const;
     // The C++ expression that runs the guest function at a computed address
     // (`target_expr`): the TU's own map (legacy) or the shared iop_resolve hook.
     void emit_indirect_call(std::ofstream& file, const std::string& indent, const std::string& target_expr,

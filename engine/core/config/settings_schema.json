@@ -1149,6 +1149,15 @@
       "user_facing": false
     },
     {
+      "key": "title.native.iopsys",
+      "section": "title",
+      "name": "native.iopsys",
+      "type": "bool",
+      "default": "off",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
       "key": "title.native.spu",
       "section": "title",
       "name": "native.spu",

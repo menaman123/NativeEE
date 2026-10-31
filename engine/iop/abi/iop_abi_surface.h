@@ -5,6 +5,9 @@
 //   iop_stubs::import_call      -> the bound IopLibraryTable (a stock module's
 //                                  HLE body, another hosted module's export, or
 //                                  the unresolved-import hook)
+//   iop_seam::Call              -> the per-function seam of a `--seam` TU (abi/host_app/
+//                                  iop_seam.h): the installed native body or the recompiled
+//                                  one; BindSeamTrace binds the call-trace hook
 //   iop_stubs::iop_resolve      -> the bound function resolver (every hosted
 //                                  module's address -> body map) plus the import
 //                                  stub addresses registered from each module's
@@ -22,6 +25,7 @@
 #include <string>
 #include <string_view>
 
+#include "engine/iop/abi/host_app/iop_seam.h"
 #include "engine/iop/iop_context.h"
 
 namespace ps2r::iop {
@@ -44,6 +48,8 @@ public:
     static void SetUnresolvedImport(UnresolvedImport fn) { unresolved_ = std::move(fn); }
     // A module's import stub: the address of its `jr ra / addiu zero,zero,idx` pair.
     static void RegisterImportStub(uint32_t addr, std::string_view lib, uint32_t index);
+    // The per-function seam's call-trace hook (iop_seam::trace); nullptr = off. Cleared by Unbind.
+    static void BindSeamTrace(iop_seam::TraceFn fn, iop_seam::ImportTraceFn imports);
     static void Unbind();
 
     static IopMemory& Memory() { return *memory_; }
@@ -57,6 +63,8 @@ public:
     static uint64_t ResolveMisses() { return resolve_misses_; }
 
 private:
+    static void ImportCallBody(const char* lib, uint32_t index, IopContext& ctx);
+
     static IopMemory* memory_;
     static IopLibraryTable* libs_;
     static Resolver resolver_;

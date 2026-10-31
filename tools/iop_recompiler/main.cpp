@@ -40,7 +40,7 @@ struct ToolOptions {
     uint32_t base = 0;            // --base: load address the module is relocated to
     std::string ns;               // --namespace: wrap the TU in namespace <ns>, route indirect calls via iop_stubs::iop_resolve
     bool import_call = false;     // --import-call: every import -> iop_stubs::import_call("lib", idx, ctx)
-    bool override_table = false;  // --override-table: the per-function seam (iop_fn_slots[], iop_seam_install)
+    bool seam = false;            // --seam: per-function native-override wrappers (abi/host_app/iop_seam.h)
     bool quiet = false;           // --quiet: no per-stub / per-label lines (the summary stays)
 };
 static ToolOptions g_opts;
@@ -828,8 +828,8 @@ int main(int argc, char* argv[]) {
             g_opts.ns = argv[++i];
         } else if (arg == "--import-call") {
             g_opts.import_call = true;
-        } else if (arg == "--override-table") {
-            g_opts.override_table = true;
+        } else if (arg == "--seam") {
+            g_opts.seam = true;
         } else if (arg == "--quiet") {
             g_opts.quiet = true;
         } else {
@@ -844,7 +844,7 @@ int main(int argc, char* argv[]) {
                   << " [--ghidra-input <csv>]"
                   << " [--output-header <header>]"
                   << " [--output-cpp <cpp>]"
-                  << " [--base <addr>] [--namespace <id>] [--import-call] [--legacy-title-stubs]" << std::endl;
+                  << " [--base <addr>] [--namespace <id>] [--import-call] [--seam] [--legacy-title-stubs]" << std::endl;
         std::cerr << "\nOptions:" << std::endl;
         std::cerr << "  --input          Path to IOP ELF (e.g. STREAM.IRX)"
                   << std::endl;
@@ -860,8 +860,9 @@ int main(int argc, char* argv[]) {
         std::cerr << "  --namespace <id> Wrap the output in namespace <id>; indirect calls (jalr, jr to another\n"
                      "                   function, J/JAL to an unknown target) go through iop_stubs::iop_resolve(addr)" << std::endl;
         std::cerr << "  --import-call    Every library import -> iop_stubs::import_call(\"lib\", index, ctx)" << std::endl;
-        std::cerr << "  --override-table Per-function override seam: kFunctionAddrs[], iop_override_table[] (a host body\n"
-                     "                   or null per function, consulted in every body's prologue), the two call counters" << std::endl;
+        std::cerr << "  --seam           (with --namespace) every function = a body + an iop_func_<addr> wrapper through\n"
+                     "                   iop_seam::Call(iop_fn_slots[k], body, ctx): a native host body installed in the\n"
+                     "                   slot replaces the recompiled one per function (the per-function port seam)" << std::endl;
         std::cerr << "  --quiet          No per-stub / per-label lines (the summary stays)" << std::endl;
         std::cerr << "  --legacy-title-stubs  The frozen tool's first-title facts (its stub range, pinned function\n"
                      "                   starts, probe arms, RPC thunk); byte-identical output for that title" << std::endl;
@@ -887,7 +888,7 @@ int main(int argc, char* argv[]) {
     ropts.legacy_title_stubs = g_opts.legacy_title_stubs;
     ropts.ns = g_opts.ns;
     ropts.import_call = g_opts.import_call;
-    ropts.override_table = g_opts.override_table;
+    ropts.seam = g_opts.seam;
     ropts.base = g_opts.base;
     ropts.entry = elf_data.entry;
     ropts.load_extent = elf_data.load_extent;

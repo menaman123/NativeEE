@@ -292,7 +292,7 @@ void IopRecompiler::write_header_file(std::ofstream& file) {
     file << "#include \"../host_app/iop_context.h\"\n";
     file << "#include \"../host_app/iop_memory.h\"\n";
     file << "#include \"../host_app/iop_stubs.h\"\n";
-    if (m_opts.override_table) file << "#include \"../host_app/iop_seam.h\"\n";
+    if (m_opts.seam) file << "#include \"../host_app/iop_seam.h\"\n";
     file << "\n#include <cstdint>\n";
     file << "#include <cstdio>\n";
     file << "#include <functional>\n";
@@ -310,21 +310,6 @@ void IopRecompiler::write_header_file(std::ofstream& file) {
             "iop_recompiled_functions;\n";
     file << "void initialize_iop_recompiled_functions();\n";
 
-    if (m_opts.override_table) {
-        size_t n = 0;
-        for (const auto& [addr, func] : m_functions) if (!m_import_stubs.count(addr)) ++n;
-        file << "\n// The per-function seam (ps2r_iop_recompiler --override-table; ../host_app/iop_seam.h): slot k = function k in\n";
-        file << "// address order {addr, size, native, native_calls, recompiled_calls}. Every body's prologue runs slot.native\n";
-        file << "// when set, else the recompiled body, and counts the call. A native body takes the same IopContext (args in\n";
-        file << "// $a0..$a3 + the stack, result in $v0) over the same IOP RAM: the two are interchangeable at any call.\n";
-        file << "constexpr uint32_t kFnSlotCount = " << n << ";\n";
-        file << "extern IopFnSlot iop_fn_slots[" << (n ? n : 1) << "];\n";
-        file << "// The slot of a function address (slots are sorted by addr), or -1.\n";
-        file << "int iop_seam_slot(uint32_t addr);\n";
-        file << "// Install (fn) / remove (nullptr) the native body of the function at addr; false = no such function.\n";
-        file << "bool iop_seam_install(uint32_t addr, IopNativeFn fn);\n";
-    }
-
     if (!m_opts.ns.empty()) {
         file << "\n// The module as recompiled: its load base, relocated entry and allocated extent, and\n";
         file << "// its import stubs (address -> library, index) so a stub address taken as a function\n";
@@ -335,8 +320,26 @@ void IopRecompiler::write_header_file(std::ofstream& file) {
         file << "constexpr uint32_t kLoadExtent = 0x" << m_opts.load_extent << std::dec << ";\n";
         file << "constexpr uint32_t kImportStubCount = " << m_import_stubs.size() << ";\n";
         file << "extern const ImportStub kImportStubs[" << (m_import_stubs.empty() ? 1 : m_import_stubs.size()) << "];\n";
+        if (m_opts.seam) {
+            size_t count = 0;
+            for (const auto& [addr, func] : m_functions)
+                if (!m_import_stubs.count(addr)) ++count;
+            file << "\n// The per-function seam (abi/host_app/iop_seam.h): one slot per recompiled function, in address\n";
+            file << "// order; a native body installed in a slot answers every call to that function.\n";
+            file << "constexpr uint32_t kFunctionCount = " << count << ";\n";
+            file << "extern iop_seam::IopFnSlot iop_fn_slots[" << (count ? count : 1) << "];\n";
+            file << "inline iop_seam::IopFnSlot* iop_fn_slot(uint32_t addr) { return iop_seam::Find(iop_fn_slots, kFunctionCount, addr); }\n";
+        }
         file << "\n}  // namespace " << m_opts.ns << "\n";
     }
+}
+
+// The recompiled body's name under --seam: iop_func_<addr> -> iop_body_<addr> (the wrapper keeps the
+// function's name, so every call site and the lookup map reach the seam).
+std::string IopRecompiler::body_name(const IopFunction& func) const {
+    const std::string prefix = "iop_func_";
+    if (func.name.compare(0, prefix.size(), prefix) == 0) return "iop_body_" + func.name.substr(prefix.size());
+    return func.name + "_body";
 }
 
 // ---------------------------------------------------------------------------
@@ -347,8 +350,9 @@ void IopRecompiler::write_cpp_file(std::ofstream& file,
     file << "#include \"" << header_filename << "\"\n";
     file << "#include \"../host_app/iop_context.h\"\n";
     file << "#include \"../host_app/iop_memory.h\"\n";
-    file << "#include \"../host_app/iop_stubs.h\"\n\n";
-    file << "#include <cstdio>\n";
+    file << "#include \"../host_app/iop_stubs.h\"\n";
+    if (m_opts.seam) file << "#include \"../host_app/iop_seam.h\"\n";
+    file << "\n#include <cstdio>\n";
     file << "#include <cstdint>\n";
     file << "#include <cstdlib>\n";
     file << "#include <functional>\n";
@@ -363,36 +367,34 @@ void IopRecompiler::write_cpp_file(std::ofstream& file,
     file << "std::map<uint32_t, std::function<void(IopContext&)>> "
             "iop_recompiled_functions;\n\n";
 
-    if (m_opts.override_table) {
-        m_override_index.clear();
-        uint32_t i = 0;
-        size_t n = 0;
-        for (const auto& [addr, func] : m_functions) if (!m_import_stubs.count(addr)) ++n;
-        file << "IopFnSlot iop_fn_slots[" << std::dec << (n ? n : 1) << "] = {\n";
+    // The seam's slot table: {addr, end, native, self, native_calls, recompiled_calls} per function, in
+    // address order; each function's wrapper indexes it by position.
+    std::map<uint32_t, size_t> slot_index;
+    if (m_opts.seam && !m_opts.ns.empty()) {
+        size_t k = 0;
         for (const auto& [addr, func] : m_functions) {
             if (m_import_stubs.count(addr)) continue;
-            m_override_index[addr] = i++;
-            file << "    {0x" << std::hex << addr << ", 0x" << (func.end_addr - func.start_addr) << std::dec << ", nullptr, 0, 0},\n";
+            slot_index[addr] = k++;
         }
-        if (n == 0) file << "    {0, 0, nullptr, 0, 0},\n";
-        file << "};\n";
-        file << "int iop_seam_slot(uint32_t addr) {\n";
-        file << "    uint32_t lo = 0, hi = kFnSlotCount;\n";
-        file << "    while (lo < hi) { uint32_t mid = (lo + hi) / 2; if (iop_fn_slots[mid].addr < addr) lo = mid + 1; else hi = mid; }\n";
-        file << "    return lo < kFnSlotCount && iop_fn_slots[lo].addr == addr ? static_cast<int>(lo) : -1;\n";
-        file << "}\n";
-        file << "bool iop_seam_install(uint32_t addr, IopNativeFn fn) {\n";
-        file << "    const int k = iop_seam_slot(addr);\n";
-        file << "    if (k < 0) return false;\n";
-        file << "    iop_fn_slots[k].native = fn;\n";
-        file << "    return true;\n";
-        file << "}\n\n";
+        file << "iop_seam::IopFnSlot iop_fn_slots[" << (k ? k : 1) << "] = {\n";
+        if (k == 0) file << "    {0, 0, nullptr, nullptr, 0, 0, nullptr},\n";
+        for (const auto& [addr, func] : m_functions) {
+            if (m_import_stubs.count(addr)) continue;
+            file << "    {0x" << std::hex << addr << ", 0x" << func.end_addr << std::dec << ", nullptr, nullptr, 0, 0, nullptr},\n";
+        }
+        file << "};\n\n";
     }
 
     // Emit each function body (skip functions in the import stub range).
     for (const auto& [addr, func] : m_functions) {
         if (m_import_stubs.count(addr)) continue; // Skip import stubs
         recompile_function(func, file);
+        if (m_opts.seam && !m_opts.ns.empty()) {
+            // The seam wrapper: the name every call site / the lookup map uses.
+            file << "void " << func.name << "(IopContext& iop_ctx) {\n";
+            file << "    iop_seam::Call(iop_fn_slots[" << std::dec << slot_index[addr] << "], &" << body_name(func) << ", iop_ctx);\n";
+            file << "}\n\n";
+        }
     }
 
     // Emit the initialization function that populates the lookup map.
@@ -431,15 +433,10 @@ void IopRecompiler::recompile_function(const IopFunction& func,
     file << "// Function at 0x" << std::hex << func.start_addr
          << " - 0x" << func.end_addr << " (" << std::dec << num_instrs
          << " instructions)\n";
-    file << "void " << func.name << "(IopContext& iop_ctx) {\n";
-    if (m_opts.override_table) {
-        auto it = m_override_index.find(func.start_addr);
-        if (it != m_override_index.end()) {
-            file << "    { IopFnSlot& _s = iop_fn_slots[" << it->second << "];\n";
-            file << "      if (_s.native) { ++_s.native_calls; _s.native(iop_ctx); return; }\n";
-            file << "      ++_s.recompiled_calls; }\n";
-        }
-    }
+    if (m_opts.seam && !m_opts.ns.empty())
+        file << "static void " << body_name(func) << "(IopContext& iop_ctx) {\n";
+    else
+        file << "void " << func.name << "(IopContext& iop_ctx) {\n";
 
     // [S63 STRMQ] Env-gated (PS2_STRMQ=1, default OFF) ra-stamped entry
     // probes for the stream-prime wedge investigation (LOADTIME review
