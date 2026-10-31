@@ -51,6 +51,7 @@ def collect(shards):
             prologue = re.sub(
                 r"bool branch_taken;|bool cond;|uint64_t _native_saved_r\d+ = 0;|"
                 r"bool _native_valid = false; \(void\)_native_valid;|"
+                r"VR_reg _vu0_fl\{\}; VR_reg _vu0_fo\{\}; \(void\)_vu0_fl; \(void\)_vu0_fo;|"  # --vu0-native fold locals
                 r"initialize_recompiled_functions\(\);", "", prologue)
             if prologue.strip() and not audited("prologues", address, raw_prologue):
                 continue

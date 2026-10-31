@@ -1,7 +1,8 @@
 #pragma once
 // The VU execution ladder, written once: a program start (MSCAL / MSCNT /
 // MSCALF / VCALLMS / CMSAR0 / a resume) is offered to the VU1 HLE library, then
-// to the MTVU redirect, then run on the configured tier -- cached (the
+// to the MTVU redirect (VU1), or to the VU0 native-program hook (VU0), then run
+// on the configured tier -- cached (the
 // default), the block tier (VU1 only: VU0 stays on the cached tier under it),
 // the AOT tier (VU1 only: a verified image on its specialised block table,
 // anything else on the AOT tier's fallback; engine/vu/vu1_aot/) or the
@@ -13,7 +14,7 @@
 // the composition root (the HLE runtime, the MTVU worker); null means absent.
 // A hook returning true has RUN the program (kicks submitted, memory and
 // registers updated) and the tiers are not touched; false falls through with
-// nothing changed. VU0 never enters the hooks.
+// nothing changed. VU0 never enters the HLE / MTVU hooks; its own hook is Vu0Hook.
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -49,6 +50,14 @@ public:
     using HleHook = bool (*)(void* user, VuUnit& unit, uint32_t start_pc, uint64_t micro_generation);
     // The MTVU EE-kick redirect: true = executed on the worker's unit.
     using MtvuHook = bool (*)(void* user, VuUnit& unit, uint32_t start_pc);
+    // The VU0 native-program hook (a title's host bodies for the microprograms
+    // its VCALLMS sites start, keyed by entry pc + image fingerprint): true =
+    // the program RAN on the unit's register file (regs, TPC, flags, Q, the
+    // clock advanced as the tier would have), false = nothing touched and the
+    // cached tier runs it (the oracle). Consulted for unit 0 only, before the
+    // tier; a resumed park (ResumeIfWaiting) passes through it too and is
+    // expected to be declined (its pc is not an entry).
+    using Vu0Hook = bool (*)(void* user, VuUnit& unit, uint32_t start_pc, uint64_t micro_generation);
 
     static constexpr uint64_t kDefaultCycleCap = 1000000;  // bundles before a runaway program is cut
 
@@ -68,6 +77,7 @@ public:
 
     void SetHleHook(HleHook fn, void* user);
     void SetMtvuHook(MtvuHook fn, void* user);
+    void SetVu0Hook(Vu0Hook fn, void* user);
 
     // One cap serves every tier (the tool's --cycle-cap).
     void set_cycle_cap(uint64_t cap);
@@ -94,5 +104,7 @@ private:
     void* hle_user_ = nullptr;
     MtvuHook mtvu_ = nullptr;
     void* mtvu_user_ = nullptr;
+    Vu0Hook vu0_ = nullptr;
+    void* vu0_user_ = nullptr;
     std::unique_ptr<VuLockstep> lockstep_;
 };

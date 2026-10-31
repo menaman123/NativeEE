@@ -117,6 +117,12 @@ ps2r_vu_test(test_lib_vu0_sin_cos LibVu0SinCosPin)
 # unit run on five variants (VI02 == 0 on the PASS vector), ResumeIfWaiting on
 # a non-suspended unit is a no-op, Vu1Window::Execute advances the VU1 clock.
 ps2r_vu_test(test_vu_macro_bridge VuMacroBridge)
+# Vu0NativeTwin: the `--vu0-native` lane kernels (recomp_abi vu0_native.h: NEON /
+# SSE2 / scalar) against the scalar COP2 emission they replace -- the VR_reg
+# operators, the masked write, VuMacroCommitFlags for one op and for a folded
+# run -- bit for bit over a random grid with the special patterns, under all
+# four rounding modes; and the vector arm against the scalar arm.
+ps2r_vu_test(test_vu0_native_twin Vu0NativeTwin 200000)
 target_link_libraries(test_vu_macro_bridge PRIVATE ps2r_private_fixtures)
 
 # ---- cached tier + tier dispatch (5C) ----
