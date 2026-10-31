@@ -109,6 +109,39 @@ public:
     // Parity of an UNPACK payload's first word inside its quadword (the V2-32 / V3-32 W rule).
     void SetUnpackPhase(int vif, uint8_t phase) { u_[vif].unpack_phase = phase; }
 
+    // The native SPAN executor (a title's): consulted first in ProcessData, on the
+    // feeding thread (the EE / DMAC thread inline, the MTVU worker under the staged
+    // feed), with the unit in whatever state the previous span left it. True = the
+    // span was consumed and the unit left exactly as the engine's parse would have
+    // left it; false = untouched, the engine's parse runs. Null = none.
+    using SpanExecutor = bool (*)(void* user, int vif, const uint8_t* data, size_t size);
+    void SetSpanExecutor(SpanExecutor fn, void* user);
+    bool HasSpanExecutor() const { return span_exec_ != nullptr; }
+    // The span parser's state-carrying steps, shared by the whole-span parser and a
+    // native span executor so a payload or DIRECT stream crossing a span end is
+    // parked and resumed by ONE implementation. `data`/`nwords` is the span in
+    // 32-bit words, `s` the word the payload starts at.
+    //   SubmitDirectSpan: a DIRECT / DIRECTHL whose payload (`bytes` = QWC x 16) is
+    //     inside the span: PATH2 submit, idle, the i bit.
+    //   ParkDirect: a DIRECT whose payload crosses the span end: DirectStream with
+    //     the span's words from `s` buffered.
+    //   ContinueDirect: a span arriving while a DIRECT streams: words consumed;
+    //     `*streaming` true = the whole span went to the stream and it is still open.
+    //   ParkPayload: a command whose payload crosses the span end: WaitData, the
+    //     partial quadword held, the span's remaining words latched.
+    //   CompletePending: the caller executed the parked command from the held words
+    //     + the next span (unit(vif) exposes current_qw / word_index / fifo / the
+    //     pending_* fields): the unit goes idle with nothing held.
+    void SubmitDirectSpan(int vif, const uint8_t* payload, size_t bytes, bool hl, bool irq);
+    void ParkDirect(int vif, uint32_t qwc, bool hl, bool irq, const uint8_t* data, size_t nwords, size_t s);
+    size_t ContinueDirect(int vif, const uint8_t* data, size_t nwords, bool* streaming);
+    void ParkPayload(int vif, uint32_t cmd, uint32_t imm, uint32_t num, uint32_t bytes_needed, bool irq, bool use_mask,
+                     const uint8_t* data, size_t nwords, size_t s);
+    void CompletePending(int vif);
+    //   LatchWords: a span that does not complete the parked payload either: every word
+    //     to the latch (the FIFO accumulates whole quadwords; nothing executes).
+    void LatchWords(int vif, const uint8_t* data, size_t nwords);
+
     VifRegs& regs(int vif) { return u_[vif].regs; }
     const VifRegs& regs(int vif) const { return u_[vif].regs; }
     const VifUnitState& unit(int vif) const { return u_[vif]; }
@@ -144,4 +177,6 @@ private:
     IrqHook on_irq_ = nullptr;
     IrqHook on_stc_ = nullptr;
     void* irq_user_ = nullptr;
+    SpanExecutor span_exec_ = nullptr;
+    void* span_exec_user_ = nullptr;
 };
