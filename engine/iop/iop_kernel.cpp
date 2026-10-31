@@ -691,6 +691,7 @@ void IopKernel::RunThread(Thread* t) {
     if (run_pre_) run_pre_(t->tid);
     running_kernel = this;
     coro_switches_++;
+    t->coro_switches++;
     t->coro.SwitchTo();
     running_kernel = previous;
     if (run_post_) run_post_(t->tid);
@@ -735,6 +736,7 @@ void IopKernel::RunStepThread(Thread* t) {
     // (the coroutine form's WaitSema-with-count returns inline), as long as the thread stays Run.
     for (;;) {
         step_runs_++;
+        t->step_runs++;
         const Resume r = t->resume;
         t->resume = Resume{};
         t->resume.first = false;
@@ -745,6 +747,12 @@ void IopKernel::RunStepThread(Thread* t) {
     }
     leave();
 }
+
+uint64_t IopKernel::ThreadCoroutineSwitches(int tid) const {
+    return (tid > 0 && tid < kMaxThreads) ? threads_[tid].coro_switches : 0;
+}
+
+uint64_t IopKernel::ThreadStepRuns(int tid) const { return (tid > 0 && tid < kMaxThreads) ? threads_[tid].step_runs : 0; }
 
 bool IopKernel::ApplyPark(Thread* t, const Park& p) {
     switch (p.kind) {
