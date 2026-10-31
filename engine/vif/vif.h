@@ -95,6 +95,20 @@ public:
     using IrqHook = void (*)(void* user, int vif);
     void SetIrqHooks(IrqHook on_irq, IrqHook on_stc, void* user);
 
+    // The native-executor surface (a title's chain executor, ChainWalker::
+    // SetVifChainExecutor, replays the codes it does not unpack itself through
+    // the engine's own command executor, and raises the i bit of a code it did):
+    // one decoded VIFcode with its payload (`payload_size` bytes; an UNPACK's
+    // payload carries one lookahead word after the data), exactly as the feed
+    // paths call it. The caller has set regs(vif).code and, for an UNPACK,
+    // SetUnpackPhase. MSCAL/MSCALF/MSCNT run the double-buffer swap + the VU kick.
+    void ExecuteCommand(int vif, uint32_t cmd, uint32_t imm, uint32_t num, const uint8_t* payload,
+                        size_t payload_size, bool irq, bool use_mask);
+    // The command carrying the i bit completed: INT (+ VIS) unless ERR.MII, then the hook.
+    void RaiseIBit(int vif);
+    // Parity of an UNPACK payload's first word inside its quadword (the V2-32 / V3-32 W rule).
+    void SetUnpackPhase(int vif, uint8_t phase) { u_[vif].unpack_phase = phase; }
+
     VifRegs& regs(int vif) { return u_[vif].regs; }
     const VifRegs& regs(int vif) const { return u_[vif].regs; }
     const VifUnitState& unit(int vif) const { return u_[vif]; }
@@ -107,8 +121,6 @@ private:
 
     void WriteToLatch2(int vif, uint32_t word);
     void ProcessFifo(int vif);
-    void ExecuteCommand(int vif, uint32_t cmd, uint32_t imm, uint32_t num, const uint8_t* payload,
-                        size_t payload_size, bool irq, bool use_mask);
     void UpdateStat(int vif, uint32_t vps);
     // Payload bytes a code word needs after itself (0 = none); sets `use_mask` for UNPACK.
     uint32_t BytesNeeded(int vif, uint32_t cmd, uint32_t num, bool* use_mask) const;
@@ -116,8 +128,6 @@ private:
     void CompleteDirect(int vif);
     void SwapDoubleBuffer();
     void KickVu1(uint32_t start_pc, bool resume);
-    // The command carrying the i bit completed: INT (+ VIS) unless ERR.MII, then the hook.
-    void RaiseIBit(int vif);
     void WriteRegister(int vif, uint32_t offset, uint32_t value);
     uint32_t ReadRegister(int vif, uint32_t offset) const;
 

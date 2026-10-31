@@ -70,6 +70,30 @@ public:
     void SetVif1TagObserver(TagObserver observer, std::function<void()> end = {});
     void FlushVif1StagedFeed();
 
+    // A title's native chain executor: a title that knows its own display-list
+    // grammar executes the tags it recognises itself; this walk stays the
+    // fallback and the oracle. Consulted at the head of every INLINE (non-staged)
+    // VIF chain walk, after the early returns, with the latch reset and `regs`
+    // as the kick left them. The executor consumes zero or more tags from the
+    // head. For every tag it consumes it must leave the channel registers
+    // (CHCR TAG/ASP, MADR, TADR, QWC, ASR0/1) and the VIF unit exactly as this
+    // walk would have, and count it in `tags`. `ended` = the chain ended inside
+    // the consumed tags (terminator, REFE/END, empty-stack RET, IRQ+TIE): `res`'s
+    // last-tag fields are the executor's and the generic loop is skipped.
+    // Otherwise the walk resumes at `regs.tadr` with `next_from_spr` as the
+    // scratchpad routing of that address (the SPR bit of the tag that named it).
+    struct NativeChainStep {
+        int tags = 0;
+        bool ended = false;
+        bool next_from_spr = false;
+    };
+    using ChainExecutor = NativeChainStep (*)(void* user, int ch, DmacChannelRegs& regs, DmacVifWalkResult& res);
+    void SetVifChainExecutor(ChainExecutor fn, void* user);
+    bool HasVifChainExecutor() const { return chain_exec_ != nullptr; }
+    // The per-tag observer, for a native executor's consumed tags (same contract
+    // as the generic loop's call: after the tag's input was fed, VIF1 only).
+    void ObserveVif1Tag(uint32_t base, bool from_spr, bool first);
+
     // VIF0/VIF1 chain-mode walk over `regs` (CHCR.STR set by the caller).
     DmacVifWalkResult WalkVifChain(int ch, DmacChannelRegs& regs);
     // VIF0/VIF1 normal mode: QWC quadwords from MADR (RAM only), MADR advanced, QWC 0.
@@ -105,4 +129,6 @@ private:
     void* staged_user_ = nullptr;
     TagObserver tag_observer_;
     std::function<void()> walk_end_observer_;
+    ChainExecutor chain_exec_ = nullptr;
+    void* chain_exec_user_ = nullptr;
 };
