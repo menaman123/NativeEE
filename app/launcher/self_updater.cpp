@@ -40,7 +40,7 @@ QNetworkRequest request(const QUrl& url, int timeoutMs) {
 }
 
 // A path inside a single-quoted PowerShell / POSIX shell string.
-QString psQuote(const QString& s) { return "'" + QString(s).replace("'", "''") + "'"; }
+[[maybe_unused]] QString psQuote(const QString& s) { return "'" + QString(s).replace("'", "''") + "'"; }
 QString shQuote(const QString& s) { return "'" + QString(s).replace("'", "'\\''") + "'"; }
 }  // namespace
 
