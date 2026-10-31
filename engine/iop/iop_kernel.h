@@ -108,6 +108,10 @@ public:
     // Census: step bodies run (RunThread entries) and coroutine switches (SwitchTo) so far.
     uint64_t StepRuns() const { return step_runs_; }
     uint64_t CoroutineSwitches() const { return coro_switches_; }
+    // Census: blocking kernel calls made FROM a step body (a callee's WaitSema/SleepThread/... that parked the thread
+    // with no coroutine to switch from -- the body's programming error, reported on stderr). A lane is exact only at 0:
+    // run.meta iop_dispatch step_blocks= is the row to read.
+    uint64_t StepBlockingCalls() const { return step_blocking_calls_; }
     // Census per thread: coroutine switches into tid / step-body runs of tid so far (0 for an unknown tid). Which
     // threads still pay the coroutine switch = which thread entries lack a step form (run.meta iop_threads=).
     uint64_t ThreadCoroutineSwitches(int tid) const;
@@ -302,6 +306,7 @@ private:
     uint64_t timer_beats_ = 0;
     uint64_t step_runs_ = 0;
     uint64_t coro_switches_ = 0;
+    uint64_t step_blocking_calls_ = 0;
     uint64_t ready_seq_ = 1;
     std::atomic<uint64_t> dispatch_gen_{0};
     std::atomic<int> next_timer_id_{0};
