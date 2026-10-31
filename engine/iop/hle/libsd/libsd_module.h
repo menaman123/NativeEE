@@ -48,6 +48,16 @@ public:
 
     // Runs a guest function (the registered handler) with the context prepared.
     using HandlerRunner = std::function<void(uint32_t addr, IopContext& ctx)>;
+    // Diagnostic tap (census-class, no behaviour): one call per libsd entry the module reached, after
+    // the body ran -- the ordinal, a0..a3 as the caller passed them, and v0 as returned. For
+    // SdVoiceTrans a3 is the SPU address and `extra` the byte count (the stack argument).
+    struct OpEvent {
+        int ordinal = 0;
+        uint32_t a0 = 0, a1 = 0, a2 = 0, a3 = 0, extra = 0, v0 = 0;
+    };
+    using OpTracer = std::function<void(const OpEvent&)>;
+    void SetOpTracer(OpTracer t) { op_tracer_ = std::move(t); }
+    const OpTracer& GetOpTracer() const { return op_tracer_; }   // a second observer chains the first
 
     LibsdModule(IopMemory& mem, sound::SpuCore& core);
 
@@ -87,6 +97,7 @@ private:
     uint64_t voice_trans_bytes_ = 0;
     uint32_t handlers_fired_ = 0;
     uint32_t batch_records_ = 0;
+    OpTracer op_tracer_;
 };
 
 }  // namespace ps2r::iop::hle

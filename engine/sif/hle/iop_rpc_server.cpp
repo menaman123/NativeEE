@@ -41,6 +41,11 @@ void IopRpcServer::Call(const RpcRouter::CallRequest& req) {
                     ev.send_size = req.send_size;
                 }
             }
+            if (const Tracer& t = TracerSlot()) {
+                ev.begin = true;
+                t(ev);
+                ev.begin = false;
+            }
             // 2. The dispatch: func(fno, buff, size) on the RPC thread's own register file.
             const GuestFunction* fn = resolve_ ? resolve_(record_.func) : nullptr;
             if (!fn) {
