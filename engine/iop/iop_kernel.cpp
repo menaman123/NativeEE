@@ -838,9 +838,11 @@ bool IopKernel::ApplyPark(Thread* t, const Park& p) {
 
 void IopKernel::LeaveThread() {
     if (current_ && current_->step) {
-        // A blocking kernel call from a step body: there is no coroutine to switch from. The caller has
-        // recorded the wait on the thread (SetWaiting); the body must return now -- reported, never switched.
-        std::fprintf(stderr, "iop: blocking kernel call from step thread %d (the body must return a Park)\n", current_->tid);
+        // No coroutine to switch from. A yield (ChangePriority / RotateThreadReadyQueue left the thread Ready)
+        // takes effect when the body returns: RunStepThread sees the state and reschedules. A blocking call
+        // (the caller parked the thread) is a step body's programming error: reported, never switched.
+        if (current_->state == State::Wait)
+            std::fprintf(stderr, "iop: blocking kernel call from step thread %d (the body must return a Park)\n", current_->tid);
         return;
     }
     IopCoroutine::SwitchToContext(dispatch_ctx_);
