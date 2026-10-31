@@ -108,6 +108,10 @@ public:
     // Census: step bodies run (RunThread entries) and coroutine switches (SwitchTo) so far.
     uint64_t StepRuns() const { return step_runs_; }
     uint64_t CoroutineSwitches() const { return coro_switches_; }
+    // Census per thread: coroutine switches into tid / step-body runs of tid so far (0 for an unknown tid). Which
+    // threads still pay the coroutine switch = which thread entries lack a step form (run.meta iop_threads=).
+    uint64_t ThreadCoroutineSwitches(int tid) const;
+    uint64_t ThreadStepRuns(int tid) const;
     void ExitThread();                            // from the running thread
     void TerminateThread(int tid);
     // thbase semantics: tid 0 = self, priority 0 = caller's priority.
@@ -233,6 +237,8 @@ private:
         IopCoroutine coro;
         bool registered = false;
         IopKernel* owner = nullptr;
+        uint64_t coro_switches = 0;               // census: SwitchTo into this thread
+        uint64_t step_runs = 0;                   // census: step-body calls of this thread
     };
     struct Sema {
         bool active = false;
