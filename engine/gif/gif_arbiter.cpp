@@ -39,6 +39,11 @@ void GifArbiter::SetDrainObserver(DrainObserver fn, void* user) {
     drain_observer_user_ = user;
 }
 
+void GifArbiter::SetPacketInterceptor(PacketInterceptor fn, void* user) {
+    interceptor_ = fn;
+    interceptor_user_ = user;
+}
+
 void GifArbiter::SetPassEndHook(PassEndHook fn, void* user) {
     pass_end_ = fn;
     pass_end_user_ = user;
@@ -379,6 +384,8 @@ bool GifArbiter::DrainPassDelivered() {
             if (pkt.direct) {
                 lowered = parser_.CanAcceptDirect();
                 pkt.direct(lowered);
+            } else if (interceptor_ && !pkt.data.empty() && parser_.CanAcceptDirect()) {
+                lowered = interceptor_(interceptor_user_, pkt.path, pkt.data.data(), pkt.data.size());
             }
             if (!lowered && !pkt.data.empty()) parser_.ReceiveData(pkt.path, pkt.data.data(), pkt.data.size());
             if (pkt.path == GifPath::Path3) had_path3 = true;

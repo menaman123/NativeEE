@@ -204,6 +204,15 @@ public:
     // until the next kick). Null = absent.
     using PassEndHook = void (*)(void* user);
     void SetPassEndHook(PassEndHook fn, void* user);
+    // Whole-packet interceptor (a title's native GIF path): consulted on the
+    // drain owner before a packet with data reaches the parser, ONLY while the
+    // parser is between streams (CanAcceptDirect: no tail, no tag in flight,
+    // PATH3 not masked -- the same precondition as the direct slot). Returns
+    // true when it consumed the WHOLE packet (produced every GS mutation the
+    // parser would have, in order); false hands the bytes to the parser
+    // untouched. Null = absent. A packet that carries `direct` is not offered.
+    using PacketInterceptor = bool (*)(void* user, GifPath path, const uint8_t* data, size_t size);
+    void SetPacketInterceptor(PacketInterceptor fn, void* user);
 
 private:
     friend class GifDrainThread;
@@ -234,6 +243,8 @@ private:
     void* drain_observer_user_ = nullptr;
     PassEndHook pass_end_ = nullptr;
     void* pass_end_user_ = nullptr;
+    PacketInterceptor interceptor_ = nullptr;
+    void* interceptor_user_ = nullptr;
     GifMarkerOwner* owner_ = nullptr;
     GifDrainThread* drain_thread_ = nullptr;
     FinishRaiser finish_raiser_ = nullptr;
