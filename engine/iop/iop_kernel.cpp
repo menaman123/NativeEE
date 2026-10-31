@@ -753,6 +753,7 @@ uint64_t IopKernel::ThreadCoroutineSwitches(int tid) const {
 }
 
 uint64_t IopKernel::ThreadStepRuns(int tid) const { return (tid > 0 && tid < kMaxThreads) ? threads_[tid].step_runs : 0; }
+uint64_t IopKernel::ThreadStepBlocks(int tid) const { return (tid > 0 && tid < kMaxThreads) ? threads_[tid].step_blocks : 0; }
 
 bool IopKernel::ApplyPark(Thread* t, const Park& p) {
     switch (p.kind) {
@@ -851,7 +852,11 @@ void IopKernel::LeaveThread() {
         // (the caller parked the thread) is a step body's programming error: reported, never switched.
         if (current_->state == State::Wait) {
             ++step_blocking_calls_;
-            std::fprintf(stderr, "iop: blocking kernel call from step thread %d (the body must return a Park)\n", current_->tid);
+            // Reported once per thread (the first site), counted always: a leg that nests a block inside a step body
+            // can repeat this millions of times (the snd989 RPC server on the loader route: a 1.1 GB log) -- the census
+            // row (iop_dispatch step_blocks=, iop_threads blocks=) is the signal, not the log.
+            if (++current_->step_blocks == 1)
+                std::fprintf(stderr, "iop: blocking kernel call from step thread %d (the body must return a Park); further ones counted only\n", current_->tid);
         }
         return;
     }

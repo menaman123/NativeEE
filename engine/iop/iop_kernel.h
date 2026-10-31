@@ -116,6 +116,7 @@ public:
     // threads still pay the coroutine switch = which thread entries lack a step form (run.meta iop_threads=).
     uint64_t ThreadCoroutineSwitches(int tid) const;
     uint64_t ThreadStepRuns(int tid) const;
+    uint64_t ThreadStepBlocks(int tid) const;
     void ExitThread();                            // from the running thread
     void TerminateThread(int tid);
     // thbase semantics: tid 0 = self, priority 0 = caller's priority.
@@ -243,6 +244,7 @@ private:
         IopKernel* owner = nullptr;
         uint64_t coro_switches = 0;               // census: SwitchTo into this thread
         uint64_t step_runs = 0;                   // census: step-body calls of this thread
+        uint64_t step_blocks = 0;                 // census: blocking kernel calls made from this step body (must be 0)
     };
     struct Sema {
         bool active = false;
