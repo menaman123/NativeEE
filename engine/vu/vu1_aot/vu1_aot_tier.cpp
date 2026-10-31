@@ -27,7 +27,25 @@ void Vu1AotTier::SetNativeExports(uint64_t image_hash, const Vu1AotImageExports*
     std::lock_guard<std::mutex> lock(mu_);
     if (exports == nullptr) native_.erase(image_hash);
     else native_[image_hash] = exports;
+    alias_.erase(image_hash);
     epoch_.fetch_add(1, std::memory_order_release);
+}
+
+void Vu1AotTier::SetNativeExportsAlias(uint64_t image_hash, const Vu1AotImageExports* exports) {
+    std::lock_guard<std::mutex> lock(mu_);
+    if (exports == nullptr) {
+        native_.erase(image_hash);
+        alias_.erase(image_hash);
+    } else {
+        native_[image_hash] = exports;
+        alias_.insert(image_hash);
+    }
+    epoch_.fetch_add(1, std::memory_order_release);
+}
+
+void Vu1AotTier::SetUnknownImageResolver(UnknownImageResolver fn, void* user) {
+    resolver_ = fn;
+    resolver_user_ = user;
 }
 
 const Vu1AotImageExports* Vu1AotTier::native_exports(uint64_t image_hash) const {
@@ -41,8 +59,9 @@ size_t Vu1AotTier::native_images() const {
     return native_.size();
 }
 
-bool Vu1AotTier::InstallNative(VuBlockProgram& prog, const Vu1AotImageExports& ex, bool flags_lazy) {
-    if (ex.abi_version != kVu1AotAbiVersion || ex.slot_size != sizeof(VuDecodedSlot) || ex.image_hash != prog.hash) return false;
+bool Vu1AotTier::InstallNative(VuBlockProgram& prog, const Vu1AotImageExports& ex, bool flags_lazy, bool alias) {
+    if (ex.abi_version != kVu1AotAbiVersion || ex.slot_size != sizeof(VuDecodedSlot)) return false;
+    if (!alias && ex.image_hash != prog.hash) return false;
     if ((ex.flags_lazy != 0) != flags_lazy) return false;  // the pushes name the other MAC-ring arm
     const size_t n_slots = prog.slots.size();
     for (uint32_t i = 0; i < ex.block_count; ++i) {
@@ -104,6 +123,7 @@ Vu1AotTier::Status Vu1AotTier::Lookup(uint64_t image_hash) {
         memo_status_ = it == status_.end() ? Status::Unverified : it->second;
         const auto nt = native_.find(image_hash);
         memo_native_ = nt == native_.end() ? nullptr : nt->second;
+        memo_alias_ = alias_.count(image_hash) != 0;
     }
     memo_hash_ = image_hash;
     memo_epoch_ = epoch;
@@ -117,7 +137,11 @@ void Vu1AotTier::Execute(VuUnit& unit, uint32_t start_pc) {
         return;
     }
     VuBlockProgram* prog = block_.Acquire(unit);
-    const Status looked = Lookup(prog->hash);  // (the memo also carries the exports: read even when assumed)
+    Status looked = Lookup(prog->hash);  // (the memo also carries the exports: read even when assumed)
+    if (looked == Status::Unverified && resolver_ != nullptr && !assume_verified_) {
+        // The title's content identity: a program loaded with another residue.
+        if (resolver_(resolver_user_, unit, prog->hash)) looked = Lookup(prog->hash);
+    }
     const Status st = assume_verified_ ? Status::Verified : looked;
     if (st == Status::Verified) {
         if (prog->resolve != &Vu1AotTier::ResolveSpecialized) {
@@ -130,7 +154,7 @@ void Vu1AotTier::Execute(VuUnit& unit, uint32_t start_pc) {
         if (prog->native != memo_native_) {
             if (memo_native_ == nullptr) {
                 VuBlockTier::ClearNative(*prog);
-            } else if (!InstallNative(*prog, *memo_native_, unit.flags().lazy())) {
+            } else if (!InstallNative(*prog, *memo_native_, unit.flags().lazy(), memo_alias_)) {
                 VuBlockTier::ClearNative(*prog);
                 ++native_refused_;
                 SetNativeExports(prog->hash, nullptr);

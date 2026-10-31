@@ -43,6 +43,7 @@
 #include <cstdint>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "engine/vu/tiers/vu_block_tier.h"
 #include "engine/vu/vu1_aot/vu1_aot_exports.h"
@@ -68,6 +69,12 @@ public:
     // The kick observer: every kick of an image that is not Verified (the
     // corpus collector lives in the composition root).
     using KickObserver = void (*)(void* user, VuUnit& unit, uint32_t start_pc, uint64_t image_hash, Status status);
+    // The unknown-image resolver: consulted ONCE per kick of an image whose
+    // status is Unverified, before the fallback runs (the title identifies the
+    // program by its CONTENT -- the bytes at the load address -- and registers
+    // the whole-memory hash as an alias: SetStatus + SetNativeExportsAlias).
+    // True = something was registered: the status is looked up again.
+    using UnknownImageResolver = bool (*)(void* user, VuUnit& unit, uint64_t image_hash);
 
     Vu1AotTier(VuBlockTier& block, VuInterpreterTier& generic);
 
@@ -83,6 +90,12 @@ public:
     // image's next Verified kick; a table whose blocks disagree with the live
     // block structure is refused there (nothing installed, `native_refused`).
     void SetNativeExports(uint64_t image_hash, const Vu1AotImageExports* exports);
+    // The same, for an exports table generated from ANOTHER image of the same
+    // program (its `image_hash` differs): InstallNative skips the header's
+    // image-hash equality for an alias and relies on the per-block structural
+    // check (every exported block must lie in the identical content prefix:
+    // the title's resolver guarantees that by construction).
+    void SetNativeExportsAlias(uint64_t image_hash, const Vu1AotImageExports* exports);
     const Vu1AotImageExports* native_exports(uint64_t image_hash) const;
     size_t native_images() const;
     uint64_t native_refused() const { return native_refused_; }
@@ -90,7 +103,7 @@ public:
     // not exist yet). False = a block of the table does not match the program
     // (pc past the image, op count differs): nothing is installed. Called on the
     // thread that runs the unit; public for the verifier leg and the tests.
-    bool InstallNative(VuBlockProgram& prog, const Vu1AotImageExports& ex, bool flags_lazy);
+    bool InstallNative(VuBlockProgram& prog, const Vu1AotImageExports& ex, bool flags_lazy, bool alias = false);
     Status status(uint64_t image_hash) const;
     size_t images() const;
     size_t verified() const;
@@ -103,6 +116,7 @@ public:
     void set_fallback(Fallback f) { fallback_ = f; }
     Fallback fallback() const { return fallback_; }
     void SetKickObserver(KickObserver fn, void* user);
+    void SetUnknownImageResolver(UnknownImageResolver fn, void* user);
 
     const Stats& stats() const { return stats_; }
     // Mean ns per bundle on the native path (0 when nothing ran there).
@@ -120,15 +134,19 @@ private:
     mutable std::mutex mu_;
     std::unordered_map<uint64_t, Status> status_;
     std::unordered_map<uint64_t, const Vu1AotImageExports*> native_;
+    std::unordered_set<uint64_t> alias_;  // image hashes whose exports were registered as an alias
     std::atomic<uint32_t> epoch_{0};   // bumped by SetStatus: the memo below re-reads the map
     uint64_t memo_hash_ = 0;
     uint32_t memo_epoch_ = ~0u;
     Status memo_status_ = Status::Unverified;
     const Vu1AotImageExports* memo_native_ = nullptr;
+    bool memo_alias_ = false;
     uint64_t native_refused_ = 0;
     bool assume_verified_ = false;
     Fallback fallback_ = Fallback::Block;
     KickObserver observer_ = nullptr;
     void* observer_user_ = nullptr;
+    UnknownImageResolver resolver_ = nullptr;
+    void* resolver_user_ = nullptr;
     Stats stats_;
 };
