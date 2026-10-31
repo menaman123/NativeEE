@@ -96,6 +96,9 @@ public:
     const ServerRecord* FindServer(uint32_t sid) const;
     // The register file of the thread parked in sceSifRpcLoop (nullptr = none).
     const IopContext* LoopContext(int tid) const;
+    // A STEP-form RPC server thread (no sceSifRpcLoop import on its stack) binds the register file its handlers
+    // dispatch from (IopRpcServer reads LoopContext(tid)); nullptr unbinds. `ctx` must outlive the thread.
+    void SetLoopContext(int tid, const IopContext* ctx);
     int QueueTid(uint32_t queue) const;
     uint64_t OtherDataBytes() const { return other_data_bytes_; }
 

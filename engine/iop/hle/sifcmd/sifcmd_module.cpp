@@ -140,6 +140,11 @@ const SifcmdModule::ServerRecord* SifcmdModule::FindServer(uint32_t sid) const {
     return nullptr;
 }
 
+void SifcmdModule::SetLoopContext(int tid, const IopContext* ctx) {
+    if (ctx) loop_ctx_[tid] = ctx;
+    else loop_ctx_.erase(tid);
+}
+
 const IopContext* SifcmdModule::LoopContext(int tid) const {
     auto it = loop_ctx_.find(tid);
     return it == loop_ctx_.end() ? nullptr : it->second;

@@ -103,33 +103,40 @@ void SifRpcBridge::RpcServiceLoop() {
     // no lost-command window. The queue drained is the running thread's own;
     // a body submitted to the default tid (0: no queue bound yet) is also
     // served by whichever RPC thread wakes.
-    const int self = kernel_.CurrentTid();
     for (;;) {
         kernel_.SleepThread();
-        for (;;) {
-            std::function<void()> body;
-            int from = self;
-            {
-                std::lock_guard<std::mutex> lk(m_);
-                Queue* q = &QueueFor(self);
-                if (q->bodies.empty() && self != RpcTid()) {
-                    q = &QueueFor(RpcTid());
-                    from = RpcTid();
-                }
-                if (q->bodies.empty()) break;
-                body = std::move(q->bodies.front());
-                q->bodies.pop_front();
-            }
-            if (body) body();
-            {
-                std::lock_guard<std::mutex> lk(m_);
-                QueueFor(from).completed++;
-                completed_++;
-            }
-            cv_.notify_all();
-        }
+        RpcServiceDrain();
         if (kernel_.IsShutdown()) return;
     }
+}
+
+int SifRpcBridge::RpcServiceDrain() {
+    const int self = kernel_.CurrentTid();
+    int served = 0;
+    for (;;) {
+        std::function<void()> body;
+        int from = self;
+        {
+            std::lock_guard<std::mutex> lk(m_);
+            Queue* q = &QueueFor(self);
+            if (q->bodies.empty() && self != RpcTid()) {
+                q = &QueueFor(RpcTid());
+                from = RpcTid();
+            }
+            if (q->bodies.empty()) break;
+            body = std::move(q->bodies.front());
+            q->bodies.pop_front();
+        }
+        if (body) body();
+        {
+            std::lock_guard<std::mutex> lk(m_);
+            QueueFor(from).completed++;
+            completed_++;
+        }
+        cv_.notify_all();
+        ++served;
+    }
+    return served;
 }
 
 bool SifRpcBridge::WaitEeReplyUs(uint64_t timeout_us) {

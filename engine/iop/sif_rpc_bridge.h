@@ -74,6 +74,9 @@ public:
 
     // Kernel side: the sceSifRpcLoop body of the running RPC thread (drains that thread's queue).
     void RpcServiceLoop();
+    // Kernel side, non-blocking: one drain of the running RPC thread's queue (RpcServiceLoop's inner loop) --
+    // what a STEP-form RPC server thread calls after its Park::Sleep is woken. Returns the bodies served.
+    int RpcServiceDrain();
 
     // Kernel side: park the calling worker until the EE services its marshal
     // or the timeout expires. True when woken by the EE.
