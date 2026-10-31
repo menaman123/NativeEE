@@ -1,6 +1,8 @@
 // engine/iop/iop_module_table.cpp -- IopModuleTable implementation.
 #include "engine/iop/iop_module_table.h"
 
+#include <chrono>
+
 #include <cstdio>
 
 namespace ps2r::iop {
@@ -78,8 +80,11 @@ bool IopModuleTable::DrainQuantum(bool advance_frame) {
 bool IopModuleTable::DrainToUs(uint64_t ceiling) {
     IopClock& clock = kernel_.Clock();
     bool ran = false;
+    const auto t0 = std::chrono::steady_clock::now();
+    cost_.pumps++;
     for (int i = 0; i < 4096; i++) {
         const IopKernel::DispatchResult r = kernel_.Dispatch();
+        cost_.passes++;
         ran = ran || r.ran_something;
         // Inclusive ceiling: stop only when the next due is PAST the ceiling.
         if (!r.next_due_us || *r.next_due_us > ceiling) break;
@@ -90,6 +95,7 @@ bool IopModuleTable::DrainToUs(uint64_t ceiling) {
             if (*r.next_due_us >= ceiling) break;
         }
     }
+    cost_.ns += static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count());
     return ran;
 }
 
@@ -130,7 +136,11 @@ void IopModuleTable::PumpFromParkLoop() {
     // one frame quantum) when everything is time-parked: the caller gates this
     // to genuine EE park spins, where guest delays MUST expire for progress.
     IopClock& clock = kernel_.Clock();
+    const auto t0 = std::chrono::steady_clock::now();
+    cost_.pumps++;
     const IopKernel::DispatchResult r = kernel_.Dispatch();
+    cost_.passes++;
+    cost_.ns += static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count());
     if (r.next_due_us && !r.ran_something) {
         const uint64_t cap = clock.NowUs() + IopClock::kFrameUs;
         clock.AdvanceToUs(*r.next_due_us < cap ? *r.next_due_us : cap);

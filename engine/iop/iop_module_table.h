@@ -107,6 +107,16 @@ public:
 
     void Shutdown();
 
+    // The host cost of the FRAME-policy pumps so far (steady_clock around every Dispatch pass; a census,
+    // never an input): total nanoseconds, passes, pumps. The per-boundary cost of the coroutine dispatch vs
+    // native step bodies is read off these (run.meta iop_dispatch=).
+    struct DispatchCost {
+        uint64_t ns = 0;
+        uint64_t passes = 0;
+        uint64_t pumps = 0;
+    };
+    const DispatchCost& Cost() const { return cost_; }
+
     // The kernel-state watch line (diag category iopsched, `watch`): thread
     // states/wait kinds of the first four tids + the unparked census.
     // Grammar: the IOPK-WATCH prefix, then " t<i>=<state>/<wait>" x4, then " unparked=<n>". Returns chars written.
@@ -125,6 +135,7 @@ private:
     std::vector<ModuleEntry> modules_;
     bool frame_ = true;
     bool booted_ = false;
+    DispatchCost cost_;
 };
 
 }  // namespace ps2r::iop
