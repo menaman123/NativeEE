@@ -72,9 +72,10 @@ public:
 
     // A title's native chain executor: a title that knows its own display-list
     // grammar executes the tags it recognises itself; this walk stays the
-    // fallback and the oracle. Consulted at the head of every INLINE (non-staged)
-    // VIF chain walk, after the early returns, with the latch reset and `regs`
-    // as the kick left them. The executor consumes zero or more tags from the
+    // fallback and the oracle. Consulted at the head of every VIF chain walk --
+    // inline or staged (the executor feeds every span and TTE quadword through
+    // FeedVif1, which routes to the staged feed when one is installed) -- after
+    // the early returns, with the latch reset and `regs` as the kick left them. The executor consumes zero or more tags from the
     // head. For every tag it consumes it must leave the channel registers
     // (CHCR TAG/ASP, MADR, TADR, QWC, ASR0/1) and the VIF unit exactly as this
     // walk would have, and count it in `tags`. `ended` = the chain ended inside
@@ -93,6 +94,10 @@ public:
     // The per-tag observer, for a native executor's consumed tags (same contract
     // as the generic loop's call: after the tag's input was fed, VIF1 only).
     void ObserveVif1Tag(uint32_t base, bool from_spr, bool first);
+    // The VIF1 span feed a native executor uses for every span and TTE quadword
+    // it walks: the staged feed when installed (MTVU), else Vif::ProcessData
+    // inside the TTE bracket -- exactly the generic loop's feed.
+    void FeedVif1(const uint8_t* data, size_t bytes, bool tte);
 
     // VIF0/VIF1 chain-mode walk over `regs` (CHCR.STR set by the caller).
     DmacVifWalkResult WalkVifChain(int ch, DmacChannelRegs& regs);

@@ -57,21 +57,13 @@ bool VifFastSpan::Process(Vif& vif, int v, const uint8_t* data, size_t size) {
     size_t wi = 0;  // parse cursor in 32-bit words
 
     if (u.state == VifState::DirectStream) {
-        vif.UpdateStat(v, VifStat::kVpsTransfer);
-        const uint32_t qwc_needed = (u.pending_bytes + 15) / 16;
-        const uint32_t chunk = std::min<uint32_t>(static_cast<uint32_t>(nwords / 4), qwc_needed);
-        if (chunk > 0) {
-            u.direct_buffer.insert(u.direct_buffer.end(), data, data + static_cast<size_t>(chunk) * 16);
-            const uint32_t transferred = chunk * 16;
-            u.pending_bytes = (transferred > u.pending_bytes) ? 0 : u.pending_bytes - transferred;
-        }
-        if (u.pending_bytes != 0) return true;  // span exhausted, still streaming
-        vif.CompleteDirect(v);
-        wi = static_cast<size_t>(chunk) * 4;
+        bool streaming = false;
+        wi = vif.ContinueDirect(v, data, nwords, &streaming);
+        if (streaming) return true;  // span exhausted, still streaming
     } else if (u.state == VifState::WaitData) {
         const size_t words_needed = (u.pending_bytes + 3) / 4;
         if (words_needed > nwords) {
-            for (size_t w = 0; w < nwords; w++) vif.WriteToLatch2(v, ReadWord(data, w));
+            vif.LatchWords(v, data, nwords);
             return true;
         }
         vif.UpdateStat(v, VifStat::kVpsTransfer);
@@ -100,25 +92,13 @@ bool VifFastSpan::Process(Vif& vif, int v, const uint8_t* data, size_t size) {
             const uint32_t qwc = (imm == 0) ? 0x10000u : imm;
             const size_t s = (p + 4) & ~static_cast<size_t>(3);  // payload starts on the next quadword
             const size_t need_words = static_cast<size_t>(qwc) * 4;
-            u.pending_directhl = cmd == static_cast<uint32_t>(VifCommand::Directhl);
+            const bool hl = cmd == static_cast<uint32_t>(VifCommand::Directhl);
             if (need_words <= nwords - s) {
-                u.direct_buffer.clear();
-                u.direct_buffer.reserve(qwc * 16);
-                u.direct_buffer.insert(u.direct_buffer.end(), data + s * 4, data + s * 4 + need_words * 4);
-                vif.SubmitDirect(v);
-                vif.UpdateStat(v, VifStat::kVpsIdle);
-                if (irq) vif.RaiseIBit(v);
-                u.pending_irq = false;
+                vif.SubmitDirectSpan(v, data + s * 4, need_words * 4, hl, irq);
                 wi = s + need_words;
                 continue;
             }
-            u.word_index = 4;
-            u.state = VifState::DirectStream;
-            u.pending_bytes = qwc * 16;
-            u.pending_irq = irq;
-            u.direct_buffer.clear();
-            u.direct_buffer.reserve(qwc * 16);
-            for (size_t w = s; w < nwords; w++) vif.WriteToLatch2(v, ReadWord(data, w));
+            vif.ParkDirect(v, qwc, hl, irq, data, nwords, s);
             return true;
         }
 
@@ -134,21 +114,7 @@ bool VifFastSpan::Process(Vif& vif, int v, const uint8_t* data, size_t size) {
         if (words_needed > nwords - s) {
             // The payload crosses the span end: park the command and seed the
             // latch path with the partial quadword so it sees the same phase.
-            u.state = VifState::WaitData;
-            u.pending_cmd = cmd;
-            u.pending_num = num;
-            u.pending_imm = imm;
-            u.pending_bytes = bytes_needed;
-            u.pending_irq = irq;
-            u.pending_use_mask = use_mask;
-            vif.UpdateStat(v, VifStat::kVpsWait);
-            size_t rem = s;
-            if ((s & 3) != 0) {
-                std::memcpy(u.current_qw.data(), data + (s / 4) * 16, 16);
-                u.word_index = static_cast<int>(s & 3);
-                rem = (s / 4 + 1) * 4;
-            }
-            for (size_t w = rem; w < nwords; w++) vif.WriteToLatch2(v, ReadWord(data, w));
+            vif.ParkPayload(v, cmd, imm, num, bytes_needed, irq, use_mask, data, nwords, s);
             return true;
         }
 

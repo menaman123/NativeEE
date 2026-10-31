@@ -205,9 +205,10 @@ public:
     using PassEndHook = void (*)(void* user);
     void SetPassEndHook(PassEndHook fn, void* user);
     // Whole-packet interceptor (a title's native GIF path): consulted on the
-    // drain owner before a packet with data reaches the parser, ONLY while the
-    // parser is between streams (CanAcceptDirect: no tail, no tag in flight,
-    // PATH3 not masked -- the same precondition as the direct slot). Returns
+    // drain owner before a packet with data reaches the parser, while the parser
+    // has nothing buffered and PATH3 is not masked (GifParser::CanAcceptIntercept;
+    // a tag may be in transfer: the interceptor continues the one it opened itself
+    // in the register file's transfer view, and declines the parser's own). Returns
     // true when it consumed the WHOLE packet (produced every GS mutation the
     // parser would have, in order); false hands the bytes to the parser
     // untouched. Null = absent. A packet that carries `direct` is not offered.

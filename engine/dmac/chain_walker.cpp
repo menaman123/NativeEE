@@ -86,6 +86,10 @@ void ChainWalker::FeedVif(int ch, const uint8_t* data, size_t bytes, bool tte) {
     if (tte) vif_.SetTteFeed(v, false);
 }
 
+void ChainWalker::FeedVif1(const uint8_t* data, size_t bytes, bool tte) {
+    FeedVif(static_cast<int>(DmacChannelId::Vif1), data, bytes, tte);
+}
+
 void ChainWalker::FlushStaged(int ch) {
     if (ch == static_cast<int>(DmacChannelId::Vif1) && staged_flush_) staged_flush_(staged_user_);
 }
@@ -142,7 +146,7 @@ DmacVifWalkResult ChainWalker::WalkVifChain(int ch, DmacChannelRegs& regs) {
 
     bool tag_end = false;
     int tag_count = 0;
-    if (!staged && chain_exec_) {
+    if (chain_exec_) {
         // The title's native executor takes the head of the chain (zero or more
         // tags); the generic loop resumes where it stopped.
         const NativeChainStep step = chain_exec_(chain_exec_user_, ch, regs, res);

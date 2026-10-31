@@ -574,19 +574,22 @@ struct TriageConfig {
 // selected through the engine's seams: the VU1 AOT registry, DrawIrSink, the VIF unpack
 // span, the DMAC chain walker, the IOP module table, the SPU2 driver, the COP2 emit).
 // The engine itself reads none of them; its generic models stay the fallback and the
-// oracle. Default off = the modelled path. Guest-observable in principle (a native path
-// that diverges changes RAM), so the keys are in the fingerprint: `on` shows in env_ps2 /
-// env_hash while the default leaves both unchanged vs builds that predate the keys. The
-// deterministic profile does NOT pin them (the lane is the oracle for either value).
+// oracle. Guest-observable in principle (a native path that diverges changes RAM), so the
+// keys are in the fingerprint: a NON-DEFAULT value shows in env_ps2 / env_hash while the
+// default leaves both unchanged vs builds that predate the keys. The deterministic profile
+// does NOT pin them (the lane is the oracle for either value). STAGE NATIVE-2 (2026-10-31):
+// vu1 / gif / vif / dmac / vu0 default ON -- each proved on the lane and the Paris play lane
+// with zero fallbacks (`--set title.native.<unit>=off` = the modelled path, the oracle);
+// iop / spu / gs stay off (the sound driver is a separate track; gs has no native path).
 struct TitleNativeConfig {
-    bool vu1 = false;    // the VU1 microprograms (kick handlers keyed by image hash + entry)
-    bool gif = false;    // the GIF packet -> DrawIR parse
-    bool vif = false;    // the VIF unpack into VU1 memory
-    bool dmac = false;   // the DMAC chain walks (VIF1 / GIF paths)
+    bool vu1 = true;     // the VU1 microprograms (kick handlers keyed by image hash + entry)
+    bool gif = true;     // the GIF packet -> DrawIR parse
+    bool vif = true;     // the VIF unpack into VU1 memory
+    bool dmac = true;    // the DMAC chain walks (VIF1 / GIF paths)
     bool iop = false;    // the hosted IOP modules (SIF RPC servers)
     bool spu = false;    // the SPU2 driver path (989snd -> the mixer)
     bool gs = false;     // the GS register-state model
-    bool vu0 = false;    // VU0 macro mode (the COP2 ops / VCALLMS micros)
+    bool vu0 = true;     // VU0 macro mode (the COP2 ops / VCALLMS micros)
 };
 
 struct HarnessConfig {

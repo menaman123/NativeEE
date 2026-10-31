@@ -1117,7 +1117,7 @@
       "section": "title",
       "name": "native.dmac",
       "type": "bool",
-      "default": "off",
+      "default": "on",
       "kind": "switch",
       "user_facing": false
     },
@@ -1126,7 +1126,7 @@
       "section": "title",
       "name": "native.gif",
       "type": "bool",
-      "default": "off",
+      "default": "on",
       "kind": "switch",
       "user_facing": false
     },
@@ -1162,7 +1162,7 @@
       "section": "title",
       "name": "native.vif",
       "type": "bool",
-      "default": "off",
+      "default": "on",
       "kind": "switch",
       "user_facing": false
     },
@@ -1171,7 +1171,7 @@
       "section": "title",
       "name": "native.vu0",
       "type": "bool",
-      "default": "off",
+      "default": "on",
       "kind": "switch",
       "user_facing": false
     },
@@ -1180,7 +1180,7 @@
       "section": "title",
       "name": "native.vu1",
       "type": "bool",
-      "default": "off",
+      "default": "on",
       "kind": "switch",
       "user_facing": false
     },

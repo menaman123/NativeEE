@@ -73,12 +73,106 @@ void Vif::ResetTransient(int vif) {
 
 void Vif::ProcessData(int vif, const uint8_t* data, size_t size) {
     if (!data || size == 0) return;
+    if (span_exec_ && span_exec_(span_exec_user_, vif, data, size)) return;
     if (settings_.fast_span && VifFastSpan::Process(*this, vif, data, size)) return;
     for (size_t i = 0; i + 4 <= size; i += 4) {
         uint32_t word;
         std::memcpy(&word, data + i, 4);
         WriteToLatch2(vif, word);
     }
+}
+
+void Vif::SetSpanExecutor(SpanExecutor fn, void* user) {
+    span_exec_ = fn;
+    span_exec_user_ = user;
+}
+
+// ------------------------------------------- the span parser's shared steps ---
+// (The whole-span parser's state-carrying blocks, verbatim; VifFastSpan and a
+// native span executor both call these so there is one implementation.)
+
+namespace {
+inline uint32_t SpanWord(const uint8_t* data, size_t w) {
+    uint32_t x;
+    std::memcpy(&x, data + w * 4, 4);
+    return x;
+}
+}  // namespace
+
+void Vif::SubmitDirectSpan(int vif, const uint8_t* payload, size_t bytes, bool hl, bool irq) {
+    VifUnitState& u = u_[vif];
+    u.pending_directhl = hl;
+    u.direct_buffer.clear();
+    u.direct_buffer.reserve(bytes);
+    u.direct_buffer.insert(u.direct_buffer.end(), payload, payload + bytes);
+    SubmitDirect(vif);
+    UpdateStat(vif, VifStat::kVpsIdle);
+    if (irq) RaiseIBit(vif);
+    u.pending_irq = false;
+}
+
+void Vif::ParkDirect(int vif, uint32_t qwc, bool hl, bool irq, const uint8_t* data, size_t nwords, size_t s) {
+    VifUnitState& u = u_[vif];
+    u.pending_directhl = hl;
+    u.word_index = 4;
+    u.state = VifState::DirectStream;
+    u.pending_bytes = qwc * 16;
+    u.pending_irq = irq;
+    u.direct_buffer.clear();
+    u.direct_buffer.reserve(qwc * 16);
+    for (size_t w = s; w < nwords; w++) WriteToLatch2(vif, SpanWord(data, w));
+}
+
+size_t Vif::ContinueDirect(int vif, const uint8_t* data, size_t nwords, bool* streaming) {
+    VifUnitState& u = u_[vif];
+    UpdateStat(vif, VifStat::kVpsTransfer);
+    const uint32_t qwc_needed = (u.pending_bytes + 15) / 16;
+    const uint32_t chunk = std::min<uint32_t>(static_cast<uint32_t>(nwords / 4), qwc_needed);
+    if (chunk > 0) {
+        u.direct_buffer.insert(u.direct_buffer.end(), data, data + static_cast<size_t>(chunk) * 16);
+        const uint32_t transferred = chunk * 16;
+        u.pending_bytes = (transferred > u.pending_bytes) ? 0 : u.pending_bytes - transferred;
+    }
+    if (u.pending_bytes != 0) {
+        *streaming = true;
+        return nwords;
+    }
+    *streaming = false;
+    CompleteDirect(vif);
+    return static_cast<size_t>(chunk) * 4;
+}
+
+void Vif::ParkPayload(int vif, uint32_t cmd, uint32_t imm, uint32_t num, uint32_t bytes_needed, bool irq, bool use_mask,
+                      const uint8_t* data, size_t nwords, size_t s) {
+    VifUnitState& u = u_[vif];
+    u.state = VifState::WaitData;
+    u.pending_cmd = cmd;
+    u.pending_num = num;
+    u.pending_imm = imm;
+    u.pending_bytes = bytes_needed;
+    u.pending_irq = irq;
+    u.pending_use_mask = use_mask;
+    UpdateStat(vif, VifStat::kVpsWait);
+    size_t rem = s;
+    if ((s & 3) != 0) {
+        std::memcpy(u.current_qw.data(), data + (s / 4) * 16, 16);
+        u.word_index = static_cast<int>(s & 3);
+        rem = (s / 4 + 1) * 4;
+    }
+    for (size_t w = rem; w < nwords; w++) WriteToLatch2(vif, SpanWord(data, w));
+}
+
+void Vif::LatchWords(int vif, const uint8_t* data, size_t nwords) {
+    for (size_t w = 0; w < nwords; w++) WriteToLatch2(vif, SpanWord(data, w));
+}
+
+void Vif::CompletePending(int vif) {
+    VifUnitState& u = u_[vif];
+    u.fifo.clear();
+    u.word_index = 4;
+    u.state = VifState::Idle;
+    u.pending_bytes = 0;
+    UpdateStat(vif, VifStat::kVpsIdle);
 }
 
 void Vif::WriteToLatch2(int vif, uint32_t word) {
