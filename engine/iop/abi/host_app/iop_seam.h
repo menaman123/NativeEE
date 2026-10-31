@@ -24,6 +24,8 @@ namespace iop_seam {
 // $sp/$gp/$ra as the caller left them; the result goes to gpr[2]/gpr[3]) and the installer's
 // own pointer (the native module object).
 using NativeFn = void (*)(IopContext& ctx, void* self);
+// A native body without an object: the plain `void(IopContext&)` form (installed through InstallPlain).
+using PlainFn = void (*)(IopContext& ctx);
 
 struct IopFnSlot {
     uint32_t addr;                  // the function's entry address (the module's IOP address)
@@ -32,7 +34,27 @@ struct IopFnSlot {
     void* self;                     // handed to `native`
     uint64_t native_calls;          // calls answered by `native`
     uint64_t recompiled_calls;      // calls answered by the recompiled body
+    PlainFn plain;                  // the plain body InstallPlain set (native = PlainThunk, self = the slot)
 };
+
+inline void PlainThunk(IopContext& ctx, void* self) { static_cast<IopFnSlot*>(self)->plain(ctx); }
+
+// Installs / clears a native body in a slot (either form).
+inline void Install(IopFnSlot& s, NativeFn fn, void* self) {
+    s.native = fn;
+    s.self = self;
+    s.plain = nullptr;
+}
+inline void InstallPlain(IopFnSlot& s, PlainFn fn) {
+    s.plain = fn;
+    s.native = fn ? &PlainThunk : nullptr;
+    s.self = fn ? &s : nullptr;
+}
+inline void Uninstall(IopFnSlot& s) {
+    s.native = nullptr;
+    s.self = nullptr;
+    s.plain = nullptr;
+}
 
 // The call trace hook: (slot, native?, entry?, ctx). Bound by the composition; nullptr = off.
 using TraceFn = void (*)(const IopFnSlot& slot, bool native, bool entry, IopContext& ctx);

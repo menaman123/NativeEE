@@ -377,10 +377,10 @@ void IopRecompiler::write_cpp_file(std::ofstream& file,
             slot_index[addr] = k++;
         }
         file << "iop_seam::IopFnSlot iop_fn_slots[" << (k ? k : 1) << "] = {\n";
-        if (k == 0) file << "    {0, 0, nullptr, nullptr, 0, 0},\n";
+        if (k == 0) file << "    {0, 0, nullptr, nullptr, 0, 0, nullptr},\n";
         for (const auto& [addr, func] : m_functions) {
             if (m_import_stubs.count(addr)) continue;
-            file << "    {0x" << std::hex << addr << ", 0x" << func.end_addr << std::dec << ", nullptr, nullptr, 0, 0},\n";
+            file << "    {0x" << std::hex << addr << ", 0x" << func.end_addr << std::dec << ", nullptr, nullptr, 0, 0, nullptr},\n";
         }
         file << "};\n\n";
     }
