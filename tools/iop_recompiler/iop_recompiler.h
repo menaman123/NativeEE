@@ -27,6 +27,9 @@ public:
         bool legacy_title_stubs = false;   // the first title's probe arms / RPC thunk
         std::string ns;                    // wrap the TU in namespace <ns>; indirect calls via iop_stubs::iop_resolve
         bool import_call = false;          // imports -> iop_stubs::import_call("lib", idx, ctx)
+        bool override_table = false;       // per-function override seam: every body's prologue consults
+                                           // iop_override_table[i] (a host body for function i, or null) and
+                                           // counts the call in iop_override_calls / iop_recompiled_calls
         uint32_t base = 0;                 // the relocation base (recorded in the TU)
         uint32_t entry = 0;                // the relocated module entry (recorded in the TU)
         uint32_t load_extent = 0;          // module-relative end of the allocated sections
@@ -65,6 +68,7 @@ public:
 private:
     std::map<uint32_t, IopFunction> m_functions;
     std::map<uint32_t, std::string> m_import_stubs; // stub addr → stub name
+    std::map<uint32_t, uint32_t> m_override_index;  // --override-table: function addr -> table index
     Options m_opts;
     Census m_census;
 
