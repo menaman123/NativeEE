@@ -43,6 +43,10 @@ public:
     bool CanAcceptDirect() const {
         return tail_.empty() && !regs_.Transfer().in_transfer && !regs_.Path3Masked();
     }
+    // A packet interceptor may be offered a packet whenever nothing is buffered and PATH3
+    // is not masked -- a tag in transfer included: the interceptor itself knows whether
+    // the open tag is its own (it continues it) or this parser's (it declines).
+    bool CanAcceptIntercept() const { return tail_.empty() && !regs_.Path3Masked(); }
 
     // Lane census (plain counters, single writer): strip3 triples and rowable
     // rows consumed by the bulk lanes, and quadwords consumed by the bulk branch.
@@ -57,6 +61,13 @@ public:
     // The path of the delivery being parsed (or last parsed): a sink callback
     // (a FINISH / SIGNAL observer) reads it to attribute the event to its path.
     GifPath ActivePath() const { return active_path_; }
+    // A packet interceptor (GifArbiter::SetPacketInterceptor) that consumed a packet
+    // itself: the path it came on (what the observers above read), and -- when it left
+    // a tag open in the register file's transfer view (its payload continues in the
+    // next packet) -- the tag's class, so this parser continues that tag through the
+    // same lane it would have chosen at AcceptTag.
+    void SetActivePath(GifPath path) { active_path_ = path; }
+    void AdoptTransfer() { tag_class_ = ClassifyGifTag(regs_.Transfer().tag); }
 
 private:
     void ProcessBuffer();

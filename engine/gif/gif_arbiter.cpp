@@ -384,7 +384,7 @@ bool GifArbiter::DrainPassDelivered() {
             if (pkt.direct) {
                 lowered = parser_.CanAcceptDirect();
                 pkt.direct(lowered);
-            } else if (interceptor_ && !pkt.data.empty() && parser_.CanAcceptDirect()) {
+            } else if (interceptor_ && !pkt.data.empty() && parser_.CanAcceptIntercept()) {
                 lowered = interceptor_(interceptor_user_, pkt.path, pkt.data.data(), pkt.data.size());
             }
             if (!lowered && !pkt.data.empty()) parser_.ReceiveData(pkt.path, pkt.data.data(), pkt.data.size());
