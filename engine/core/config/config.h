@@ -587,7 +587,7 @@ struct TitleNativeConfig {
     bool vif = true;     // the VIF unpack into VU1 memory
     bool dmac = true;    // the DMAC chain walks (VIF1 / GIF paths)
     bool iop = false;    // the hosted IOP modules (SIF RPC servers)
-    bool iopsys = false; // the hosted IOP modules' functions as native host bodies (the per-function seam)
+    bool iopsys = true;  // the hosted IOP modules' functions as native host bodies (the per-function seam)
     bool spu = false;    // the SPU2 driver path (989snd -> the mixer)
     bool gs = false;     // the GS register-state model
     bool vu0 = true;     // VU0 macro mode (the COP2 ops / VCALLMS micros)

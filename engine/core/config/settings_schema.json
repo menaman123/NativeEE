@@ -1153,7 +1153,7 @@
       "section": "title",
       "name": "native.iopsys",
       "type": "bool",
-      "default": "off",
+      "default": "on",
       "kind": "switch",
       "user_facing": false
     },
