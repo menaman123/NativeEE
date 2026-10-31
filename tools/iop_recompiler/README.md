@@ -13,9 +13,16 @@ Any other IRX (a title's embedded modules, a stock module out of the IOP reboot 
 options -- the first title's facts stay behind `--legacy-title-stubs`:
 
 ```
-ps2r_iop_recompiler --input lgAud.irx --base 0x28000 --namespace iop_lgaud --import-call --quiet \
+ps2r_iop_recompiler --input lgAud.irx --base 0x28000 --namespace iop_lgaud --import-call --seam --quiet \
     --output-header iop_recompiled.h --output-cpp iop_recompiled.cpp
 ```
+
+`--seam` (with `--namespace`) emits every function as a recompiled body (`iop_body_<addr>`, static) plus the
+`iop_func_<addr>` wrapper every call site, the lookup map and the thread/RPC/timer entries reach; the wrapper is
+`iop_seam::Call(iop_fn_slots[k], body, ctx)` (`engine/iop/abi/host_app/iop_seam.h`): a native host body installed in
+the function's slot (`iop_<id>::iop_fn_slot(addr)->native`) runs instead of the recompiled one, on the same IopContext
+and IOP RAM, so a module is ported one function at a time with the recompiled body as the fallback and the oracle;
+the slot's two counters are the census, `iop_seam::trace` the call trace.
 
 `--base` relocates the image (its `.rel.*` tables, through the same `engine/iop/iop_relocator.h` the runtime IopLoader
 uses) so the emitted addresses are the module's addresses in IOP RAM; `--namespace` wraps the TU so several modules link
