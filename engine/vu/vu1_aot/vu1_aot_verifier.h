@@ -44,8 +44,10 @@ public:
     // dispatch default).
     // `oracle_block` judges the native leg against the BLOCK tier instead of
     // the interpreter (the loop's own cut path under a cap).
+    // `alias` registers `native` as an alias of the cases' image (its header names another image of the
+    // same program content: Vu1AotTier::SetNativeExportsAlias).
     static Result Verify(const std::vector<const Vu1Case*>& cases, const Vu1AotImageExports* native = nullptr,
-                         uint64_t cycle_cap = 0, bool oracle_block = false);
+                         uint64_t cycle_cap = 0, bool oracle_block = false, bool alias = false);
 
     // The image hash of a case (VuImageHash::Fast over its micro memory).
     static uint64_t ImageHashOf(const Vu1Case& c);
@@ -54,7 +56,7 @@ public:
 
 private:
     struct Outcome;
-    static void RunLeg(const Vu1Case& c, bool native, const Vu1AotImageExports* exports, uint64_t cycle_cap, bool oracle_block,
+    static void RunLeg(const Vu1Case& c, bool native, const Vu1AotImageExports* exports, bool alias, uint64_t cycle_cap, bool oracle_block,
                        Outcome& out, Result& r);
     static bool Same(const Outcome& native, const Outcome& interp, std::string& field);
 };
