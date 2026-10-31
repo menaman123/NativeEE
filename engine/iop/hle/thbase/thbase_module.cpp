@@ -205,6 +205,19 @@ bool ThbaseModule::ArmBody(int ktid, uint32_t arg, const GuestFunction& body) {
     const uint32_t gp = gp_[ktid] ? gp_[ktid] : layout.gp;
     const uint32_t sp = stack_base_[ktid] ? stack_base_[ktid] + stack_size_[ktid] - 0x10
                                           : layout.stack_top - static_cast<uint32_t>(ktid) * layout.stack_stride - 0x10;
+    if (step_provider_) {
+        IopContext initial = IopContext::ForEntry(sp, gp);
+        initial.gpr[4] = arg;
+        initial.pc = entry;
+        if (IopKernel::StepBody step = step_provider_(entry, initial)) {
+            ++step_armed_;
+            return table_.Kernel().StartStepThread(ktid, [this, ktid, step](const IopKernel::Resume& r) {
+                const IopKernel::Park p = step(r);
+                if (p.kind == IopKernel::Park::Kind::Exit) started_[ktid] = false;
+                return p;
+            });
+        }
+    }
     return table_.Kernel().StartThread(ktid, [this, ktid, body, entry, arg, sp, gp] {
         IopContext thread_ctx = IopContext::ForEntry(sp, gp);
         thread_ctx.gpr[4] = arg;

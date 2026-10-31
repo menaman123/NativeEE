@@ -15,6 +15,22 @@
 // Time comes exclusively from IopClock (Frame = EE-frame-derived virtual time,
 // the proof path; Realtime = steady_clock). Engine-pure: guest glue (register
 // files, IOP RAM, diagnostics) is injected through hooks.
+//
+// Two thread BODY forms share one scheduler (the thread record, its priority,
+// its wait lists and the Dispatch decisions are the same either way):
+//   * a COROUTINE body (StartThread): host code that parks by calling the
+//     blocking kernel calls (WaitSema / SleepThread / ...) -- the recompiled
+//     module threads and any native body written as the recompiled loop;
+//   * a STEP body (StartStepThread): host code that runs to its next park and
+//     RETURNS the park (Park{Sema, sid} ...) instead of switching stacks; the
+//     kernel applies it and calls the body again when the thread is next
+//     scheduled, handing it the wait's result. No coroutine, no stack switch:
+//     the form a fully native module's threads take (STAGE NATIVE-3, iopsys).
+//     A park satisfied at once (a sema with count > 0, a banked wakeup, a flag
+//     already set) re-enters the body in the same RunThread, as the coroutine
+//     form continues without a reschedule. A step body must never call a
+//     blocking kernel call (LeaveThread would switch from the dispatcher's own
+//     stack): the kernel reports it and treats it as the step's park.
 #pragma once
 
 #include <atomic>
@@ -42,6 +58,31 @@ public:
     static constexpr size_t kThreadStackBytes = 1024u * 1024u;   // host stack per guest thread
 
     using ThreadBody = std::function<void()>;
+    // A step body's park (the blocking call it would have made).
+    struct Park {
+        enum class Kind : uint8_t { Exit, Sleep, Sema, EventFlag, Mbx, Delay, Rpc, Yield };
+        Kind kind = Kind::Exit;
+        int id = 0;               // Sema sid / EventFlag ef / Mbx mbx
+        uint32_t pattern = 0;     // EventFlag pattern
+        uint32_t mode = 0;        // EventFlag mode (bit0 OR, bit4 clear)
+        uint64_t usec = 0;        // Delay / Rpc timeout
+        static Park Exit() { return Park{}; }
+        static Park Sleep() { return Park{Kind::Sleep, 0, 0, 0, 0}; }
+        static Park Sema(int sid) { return Park{Kind::Sema, sid, 0, 0, 0}; }
+        static Park EventFlag(int ef, uint32_t pattern, uint32_t mode) { return Park{Kind::EventFlag, ef, pattern, mode, 0}; }
+        static Park Mbx(int mbx) { return Park{Kind::Mbx, mbx, 0, 0, 0}; }
+        static Park Delay(uint64_t usec) { return Park{Kind::Delay, 0, 0, 0, usec}; }
+        static Park Rpc(uint64_t timeout_usec) { return Park{Kind::Rpc, 0, 0, 0, timeout_usec}; }
+        static Park Yield() { return Park{Kind::Yield, 0, 0, 0, 0}; }
+    };
+    // The result the step body is resumed with: the wait's result (WaitSema's / WaitEventFlag's return
+    // code; 1 = woken for Rpc, 0 = timed out), the message pointer of a Mbx park, the first call's 0.
+    struct Resume {
+        int result = 0;
+        void* message = nullptr;
+        bool first = true;        // the first call after StartStepThread
+    };
+    using StepBody = std::function<Park(const Resume&)>;
     // iopsched trace: (event, a, b, t_us) -- installed by the diag category only.
     using TraceHook = std::function<void(const char* evt, int64_t a, int64_t b, uint64_t t_us)>;
 
@@ -62,6 +103,11 @@ public:
     bool RegisterThread(int tid, uint32_t priority);
     void UnregisterThread(int tid);
     bool StartThread(int tid, ThreadBody body);   // arm the body, make Ready
+    bool StartStepThread(int tid, StepBody step);  // arm a step body (no coroutine), make Ready
+    bool ThreadIsStep(int tid) const;
+    // Census: step bodies run (RunThread entries) and coroutine switches (SwitchTo) so far.
+    uint64_t StepRuns() const { return step_runs_; }
+    uint64_t CoroutineSwitches() const { return coro_switches_; }
     void ExitThread();                            // from the running thread
     void TerminateThread(int tid);
     // thbase semantics: tid 0 = self, priority 0 = caller's priority.
@@ -181,6 +227,9 @@ private:
         int wakeup_pending = 0;                   // banked WakeupThread tokens
         uint64_t ready_seq = 0;                   // FIFO order among equal priorities
         ThreadBody body;
+        StepBody step;                            // set = a step thread (no coroutine)
+        Park step_park;                           // the park the step body last returned
+        Resume resume;                            // what the next step call is handed
         IopCoroutine coro;
         bool registered = false;
         IopKernel* owner = nullptr;
@@ -220,6 +269,9 @@ private:
 
     static void FiberTrampoline(void* param);
     void RunThread(Thread* t);
+    void RunStepThread(Thread* t);
+    // Applies a step body's park; true when it was satisfied at once (the body runs again now).
+    bool ApplyPark(Thread* t, const Park& p);
     void LeaveThread();                           // park: switch to the dispatcher
     void MakeReady(Thread* t);
     void SetWaiting(Thread* t, WaitKind k);
@@ -242,6 +294,8 @@ private:
     std::vector<Timer> timers_;
     uint64_t event_seq_ = 1;
     uint64_t timer_beats_ = 0;
+    uint64_t step_runs_ = 0;
+    uint64_t coro_switches_ = 0;
     uint64_t ready_seq_ = 1;
     std::atomic<uint64_t> dispatch_gen_{0};
     std::atomic<int> next_timer_id_{0};

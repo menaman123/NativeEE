@@ -92,9 +92,38 @@ bool IopKernel::StartThread(int tid, ThreadBody body) {
     return true;
 }
 
+bool IopKernel::StartStepThread(int tid, StepBody step) {
+    if (tid <= 0 || tid >= kMaxThreads || !step) return false;
+    Thread& t = threads_[tid];
+    if (!t.registered || t.state != State::Dormant) return false;
+    t.body = nullptr;
+    t.step = std::move(step);
+    t.resume = Resume{};
+    t.priority = t.initial_priority;
+    t.wait = WaitKind::None;
+    t.wakeup_pending = 0;
+    MakeReady(&t);
+    Trace("start_step", tid, (int64_t)t.priority);
+    PokeWakeHook();
+    return true;
+}
+
+bool IopKernel::ThreadIsStep(int tid) const {
+    if (tid <= 0 || tid >= kMaxThreads) return false;
+    return static_cast<bool>(threads_[tid].step);
+}
+
 void IopKernel::ExitThread() {
     Thread* self = current_;
     if (!self) return;
+    if (self->step) {   // a step body's Exit park is applied by RunStepThread; a direct call is the same
+        self->state = State::Dormant;
+        self->wait = WaitKind::None;
+        self->step = nullptr;
+        unparked_.fetch_sub(1, std::memory_order_acq_rel);
+        Trace("exit", self->tid, 0);
+        return;
+    }
     self->state = State::Dormant;
     self->wait = WaitKind::None;
     unparked_.fetch_sub(1, std::memory_order_acq_rel);
@@ -111,6 +140,7 @@ void IopKernel::TerminateThread(int tid) {
     t.state = State::Dormant;
     t.wait = WaitKind::None;
     t.body = nullptr;
+    t.step = nullptr;
     t.wakeup_pending = 0;
     // A terminated continuation must not resume at its old Sleep/Wait/Delay
     // call on a later StartThread. Never free the running stack itself.
