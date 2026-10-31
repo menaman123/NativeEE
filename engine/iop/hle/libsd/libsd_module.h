@@ -57,6 +57,7 @@ public:
     };
     using OpTracer = std::function<void(const OpEvent&)>;
     void SetOpTracer(OpTracer t) { op_tracer_ = std::move(t); }
+    const OpTracer& GetOpTracer() const { return op_tracer_; }   // a second observer chains the first
 
     LibsdModule(IopMemory& mem, sound::SpuCore& core);
 
