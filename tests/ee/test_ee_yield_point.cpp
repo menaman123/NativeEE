@@ -271,6 +271,78 @@ static void TestGuards() {
     TM().JoinAll();
 }
 
+// --- 4: the progress gate -- a register file that moves is a computation, not a spin -----
+static void TestProgressGate() {
+    std::printf("[4] progress gate: moving registers pass no field; identical registers spin; a pending cause is taken with no field\n");
+    TestEeYieldPoint rig;
+    // Re-bind with the spin gate + the progress gate on and a fire_due_fields that counts.
+    uint64_t due_fires = 0;
+    bool wall_due = false;
+    {
+        EeYieldPoint::Deps d;
+        d.advance_field = [&rig] { ++rig.fields; if (rig.field) rig.field(); };
+        d.intc = &INTC();
+        d.queue = &EeEventQueue::Instance();
+        d.budget = kBudget;
+        d.spin_gate = true;
+        d.progress_gate = true;
+        d.wall_field_due = [&wall_due] { return wall_due; };
+        d.fire_due_fields = [&due_fires, &wall_due] { ++due_fires; wall_due = false; };
+        YP().Bind(std::move(d));
+    }
+    CpuContext ctx{};
+    TM().SetStackBytes(static_cast<size_t>(8) * 1024 * 1024);
+    TM().AdoptCurrentThread(kMainTid, kMainPrio);
+    TOK().GuestEnter(kMainTid, kMainPrio);
+    const auto& c = YP().Stats();
+    // (a) A computation: a counter register advances every iteration -> 4 trips, no field, 4 progress trips.
+    for (uint64_t i = 0; i < kBudget * 4; ++i) {
+        ctx.cpuRegs.GPR.r[8].UD[0] = i;   // $t0 moves
+        TestEeYieldPoint::BackEdge(ctx);
+    }
+    // (The first trip follows GuestEnter's scheduling point: a sched trip; the other three are progress trips.)
+    CHECK(c.yields == 4 && rig.fields == 0 && c.progress_trips == 3 && c.sched_trips == 1 && c.spin_trips == 0,
+          "4a: four trips of a register-moving loop advanced no field (sched_trips 1 + progress_trips 3)");
+    // (b) ... and fires a wall field the pacer noted, without a park.
+    wall_due = true;
+    for (uint64_t i = 0; i < kBudget; ++i) {
+        ctx.cpuRegs.GPR.r[8].UD[0] = 1000 + i;
+        TestEeYieldPoint::BackEdge(ctx);
+    }
+    CHECK(c.yields == 5 && rig.fields == 0 && due_fires == 1 && c.due_fields == 1, "4b: the due wall field fired at the progress trip, no park");
+    // (c) A true spin: the register file is identical at the next trip -> the field passes. The first
+    // trip still sees the register moved from (b) (progress); the next two see it unchanged.
+    ctx.cpuRegs.GPR.r[8].UD[0] = 7;
+    for (uint64_t i = 0; i < kBudget * 3; ++i) TestEeYieldPoint::BackEdge(ctx);
+    CHECK(c.yields == 8 && rig.fields == 2 && c.spin_trips == 2, "4c: two trips with an identical register file each passed a field (spin_trips 2)");
+    // (d) kProgressTripsMax + 1 register-changing trips with no field due: the run falls back to the park once.
+    const uint64_t fields_before = rig.fields;
+    for (uint64_t i = 0; i < kBudget * (EeYieldPoint::kProgressTripsMax + 1); ++i) {
+        ctx.cpuRegs.GPR.r[9].UD[0] = i;
+        TestEeYieldPoint::BackEdge(ctx);
+    }
+    CHECK(rig.fields == fields_before + 1 && c.progress_parks == 1,
+          "4d: a register-changing spin parks after kProgressTripsMax progress trips (progress_parks 1)");
+    // (e) A pending INTC cause at a trip is taken with no field (irq_trips), the handler runs on this thread.
+    uint64_t isr_runs = 0;
+    rig.isr = [&](CpuContext&) { ++isr_runs; };
+    const uint64_t f0 = rig.fields;
+    INTC().RaiseInPlace(Intc::kGs);
+    ctx.cpuRegs.GPR.r[8].UD[0] = 7;   // the register file as at the previous trip: a spin, were it not for the cause
+    for (uint64_t i = 0; i < kBudget; ++i) TestEeYieldPoint::BackEdge(ctx);
+    CHECK(isr_runs == 1 && rig.fields == f0 && c.irq_trips == 1, "4e: the pending cause was dispatched at the trip with no field (irq_trips 1)");
+    // (f) RequestPromptTrip: the next back-edge trips.
+    const uint64_t y0 = c.yields;
+    YP().RequestPromptTrip();
+    CHECK(g_ee_backedge_budget == 1 && c.prompt_requests == 1, "4f: a prompt request set the budget to 1");
+    ctx.cpuRegs.GPR.r[8].UD[0] = 99;
+    TestEeYieldPoint::BackEdge(ctx);
+    CHECK(c.yields == y0 + 1 && c.prompt_trips == 1 && g_ee_backedge_budget == kBudget, "4g: the next back-edge tripped (prompt_trips 1) and reloaded the budget");
+    std::printf("  census: %s\n", c.Format().c_str());
+    TOK().GuestExit(kMainTid);
+    TM().JoinAll();
+}
+
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("EeYieldPoint\n");
@@ -278,6 +350,7 @@ int main() {
     TestPreemptedAtTrip();
     TestEqualPriorityNoPreempt();
     TestGuards();
+    TestProgressGate();
     if (g_fail) std::printf("FAILURES: %d (%d passed)\n", g_fail, g_pass);
     else std::printf("ALL PASS (%d)\n", g_pass);
     return g_fail ? 1 : 0;
