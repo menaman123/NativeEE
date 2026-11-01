@@ -4,7 +4,9 @@
 // judge runs without a window; `--index URL` names the release index the Build step reads (the manifest's by default;
 // an offline copy for a judge); `--prepare --index URL --iso IMAGE --folder DIR [--jobs N] [--release TAG]
 // [--json REPORT] [--subfolder memcards=DIR] [--subfolder saves=DIR]` is the headless Build: no window, progress on
-// stderr, the game's path on stdout, the same report the command-line tool writes, exit 0 when the game is ready; `--iso IMAGE` alone opens the setup window on that disc. The
+// stderr, the game's path on stdout, the same report the command-line tool writes, exit 0 when the game is ready; `--iso IMAGE` alone opens the setup window on that disc.
+// `--folder DIR --page settings --screenshot FILE.png` opens the window on that game folder and page, writes its picture
+// and quits (a reviewer's / judge's look at a page; no update check). The
 // launcher never looks for disc images by itself (D-L10). With a window it first looks for a newer release of itself
 // (SelfUpdater; `--no-update` skips that) and refreshes the game folder after an update (LauncherApp::refreshGame).
 #include <QApplication>
@@ -194,12 +196,15 @@ int main(int argc, char** argv) {
     const QCommandLineOption releaseOpt("release", "The release to use (the newest by default).", "tag");
     const QCommandLineOption prepareOpt("prepare", "Build the game without a window (with --iso and --folder).");
     const QCommandLineOption isoOpt("iso", "The disc image: opened in the setup window, or built with --prepare.", "image");
-    const QCommandLineOption folderOpt("folder", "The game folder (--prepare).", "dir");
+    const QCommandLineOption folderOpt("folder", "The game folder (--prepare), or the one to open the window on.", "dir");
+    const QCommandLineOption pageOpt("page", "Open the window on this page: games, saves, settings or about.", "name");
+    const QCommandLineOption screenshotOpt("screenshot", "Write a picture of the window to this file once it is shown, then quit.", "file");
     const QCommandLineOption jobsOpt("jobs", "How many things to do at once (--prepare).", "n");
     const QCommandLineOption jsonOpt("json", "Write the report here (--prepare).", "report");   // lint: allow
     const QCommandLineOption subfolderOpt("subfolder", "Where the memory cards or save states go (--prepare), e.g. memcards=DIR; else inside the game folder.", "id=dir");
     const QCommandLineOption noUpdateOpt("no-update", "Do not look for a newer version of the launcher at start.");
-    parser.addOptions({manifestOpt, identifyOpt, indexOpt, releaseOpt, prepareOpt, isoOpt, folderOpt, jobsOpt, jsonOpt, subfolderOpt, noUpdateOpt});
+    parser.addOptions({manifestOpt, identifyOpt, indexOpt, releaseOpt, prepareOpt, isoOpt, folderOpt, jobsOpt, jsonOpt, subfolderOpt, noUpdateOpt,
+                       pageOpt, screenshotOpt});
     parser.process(*app);
 
     ps2r::launcher::LauncherApp launcher;
@@ -246,9 +251,28 @@ int main(int argc, char** argv) {
     }
 #endif
     ps2r::launcher::MainWindow window(&launcher);
+    if (parser.isSet(folderOpt)) launcher.chooseGameFolder(QFileInfo(parser.value(folderOpt)).absoluteFilePath(), true);
     window.show();
     const bool discNamed = parser.isSet(isoOpt);
     if (discNamed) window.showSetup(QFileInfo(parser.value(isoOpt)).absoluteFilePath());   // a disc named on the command line
+    if (parser.isSet(pageOpt)) {
+        static const QStringList kPages = {"games", "saves", "settings", "about"};
+        const int page = kPages.indexOf(parser.value(pageOpt).toLower());
+        if (page < 0) { QTextStream(stderr) << "launcher --page: one of games, saves, settings, about\n"; return 2; }
+        window.showPages();
+        window.showPage(page);
+    }
+    if (parser.isSet(screenshotOpt)) {
+        // The window as a player would see it (its first layout and paint done), written, then quit: a judge's or a
+        // reviewer's picture of a page; no update check, nothing started.
+        const QString out = QFileInfo(parser.value(screenshotOpt)).absoluteFilePath();
+        QTimer::singleShot(400, &window, [&window, out] {
+            const QString written = window.screenshot(out);
+            QTextStream(stdout) << written << "\n";
+            QCoreApplication::exit(QFileInfo::exists(written) ? 0 : 1);
+        });
+        return app->exec();
+    }
     checkForUpdate(launcher, &window, !parser.isSet(noUpdateOpt), [&launcher, &window, discNamed] {
         if (discNamed) return;
         // a launcher newer than the game in the game folder copies its game in; else the first run's setup if due

@@ -36,7 +36,8 @@ struct SettingsRowSpec {
     QString key;      // the options-file key (e.g. video.frame_cap)
     QString label;
     QString kind;     // "choice" or "switch"
-    QString defaultValue;
+    QString defaultValue;   // what the game does when the key is absent from the options file (the game's own default)
+    QString firstRun;       // optional: the value the setup window pre-selects and writes into a NEW game folder; empty = none
     QString help;
     QVector<SettingsChoice> choices;
     SettingsLock lockedBy;   // key empty = no lock

@@ -18,6 +18,8 @@ struct PrepareRequest {
     QString binaryName;       // the executable name expected in gameFolder when done (the target's `binary`)
     QString logPath;          // where the runner writes its log
     QString appDataFolder;    // the launcher's app-data root (bundles beside the launcher are found from the application path)
+    QString configPath;       // the game folder's options file: the pipeline writes it FRESH (paths only); the launcher
+                              // puts the player's choices back after `finished` (the fake runner rewrites it the same way)
 };
 
 class PrepareRunner : public QObject {

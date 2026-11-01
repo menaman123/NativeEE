@@ -198,7 +198,8 @@ void SessionRuntime::Publish() {
             scale_request_.store(native);
         }
     }
-    status_.scale = effective_scale_.load();
+    status_.scale = scale_setting_.load();
+    status_.effective_scale = effective_scale_.load();
     status_.aspect = aspect_setting_.load();
     status_.render_rate = render_rate_.load();
     status_.frame_cap = frame_cap_.load();
@@ -407,7 +408,7 @@ void SessionRuntime::ProcessCommands() {
                 } else {
                     effective_scale_.store(0);   // Publish resolves the native factor and requests it
                 }
-                detail = request.value != 0 ? "Internal scale applied at the next frame." : "Internal scale follows the window.";
+                detail = request.value != 0 ? "Internal resolution applied at the next frame." : "Internal resolution follows the window.";
                 if (persist_) persist_("video.scale", std::to_string(request.value));
                 break;
             case Action::SetVSync:

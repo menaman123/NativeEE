@@ -87,7 +87,8 @@ public:
         // The Display page's live values (A2/A3): video.fullscreen's mode, video.scale
         // (0 = native window), video.aspect's selection and video.render_rate.
         int display_mode = 0;
-        int scale = 1;
+        int scale = 1;             // the SETTING (what the row shows and the file says; 0 = window)
+        int effective_scale = 1;   // the factor in force (the window's resolution resolved; = scale when scale != 0)
         int aspect = 0;
         int render_rate = 0;
         int frame_cap = 2;   // video.frame_cap's index (0 off, 1 30, 2 60)

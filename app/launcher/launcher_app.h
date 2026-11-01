@@ -43,6 +43,7 @@ public:
     QString settingsFilePath() const;
     IniSettings* settings() const { return settings_; }
     QString settingValue(const QString& key) const;   // the file's value or the manifest's default
+    bool settingWritten(const QString& key) const;    // the options file has the key (a chosen folder)
     bool setSettingValue(const QString& key, const QString& value, QString* error = nullptr);
 
     // discs: identifies a dropped / chosen file by its content; a recognised disc (supported or not) joins the library.

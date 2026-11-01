@@ -148,6 +148,7 @@ bool TitleManifest::loadJson(const QJsonObject& root, QString* error) {
             row.label = r.value("label").toString(row.key);
             row.kind = r.value("kind").toString("choice");
             row.defaultValue = r.value("default").toString();
+            row.firstRun = r.value("first_run").toString();
             row.help = r.value("help").toString();
             for (const QJsonValue& cv : r.value("choices").toArray()) {
                 const QJsonObject c = cv.toObject();

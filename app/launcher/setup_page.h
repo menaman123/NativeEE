@@ -74,6 +74,7 @@ public:
     QString errorText() const { return errorText_; }
     QString folderPath() const;   // the chosen folder, else the suggested one
     QMap<QString, QString> pendingSettings() const { return pending_; }
+    QMap<QString, QString> chosenSettings() const { return chosen_; }
 
 signals:
     void completed();   // the pages take over (the game plays, is ready, or the player left for now)
@@ -99,6 +100,7 @@ private:
     void refreshButtons();
     void applyLocks();
     void flushSettings();   // writes every pending row to the options file (the folder must be chosen)
+    void seedFirstRun();    // the manifest's first_run values into rows the options file does not have yet
     void setError(const QString& text);
     static QString etaText(qint64 seconds);
 
@@ -130,7 +132,9 @@ private:
     FlatButton* play_;
     FlatButton* leave_;
     DiscIdentity disc_;
-    QMap<QString, QString> pending_;
+    QMap<QString, QString> pending_;   // chosen here, not yet in the options file
+    QMap<QString, QString> chosen_;    // everything this window set (the first-run seeds included): written again after
+                                       // the pipeline's fresh options file, like the folder choices (D-L13)
     QString errorText_, lastLog_;
     State state_ = Idle;
     bool dragOver_ = false;
