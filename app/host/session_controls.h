@@ -42,7 +42,13 @@ public:
         // The Display page's motion blur (video.motion_blur: the title's own blend of the
         // previous picture), applied by the title at its next boundary
         // (MotionBlurSetting); persisted.
-        SetMotionBlur
+        SetMotionBlur,
+        // The 'Mods (for testing)' section (mods.enabled): ModsWarp's value is the
+        // level id (RuntimeState::mods_levels[].wid) the title loads through its own
+        // loader request at its next frame boundary; ModsSkipCutscene ends the movie
+        // playing or fast-forwards the in-engine cutscene (nothing when neither is
+        // on). Neither is persisted.
+        ModsWarp, ModsSkipCutscene
     };
     enum class Phase { Queued, Working, Waiting, Succeeded, Refused, Failed, Cancelled };
     struct Capabilities {
@@ -60,6 +66,14 @@ public:
         bool frame_limit = false;    // the title supports an uncapped frame rate
         bool camera_invert = false;  // live input: the right stick can be inverted
         bool motion_blur = false;    // the title can switch its motion blur
+        bool mods = false;           // mods.enabled: the level select + skip cutscene (play mode)
+    };
+    // One row of the level select (the title's own level table, read at run time).
+    struct ModsLevel {
+        int wid = 0;              // the title's level id (the table index)
+        int episode = 0;          // the episode the level belongs to (the title's episode table)
+        std::string name;         // "episode/level" from the title's table names
+        std::string kind;         // "hub" (the episode's exterior) or "level"
     };
     struct RuntimeState {
         uint64_t frame = 0;
@@ -99,6 +113,13 @@ public:
         bool invert_camera_x = false;
         bool invert_camera_y = false;
         bool motion_blur = true;   // video.motion_blur
+        // The Mods section's live rows: the level the title is in (-1 = unknown / not yet
+        // published), the level list (empty until the title has built its table), and whether a
+        // movie or an in-engine cutscene is playing now (the Skip button's state).
+        int mods_level = -1;
+        std::vector<ModsLevel> mods_levels;
+        bool mods_cutscene = false;
+        bool mods_fast_forward = false;   // a fast-forward is in force
         std::string input_name;
         std::string renderer;   // the video backend in force ("metal (auto): Apple M4"), from the title's leg
         std::string recording_path;

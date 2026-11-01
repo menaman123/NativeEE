@@ -961,6 +961,17 @@
       "user_facing": false
     },
     {
+      "key": "mods.enabled",
+      "section": "mods",
+      "name": "enabled",
+      "type": "bool",
+      "default": "off",
+      "kind": "switch",
+      "user_facing": true,
+      "label": "Testing aids",
+      "help": "Adds a 'Mods (for testing)' section to the in-game menu (press Esc): a level select that jumps to any level or hub, and a Skip cutscene button. Backspace, or Select and Start together on the controller, skips the movie or cutscene playing. Off is the game as it ships."
+    },
+    {
       "key": "paths.game_files",
       "section": "paths",
       "name": "game_files",

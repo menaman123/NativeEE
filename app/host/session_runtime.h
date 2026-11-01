@@ -165,6 +165,16 @@ public:
     void ConfigureMotionBlur(bool seed);
     // Game owner, at its frame boundary: the motion blur in force.
     bool MotionBlurSetting() const { return motion_blur_.load(); }
+    // Mods (mods.enabled, STAGE FIX-2). Main thread before Run: offer the 'Mods (for testing)' section
+    // (the capability); the level list and the live rows arrive from the game owner as the title builds
+    // its table (any thread: SetModsLevels / SetModsState). The menu's Go and Skip requests are taken by
+    // the game owner at its frame boundary (TakeModsWarpRequest: the level id, -1 = none pending;
+    // TakeModsSkipRequest: true once per press).
+    void ConfigureMods();
+    void SetModsLevels(std::vector<SessionControls::ModsLevel> levels);
+    void SetModsState(int level, bool cutscene, bool fast_forward);
+    int TakeModsWarpRequest() { return mods_warp_request_.exchange(-1); }
+    bool TakeModsSkipRequest() { return mods_skip_request_.exchange(false); }
     // Main thread before Run: the pause-menu shape -- Escape opens the menu and
     // pauses the game (hooks.pause must exist for the pause), the panel's Resume /
     // Quit; off, Escape is the window close (the first title's shape).
@@ -310,6 +320,12 @@ private:
     std::atomic<int> volume_{100};
     std::atomic<bool> perf_overlay_{false}, fullscreen_state_{false}, keyboard_state_{true}, vsync_state_{false},
         motion_blur_{true};
+    // Mods: the level list (under mods_mutex_: written by the game owner, copied at Publish), the live rows.
+    std::mutex mods_mutex_;
+    std::vector<SessionControls::ModsLevel> mods_levels_;
+    bool mods_levels_dirty_ = false;
+    std::atomic<int> mods_level_{-1}, mods_warp_request_{-1};
+    std::atomic<bool> mods_cutscene_{false}, mods_fast_forward_{false}, mods_skip_request_{false};
     bool display_rows_ = false;
     std::atomic<uint64_t> present_output_{0}, present_output_request_{0};   // PackSize(w, h) of the host picture
     std::atomic<int> scale_setting_{1}, effective_scale_{1}, scale_request_{0}, aspect_setting_{0}, render_rate_{0},

@@ -564,6 +564,18 @@ struct FixesConfig {
     bool skid_mark_init = false;
 };
 
+// Mods (STAGE FIX-2, mods track): the testing aids a player may switch on --
+// the in-game 'Mods (for testing)' menu section with the level select (a warp
+// to any of the title's levels through the title's own loader request) and
+// the skip-cutscene key (a movie ends through the player's own end test; an
+// in-engine cutscene is fast-forwarded). Default OFF: the harness legs never
+// see them. EXCLUDED from the fingerprint like harness.*: the knob changes
+// nothing the title executes until a warp or a skip is REQUESTED, so a leg
+// with the knob on but unused keeps the baseline's env_hash and rows.
+struct ModsConfig {
+    bool enabled = false;
+};
+
 struct LogConfig {
     std::string channels = "all";          // ring channel list: all|none|perf,ee,gfx,input,mem
     int         ring_events = 65536;       // pow2 in 1024..4194304
@@ -754,6 +766,7 @@ public:
     LauncherConfig launcher;
     QolConfig qol;
     FixesConfig fixes;
+    ModsConfig    mods;
     DevConfig     dev;
     LogConfig     log;
     DiagConfig    diag;
@@ -781,7 +794,7 @@ public:
     // excluded -- they legitimately differ per leg.
     std::string Fingerprint() const;
     // True for a key Fingerprint() leaves out: harness.* / paths.* / meta.* /
-    // diag.* and the named host-scheduling / toolchain keys (config.cpp
+    // diag.* / mods.* and the named host-scheduling / toolchain keys (config.cpp
     // ExcludedFromFingerprint). The settings-table check and
     // tools/gen_settings_table.py derive the preset's golden with the same set.
     static bool FingerprintExcludes(const std::string& key);

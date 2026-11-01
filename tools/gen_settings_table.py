@@ -47,7 +47,7 @@ ROOT = os.path.abspath(os.path.join(HERE, ".."))
 LEDGER = os.path.join(ROOT, "docs", "filemap", "FLAG_LEDGER.md")
 PLAN = os.path.join(ROOT, "docs", "phases", "PHASE1_PLAN.md")
 PROFILE_NAME = "deterministic"
-FINGERPRINT_EXCLUDED_PREFIXES = ("harness.", "paths.", "meta.", "diag.")
+FINGERPRINT_EXCLUDED_PREFIXES = ("harness.", "paths.", "meta.", "diag.", "mods.")
 # Keys Config::Fingerprint() excludes by name (engine/core/config/config.cpp
 # FingerprintExcluded): host scheduling / toolchain choices that change nothing
 # the title executes or an image carries. A preset may pin them (det column)
@@ -196,6 +196,7 @@ ROWS = [
     ("log.ring_events", "int", "65536", "=", "PS2_LOG_RING_EVENTS"),
     ("meta.profile", "str", "default", PROFILE_NAME, "--profile"),
     ("meta.source_fingerprint", "str", "", "=", "build-id"),
+    ("mods.enabled", "bool", "off", "=", "-"),
     ("paths.game_files", "str", "", "=", "GAME_FILES_DIR"),
     ("paths.iso", "str", "", "=", "GAME_FILES_DIR"),
     ("paths.log_dir", "str", "", "=", "-"),

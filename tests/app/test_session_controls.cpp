@@ -173,6 +173,31 @@ static void CapabilitiesAndValuesAreHonest() {
     CHECK(controls.Read().runtime.volume_percent == 100);  // Only Publish changes observed state.
 }
 
+// The Mods section (mods.enabled): refused without the capability; a Go for a level id the published
+// table lacks is refused; a known one and a Skip reach the game owner through TakeNext.
+static void ModsRequestsFollowThePublishedTable() {
+    Controls controls;
+    controls.Submit(Action::ModsWarp, 8);
+    CHECK(controls.Read().pending.empty() && controls.Read().recent.back().phase == Phase::Refused);
+    controls.Submit(Action::ModsSkipCutscene);
+    CHECK(controls.Read().pending.empty() && controls.Read().recent.back().phase == Phase::Refused);
+    Controls::Capabilities caps = Capabilities();
+    caps.mods = true;
+    Controls::RuntimeState runtime;
+    runtime.mods_levels.push_back({8, 2, "palace/exterior", "hub"});
+    runtime.mods_levels.push_back({9, 2, "palace/interior", "level"});
+    controls.Publish(caps, runtime);
+    controls.Submit(Action::ModsWarp, 18);   // not in the table
+    CHECK(controls.Read().pending.empty() && controls.Read().recent.back().phase == Phase::Refused);
+    const auto go = controls.Submit(Action::ModsWarp, 9);
+    const auto skip = controls.Submit(Action::ModsSkipCutscene);
+    Controls::Request request;
+    CHECK(controls.TakeNext(request) && request.id == go && request.action == Action::ModsWarp && request.value == 9);
+    CHECK(controls.TakeNext(request) && request.id == skip && request.action == Action::ModsSkipCutscene);
+    CHECK(controls.Finish(go, Phase::Succeeded, "Level change requested.") && controls.Finish(skip, Phase::Succeeded, "Skip requested."));
+    CHECK(controls.Read().runtime.mods_levels.size() == 2 && controls.Read().runtime.mods_level == -1);
+}
+
 static void CompletedPauseDoesNotUseStaleUiState() {
     Controls controls;
     controls.Publish(Capabilities(), {}); // playing snapshot on the main owner
@@ -1655,6 +1680,7 @@ int main(int argc, char** argv) {
     SaveNeverSucceedsBeforeOwnerCompletion();
     RestoreValidationFailureLeavesPublishedStateAlone();
     CapabilitiesAndValuesAreHonest();
+    ModsRequestsFollowThePublishedTable();
     CompletedPauseDoesNotUseStaleUiState();
     CloseCannotBeStarvedByPendingSave();
     BoundedConcurrentRequests();

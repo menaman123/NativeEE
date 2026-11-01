@@ -40,6 +40,7 @@ bool SessionControls::Supported(Action action) const {
         case Action::SetFrameLimit: return capabilities_.frame_limit;
         case Action::SetInvertCameraX: case Action::SetInvertCameraY: return capabilities_.camera_invert;
         case Action::SetMotionBlur: return capabilities_.motion_blur;
+        case Action::ModsWarp: case Action::ModsSkipCutscene: return capabilities_.mods;
     }
     return false;
 }
@@ -115,6 +116,11 @@ uint64_t SessionControls::SubmitLocked(Action action, int value, std::string pat
         return refuse("Texture filter must be title, point, bilinear or trilinear (0..3).");
     if (action == Action::SetAnisotropy && value != 1 && value != 2 && value != 4 && value != 8 && value != 16)
         return refuse("Anisotropy must be 1, 2, 4, 8 or 16.");
+    if (action == Action::ModsWarp) {
+        const bool known = std::any_of(runtime_.mods_levels.begin(), runtime_.mods_levels.end(),
+                                       [value](const ModsLevel& l) { return l.wid == value; });
+        if (!known) return refuse("Not a level of this game's table.");
+    }
     // The main/UI snapshot may lag a completed pause command. The game owner
     // validates Step against its current pause state when consuming the queue.
     if (Conflicts(action)) return refuse("A related request is already pending.");
@@ -308,6 +314,8 @@ const char* SessionControls::ActionLabel(Action action) {
         case Action::SetInvertCameraX: return "Invert camera X";
         case Action::SetInvertCameraY: return "Invert camera Y";
         case Action::SetMotionBlur: return "Motion blur";
+        case Action::ModsWarp: return "Go to level";
+        case Action::ModsSkipCutscene: return "Skip cutscene";
     }
     return "Unknown action";
 }

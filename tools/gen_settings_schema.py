@@ -95,6 +95,8 @@ UI = {
     # Play
     "qol.skip_movies": dict(label="Skip movies", help="Start or Cross skips a movie, the opening one included."),
     "qol.fast_forward": dict(label="Cutscene fast-forward", help="How many times faster a cutscene plays while the fast-forward button is held. 1 is off.", min=1, max=8),
+    # Mods (testing aids, off by default)
+    "mods.enabled": dict(label="Testing aids", help="Adds a 'Mods (for testing)' section to the in-game menu (press Esc): a level select that jumps to any level or hub, and a Skip cutscene button. Backspace, or Select and Start together on the controller, skips the movie or cutscene playing. Off is the game as it ships."),
     # Fixes (each a documented defect of the original game, off = as shipped)
     "fixes.look_rest_seconds": dict(label="Fix: head-look rest time", help="The original never set how long a head-look rests, so it used leftover memory. On stores zero."),
     "fixes.skid_mark_init": dict(label="Fix: skid-mark colours", help="The original never set the first skid-mark strip's colours, so it used leftover memory. On clears them."),

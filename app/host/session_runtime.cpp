@@ -119,6 +119,24 @@ void SessionRuntime::ConfigureMotionBlur(bool seed) {
     Publish();
 }
 
+void SessionRuntime::ConfigureMods() {
+    if (std::this_thread::get_id() != main_thread_) return;
+    capabilities_.mods = true;
+    Publish();
+}
+
+void SessionRuntime::SetModsLevels(std::vector<SessionControls::ModsLevel> levels) {
+    std::lock_guard<std::mutex> lock(mods_mutex_);
+    mods_levels_ = std::move(levels);
+    mods_levels_dirty_ = true;
+}
+
+void SessionRuntime::SetModsState(int level, bool cutscene, bool fast_forward) {
+    mods_level_.store(level);
+    mods_cutscene_.store(cutscene);
+    mods_fast_forward_.store(fast_forward);
+}
+
 void SessionRuntime::ConfigurePauseMenu(bool on) {
     if (std::this_thread::get_id() != main_thread_) return;
     controls_.SetPauseMenu(on);
@@ -205,6 +223,16 @@ void SessionRuntime::Publish() {
     status_.frame_cap = frame_cap_.load();
     status_.frame_limit = frame_limit_.load();
     status_.motion_blur = motion_blur_.load();
+    if (capabilities_.mods) {
+        std::lock_guard<std::mutex> lock(mods_mutex_);
+        if (mods_levels_dirty_) {
+            status_.mods_levels = mods_levels_;
+            mods_levels_dirty_ = false;
+        }
+        status_.mods_level = mods_level_.load();
+        status_.mods_cutscene = mods_cutscene_.load();
+        status_.mods_fast_forward = mods_fast_forward_.load();
+    }
     capabilities_.camera_invert = input_ != nullptr;
     status_.invert_camera_x = input_ && input_->CameraInvertX();
     status_.invert_camera_y = input_ && input_->CameraInvertY();
@@ -465,6 +493,16 @@ void SessionRuntime::ProcessCommands() {
                 if (persist_) persist_("video.frame_limit", std::to_string(request.value));
                 break;
             }
+            case Action::ModsWarp:
+                // The game owner takes it at its next frame boundary and writes the title's own loader
+                // request; a second Go before then replaces the first.
+                mods_warp_request_.store(request.value);
+                detail = "Level change requested.";
+                break;
+            case Action::ModsSkipCutscene:
+                mods_skip_request_.store(true);
+                detail = "Skip requested.";
+                break;
             case Action::SetMotionBlur:
                 motion_blur_.store(request.value != 0);
                 detail = request.value != 0 ? "Motion blur on." : "Motion blur off.";

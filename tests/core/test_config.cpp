@@ -285,6 +285,16 @@ static void TestPeakDefaults() {
     CHECK(c.ui.perf_overlay == false);   // the Display page's first option (MenuExtension), off by default
     CHECK(c.ui.menu_pages == true);      // the extension itself (play mode only)
     CHECK(c.meta.profile == "default");
+    // mods.enabled (STAGE FIX-2): off by default; on, the knob stays OUT of the fingerprint (nothing the
+    // title executes changes until a warp / skip is requested), so a leg with it on keeps the baseline's env_hash.
+    CHECK(c.mods.enabled == false && Config::FingerprintExcludes("mods.enabled"));
+    {
+        Config m;
+        const uint64_t base = m.FingerprintHash();
+        std::string err;
+        CHECK(m.Set("mods.enabled", "on", &err) && m.mods.enabled);
+        CHECK(m.Fingerprint().find("mods.") == std::string::npos && m.FingerprintHash() == base);
+    }
 
     // String access round-trips every key and the key set is sorted.
     const auto& keys = Config::Keys();

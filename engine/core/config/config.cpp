@@ -271,6 +271,7 @@ const std::vector<Field>& Fields() {
         STR_FIELD("log.channels", log.channels),
         INT_FIELD("log.ring_events", log.ring_events),
         STR_FIELD("meta.profile", meta.profile),
+        BOOL_FIELD("mods.enabled", mods.enabled),
         STR_FIELD("meta.source_fingerprint", meta.source_fingerprint),
         STR_FIELD("paths.game_files", paths.game_files),
         STR_FIELD("paths.iso", paths.iso),
@@ -389,7 +390,12 @@ bool ExcludedFromFingerprint(const std::string& key) {
     // _region_blocks / _region_ops / _region_taken / _chain / _mac_acc its region shape;
     // the code is verified the identity before it runs: nothing the title
     // executes changes with them.
+    // mods.* (STAGE FIX-2): the testing aids' availability (the menu section, the
+    // skip key). Nothing the title executes changes until a warp / skip is
+    // REQUESTED (a play-mode act, or NATIVEEE_MODS on a lane that says so in its
+    // run.meta mods= row); a leg with the knob on but unused is the baseline.
     return key.compare(0, 8, "harness.") == 0 || key.compare(0, 6, "paths.") == 0 || key.compare(0, 5, "diag.") == 0 ||
+           key.compare(0, 5, "mods.") == 0 ||
            key == "meta.profile" || key == "meta.source_fingerprint" || key == "save.restore_mode" ||
            key == "engine.mtvu_kick_drop" || key == "engine.mtvu_early_finish" || key == "engine.mtvu_wait_probe" || key == "engine.ee_yield_spin_gate" || key == "engine.ee_fast_dispatch" || key == "engine.cop0_count" || key == "engine.vu1_aot_corpus" || key == "engine.vu1_aot_codegen" || key == "engine.mtvu_depth_hold" || key == "video.capture_wait_ms" || key == "video.present_relax" || key == "video.hidpi" ||
            key == "engine.vu1_aot_compiler" || key == "engine.vu1_aot_sysroot" || key == "engine.vu1_aot_prelude" || key == "engine.vu1_aot_opt" ||
