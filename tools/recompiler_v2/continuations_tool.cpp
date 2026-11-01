@@ -318,11 +318,14 @@ bool Collect(const std::string& dir, const std::vector<std::string>& shards, con
             for (const auto& k : kinds) {
                 char num[16];
                 std::snprintf(num, sizeof num, "0x%x", k.first);
-                const std::string expected = std::string("{") +
-                    "ctx.cpuRegs.GPR.r[3].SD[0]=static_cast<int32_t>(" +
-                    "static_cast<int32_t>(ctx.cpuRegs.GPR.r[0].SL[0])+" + num + ");" +
-                    "runtime_syscall_dispatcher(ctx.cpuRegs.GPR.r[3].UL[0],ctx);" + "return;}";
-                if (normalized == expected) wait = k.second;
+                // The $zero read spelled as the register, or as the --zero-fold literal.
+                for (const char* zero : {"ctx.cpuRegs.GPR.r[0].SL[0]", "static_cast<int32_t>(0)"}) {
+                    const std::string expected = std::string("{") +
+                        "ctx.cpuRegs.GPR.r[3].SD[0]=static_cast<int32_t>(" +
+                        "static_cast<int32_t>(" + zero + ")+" + num + ");" +
+                        "runtime_syscall_dispatcher(ctx.cpuRegs.GPR.r[3].UL[0],ctx);" + "return;}";
+                    if (normalized == expected) wait = k.second;
+                }
             }
             records->push_back({address, std::vector<uint32_t>(entries.begin(), entries.end()), wait});
         }

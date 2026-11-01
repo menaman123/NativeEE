@@ -74,15 +74,17 @@ def collect(shards):
             normalized = re.sub(r"\s+", "", normalized)
             wait = 0
             for syscall, kind in ((0x32, 1), (0x44, 2), (0x56, 3)):
-                expected = (
-                    "{"
-                    "ctx.cpuRegs.GPR.r[3].SD[0]=static_cast<int32_t>("
-                    "static_cast<int32_t>(ctx.cpuRegs.GPR.r[0].SL[0])+"
-                    f"0x{syscall:x});"
-                    "runtime_syscall_dispatcher(ctx.cpuRegs.GPR.r[3].UL[0],ctx);"
-                    "return;}")
-                if normalized == expected:
-                    wait = kind
+                # The $zero read spelled as the register, or as the --zero-fold literal.
+                for zero in ("ctx.cpuRegs.GPR.r[0].SL[0]", "static_cast<int32_t>(0)"):
+                    expected = (
+                        "{"
+                        "ctx.cpuRegs.GPR.r[3].SD[0]=static_cast<int32_t>("
+                        f"static_cast<int32_t>({zero})+"
+                        f"0x{syscall:x});"
+                        "runtime_syscall_dispatcher(ctx.cpuRegs.GPR.r[3].UL[0],ctx);"
+                        "return;}")
+                    if normalized == expected:
+                        wait = kind
             records.append((address, sorted(entries), wait))
     records.sort()
     if len({r[0] for r in records}) != len(records):
