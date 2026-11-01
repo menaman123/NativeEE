@@ -311,18 +311,33 @@ int StreamReplayDriver::Run() {
         std::fprintf(stderr, "[GSSTREAM] %s\n", reader.Error().c_str());
         return 2;
     }
-    reader_thread_ = std::thread([this, &reader] { ReaderMain(&reader); });
     if (!CreateContext()) {
         std::fprintf(stderr, "[GSSTREAM] no %s device (SKIP)\n", opt_.metal ? "Metal" : "GL");
         return 77;
     }
     BuildScene();
     if (!opt_.quiet)
-        std::printf("[GSSTREAM] %s scale=%d api=%s renderer=%s\n", opt_.in_path, opt_.scale, api_name_.c_str(), renderer_name_.c_str());
+        std::printf("[GSSTREAM] %s scale=%d api=%s renderer=%s draw_mult=%u loop=%u\n", opt_.in_path, opt_.scale, api_name_.c_str(),
+                    renderer_name_.c_str(), opt_.draw_mult, opt_.loop);
     gs::GsStreamReader::Record rec;
     gs::VramOpLog ops;
     frame_t0_ = NowMs();
     if (const render::CallCensus* c = be_->Census()) census_at_frame_ = *c;
+    for (uint32_t pass = 0; pass < std::max<uint32_t>(1, opt_.loop); ++pass) {
+    if (pass > 0) {
+        // the next pass: the reader re-opened at the head (its VramInit record restores the image)
+        reader_thread_.join();
+        reader.Close();
+        if (!reader.Open(opt_.in_path)) break;
+        {
+            std::lock_guard<std::mutex> lk(q_mu_);
+            reader_done_ = false;
+            stop_reader_ = false;
+            q_.clear();
+        }
+        local_.clear();
+    }
+    reader_thread_ = std::thread([this, &reader] { ReaderMain(&reader); });
     while (PopRecord(&rec)) {
         switch (rec.kind) {
             case gs::GsStreamFormat::kVramInit:
@@ -341,9 +356,11 @@ int StreamReplayDriver::Run() {
                 // The bisection aid limits only the dumped frames (every earlier frame runs whole so the
                 // render-target / depth state the limited frame starts from is the real one).
                 if (!opt_.draw_limit || !DrawLimitApplies(static_cast<uint32_t>(frames_.size())) ||
-                    frame_draws_ < opt_.draw_limit)
+                    frame_draws_ < opt_.draw_limit) {
+                    for (uint32_t k = 1; k < opt_.draw_mult; ++k) consumer_->OnDrawOwned(gs::DrawIr(rec.draw));   // the stress multiplicity
                     consumer_->OnDrawOwned(std::move(rec.draw));   // the record is re-read next pop
-                ++frame_draws_;
+                }
+                frame_draws_ += std::max<uint32_t>(1, opt_.draw_mult);
                 break;
             case gs::GsStreamFormat::kJob:
                 if (rec.job.payload_incl && !rec.bytes.empty()) {
@@ -364,13 +381,14 @@ int StreamReplayDriver::Run() {
                 break;
         }
     }
+    }   // passes
 done:
     {
         std::lock_guard<std::mutex> lk(q_mu_);
         stop_reader_ = true;
     }
     q_cv_.notify_all();
-    reader_thread_.join();
+    if (reader_thread_.joinable()) reader_thread_.join();
     if (!reader_error_.empty()) std::fprintf(stderr, "[GSSTREAM] note: %s (tail kept)\n", reader_error_.c_str());
     // --deferred-grab: the last row's queued grab lands now.
     if (pending_row_ >= 0 && consumer_->FlushPendingGrab()) TakeGrab(&frames_[static_cast<size_t>(pending_row_)], static_cast<uint32_t>(pending_row_));

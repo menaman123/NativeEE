@@ -4,6 +4,7 @@
 # A composition root like app/host: it may link engine/*. Reads no environment.
 add_executable(gs_replay
     gs_replay.cpp
+    stream_census.cpp
     stream_replay_driver.cpp)
 target_include_directories(gs_replay PRIVATE ${CMAKE_SOURCE_DIR})
 target_compile_options(gs_replay PRIVATE -Wall -Wextra -Werror -O2)

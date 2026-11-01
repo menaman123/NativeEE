@@ -19,6 +19,7 @@
 #include <string>
 
 #include "tools/gs_replay/frame_range.h"
+#include "tools/gs_replay/stream_census.h"
 #include "tools/gs_replay/stream_replay_driver.h"
 
 using namespace ps2r;
@@ -32,8 +33,28 @@ int Usage() {
                  "                 [--csv f] [--json f] [--dump-ppm DIR] [--dump-frames a-b[:step]] [--no-grab] [--deferred-grab] [--phash]\n"
                  "                 [--quiet] [--sync-capture] [--swap] [--cd-barrier] [--backend gl|metal] [--metal-hw-depth] [--metal-commit-draws N] [--trace-draw N@F]\n"
                  "                 [--force-shader-blend] [--draw-limit N[@F]] [--no-coalesce] [--unified-blend|--no-unified-blend]\n"
-                 "                 (exit 77 = no GL / Metal device)\n");
+                 "                 [--draw-mult K] [--loop N]   (the STRESS lane: every draw delivered K times; the capture replayed N times)\n"
+                 "                 (exit 77 = no GL / Metal device)\n"
+                 "       gs_replay census <in.gsstream> [--csv f] [--full-frac F] [--frame-height H] [--top N] [--max-frames N] [--quiet]\n"
+                 "                 (the per-frame draw census of the capture: no GPU)\n");
     return 2;
+}
+
+int MainCensus(int argc, char** argv) {
+    if (argc < 3) return Usage();
+    tools::StreamCensusOptions opt;
+    opt.in_path = argv[2];
+    for (int i = 3; i < argc; i++) {
+        if (!std::strcmp(argv[i], "--csv") && i + 1 < argc) opt.csv_path = argv[++i];
+        else if (!std::strcmp(argv[i], "--full-frac") && i + 1 < argc) opt.full_frac = std::atof(argv[++i]);
+        else if (!std::strcmp(argv[i], "--frame-height") && i + 1 < argc) opt.frame_height = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 0));
+        else if (!std::strcmp(argv[i], "--top") && i + 1 < argc) opt.top = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 0));
+        else if (!std::strcmp(argv[i], "--max-frames") && i + 1 < argc) opt.max_frames = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 0));
+        else if (!std::strcmp(argv[i], "--quiet")) opt.quiet = true;
+        else return Usage();
+    }
+    tools::StreamCensus c(opt);
+    return c.Run();
 }
 
 // "a", "a-b" or "a-b:s" (every s-th frame from a).
@@ -73,6 +94,8 @@ int MainStream(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--no-unified-blend")) opt.unified_blend = 0;
         else if (!std::strcmp(argv[i], "--unified-blend")) opt.unified_blend = 1;
         else if (!std::strcmp(argv[i], "--metal-hw-depth")) opt.metal_hw_depth = true;
+        else if (!std::strcmp(argv[i], "--draw-mult") && i + 1 < argc) opt.draw_mult = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 0));
+        else if (!std::strcmp(argv[i], "--loop") && i + 1 < argc) opt.loop = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 0));
         else if (!std::strcmp(argv[i], "--trace-draw") && i + 1 < argc) {
             char* end = nullptr;
             opt.trace_draw = static_cast<uint32_t>(std::strtoul(argv[++i], &end, 0));
@@ -103,5 +126,6 @@ int main(int argc, char** argv) {
     if (argc < 3) return Usage();
     const std::string cmd = argv[1];
     if (cmd == "stream") return MainStream(argc, argv);
+    if (cmd == "census") return MainCensus(argc, argv);
     return Usage();
 }
