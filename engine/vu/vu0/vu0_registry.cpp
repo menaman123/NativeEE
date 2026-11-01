@@ -3,7 +3,19 @@
 
 #include <cstring>
 
-void Vu0Registry::AddEntry(const Descriptor& d) { entries_.push_back(d); }
+void Vu0Registry::AddEntry(const Descriptor& d) {
+    entries_.push_back(d);
+    // The rows cache Lookup's answer: a new entry (or a reallocation of entries_) invalidates it.
+    for (auto& rows : rows_)
+        if (rows)
+            for (uint32_t i = 0; i <= kRows; ++i) rows[i].descriptor_cached = false;
+}
+
+Vu0Registry::Row& Vu0Registry::RowFor(int vu_id, uint32_t pc) {
+    const int v = vu_id == 1 ? 1 : 0;
+    if (!rows_[v]) rows_[v].reset(new Row[kRows + 1]);
+    return rows_[v][pc < kRows ? pc : kRows];
+}
 
 void Vu0Registry::AddSubroutine(const Descriptor& d) { subroutines_.push_back(d); }
 
@@ -30,8 +42,13 @@ const char* Vu0Registry::KindName(Kind k) {
 
 Vu0Registry::Note Vu0Registry::NoteEntry(int vu_id, uint32_t pc, const uint8_t* micro, size_t micro_size) {
     Note n;
-    n.call_number = ++call_counts_[Key(vu_id, pc)];
-    n.descriptor = Lookup(vu_id, pc);
+    Row& row = RowFor(vu_id, pc);
+    n.call_number = ++row.count;
+    if (!row.descriptor_cached) {
+        row.descriptor = Lookup(vu_id, pc);
+        row.descriptor_cached = true;
+    }
+    n.descriptor = row.descriptor;
     if (micro != nullptr && static_cast<size_t>(pc) + 16 <= micro_size) {
         std::memcpy(&n.live_lo, micro + pc, 8);
         std::memcpy(&n.live_hi, micro + pc + 8, 8);
@@ -53,7 +70,9 @@ Vu0Registry::Note Vu0Registry::NoteEntry(int vu_id, uint32_t pc, const uint8_t* 
     // A declared fingerprint that the live bytes contradict is reported once
     // per (vu, pc), independently of the call marks.
     const Descriptor& d = *n.descriptor;
-    if ((d.fingerprint_lo | d.fingerprint_hi) != 0 && (n.live_lo != d.fingerprint_lo || n.live_hi != d.fingerprint_hi))
-        n.fingerprint_mismatch = fingerprint_warned_.insert(Key(vu_id, pc)).second;
+    if ((d.fingerprint_lo | d.fingerprint_hi) != 0 && (n.live_lo != d.fingerprint_lo || n.live_hi != d.fingerprint_hi)) {
+        n.fingerprint_mismatch = !row.fingerprint_warned;
+        row.fingerprint_warned = true;
+    }
     return n;
 }

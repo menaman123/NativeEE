@@ -14,8 +14,7 @@
 // title data lives here -- the table is handed in.
 #include <cstddef>
 #include <cstdint>
-#include <unordered_map>
-#include <unordered_set>
+#include <memory>
 #include <vector>
 
 class Vu0Registry {
@@ -67,10 +66,23 @@ public:
     static const char* KindName(Kind k);
 
 private:
-    static uint64_t Key(int vu_id, uint32_t pc) { return (static_cast<uint64_t>(vu_id) << 32) | pc; }
+    // The per-(vu, pc) census row. NoteEntry runs once per VCALLMS on the EE
+    // thread (hundreds per frame), so the rows are a flat table indexed by pc
+    // (micro memory is at most 16 KB; the pcs beyond it, which no unit can
+    // address, share one overflow row) with the descriptor lookup
+    // cached per row -- no hashing, no allocation after the first call
+    // (STAGE PERF-1, track ee: the unordered_map emplace + the linear Lookup
+    // were a third of the VU0 dispatch's EE-thread cost).
+    struct Row {
+        uint64_t count = 0;
+        const Descriptor* descriptor = nullptr;
+        bool descriptor_cached = false;
+        bool fingerprint_warned = false;
+    };
+    static constexpr uint32_t kRows = 1u << 14;   // 16 KB of micro memory, byte-addressed
+    Row& RowFor(int vu_id, uint32_t pc);
 
     std::vector<Descriptor> entries_;
     std::vector<Descriptor> subroutines_;
-    std::unordered_map<uint64_t, uint64_t> call_counts_;
-    std::unordered_set<uint64_t> fingerprint_warned_;
+    std::unique_ptr<Row[]> rows_[2];   // [vu_id]: kRows + 1 rows, allocated on first use
 };
