@@ -91,6 +91,18 @@ public:
     // emission change.
     void set_vu0_native(bool enabled) { m_vu0_native = enabled; }
 
+    // --mem-window (STAGE PERF-1, track ee): every generated body takes its
+    // context as `CpuContext& PS2R_RECOMP_RESTRICT ctx` (guest RAM never
+    // overlaps the register file, so a guest store cannot change a register)
+    // and opens with `const memory::Window _mw = memory::window();` -- the two
+    // inline memory bases read once per body; the shard post-pass
+    // (rewrite_memory_window_file) rewrites every memory::read/write/
+    // read_quad/write_quad site in the shard to the Window overload. Same
+    // arms, same order, same slow path: the bytes the game sees are the
+    // classic form's. Default OFF: no emission change.
+    void set_mem_window(bool enabled) { m_mem_window = enabled; }
+
+
     // [RECOMP-P3a] v2 emission mode (RECOMP_P0_DESIGN.md §6-§8). When enabled,
     // unpinned functions take the general emission path with the v2 deltas:
     // the body-time special-case chain is bypassed, jr sites emit ELF-read
@@ -140,6 +152,7 @@ private:
     bool m_legacy_title_stubs = false;
     bool m_yield_backedges = false;
     bool m_vu0_native = false;
+    bool m_mem_window = false;
     // The pc of the branch translate_control_flow is emitting (0 outside it):
     // emit_branch_target compares the target against it to recognise a back-edge.
     uint32_t m_branch_from_pc = 0;
@@ -178,6 +191,9 @@ private:
     // a table-entry T are rewritten; residuals are reported to stderr.
     // Returns rewritten-site count, -1 on I/O failure.
     int rewrite_manual_dispatch_file(const std::string& path);
+    // --mem-window: the shard text post-pass (see set_mem_window). Returns the
+    // number of rewritten sites, -1 on an I/O error.
+    int rewrite_memory_window_file(const std::string& path);
     // [W16R1][FIX-E1] Post-pass over the generated common TU: scan
     // initialize_recompiled_functions for explicit (non-default-form)
     // `recompiled_functions[0x...] = ` assignments -- the generator-known

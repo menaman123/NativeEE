@@ -190,9 +190,12 @@ std::vector<FunctionMatch> FindFunctions(const std::string& s) {
         if (!hl) continue;
         const std::string hex = s.substr(i, hl);
         i += hl;
+        // The classic signature, or the --mem-window form (the context parameter restrict-qualified).
         const std::string tail = "\nvoid " + name + "(CpuContext& ctx, uint32_t addr) {";
-        if (!StartsWith(s, i, tail.c_str())) continue;
-        i += tail.size();
+        const std::string tail_mw = "\nvoid " + name + "(CpuContext& PS2R_RECOMP_RESTRICT ctx, uint32_t addr) {";
+        if (StartsWith(s, i, tail.c_str())) i += tail.size();
+        else if (StartsWith(s, i, tail_mw.c_str())) i += tail_mw.size();
+        else continue;
         out.push_back({start, i, name, ParseHex(hex)});
         p = i;
     }
@@ -236,6 +239,10 @@ std::string StripPrologueTokens(const std::string& text) {
         // --vu0-native: the folded COP2 flag locals (inert initialisation).
         if (StartsWith(text, i, "VR_reg _vu0_fl{}; VR_reg _vu0_fo{}; (void)_vu0_fl; (void)_vu0_fo;")) {
             i += std::strlen("VR_reg _vu0_fl{}; VR_reg _vu0_fo{}; (void)_vu0_fl; (void)_vu0_fo;"); continue;
+        }
+        // --mem-window: the hoisted memory window (inert: two pointer reads).
+        if (StartsWith(text, i, "const memory::Window _mw = memory::window(); (void)_mw;")) {
+            i += std::strlen("const memory::Window _mw = memory::window(); (void)_mw;"); continue;
         }
         out.push_back(text[i]);
         ++i;

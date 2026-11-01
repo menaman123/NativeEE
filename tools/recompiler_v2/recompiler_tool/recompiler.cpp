@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <set>
 #include <cstring>   // [W16R1] post-pass tokenizer (strlen)
+#include <cctype>    // --mem-window post-pass (isalnum)
 #include <algorithm> // [U1-WIN] std::sort (hook-list post-pass; Apple libc++ got it transitively)
 #include <iterator>  // [W16R1] post-pass file slurp (istreambuf_iterator)
 
@@ -9275,6 +9276,8 @@ bool Recompiler::write_sharded_cpp_files(const std::string& output_cpp,
         // [W16R1][FIX-E2] rewrite the manual raw-string bodies' classic map
         // dispatch into dense-id recomp_call (exact-shape sites only).
         if (rewrite_manual_dispatch_file(shard_path.string()) < 0) return false;
+        // --mem-window: every memory:: access site in the shard -> the Window overload.
+        if (m_mem_window && rewrite_memory_window_file(shard_path.string()) < 0) return false;
         std::cout << "Successfully generated shard " << shard_path.filename().string()
                   << " (" << shard_funcs << " functions)" << std::endl;
     }
@@ -20098,9 +20101,18 @@ if (legacy_title_addr(func, 0x00202ef0)) {
 
 
     file << "// Function: " << func.name << " at 0x" << std::hex << func.base_address << "\n";
-    file << "void " << func.name << "(CpuContext& ctx, uint32_t addr) {\n";
+    if (m_mem_window) {
+        // --mem-window: the restrict-qualified context (a parameter qualifier, not part of
+        // the function type: the raw-body table and the declarations are unchanged) and the
+        // hoisted memory window the shard post-pass routes every access through.
+        file << "void " << func.name << "(CpuContext& PS2R_RECOMP_RESTRICT ctx, uint32_t addr) {\n";
+    } else {
+        file << "void " << func.name << "(CpuContext& ctx, uint32_t addr) {\n";
+    }
     file << "bool branch_taken;\n";
     file << "bool cond;\n";
+    // --mem-window: an inert prologue local (the continuations tools strip it like the others).
+    if (m_mem_window) file << "const memory::Window _mw = memory::window(); (void)_mw;\n";
     if (m_vu0_native) {
         // --vu0-native: the folded MAC/STATUS lane flags of the open FMAC run
         // (the last op's / the OR over the run); vu0n::Commit at the run's end.
@@ -26302,6 +26314,93 @@ int Recompiler::rewrite_manual_dispatch_file(const std::string& path) {
                   << " dispatch site(s) rewritten to recomp_call, " << residual
                   << " residual classic site(s)" << std::endl;
     }
+    return rewritten;
+}
+
+// ============================================================================
+// --mem-window shard post-pass (STAGE PERF-1, track ee). Every generated body
+// opens with `const memory::Window _mw = memory::window();`; this pass routes
+// every access site in the shard through the Window overload of the same
+// accessor:  memory::read<T>(A)        -> memory::read<T>(_mw, A)
+//            memory::write<T>(A, V)    -> memory::write<T>(_mw, A, V)
+//            memory::read_quad(A, Q)   -> memory::read_quad(_mw, A, Q)
+//            memory::write_quad(A, Q)  -> memory::write_quad(_mw, A, Q)
+// A textual pass over the emitted shard (the emitter's ~2300 access sites keep
+// their classic spelling, so --no-mem-window stays byte-identical to the
+// pre-flag output). A site the pass cannot shape (no `(` after the template
+// argument list) is left as is and counted; the classic overload still
+// compiles, so nothing silently breaks. Deterministic: a pure function of the
+// shard text.
+// ============================================================================
+int Recompiler::rewrite_memory_window_file(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in.is_open()) {
+        std::cerr << "[MEM-WINDOW] cannot open for rewrite: " << path << std::endl;
+        return -1;
+    }
+    std::string src((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    in.close();
+
+    static const char kNs[] = "memory::";
+    std::string out;
+    out.reserve(src.size() + src.size() / 16);
+    size_t pos = 0;
+    int rewritten = 0, residual = 0;
+    for (;;) {
+        const size_t hit = src.find(kNs, pos);
+        if (hit == std::string::npos) {
+            out.append(src, pos, std::string::npos);
+            break;
+        }
+        // The identifier after the namespace.
+        size_t p = hit + std::strlen(kNs);
+        size_t q = p;
+        while (q < src.size() && (std::isalnum(static_cast<unsigned char>(src[q])) || src[q] == '_')) ++q;
+        const std::string name = src.substr(p, q - p);
+        bool templated = false;
+        if (name == "read" || name == "write") templated = true;
+        else if (name != "read_quad" && name != "write_quad") {
+            // memory::get_pointer and anything else: untouched.
+            out.append(src, pos, q - pos);
+            pos = q;
+            continue;
+        }
+        size_t r = q;
+        bool ok = true;
+        if (templated) {
+            // `<T>` with no nested angle brackets (the emitter writes plain integer types).
+            if (r < src.size() && src[r] == '<') {
+                const size_t close = src.find('>', r);
+                if (close == std::string::npos) ok = false; else r = close + 1;
+            } else {
+                ok = false;
+            }
+        }
+        if (ok && !(r < src.size() && src[r] == '(')) ok = false;
+        if (!ok) {
+            out.append(src, pos, q - pos);
+            pos = q;
+            ++residual;
+            continue;
+        }
+        // Copy through the `(` and insert the window argument.
+        out.append(src, pos, (r + 1) - pos);
+        out += "_mw, ";
+        pos = r + 1;
+        ++rewritten;
+    }
+
+    if (rewritten > 0) {
+        std::ofstream outf(path, std::ios::binary | std::ios::trunc);
+        if (!outf.is_open()) {
+            std::cerr << "[MEM-WINDOW] cannot reopen for write: " << path << std::endl;
+            return -1;
+        }
+        outf << out;
+        outf.close();
+    }
+    std::cout << "[MEM-WINDOW] " << path << ": " << rewritten << " access site(s) -> Window overload, "
+              << residual << " left classic" << std::endl;
     return rewritten;
 }
 
