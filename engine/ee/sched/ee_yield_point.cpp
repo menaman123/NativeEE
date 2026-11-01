@@ -31,6 +31,9 @@ std::string EeYieldPoint::Census::Format() const {
            ":deferred_collects=" + std::to_string(deferred_collects) + ":idle_first=" + std::to_string(idle_first_tick) +
            "@tid" + std::to_string(idle_first_tid) + ":spin_trips=" + std::to_string(spin_trips) +
            ":sched_trips=" + std::to_string(sched_trips) + ":due_fields=" + std::to_string(due_fields) +
+           ":progress_trips=" + std::to_string(progress_trips) + ":progress_parks=" + std::to_string(progress_parks) +
+           ":irq_trips=" + std::to_string(irq_trips) + ":prompt_requests=" + std::to_string(prompt_requests) +
+           ":prompt_trips=" + std::to_string(prompt_trips) +
            ":budget_restores=" + std::to_string(budget_restores) + ":budget_absent=" + std::to_string(budget_absent) +
            ":restored_remaining=" + std::to_string(last_restored_remaining);
 }
@@ -47,6 +50,19 @@ void EeYieldPoint::Unbind() {
     bound_ = false;
     budget_ = kDefaultBudget;
     g_ee_backedge_budget = budget_;
+    gpr_at_trip_valid_ = false;
+    progress_run_ = 0;
+    prompt_pending_ = false;
+}
+
+void EeYieldPoint::RequestPromptTrip() {
+    if (!ProgressGate() || in_trip_) return;
+    EeRunToken& token = EeRunToken::Instance();
+    if (!token.CurrentThreadHoldsToken() || token.CurrentTid() < 0) return;
+    ++census_.prompt_requests;
+    if (prompt_pending_) return;
+    prompt_pending_ = true;
+    g_ee_backedge_budget = 1;   // the next back-edge trips
 }
 
 void EeYieldPoint::Trip(CpuContext& ctx) {
@@ -69,16 +85,47 @@ void EeYieldPoint::Trip(CpuContext& ctx) {
     }
     in_trip_ = true;
     ++census_.yields;
+    const bool prompt = prompt_pending_;
+    prompt_pending_ = false;
+    if (prompt) ++census_.prompt_trips;
     // E432: did this trip's thread pass a scheduling point since the previous trip?
     const uint64_t sched_gen = sched_gen_.load(std::memory_order_relaxed);
-    const bool spun = !deps_.spin_gate || sched_gen == sched_gen_at_trip_;
+    const bool scheduled = deps_.spin_gate && sched_gen != sched_gen_at_trip_;
     sched_gen_at_trip_ = sched_gen;
+    bool spun = !scheduled;
+    if (spun && deps_.spin_gate && deps_.progress_gate) {
+        // The progress gate (header). An interrupt already deliverable is taken with no
+        // field; a register file that moved since the previous trip is progress.
+        if (deps_.intc) deps_.intc->CollectDeferred();
+        const bool irq = (deps_.intc && deps_.intc->Pending()) || (deps_.dmac_pending && deps_.dmac_pending());
+        bool same = gpr_at_trip_valid_;
+        for (int i = 0; same && i < 31; ++i) same = gpr_at_trip_[i] == ctx.cpuRegs.GPR.r[i + 1].UD[0];
+        if (irq) {
+            ++census_.irq_trips;
+            spun = false;
+        } else if (!same) {
+            if (++progress_run_ > kProgressTripsMax) {
+                ++census_.progress_parks;   // a register-changing spin: park after the run
+                progress_run_ = 0;
+            } else {
+                ++census_.progress_trips;
+                spun = false;
+            }
+        }
+    }
+    if (deps_.progress_gate) {
+        for (int i = 0; i < 31; ++i) gpr_at_trip_[i] = ctx.cpuRegs.GPR.r[i + 1].UD[0];
+        gpr_at_trip_valid_ = true;
+        if (scheduled || spun) progress_run_ = 0;
+    }
     if (spun) {
         if (deps_.spin_gate) ++census_.spin_trips;
         RunField(ctx);
     } else {
-        ++census_.sched_trips;
+        if (scheduled) ++census_.sched_trips;
+        const uint64_t due_before = census_.due_fields;
         RunField(ctx, /*advance=*/false);
+        if (census_.due_fields != due_before) progress_run_ = 0;   // a wall field passed: the run restarts
     }
     if (token.AnyReadyBesides(tid)) ++census_.contended;
     // Cleared BEFORE the preemption point: the thread that runs next may trip on

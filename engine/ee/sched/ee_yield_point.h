@@ -84,6 +84,30 @@
 // point here: the boot spins on polling syscalls (iReferEventFlagStatus,
 // FlushCache) -- a kernel-call reload hung the cold boot (gs_draws 3, VBON 1).
 // Census trips / spin_trips / sched_trips / due_fields.
+//
+// The PROGRESS GATE (Deps::progress_gate, under the spin gate only) refines
+// "spun". The scheduling-point test cannot tell a spin from a long computation:
+// a movie picture's decode, a loader's byte loop or a checksum runs 2^18
+// back-edges many times over without blocking, and every one of those trips
+// parked the thread to the pacer's NEXT edge (up to 16.7 ms lost per ~1 ms of
+// work: the boot FMV at 36 pictures/s, its audio time-stretched 1.6x). Two tests
+// decide a trip, both the console's own behaviour:
+//   * an interrupt is already deliverable (an INTC cause pending, a DMAC INT1
+//     pending): it is taken NOW with no field -- a spinner waiting for the
+//     handler's side effect sees it a few instructions later, as on the console
+//     (counted irq_trips); the DMAC's raise asks for this trip at the next
+//     back-edge (RequestPromptTrip, counted prompt_trips) instead of 2^18 later;
+//   * the thread's register file (GPR 1..31) is byte-identical to what it was at
+//     the previous trip with no scheduling point between: nothing moved, a true
+//     spin -> the field passes as before. A register that changed -- a pointer,
+//     a counter, a loaded value -- is progress: the trip fires only the due wall
+//     fields (counted progress_trips). A spin that updates a register (a timeout
+//     count, a Count read) is classified progress and burns until a wall field
+//     is due; kProgressTripsMax consecutive progress trips with no field fired
+//     and no scheduling point fall back to the park (counted progress_parks), so
+//     a tight register-changing spin burns at most that many trips' worth.
+// Deterministic / freerun lanes: the spin gate is pinned off there, so every
+// trip is a field as before and no hash moves.
 #include <atomic>
 #include <cstdint>
 #include <functional>
@@ -128,6 +152,11 @@ public:
         std::function<bool()> inhibit;         // true = refuse this trip (boundary in flight ...)
         uint32_t budget = kDefaultBudget;      // back-edges per trip (0 = kDefaultBudget)
         bool spin_gate = false;                // E432 (header): a non-spin trip passes no field of its own
+        // The progress gate (header): under the spin gate, a trip whose register file moved since
+        // the previous trip, or that finds an interrupt deliverable, passes no field of its own.
+        bool progress_gate = false;
+        // A DMAC INT1 is pending (D_STAT CIS & CIM): Dmac::CheckInterrupt bound; optional.
+        std::function<bool()> dmac_pending;
         // E432: fire the wall fields the pacer has already noted, without a park
         // (BoundaryProtocol::FireDueFields); nothing when none is due. Optional.
         std::function<void()> fire_due_fields;
@@ -153,6 +182,11 @@ public:
         uint64_t spin_trips = 0;   // E432: trips that passed a field (spun: no scheduling point since the previous trip)
         uint64_t sched_trips = 0;  // E432: trips of scheduling code (no field of their own)
         uint64_t due_fields = 0;   // E432: sched trips that found a wall field due and fired it
+        uint64_t progress_trips = 0;   // progress gate: the register file moved since the previous trip (no field of its own)
+        uint64_t progress_parks = 0;   // progress gate: kProgressTripsMax progress trips without a field fired -> parked anyway
+        uint64_t irq_trips = 0;        // progress gate: an INTC / DMAC interrupt was deliverable -> taken, no field
+        uint64_t prompt_requests = 0;  // RequestPromptTrip calls (a device raise asked for the next back-edge)
+        uint64_t prompt_trips = 0;     // trips that arrived on a prompt request
         uint64_t budget_restores = 0;   // savestate restores that re-seated the back-edge budget (YLDP section)
         uint64_t budget_absent = 0;     // restores whose image carried no YLDP section (the budget kept the process's value)
         uint32_t last_restored_remaining = 0;   // the remaining back-edges the last restore seated
@@ -174,6 +208,13 @@ public:
     // One relaxed increment; the spin gate reads it at the trip.
     void NoteSchedulingPoint() { sched_gen_.fetch_add(1, std::memory_order_relaxed); }
     bool SpinGate() const { return bound_ && deps_.spin_gate; }
+    bool ProgressGate() const { return SpinGate() && deps_.progress_gate; }
+    // A device raised an interrupt a spinning holder may be waiting for (the DMAC's
+    // channel completion): the next back-edge trips (the budget is set to 1) and, under
+    // the progress gate, delivers it without a field. Holder thread only (the DMAC runs
+    // on the guest's own kick); a no-op when the progress gate is off. Counted.
+    void RequestPromptTrip();
+    static constexpr uint32_t kProgressTripsMax = 16;
     // The wall vblank landing on a RUNNING thread (a scheduling point of the
     // holder: the title's syscall entry). When `wall_field_due` holds and a
     // thread sleeps in WaitVblank, that thread is readied (no field passes
@@ -224,6 +265,13 @@ private:
     Census census_;
     std::atomic<uint64_t> sched_gen_{0};   // NoteSchedulingPoint count
     uint64_t sched_gen_at_trip_ = 0;       // ... as read by the previous trip (holder only)
+    // Progress gate state (holder only): the GPR 1..31 low words at the previous trip, whether
+    // that snapshot is valid, the run of progress trips since a field / scheduling point, and
+    // whether a prompt trip was requested since the previous trip.
+    uint64_t gpr_at_trip_[31] = {};
+    bool gpr_at_trip_valid_ = false;
+    uint32_t progress_run_ = 0;
+    bool prompt_pending_ = false;
     bool restore_staged_ = false;          // YLDP restore pending its seat (ApplyRestoredBudget)
     uint32_t restore_remaining_ = 0;
 };

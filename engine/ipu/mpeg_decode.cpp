@@ -105,6 +105,20 @@ bool MpegDecode::HasBits(const BitCursor& c, int count) {
 
 uint32_t MpegDecode::PeekBits(const BitCursor& c, int count) {
     if (count == 0 || !HasBits(c, count)) return 0;
+    // Fast path (the same bits the loop below assembles, MSB first): a 32-bit
+    // big-endian window at the cursor's byte, shifted past the bit offset. Needs
+    // the four window bytes inside the buffer and the field inside the window.
+    {
+        const uint32_t byte_pos = c.bit_pos / 8;
+        const uint32_t off = c.bit_pos % 8;
+        if (count <= 25 && static_cast<uint64_t>(byte_pos) + 4u <= static_cast<uint64_t>(c.size)) {
+            const uint32_t w = (static_cast<uint32_t>(c.data[byte_pos]) << 24) |
+                               (static_cast<uint32_t>(c.data[byte_pos + 1]) << 16) |
+                               (static_cast<uint32_t>(c.data[byte_pos + 2]) << 8) |
+                               static_cast<uint32_t>(c.data[byte_pos + 3]);
+            return (w << off) >> (32 - count);
+        }
+    }
     uint32_t result = 0;
     for (int i = 0; i < count; i++) {
         const uint32_t byte_pos = (c.bit_pos + static_cast<uint32_t>(i)) / 8;
@@ -284,29 +298,79 @@ bool MpegDecode::DecodeNonIntraBlock(BitCursor& c, int16_t block[kBlockCoeffs], 
 
 // ---------------------------------------------------------------------------
 // Separable float IDCT (the reference form of Annex A): rows then columns,
-// C(0) = 1/sqrt(2), each pass scaled by 1/2; result rounded and clamped.
+// C(0) = 1/sqrt(2), each pass scaled by 1/2; result rounded and clamped. The
+// basis is tabled and all-zero rows / columns are skipped: the same float
+// operations in the same order on every nonzero term, so the output is the
+// per-element form's bit for bit (the title's frames hash is the check).
 // ---------------------------------------------------------------------------
+namespace {
+
+// The basis cosf((2 * x + 1) * u * pi / 16) for x, u in 0..7 and C(0) = 1 / sqrt(2),
+// evaluated ONCE at run time through the same float expressions the per-element
+// form used (the indices pass through a volatile so the compiler cannot fold the
+// calls with its own cos: the values are the host libm's, bit for bit).
+struct IdctBasis {
+    float cos[8][8];
+    float c0;
+    IdctBasis() {
+        for (int x = 0; x < 8; x++) {
+            for (int u = 0; u < 8; u++) {
+                volatile int vx = x, vu = u;
+                const int xx = vx, uu = vu;
+                cos[x][u] = cosf((2.0f * xx + 1.0f) * uu * kPi / 16.0f);
+            }
+        }
+        volatile float two = 2.0f;
+        c0 = 1.0f / sqrtf(two);
+    }
+};
+
+const IdctBasis& Basis() {
+    static const IdctBasis basis;
+    return basis;
+}
+
+}  // namespace
+
 void MpegDecode::InverseDct(int16_t block[kBlockCoeffs]) {
+    const IdctBasis& b = Basis();
     float temp[kBlockCoeffs];
     float result[kBlockCoeffs];
 
+    // Rows. A row of zero coefficients sums to +0.0f exactly (every term is a
+    // signed zero added to +0.0f), so it is written as such without the products.
     for (int y = 0; y < 8; y++) {
+        const int16_t* row = block + y * 8;
+        bool any = false;
+        for (int u = 0; u < 8 && !any; u++) any = row[u] != 0;
+        if (!any) {
+            for (int x = 0; x < 8; x++) temp[y * 8 + x] = 0.0f;
+            continue;
+        }
         for (int x = 0; x < 8; x++) {
             float sum = 0;
             for (int u = 0; u < 8; u++) {
-                const float cu = (u == 0) ? (1.0f / sqrtf(2.0f)) : 1.0f;
-                sum += cu * block[y * 8 + u] * cosf((2.0f * x + 1.0f) * u * kPi / 16.0f);
+                const float cu = (u == 0) ? b.c0 : 1.0f;
+                sum += cu * row[u] * b.cos[x][u];
             }
             temp[y * 8 + x] = sum / 2.0f;
         }
     }
 
+    // Columns. A column of zeros (either sign) sums to a signed zero whose rounded
+    // integer is 0 either way, so it is written as 0 without the products.
     for (int x = 0; x < 8; x++) {
+        bool any = false;
+        for (int v = 0; v < 8 && !any; v++) any = temp[v * 8 + x] != 0.0f;
+        if (!any) {
+            for (int y = 0; y < 8; y++) result[y * 8 + x] = 0.0f;
+            continue;
+        }
         for (int y = 0; y < 8; y++) {
             float sum = 0;
             for (int v = 0; v < 8; v++) {
-                const float cv = (v == 0) ? (1.0f / sqrtf(2.0f)) : 1.0f;
-                sum += cv * temp[v * 8 + x] * cosf((2.0f * y + 1.0f) * v * kPi / 16.0f);
+                const float cv = (v == 0) ? b.c0 : 1.0f;
+                sum += cv * temp[v * 8 + x] * b.cos[y][v];
             }
             result[y * 8 + x] = sum / 2.0f;
         }
