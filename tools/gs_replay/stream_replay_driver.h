@@ -81,6 +81,8 @@ public:
         bool metal_hw_depth = false;       // --metal-hw-depth: the rasterizer's depth instead of the shader-written one
         bool metal_gpu_timing = false;   // --metal-gpu-timing: per-pass GPU timestamps (gpu_pass row)
         bool metal_plain_arms = false;   // --metal-plain-arms: the register program without its exact fast arms (A/B)
+        bool metal_shared_rt = false;    // --metal-shared-rt: attachments in Shared storage (A/B)
+        int metal_diag_fragment = 0;     // --metal-diag-frag N: measurement-only fragment arms (1 colour out, 2 texture only)
         uint32_t metal_commit_draws = 256; // --metal-commit-draws N: draws per command buffer (0 = one per frame)
         uint32_t trace_draw = 0xFFFFFFFFu; // --trace-draw N@F: print draw N (0-based) of frame F (registers + vertices) on stderr
         uint32_t trace_draw_frame = 0;

@@ -55,6 +55,7 @@ public:
         uint8_t fmt_case;        // target-read format case
         uint8_t ate, atst, aref, afail, zte, ztst, zmsk, date, colclamp, pabe, fba;
         uint32_t fbp, fbmsk, tbp, tpsm, cbp;
+        uint32_t zbp = 0;
         uint32_t verts;
         uint32_t rgba0;          // first vertex colour
         bool drew, sw_blend, route_rt_blend, needs_rt_copy, cd_copied, wrap_route, fbmsk16_exact;

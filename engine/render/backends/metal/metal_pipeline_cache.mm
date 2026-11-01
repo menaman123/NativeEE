@@ -103,6 +103,8 @@ void* MetalPipelineCache::Pipeline(MetalProgram program, bool color, bool depth,
                 b = ((spec >> bit) & 1u) != 0;
                 [cv setConstantValue:&b type:MTLDataTypeBool atIndex:static_cast<NSUInteger>(i)];
             }
+            int diag = static_cast<int>((spec >> 17) & 3u);
+            [cv setConstantValue:&diag type:MTLDataTypeInt atIndex:16];
             NSError* ferr = nil;
             ff = [lib newFunctionWithName:[NSString stringWithUTF8String:fs] constantValues:cv error:&ferr];
             [cv release];

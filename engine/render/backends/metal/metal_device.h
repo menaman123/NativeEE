@@ -52,6 +52,13 @@ struct MetalDeviceSettings {
     // The exact fast arms of the register program (kFstQ1 / kTexPow2*: divides folded where the IEEE result is
     // the same). Off = the plain program (the A/B oracle; output identical by construction).
     bool exact_arms = true;
+    // Attachments (renderable colour, Depth32f) in MTLStorageModePrivate: the GPU's lossless framebuffer
+    // compression applies and the tile loads / stores shrink; uploads into them go through the staging ring,
+    // readbacks through the blit (both already the GPU-busy paths). Off = every surface Shared (the A/B).
+    bool private_attachments = false;
+    // DIAGNOSTIC (measurement only; changes every pixel): 1 = the register program returns the vertex colour
+    // right away (the fill + per-draw floor); 2 = ... after the texture block only. 0 = the real program.
+    int diag_fragment = 0;
 };
 
 // One frame's (Present to Present) slice of the backend's work: the call census deltas and
@@ -100,6 +107,7 @@ struct MetalSurface {
     uint8_t levels = 0;           // authored mip levels
     uint8_t synth_levels = 0;     // synthesized tail levels
     uint8_t mip_levels_alloc = 0; // storage levels (0 = level 0 only)
+    bool priv = false;            // MTLStorageModePrivate (attachments): no replaceRegion / getBytes -- staging + blits
 };
 
 class MetalDevice : public Backend {

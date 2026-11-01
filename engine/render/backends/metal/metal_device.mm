@@ -674,7 +674,10 @@ SurfaceId MetalDevice::CreateSurface(const SurfaceDesc& desc) {
         MTLTextureDescriptor* d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:Format(desc.format)
                                                                                      width:desc.width height:desc.height
                                                                                  mipmapped:plain ? YES : NO];
-        d.storageMode = MTLStorageModeShared;
+        // Attachments live in Private storage (framebuffer compression; no CPU path needed: Upload stages,
+        // Readback blits); plain textures and the stencil format stay Shared (replaceRegion / getBytes).
+        s.priv = settings_.private_attachments && (desc.renderable || desc.format == SurfaceFormat::Depth32f);
+        d.storageMode = s.priv ? MTLStorageModePrivate : MTLStorageModeShared;
         MTLTextureUsage usage = MTLTextureUsageShaderRead;
         if (desc.renderable || desc.format == SurfaceFormat::Depth32f || desc.format == SurfaceFormat::DepthStencil24_8)
             usage |= MTLTextureUsageRenderTarget;
@@ -724,7 +727,15 @@ void MetalDevice::StagingUpload(MetalSurface& s, int level, const Rect& rect, co
     const size_t row = static_cast<size_t>(rect.w) * bpp;
     const size_t dst_row = (row + 255) & ~size_t(255);
     const size_t total = dst_row * static_cast<size_t>(rect.h);
-    if (total > kStagingRingBytes) return;
+    if (total > kStagingRingBytes) {
+        // Larger than the ring: row bands (each at most half the ring).
+        const int band = std::max<int>(1, static_cast<int>((kStagingRingBytes / 2) / dst_row));
+        for (int y = 0; y < rect.h; y += band) {
+            const Rect part{rect.x, rect.y + y, rect.w, std::min(band, rect.h - y)};
+            StagingUpload(s, level, part, static_cast<const uint8_t*>(bytes) + src_stride * static_cast<size_t>(y), src_stride, bpp);
+        }
+        return;
+    }
     if (staging_offset_ + total > kStagingRingBytes) {
         const uint64_t cur = cb_ ? serial_ : serial_ - 1;
         Commit(/*wait=*/false);
@@ -761,7 +772,7 @@ void MetalDevice::Upload(SurfaceId id, const Rect& rect, const void* bytes, size
     const size_t src_stride = stride ? stride : static_cast<size_t>(rect.w) * bpp;
     census_.uploads++;
     census_.upload_bytes += static_cast<uint64_t>(rect.w) * static_cast<uint64_t>(rect.h) * bpp;
-    if (GpuIdle(s->last_gpu_use)) {
+    if (!s->priv && GpuIdle(s->last_gpu_use)) {
         [Tex(s->tex) replaceRegion:MTLRegionMake2D(rect.x, rect.y, rect.w, rect.h)
                        mipmapLevel:0
                          withBytes:bytes
@@ -956,7 +967,9 @@ void MetalDevice::ReadTexture(MetalSurface& s, const Rect& rect, void* out, size
     const size_t row_bytes = static_cast<size_t>(rect.w) * bpp;
     // Colour: the blit encoder linearises the rows into a shared buffer on the GPU (a texture
     // getBytes de-twiddles on the CPU, ~1 ms per 512x448 frame); the queue is drained either way.
-    void* buf = depth ? nullptr : ReadbackBuffer(row_bytes * static_cast<size_t>(rect.h));
+    // A Private depth attachment has no getBytes: its floats go through the blit as well.
+    const bool blit_ok = !depth || (s.priv && s.desc.format == SurfaceFormat::Depth32f);
+    void* buf = blit_ok ? ReadbackBuffer(row_bytes * static_cast<size_t>(rect.h)) : nullptr;
     if (buf) {
         id<MTLBlitCommandEncoder> b = (id<MTLBlitCommandEncoder>)BlitEncoder();
         [b copyFromTexture:Tex(s.tex) sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(rect.x, rect.y, 0)

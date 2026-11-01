@@ -54,6 +54,8 @@ bool StreamReplayDriver::CreateContext() {
         ms.commit_draws = opt_.metal_commit_draws;
         ms.gpu_timing = opt_.metal_gpu_timing;
         ms.exact_arms = !opt_.metal_plain_arms;
+        ms.private_attachments = !opt_.metal_shared_rt;
+        ms.diag_fragment = opt_.metal_diag_fragment;
         metal_ = std::make_unique<render::MetalDevice>(ms);
         if (!metal_->Init([this] { PresentWindow(); })) return false;
         be_ = metal_.get();

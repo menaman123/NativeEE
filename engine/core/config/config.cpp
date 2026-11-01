@@ -321,6 +321,7 @@ const std::vector<Field>& Fields() {
         BOOL_FIELD("video.motion_blur", video.motion_blur),
         INT_FIELD("video.capture_wait_ms", video.capture_wait_ms),
         BOOL_FIELD("video.present_relax", video.present_relax),
+        BOOL_FIELD("video.metal_hw_depth", video.metal_hw_depth),
         ENUM_FIELD("video.frame_cap", video.frame_cap, kFrameCap),
         ENUM_FIELD("video.fullscreen", video.fullscreen, kFullscreen),
         BOOL_FIELD("video.interp", video.interp),

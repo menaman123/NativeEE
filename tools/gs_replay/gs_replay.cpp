@@ -75,6 +75,8 @@ int MainStream(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--metal-hw-depth")) opt.metal_hw_depth = true;
         else if (!std::strcmp(argv[i], "--metal-gpu-timing")) opt.metal_gpu_timing = true;
         else if (!std::strcmp(argv[i], "--metal-plain-arms")) opt.metal_plain_arms = true;
+        else if (!std::strcmp(argv[i], "--metal-shared-rt")) opt.metal_shared_rt = true;
+        else if (!std::strcmp(argv[i], "--metal-diag-frag") && i + 1 < argc) opt.metal_diag_fragment = std::atoi(argv[++i]);
         else if (!std::strcmp(argv[i], "--trace-draw") && i + 1 < argc) {
             char* end = nullptr;
             opt.trace_draw = static_cast<uint32_t>(std::strtoul(argv[++i], &end, 0));

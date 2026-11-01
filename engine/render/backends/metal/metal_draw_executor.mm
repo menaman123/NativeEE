@@ -623,6 +623,7 @@ MetalSpecKey MetalDrawExecutor::SpecKey() const {
         k.fst_q1 = u_.fst_q1 ? 1 : 0;
         k.tex_pow2 = static_cast<uint8_t>(u_.tex_pow2 & 3);
     }
+    k.diag = static_cast<uint8_t>(dev_.Settings().diag_fragment & 3);
     return k;
 }
 

@@ -241,6 +241,7 @@ ROWS = [
     ("video.frame_limit", "int", "60", "=", "-"),
     ("video.fullscreen", "enum(windowed|fullscreen|borderless)", "windowed", "=", "-"),
     ("video.interp", "bool", "on", "off", "PS2_GS_INTERP"),
+    ("video.metal_hw_depth", "bool", "off", "=", "-"),
     ("video.motion_blur", "bool", "on", "=", "-"),
     ("video.present_relax", "bool", "on", "off", "-"),
     ("video.render_rate", "enum(60|display)", "60", "=", "-"),

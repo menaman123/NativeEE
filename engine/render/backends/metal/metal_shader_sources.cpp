@@ -119,6 +119,7 @@ constant bool kScanmsk [[function_constant(12)]];
 constant bool kFstQ1 [[function_constant(13)]];        // q == 1.0 at every vertex: 1/q folded to 1.0
 constant bool kTexPow2X [[function_constant(14)]];     // tex_size_x a power of two: x / tex_size_x == x * tex_inv_x
 constant bool kTexPow2Y [[function_constant(15)]];
+constant int kDiag [[function_constant(16)]];          // measurement only: 1 = vertex colour out, 2 = texture block only
 
 struct FragOut {
     float4 color [[color(0)]];
@@ -187,6 +188,7 @@ fragment FragOut ps2_fragment(RasterData in [[stage_in]],
 
     float4 result;
     const float2 tex_size = float2(U.tex_size_x, U.tex_size_y);
+    if (kDiag == 1) { out.color = in.color; return out; }
 
     if (kUseTexture) {
         // UV-mode draws carry q = 1.0 at every vertex (an interpolated constant): 1/q is exactly 1.0.
@@ -363,6 +365,7 @@ fragment FragOut ps2_fragment(RasterData in [[stage_in]],
     }
 
     result = clamp(result, 0.0, 1.0);
+    if (kDiag == 2) { out.color = result; return out; }
 
     // --- PS2 fog (PRIM.FGE + FOGCOL) ---
     if (kFog) {

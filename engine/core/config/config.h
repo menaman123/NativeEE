@@ -140,6 +140,14 @@ struct VideoConfig {
     // Paris, no doubled frame added at 60 pictures/s). Host presentation only:
     // fingerprint-excluded; the deterministic profile pins off.
     bool         present_relax = true;
+    // The Metal arm's depth: off (default) = the fragment writes the window depth itself (the GL arm's
+    // gl_FragDepth form: the oracle); on = the rasterizer's depth (clip z = PS2 z / 2^32, w = 1) so the
+    // TBDR's hidden-surface removal / early depth rejection runs. Measured (PERF-1 gpu track, spawn
+    // capture at scale 4, quiet host): NO GPU gain (gpu_span p50 15.8 -> 15.75 ms) and +1.6 ms/frame of
+    // consumer CPU; the two interpolations differ by ULP ties (Paris hub 600 frames at scale 4: 55 frames
+    // differ in ONE pixel, max channel delta 12). Kept as the A/B knob; fingerprinted (it can change a
+    // pixel); the GL arm ignores it.
+    bool         metal_hw_depth = false;
     VideoBackend backend = VideoBackend::Auto;
     FitMode      fit_mode = FitMode::Fit;
     AspectSel    aspect = AspectSel::Auto;
