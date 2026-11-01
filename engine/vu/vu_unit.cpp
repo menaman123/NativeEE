@@ -49,9 +49,20 @@ void VuUnit::WriteDataMem(uint32_t addr, const uint8_t* src, size_t size) {
 }
 
 void VuUnit::WriteMicroMem(uint32_t addr, const uint8_t* src, size_t size) {
+    // STAGE PERF-1: an upload that changes no byte leaves the generation alone -- the generation is a
+    // cache key over the CONTENT (the block / cached tiers re-hash the 16 KB image at the next kick
+    // when it moved; the HLE memo re-looks the program up): identical bytes, identical image, nothing
+    // to invalidate. Sly 2 re-uploads its microprogram chunks every frame (60 MPG a Paris frame).
     const uint32_t mask = state_->mem_mask;
-    for (size_t i = 0; i < size; ++i) state_->micro[(addr + i) & mask] = src[i];
-    ++state_->micro_generation;
+    bool changed = false;
+    for (size_t i = 0; i < size; ++i) {
+        uint8_t& dst = state_->micro[(addr + i) & mask];
+        changed |= dst != src[i];
+        dst = src[i];
+    }
+    ++micro_writes_;
+    if (changed) ++state_->micro_generation;
+    else ++micro_writes_unchanged_;
 }
 
 void VuUnit::ReadDataMem(uint32_t addr, uint8_t* dst, size_t size) const {

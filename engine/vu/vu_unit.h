@@ -90,6 +90,9 @@ public:
     const XgKick* xgkick() const { return xgk_.get(); }
     uint64_t cycle() const { return flags_.cycle(); }
     uint64_t micro_generation() const { return state_->micro_generation; }
+    // Census: micro-memory uploads seen / of them byte-identical to what was there (no generation bump).
+    uint64_t micro_writes() const { return micro_writes_; }
+    uint64_t micro_writes_unchanged() const { return micro_writes_unchanged_; }
 
 private:
     int id_;
@@ -100,6 +103,8 @@ private:
     std::unique_ptr<VuTierDispatch> dispatch_;
     bool kick_drop_ = false;
     uint64_t dropped_kicks_ = 0;
+    uint64_t micro_writes_ = 0;
+    uint64_t micro_writes_unchanged_ = 0;
     uint16_t vif_top_ = 0;
     uint16_t vif_itop_ = 0;
 };
