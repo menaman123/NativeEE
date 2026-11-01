@@ -92,6 +92,7 @@ bool ScanoutComposer::GrabDisplayImpl(render::FenceId* fence, std::vector<uint8_
     last_grab_ = Source::None;
     last_grab_fbp_ = RenderTargetCache::kNoFbp;
     last_grab_fallback_ = false;
+    last_grab_step_ = 1;
     const RenderTarget* t = targets_.Find(scanout_fbp_);
     if (!(t && t->views.HasColor())) {
         if (grab_policy_ == GrabPolicy::LocalMemory && vram && GrabLocalMemory(*vram, out, w, h)) {
@@ -105,12 +106,37 @@ bool ScanoutComposer::GrabDisplayImpl(render::FenceId* fence, std::vector<uint8_
     if (!t) return false;
     const int pw = t->identity.PhysicalW(), ph = t->identity.PhysicalH();
     if (pw <= 0 || ph <= 0) return false;
+    const int s = t->identity.scale;
+    const render::Rect full{0, 0, pw, ph};
+    // The native grab: the texels FrameHasher::HashNativeScale samples from the physical rows -- column
+    // x*s, row ph - 1 - y*s = the LAST sub-row of each logical row (its rows run from the last physical
+    // row) -- straight from the GPU when the backend has the pass. Hash-identical; not the deposit's
+    // (x*s, y*s) rows: the offer is not made from it.
+    if (native_grab_ && s > 1 && pw % s == 0 && ph % s == 0) {
+        const int lw = pw / s, lh = ph / s;
+        bool ok = false;
+        if (fence) {
+            *fence = be_.BeginReadbackNearest(t->views.color, full, s, 0, s - 1);
+            ok = fence->id != 0;
+        } else {
+            out->assign(static_cast<size_t>(lw) * lh * 4, 0);
+            ok = be_.ReadbackNearest(t->views.color, full, s, out->data(), static_cast<size_t>(lw) * 4, 0, s - 1);
+        }
+        if (ok) {
+            *w = lw;
+            *h = lh;
+            last_grab_step_ = s;
+            last_grab_ = Source::Target;
+            last_grab_fbp_ = t->identity.fbp;
+            return true;
+        }
+    }
     if (fence) {
-        *fence = be_.BeginReadback(t->views.color, render::Rect{0, 0, pw, ph});
+        *fence = be_.BeginReadback(t->views.color, full);
         if (!fence->id) return false;
     } else {
         out->assign(static_cast<size_t>(pw) * ph * 4, 0);
-        be_.Readback(t->views.color, render::Rect{0, 0, pw, ph}, out->data(), static_cast<size_t>(pw) * 4);
+        be_.Readback(t->views.color, full, out->data(), static_cast<size_t>(pw) * 4);
     }
     *w = pw;
     *h = ph;

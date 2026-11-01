@@ -144,8 +144,8 @@ public:
     // The point-sampled reads (backend.h): a NearestColor / NearestDepth pass into a pooled logical-size
     // texture (Private), then the blit into the readback buffer. Rgba8 and Depth32f sources; a rect
     // not a multiple of `step` or another format returns false / a null fence (the caller's physical read).
-    bool ReadbackNearest(SurfaceId id, const Rect& rect, int step, void* out, size_t stride) override;
-    FenceId BeginReadbackNearest(SurfaceId id, const Rect& rect, int step) override;
+    bool ReadbackNearest(SurfaceId id, const Rect& rect, int step, void* out, size_t stride, int sub_x = 0, int sub_y = 0) override;
+    FenceId BeginReadbackNearest(SurfaceId id, const Rect& rect, int step, int sub_x = 0, int sub_y = 0) override;
     bool ReadbackReady(FenceId fence) override;
     bool PollReadback(FenceId fence, void* out, size_t stride) override;
     void Present(const ScanoutDesc& desc) override;
@@ -266,7 +266,7 @@ private:
     };
     PickTexture* AcquirePickTexture(uint32_t w, uint32_t h, bool depth_source);
     // Encodes the pick pass of `src` over `rect` at `step` into a pick texture; null when refused.
-    PickTexture* EncodeNearestPick(MetalSurface& src, const Rect& rect, int step);
+    PickTexture* EncodeNearestPick(MetalSurface& src, const Rect& rect, int step, int sub_x, int sub_y);
     std::vector<PickTexture> pick_pool_;
     void ReleaseSurface(MetalSurface& s);
     void DrawFullscreen(MetalProgram program, void* color_tex, const Rect& scissor, const void* uniforms, size_t uniform_bytes,

@@ -1083,8 +1083,9 @@ MetalDevice::PickTexture* MetalDevice::AcquirePickTexture(uint32_t w, uint32_t h
     return &pick_pool_.back();
 }
 
-MetalDevice::PickTexture* MetalDevice::EncodeNearestPick(MetalSurface& src, const Rect& rect, int step) {
+MetalDevice::PickTexture* MetalDevice::EncodeNearestPick(MetalSurface& src, const Rect& rect, int step, int sub_x, int sub_y) {
     if (step < 2 || rect.w <= 0 || rect.h <= 0 || rect.w % step || rect.h % step) return nullptr;
+    if (sub_x < 0 || sub_y < 0 || sub_x >= step || sub_y >= step) return nullptr;
     if (rect.x < 0 || rect.y < 0 || uint64_t(rect.x) + uint32_t(rect.w) > src.desc.width ||
         uint64_t(rect.y) + uint32_t(rect.h) > src.desc.height)
         return nullptr;
@@ -1096,8 +1097,8 @@ MetalDevice::PickTexture* MetalDevice::EncodeNearestPick(MetalSurface& src, cons
     void* ps = pipelines_.Pipeline(depth ? MetalProgram::NearestDepth : MetalProgram::NearestColor, true, false);
     if (!ps) return nullptr;
     MetalNearestUniforms u;
-    u.origin_x = rect.x;
-    u.origin_y = rect.y;
+    u.origin_x = rect.x + sub_x;
+    u.origin_y = rect.y + sub_y;
     u.step = step;
     EndEncoder();
     MaybeCommit();
@@ -1125,10 +1126,10 @@ MetalDevice::PickTexture* MetalDevice::EncodeNearestPick(MetalSurface& src, cons
     return pick;
 }
 
-bool MetalDevice::ReadbackNearest(SurfaceId sid, const Rect& rect, int step, void* out, size_t stride) {
+bool MetalDevice::ReadbackNearest(SurfaceId sid, const Rect& rect, int step, void* out, size_t stride, int sub_x, int sub_y) {
     MetalSurface* s = SurfaceMut(sid);
     if (!s || !s->tex || !out) return false;
-    PickTexture* pick = EncodeNearestPick(*s, rect, step);
+    PickTexture* pick = EncodeNearestPick(*s, rect, step, sub_x, sub_y);
     if (!pick) return false;
     const size_t bpp = 4;   // RGBA8 bytes or one float
     const size_t row_bytes = static_cast<size_t>(pick->w) * bpp;
@@ -1153,10 +1154,10 @@ bool MetalDevice::ReadbackNearest(SurfaceId sid, const Rect& rect, int step, voi
     return true;
 }
 
-FenceId MetalDevice::BeginReadbackNearest(SurfaceId sid, const Rect& rect, int step) {
+FenceId MetalDevice::BeginReadbackNearest(SurfaceId sid, const Rect& rect, int step, int sub_x, int sub_y) {
     MetalSurface* s = SurfaceMut(sid);
     if (!s || !s->tex || s->desc.format != SurfaceFormat::Rgba8) return FenceId{};
-    PickTexture* pick = EncodeNearestPick(*s, rect, step);
+    PickTexture* pick = EncodeNearestPick(*s, rect, step, sub_x, sub_y);
     if (!pick) return FenceId{};
     PendingReadback pr;
     pr.stride = static_cast<size_t>(pick->w) * 4;

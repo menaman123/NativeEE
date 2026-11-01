@@ -80,6 +80,7 @@ public:
         ScanoutComposer::Source source = ScanoutComposer::Source::None;   // what the grab read
         uint32_t source_fbp = 0xFFFFFFFFu;   // its base (target or DISPFB)
         bool source_fallback = false;        // the most-recently-drawn target stood in
+        int grab_step = 1;                  // the Target grab's sampling step (ScanoutComposer::LastGrabStep): 1 physical, s native
     };
 
     explicit DrawPipeline(const Deps& d);
@@ -284,6 +285,7 @@ private:
         ScanoutComposer::Source source = ScanoutComposer::Source::None;
         uint32_t source_fbp = kNoFbp;
         bool source_fallback = false;
+        int grab_step = 1;
     };
     PendingGrab pending_grab_;
     void ClearFrame(Frame* out);

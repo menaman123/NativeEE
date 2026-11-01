@@ -138,8 +138,10 @@ void DrawIrQueueConsumer::HashAndPublish(DrawPipeline::Frame* grab) {
     // The lane hash on the grab's thread: the same function the boundary
     // applies to the reference frame (HashNativeScale; 0 for no grab).
     grab->hashed = hash_scale_ > 0;
+    // A native grab (grab_step > 1) already holds one texel per logical pixel: the hash samples it at 1
+    // (the same texels and header the physical rows give at hash_scale_).
     grab->hash = grab->hashed && grab->grabbed
-                     ? verify::FrameHasher::HashNativeScale(grab->rgba.data(), grab->w, grab->h, hash_scale_)
+                     ? verify::FrameHasher::HashNativeScale(grab->rgba.data(), grab->w, grab->h, grab->grab_step > 1 ? 1 : hash_scale_)
                      : 0;
     std::lock_guard<std::mutex> lk(frame_mu_);
     std::swap(frame_, *grab);
@@ -224,6 +226,7 @@ DrawPipeline::Frame DrawIrQueueConsumer::LastFrameHeaderCopy() const {
     f.source_fallback = frame_.source_fallback;
     f.hash = frame_.hash;
     f.hashed = frame_.hashed;
+    f.grab_step = frame_.grab_step;
     return f;
 }
 
