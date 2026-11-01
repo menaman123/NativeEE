@@ -118,6 +118,28 @@ struct Vu1AotRegionPolicy {
     // Paris corpus bench: 4.62 vs 4.46 ns/bundle); it pays with regions of
     // several blocks (the loop's invariants clamped once per entry).
     bool entry_clamp = false;
+    // cluster_ops > 0 (STAGE PERF-1): ONE function per CFG CLUSTER instead of
+    // one region function per block. The TU's blocks are partitioned (BFS over
+    // fall-through and static branch targets, at most cluster_ops ops per
+    // cluster), every block is emitted ONCE as a label of its cluster's
+    // function, the function takes the entry block's pc and begins with a
+    // switch to its label; the exports table's per-block functions are
+    // thunks (a tail call into the cluster). Intra-cluster edges are gotos
+    // with the register file resident -- no store-back, no reload, no second
+    // prologue -- while the text stays the blocks=1 size (the region policy
+    // duplicated every successor into each function that reached it: 2.4-8x
+    // the text, slower in the game). block_cap / op_cap are ignored.
+    int cluster_ops = 0;
+    // clamp_mask (default on): the "known clamped" register mask persisted
+    // ACROSS block functions through Vu1State::vf_clamped. A block's exits
+    // store the mask (the entry mask for the registers the function never
+    // writes, the generator's proof for the ones it wrote: a full-mask
+    // clamped write = clamped), and a clamped read of a register the function
+    // has not written tests the entry mask before clamping (a clamp that
+    // changed nothing sets the register's bit for the blocks after). The
+    // main renderer's vertex blocks clamped their 10-20 matrix / constant
+    // inputs anew at every entry (~9 NEON ops each per vertex).
+    bool clamp_mask = true;
 };
 
 class Vu1AotBlockGen {
@@ -142,10 +164,21 @@ public:
     // chain names it; the TU declares every one before the bodies).
     static std::string EmitFunction(VuBlockProgram& prog, const VuBlock& head, const std::string& fn_name,
                                     const std::vector<uint32_t>& emitted, const Policy& policy = Policy{});
+    // Policy::cluster_ops: the partition of `emitted` into clusters (each a vector of block pcs, the
+    // head first; every emitted block in exactly one cluster), and one cluster's function text.
+    // `cluster_fn` maps every emitted block pc to its cluster function's name (the chains target it).
+    static std::vector<std::vector<uint32_t>> Clusters(VuBlockProgram& prog, const std::vector<uint32_t>& emitted,
+                                                       const Policy& policy);
+    static std::string EmitClusterFunction(VuBlockProgram& prog, const std::vector<uint32_t>& cluster, const std::string& fn_name,
+                                           const std::vector<uint32_t>& emitted,
+                                           const std::vector<std::pair<uint32_t, std::string>>& cluster_fn, const Policy& policy);
+    static std::string ClusterFunctionName(uint32_t head_pc);
     static std::string SlotName(uint32_t block_pc, int k);
     static std::string FunctionName(uint32_t block_pc);
     // The signature of a block function after its name (NativeFn's parameter list).
     static const char* Signature();
+    // A cluster function's signature: NativeFn's parameters plus the entry block's pc.
+    static const char* ClusterSignature();
 
 private:
     Vu1AotBlockGen(VuBlockProgram& prog, std::vector<const VuBlock*> blocks, const std::string& fn_name,
@@ -214,6 +247,12 @@ private:
     void ReloadAll();
     void Line(const std::string& s);
 
+    // Policy::cluster_ops: this function is a cluster (an entry switch; every edge to a block of
+    // another cluster chains into that cluster's function with the target pc).
+    bool cluster_ = false;
+    const std::vector<std::pair<uint32_t, std::string>>* cluster_fn_ = nullptr;  // pc -> cluster function (sorted by pc)
+    const std::string* ClusterFnOf(uint32_t pc) const;
+
     VuBlockProgram& prog_;
     std::vector<const VuBlock*> blocks_;  // the region, head first
     std::string fn_;
@@ -231,6 +270,11 @@ private:
     int clamped_reads_[32] = {};
     bool vfc_declared_[32] = {};
     bool entry_clamped_[32] = {};  // Policy::entry_clamp: vNc computed at entry, valid at every label
+    // Policy::clamp_mask: vf_known_[n] = the generator's proof that vN holds clamped bits at this
+    // point (path-sensitive, reset at labels); written_here_[n] = vN may have been written on some
+    // path to this point (reset to vf_written_ at labels).
+    bool vf_known_[32] = {};
+    bool written_here_[32] = {};
     bool acc_used_ = false;
     // The emission state (reset between the passes and at every label).
     bool vfc_valid_[32] = {};

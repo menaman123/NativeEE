@@ -341,6 +341,7 @@ void VuBlockTier::Run(VuUnit& unit, uint32_t pc, VuBlockProgram& prog, uint64_t 
     st.xtop_exit_requested = false;
     st.xgkick_has_fired = false;
     st.xgkick_count = 0;
+    st.vf_clamped = 0;  // nothing is known clamped at a kick (regs may have been written since)
 
     const uint64_t before = bundles_;
     Loop(unit, pc, prog, cycle_limit);
@@ -514,6 +515,7 @@ void VuBlockTier::Loop(VuUnit& unit, uint32_t pc, VuBlockProgram& prog, uint64_t
         bool t = false;
         uint32_t tg = 0;
         ++acc.blocks_run;
+        st.vf_clamped = 0;  // a modelled bundle
         if (RunOps<false>(unit, blk->ops.data(), 1, ds_pc, -1, t, tg, acc) < 1) {
             yield(ds_pc, false);
             return 2;
@@ -582,6 +584,7 @@ void VuBlockTier::Loop(VuUnit& unit, uint32_t pc, VuBlockProgram& prog, uint64_t
             const int done = n > kWarmupOps + kMinStaticOps - 1
                                  ? RunOps<true>(unit, ops, n, pc, blk->branch_idx, taken, target, acc)
                                  : RunOps<false>(unit, ops, n, pc, blk->branch_idx, taken, target, acc);
+            st.vf_clamped = 0;  // the modelled ops wrote registers the generated code did not see
             cycle_limit -= static_cast<uint64_t>(done);
             if (st.xtop_exit_requested) {
                 const int idx = done - 1;

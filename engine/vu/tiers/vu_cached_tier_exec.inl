@@ -38,6 +38,15 @@ inline uint32_t Le32(const uint8_t* p) {
 }
 inline void StoreLe32(uint8_t* p, uint32_t v) { std::memcpy(p, &v, sizeof(v)); }
 
+// Two registers bit for bit equal (the generated blocks' "a clamp that changed nothing" test).
+PS2R_FORCE_INLINE bool SameBits(const VR_reg& a, const VR_reg& b) {
+#if PS2R_VU_NEON
+    return vminvq_u32(vceqq_u32(vld1q_u32(a.I), vld1q_u32(b.I))) != 0;
+#else
+    return std::memcmp(a.I, b.I, sizeof(a.I)) == 0;
+#endif
+}
+
 // Quadword byte address of (vi + imm) with the unit's data mask.
 inline uint32_t QwAddr(uint16_t vi, int32_t imm, uint32_t mask) {
     return static_cast<uint32_t>((static_cast<int32_t>(vi) + imm) * 16) & mask;

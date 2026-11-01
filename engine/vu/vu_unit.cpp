@@ -70,6 +70,7 @@ void VuUnit::SetVifTop(uint16_t top, uint16_t itop) {
 
 void VuUnit::LoadCase(const Vu1Case& c) {
     std::memcpy(&state_->regs, &c.regs, sizeof(VUregs));
+    state_->vf_clamped = 0;
     std::memcpy(state_->micro, c.micro_mem, Vu1Case::kMicroSize);
     std::memcpy(state_->data, c.data_mem, Vu1Case::kDataSize);
     ++state_->micro_generation;
