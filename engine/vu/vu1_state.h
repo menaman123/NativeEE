@@ -41,6 +41,12 @@ struct Vu1State {
     uint32_t native_budget = 0;
     uint32_t native_exit_pc = 0;
     bool native_resume = false;
+    // STAGE PERF-1 (Vu1AotRegionPolicy::clamp_mask): bit n set = VF[n]'s raw bits equal their
+    // clamped form (VuFloat::ClampVec is the identity on them), as the generated code proved
+    // (a full-mask clamped write; a clamp that changed nothing) -- the next block's clamped
+    // reads of that register skip the clamp. Cleared by the block tier at every kick and
+    // wherever anything but the generated code writes the register file.
+    uint32_t vf_clamped = 0;
 
     // Bumped on every micro-memory store (VIF MPG, the EE window); the cached
     // tier and the HLE runtime compare it against their decoded image epoch.

@@ -190,7 +190,201 @@ std::string GenUpperName(const GenUpper& g) {
 
 std::string Vu1AotBlockGen::SlotName(uint32_t block_pc, int k) { return "S_" + Pc4(block_pc) + "_" + Dec(k); }
 std::string Vu1AotBlockGen::FunctionName(uint32_t block_pc) { return "Blk_" + Pc4(block_pc & VuBlockTier::kPcMask); }
+std::string Vu1AotBlockGen::ClusterFunctionName(uint32_t head_pc) { return "Cl_" + Pc4(head_pc & VuBlockTier::kPcMask); }
 const char* Vu1AotBlockGen::Signature() { return "(VuUnit& unit, VuInterpreterTier& g, bool& taken, uint32_t& target, int done)"; }
+// A cluster function has NativeFn's signature (the thunks and the chains tail-call it); the
+// entry block's pc arrives in Vu1State::native_exit_pc, which the dispatcher sets to the block it
+// calls and a chain sets to its target before the tail call.
+const char* Vu1AotBlockGen::ClusterSignature() { return Signature(); }
+
+const std::string* Vu1AotBlockGen::ClusterFnOf(uint32_t pc) const {
+    if (cluster_fn_ == nullptr) return nullptr;
+    pc &= VuBlockTier::kPcMask;
+    auto it = std::lower_bound(cluster_fn_->begin(), cluster_fn_->end(), pc,
+                               [](const std::pair<uint32_t, std::string>& e, uint32_t v) { return e.first < v; });
+    if (it == cluster_fn_->end() || it->first != pc) return nullptr;
+    return &it->second;
+}
+
+// The partition (Policy::cluster_ops). The CFG over the emitted blocks (the
+// fall-through and the static branch target; a NOP pair is the loop's, never in
+// a cluster) is condensed into its strongly connected components (Tarjan), so a
+// LOOP is never cut by the cap: a cluster is a seed component (the lowest
+// unassigned pc) grown breadth-first over successor components while the op cap
+// holds; a component larger than the cap is a cluster of its own, whole. Every
+// emitted block lands in exactly one cluster.
+std::vector<std::vector<uint32_t>> Vu1AotBlockGen::Clusters(VuBlockProgram& prog, const std::vector<uint32_t>& emitted,
+                                                            const Policy& policy, const Vu1AotBlockProfile* profile) {
+    std::vector<uint32_t> sorted(emitted);
+    for (uint32_t& pc : sorted) pc &= VuBlockTier::kPcMask;
+    std::sort(sorted.begin(), sorted.end());
+    const int n = static_cast<int>(sorted.size());
+    if (profile != nullptr) {
+        // PROFILE-GUIDED: the hottest taken edges first, union-find over the blocks, a merge only while the
+        // joined cluster holds within the op cap; a block no hot edge reaches stays a cluster of its own
+        // (= the blocks=1 shape for the cold code). A NOP pair is never in a cluster.
+        auto index_of = [&](uint32_t pc) -> int {
+            pc &= VuBlockTier::kPcMask;
+            auto it = std::lower_bound(sorted.begin(), sorted.end(), pc);
+            return (it != sorted.end() && *it == pc) ? static_cast<int>(it - sorted.begin()) : -1;
+        };
+        std::vector<int> parent(static_cast<size_t>(n)), ops(static_cast<size_t>(n));
+        std::vector<uint8_t> nop(static_cast<size_t>(n), 0);
+        for (int i = 0; i < n; ++i) {
+            parent[static_cast<size_t>(i)] = i;
+            const VuBlock* b = VuBlockTier::BuildBlock(prog, sorted[static_cast<size_t>(i)] >> 3);
+            ops[static_cast<size_t>(i)] = static_cast<int>(b->ops.size());
+            nop[static_cast<size_t>(i)] = (b->ops[0].flags & VuBlockOp::kNopPair) != 0;
+        }
+        auto find = [&](int x) {
+            while (parent[static_cast<size_t>(x)] != x) {
+                parent[static_cast<size_t>(x)] = parent[static_cast<size_t>(parent[static_cast<size_t>(x)])];
+                x = parent[static_cast<size_t>(x)];
+            }
+            return x;
+        };
+        std::vector<std::pair<uint64_t, std::pair<int, int>>> edges;
+        for (const auto& e : profile->edges) {
+            const int a = index_of(e.first.first), b = index_of(e.first.second);
+            if (a < 0 || b < 0 || a == b || nop[static_cast<size_t>(a)] || nop[static_cast<size_t>(b)]) continue;
+            edges.push_back({e.second, {a, b}});
+        }
+        // Hottest first; ties by the pcs (a deterministic text for a given corpus).
+        std::sort(edges.begin(), edges.end(), [](const auto& x, const auto& y) {
+            if (x.first != y.first) return x.first > y.first;
+            return x.second < y.second;
+        });
+        const int cap = policy.cluster_ops > 0 ? policy.cluster_ops : 1;
+        for (const auto& e : edges) {
+            const int ra = find(e.second.first), rb = find(e.second.second);
+            if (ra == rb) continue;
+            if (ops[static_cast<size_t>(ra)] + ops[static_cast<size_t>(rb)] > cap) continue;
+            parent[static_cast<size_t>(rb)] = ra;
+            ops[static_cast<size_t>(ra)] += ops[static_cast<size_t>(rb)];
+        }
+        std::map<int, std::vector<uint32_t>> groups;
+        for (int i = 0; i < n; ++i) {
+            if (nop[static_cast<size_t>(i)]) continue;
+            groups[find(i)].push_back(sorted[static_cast<size_t>(i)]);
+        }
+        std::vector<std::vector<uint32_t>> out;
+        for (auto& g : groups) {
+            std::sort(g.second.begin(), g.second.end());
+            out.push_back(std::move(g.second));
+        }
+        std::sort(out.begin(), out.end(), [](const auto& x, const auto& y) { return x.front() < y.front(); });
+        return out;
+    }
+    auto index_of = [&](uint32_t pc) -> int {
+        pc &= VuBlockTier::kPcMask;
+        auto it = std::lower_bound(sorted.begin(), sorted.end(), pc);
+        return (it != sorted.end() && *it == pc) ? static_cast<int>(it - sorted.begin()) : -1;
+    };
+    std::vector<const VuBlock*> blk(static_cast<size_t>(n));
+    std::vector<int> ops(static_cast<size_t>(n));
+    std::vector<uint8_t> nop(static_cast<size_t>(n));
+    std::vector<std::vector<int>> succ(static_cast<size_t>(n));
+    for (int i = 0; i < n; ++i) {
+        blk[static_cast<size_t>(i)] = VuBlockTier::BuildBlock(prog, sorted[static_cast<size_t>(i)] >> 3);
+        const VuBlock* b = blk[static_cast<size_t>(i)];
+        ops[static_cast<size_t>(i)] = static_cast<int>(b->ops.size());
+        nop[static_cast<size_t>(i)] = (b->ops[0].flags & VuBlockOp::kNopPair) != 0;
+        if (nop[static_cast<size_t>(i)] || b->e_bit) continue;
+        const uint32_t after_body = b->pc + 8u * static_cast<uint32_t>(b->n_body);
+        const uint32_t fall = b->has_ds ? after_body + 8u : after_body;
+        int j;
+        if (fall <= VuBlockTier::kPcMask && (j = index_of(fall)) >= 0 && !nop[static_cast<size_t>(j)]) succ[static_cast<size_t>(i)].push_back(j);
+        if (b->branch_idx >= 0 && b->static_target >= 0 && b->has_ds && (j = index_of(static_cast<uint32_t>(b->static_target))) >= 0 &&
+            !nop[static_cast<size_t>(j)])
+            succ[static_cast<size_t>(i)].push_back(j);
+    }
+    // Tarjan's SCC (iterative over the recursion stack of (node, next successor index)).
+    std::vector<int> index(static_cast<size_t>(n), -1), low(static_cast<size_t>(n), 0), comp(static_cast<size_t>(n), -1);
+    std::vector<uint8_t> on_stack(static_cast<size_t>(n), 0);
+    std::vector<int> stack;
+    int next_index = 0, n_comp = 0;
+    for (int root = 0; root < n; ++root) {
+        if (index[static_cast<size_t>(root)] >= 0 || nop[static_cast<size_t>(root)]) continue;
+        std::vector<std::pair<int, size_t>> call;
+        call.push_back({root, 0});
+        index[static_cast<size_t>(root)] = low[static_cast<size_t>(root)] = next_index++;
+        stack.push_back(root);
+        on_stack[static_cast<size_t>(root)] = 1;
+        while (!call.empty()) {
+            const int v = call.back().first;
+            size_t& k = call.back().second;
+            if (k < succ[static_cast<size_t>(v)].size()) {
+                const int w = succ[static_cast<size_t>(v)][k++];
+                if (index[static_cast<size_t>(w)] < 0) {
+                    index[static_cast<size_t>(w)] = low[static_cast<size_t>(w)] = next_index++;
+                    stack.push_back(w);
+                    on_stack[static_cast<size_t>(w)] = 1;
+                    call.push_back({w, 0});
+                } else if (on_stack[static_cast<size_t>(w)]) {
+                    low[static_cast<size_t>(v)] = std::min(low[static_cast<size_t>(v)], index[static_cast<size_t>(w)]);
+                }
+                continue;
+            }
+            if (low[static_cast<size_t>(v)] == index[static_cast<size_t>(v)]) {
+                for (;;) {
+                    const int w = stack.back();
+                    stack.pop_back();
+                    on_stack[static_cast<size_t>(w)] = 0;
+                    comp[static_cast<size_t>(w)] = n_comp;
+                    if (w == v) break;
+                }
+                ++n_comp;
+            }
+            call.pop_back();
+            if (!call.empty()) {
+                const int u = call.back().first;
+                low[static_cast<size_t>(u)] = std::min(low[static_cast<size_t>(u)], low[static_cast<size_t>(v)]);
+            }
+        }
+    }
+    // The components: their blocks (pc order), ops, successor components.
+    std::vector<std::vector<int>> comp_blocks(static_cast<size_t>(n_comp));
+    std::vector<int> comp_ops(static_cast<size_t>(n_comp), 0);
+    std::vector<std::vector<int>> comp_succ(static_cast<size_t>(n_comp));
+    for (int i = 0; i < n; ++i) {
+        if (nop[static_cast<size_t>(i)]) continue;
+        const int c = comp[static_cast<size_t>(i)];
+        comp_blocks[static_cast<size_t>(c)].push_back(i);
+        comp_ops[static_cast<size_t>(c)] += ops[static_cast<size_t>(i)];
+        for (int j : succ[static_cast<size_t>(i)]) {
+            const int d = comp[static_cast<size_t>(j)];
+            if (d != c) comp_succ[static_cast<size_t>(c)].push_back(d);
+        }
+    }
+    const int cap = policy.cluster_ops > 0 ? policy.cluster_ops : 1;
+    std::vector<uint8_t> comp_taken(static_cast<size_t>(n_comp), 0);
+    std::vector<std::vector<uint32_t>> out;
+    for (int i = 0; i < n; ++i) {  // seeds in pc order
+        if (nop[static_cast<size_t>(i)]) continue;
+        const int seed = comp[static_cast<size_t>(i)];
+        if (comp_taken[static_cast<size_t>(seed)]) continue;
+        std::vector<int> comps;
+        comps.push_back(seed);
+        comp_taken[static_cast<size_t>(seed)] = 1;
+        int total = comp_ops[static_cast<size_t>(seed)];
+        for (size_t q = 0; q < comps.size(); ++q) {
+            for (int d : comp_succ[static_cast<size_t>(comps[q])]) {
+                if (comp_taken[static_cast<size_t>(d)]) continue;
+                if (total + comp_ops[static_cast<size_t>(d)] > cap) continue;
+                comp_taken[static_cast<size_t>(d)] = 1;
+                total += comp_ops[static_cast<size_t>(d)];
+                comps.push_back(d);
+            }
+        }
+        std::vector<uint32_t> cl;
+        for (int c : comps)
+            for (int b : comp_blocks[static_cast<size_t>(c)]) cl.push_back(sorted[static_cast<size_t>(b)]);
+        // The head (the lowest pc) first; the rest in pc order (the labels' order is cosmetic).
+        std::sort(cl.begin(), cl.end());
+        out.push_back(std::move(cl));
+    }
+    return out;
+}
 
 std::vector<const VuBlock*> Vu1AotBlockGen::Region(VuBlockProgram& prog, const VuBlock& head, const std::vector<uint32_t>& emitted,
                                                    const Policy& policy) {
@@ -236,6 +430,10 @@ std::string Vu1AotBlockGen::EmitFunction(VuBlockProgram& prog, const VuBlock& he
     gen.EmitBody();  // pass 1: the sets
     gen.body_.clear();
     gen.indent_ = 1;
+    // Policy::entry_clamp: the registers read clamped and never written in the region.
+    for (int n = 1; n < 32; ++n) {
+        gen.entry_clamped_[n] = policy.entry_clamp && gen.clamped_reads_[n] > 0 && !gen.vf_written_[n] && gen.vfc_declared_[n];
+    }
     gen.ResetPassState();
     gen.analysing_ = false;
     gen.EmitBody();  // pass 2: the text
@@ -250,6 +448,39 @@ std::string Vu1AotBlockGen::EmitFunction(VuBlockProgram& prog, const VuBlock& he
     return o;
 }
 
+std::string Vu1AotBlockGen::EmitClusterFunction(VuBlockProgram& prog, const std::vector<uint32_t>& cluster, const std::string& fn_name,
+                                                const std::vector<uint32_t>& emitted,
+                                                const std::vector<std::pair<uint32_t, std::string>>& cluster_fn, const Policy& policy) {
+    std::vector<const VuBlock*> blocks;
+    for (uint32_t pc : cluster) blocks.push_back(VuBlockTier::BuildBlock(prog, (pc & VuBlockTier::kPcMask) >> 3));
+    Vu1AotBlockGen gen(prog, std::move(blocks), fn_name, emitted, policy);
+    gen.cluster_ = true;
+    gen.cluster_fn_ = &cluster_fn;
+    gen.analysing_ = true;
+    gen.EmitBody();  // pass 1: the sets
+    gen.body_.clear();
+    gen.indent_ = 1;
+    for (int n = 1; n < 32; ++n) {
+        gen.entry_clamped_[n] = policy.entry_clamp && gen.clamped_reads_[n] > 0 && !gen.vf_written_[n] && gen.vfc_declared_[n];
+    }
+    gen.ResetPassState();
+    gen.analysing_ = false;
+    gen.EmitBody();  // pass 2: the text
+    std::string o;
+    o += "// cluster of " + Pc4(cluster.front()) + ": " + Dec(static_cast<long long>(gen.blocks_.size())) + " block(s)";
+    for (const VuBlock* b : gen.blocks_) o += " " + Pc4(b->pc);
+    o += "\n";
+    o += "int " + fn_name + ClusterSignature() + " {\n";
+    o += gen.Prologue();
+    // The entry: the block the dispatcher (or a chain) named in st.native_exit_pc; every label is past the declarations.
+    o += "    switch (st.native_exit_pc) {\n";
+    for (const VuBlock* b : gen.blocks_) o += "        case " + Hex(b->pc) + "u: goto L_" + Pc4(b->pc) + ";\n";
+    o += "        default: goto L_" + Pc4(gen.blocks_.front()->pc) + ";\n    }\n";
+    o += gen.body_;
+    o += "}\n\n";
+    return o;
+}
+
 Vu1AotBlockGen::Vu1AotBlockGen(VuBlockProgram& prog, std::vector<const VuBlock*> blocks, const std::string& fn_name,
                                const std::vector<uint32_t>& emitted, const Policy& policy)
     : prog_(prog), blocks_(std::move(blocks)), fn_(fn_name), emitted_(emitted), policy_(policy) {
@@ -259,7 +490,9 @@ Vu1AotBlockGen::Vu1AotBlockGen(VuBlockProgram& prog, std::vector<const VuBlock*>
 
 void Vu1AotBlockGen::ResetPassState() {
     for (int n = 0; n < 32; ++n) {
-        vfc_valid_[n] = false;
+        vfc_valid_[n] = entry_clamped_[n];
+        vf_known_[n] = false;
+        written_here_[n] = false;
         for (int l = 0; l < 4; ++l) last_writer_[n][l] = -1;
     }
     acc_clean_ = false;
@@ -351,9 +584,65 @@ void Vu1AotBlockGen::Deliver(int ref) {
 }
 
 void Vu1AotBlockGen::Line(const std::string& s) {
+    // Policy::cycle_local: the statements that reach the pipeline's clock are
+    // bracketed by the two syncs (the text is the generator's own, so the
+    // match is on the callee names it emits).
+    const bool sync = policy_.cycle_local && TouchesClock(s);
+    if (sync) SyncClockIn();
     if (!s.empty() && s[0] == '}' && indent_ > 1) --indent_;
     body_ += std::string(static_cast<size_t>(indent_) * 4, ' ') + s + "\n";
     if (!s.empty() && s.back() == '{') ++indent_;
+    if (sync) SyncClockOut();
+}
+
+// The callees of a generated line that read or advance FlagPipeline::cycle():
+// the stall model's ApplySpec (reads + advances), every FlagPipeline entry
+// except the pure ring pushes / folds (PushMacRawAt takes the issue cycle,
+// FoldLazyRetired / FoldLazyBatch / CommitEagerRetired / PushMacAt / clip_latest
+// read no clock), the interpreter's GENERIC bodies (everything). XgKick::Arm /
+// Pace take the local by reference and need no sync. QueueFmac / QueueIalu
+// take the cycle by value.
+bool Vu1AotBlockGen::TouchesClock(const std::string& line) {
+    if (line.find("stalls.ApplySpec") != std::string::npos) return true;
+    if (line.find("g.Run") != std::string::npos) return true;
+    size_t p = 0;
+    while ((p = line.find("pipes.", p)) != std::string::npos) {
+        const std::string rest = line.substr(p + 6, 24);
+        const bool pure = rest.compare(0, 13, "PushMacRawAt(") == 0 || rest.compare(0, 16, "FoldLazyRetired(") == 0 ||
+                          rest.compare(0, 14, "FoldLazyBatch(") == 0 || rest.compare(0, 19, "CommitEagerRetired(") == 0 ||
+                          rest.compare(0, 10, "PushMacAt(") == 0 || rest.compare(0, 12, "clip_latest(") == 0 ||
+                          rest.compare(0, 6, "cycle(") == 0;
+        if (!pure) return true;
+        p += 6;
+    }
+    return false;
+}
+
+void Vu1AotBlockGen::SyncClockIn() { body_ += std::string(static_cast<size_t>(indent_) * 4, ' ') + "pipes.cycle() = cycle;\n"; }
+void Vu1AotBlockGen::SyncClockOut() { body_ += std::string(static_cast<size_t>(indent_) * 4, ' ') + "cycle = pipes.cycle();\n"; }
+
+void Vu1AotBlockGen::EmitStoreBack() {
+    if (!policy_.store_back_inline) {
+        Line("store_back();");
+        return;
+    }
+    for (int n = 1; n < 32; ++n) {
+        if (vf_written_[n]) Line("regs.VF[" + Dec(n) + "] = v" + Dec(n) + ";");
+    }
+    for (int n = 1; n < 16; ++n) {
+        if (vi_written_[n]) Line("regs.VI[" + Dec(n) + "] = i" + Dec(n) + ";");
+    }
+    if (acc_used_) Line("regs.ACC = acc;");
+    if (policy_.cycle_local) Line("pipes.cycle() = cycle;");
+    if (policy_.clamp_mask) {
+        uint32_t w = 0, k = 0;
+        for (int n = 1; n < 32; ++n) {
+            if (vf_written_[n]) w |= 1u << n;
+            if (vf_known_[n]) k |= 1u << n;
+        }
+        Line("st.vf_clamped = ((vfk | vfk_dyn) & " + Hex(~w) + "u) | " + Hex(k) + "u;  // known clamped after this block");
+    }
+    Line("st.native_resume = false;");
 }
 
 // ---- registers ------------------------------------------------------------
@@ -371,7 +660,20 @@ std::string Vu1AotBlockGen::VfC(int n) {
     if (analysing_) ++clamped_reads_[n];
     vfc_declared_[n] = true;
     if (!vfc_valid_[n]) {
-        Line("v" + Dec(n) + "c = VuFloat::ClampVec(" + Vf(n) + ");");
+        if (vf_known_[n]) {
+            Line("v" + Dec(n) + "c = v" + Dec(n) + ";  // known clamped (written clamped here)");
+        } else if (policy_.clamp_mask && !written_here_[n] && !analysing_) {
+            // The entry value: the persisted mask says whether it is clamped already; a clamp
+            // that changes nothing proves it for the blocks after (a register this function
+            // never writes keeps the proof past its exits).
+            Line("if (vfk & " + Hex(1u << n) + "u) v" + Dec(n) + "c = v" + Dec(n) + ";");
+            Line("else {");
+            Line("v" + Dec(n) + "c = VuFloat::ClampVec(v" + Dec(n) + ");");
+            if (!vf_written_[n]) Line("if (vu_cached_exec::SameBits(v" + Dec(n) + "c, v" + Dec(n) + ")) vfk_dyn |= " + Hex(1u << n) + "u;");
+            Line("}");
+        } else {
+            Line("v" + Dec(n) + "c = VuFloat::ClampVec(" + Vf(n) + ");");
+        }
         vfc_valid_[n] = true;
     }
     return "v" + Dec(n) + "c";
@@ -400,7 +702,10 @@ void Vu1AotBlockGen::WroteVf(int n, bool clamped_full, bool clamped_lanes) {
     if (n == 0) return;
     vf_touched_[n] = true;
     vf_written_[n] = true;
+    written_here_[n] = true;
     const bool clean = clamped_full || (clamped_lanes && vfc_valid_[n]);
+    // The persisted proof: a full clamped write, or clamped lanes over a register already proven.
+    vf_known_[n] = clamped_full || (clamped_lanes && vf_known_[n]);
     if (clean && vfc_declared_[n]) {
         Line("v" + Dec(n) + "c = v" + Dec(n) + ";");
         vfc_valid_[n] = true;
@@ -439,6 +744,7 @@ void Vu1AotBlockGen::SetVi(int n, const std::string& value_u32) {
 }
 
 void Vu1AotBlockGen::FlushAll() {
+    if (policy_.cycle_local) Line("pipes.cycle() = cycle;");
     for (int n = 1; n < 32; ++n) {
         if (vf_touched_[n]) Line("regs.VF[" + Dec(n) + "] = v" + Dec(n) + ";");
     }
@@ -459,13 +765,25 @@ void Vu1AotBlockGen::ReloadAll() {
         if (vi_touched_[n]) Line("i" + Dec(n) + " = regs.VI[" + Dec(n) + "];");
     }
     if (acc_used_) Line("acc = regs.ACC;");
+    if (policy_.cycle_local) Line("cycle = pipes.cycle();");
+    for (int n = 1; n < 32; ++n) {
+        if (entry_clamped_[n]) {
+            Line("v" + Dec(n) + "c = VuFloat::ClampVec(v" + Dec(n) + ");  // the interpreter may have written it");
+            vfc_valid_[n] = true;
+        }
+        vf_known_[n] = false;
+        written_here_[n] = true;  // the interpreter may have written any register
+    }
+    if (policy_.clamp_mask) Line("vfk = 0; vfk_dyn = 0;  // the interpreter's writes are not clamped by proof");
     acc_clean_ = false;
 }
 
 std::string Vu1AotBlockGen::Prologue() const {
     std::string o;
     o += "    Vu1State& st = unit.state();\n    VUregs& regs = st.regs;\n    FlagPipeline& pipes = unit.flags();\n"
-         "    StallModel& stalls = unit.stalls();\n    XgKick* const xgk = unit.xgkick();\n    uint64_t& cycle = pipes.cycle();\n"
+         "    StallModel& stalls = unit.stalls();\n    XgKick* const xgk = unit.xgkick();\n" +
+         std::string(policy_.cycle_local ? "    uint64_t cycle = pipes.cycle();  // the function's clock; synced to the pipeline around its readers and at the exits\n"
+                                         : "    uint64_t& cycle = pipes.cycle();\n") +
          "    uint8_t* const data = st.data;\n    const uint32_t mask = unit.mem_mask();\n"
          "    const uint32_t budget = st.native_budget;\n"
          "    taken = false;\n    bool t = false;\n    uint32_t tg = 0;\n"
@@ -473,17 +791,19 @@ std::string Vu1AotBlockGen::Prologue() const {
          "    uint64_t pace_due = (xgk != nullptr && xgk->armed()) ? xgk->next_due() : kNever;\n"
          "    (void)g; (void)stalls; (void)t; (void)tg; (void)target; (void)data; (void)mask; (void)budget;\n";
     if (MacAccumulates()) o += "    FlagPipeline::LazyAcc macc;\n    macc.Reset();\n";
+    if (policy_.clamp_mask) o += "    uint32_t vfk = st.vf_clamped;  // the registers known clamped at entry\n    uint32_t vfk_dyn = 0;  // ... and proven so here\n    (void)vfk; (void)vfk_dyn;\n";
     // The resident registers: loaded at entry (a dead load is the compiler's to drop).
     for (int n = 1; n < 32; ++n) {
         if (!vf_touched_[n]) continue;
         o += "    VR_reg v" + Dec(n) + " = regs.VF[" + Dec(n) + "];\n";
-        if (vfc_declared_[n]) o += "    VR_reg v" + Dec(n) + "c;\n    (void)v" + Dec(n) + "c;\n";
+        if (entry_clamped_[n]) o += "    VR_reg v" + Dec(n) + "c = VuFloat::ClampVec(v" + Dec(n) + ");  // read clamped, never written here\n";
+        else if (vfc_declared_[n]) o += "    VR_reg v" + Dec(n) + "c;\n    (void)v" + Dec(n) + "c;\n";
     }
     for (int n = 1; n < 16; ++n) {
         if (vi_touched_[n]) o += "    uint16_t i" + Dec(n) + " = regs.VI[" + Dec(n) + "];\n";
     }
     if (acc_used_) o += "    VR_reg acc = regs.ACC;\n";
-    o += StoreBack();
+    if (!policy_.store_back_inline) o += StoreBack();
     return o;
 }
 
@@ -496,6 +816,8 @@ std::string Vu1AotBlockGen::StoreBack() const {
         if (vi_written_[n]) o += "        regs.VI[" + Dec(n) + "] = i" + Dec(n) + ";\n";
     }
     if (acc_used_) o += "        regs.ACC = acc;\n";
+    if (policy_.cycle_local) o += "        pipes.cycle() = cycle;\n";
+    if (policy_.clamp_mask) o += "        st.vf_clamped = 0;\n";  // the lambda form carries no proof
     o += "        st.native_resume = false;\n    };\n";
     return o;
 }
@@ -513,7 +835,9 @@ void Vu1AotBlockGen::EmitBlock(int bi) {
     const VuBlock& blk = *blocks_[static_cast<size_t>(bi)];
     cur_ = bi;
     for (int n = 0; n < 32; ++n) {
-        vfc_valid_[n] = false;
+        vfc_valid_[n] = entry_clamped_[n];  // a label drops the caches except the entry-clamped (never written) views
+        vf_known_[n] = false;               // ... and the proofs (a label may be reached from any path)
+        written_here_[n] = vf_written_[n];  // possibly written on some path to this label
         for (int l = 0; l < 4; ++l) last_writer_[n][l] = -1;
     }
     acc_clean_ = false;
@@ -529,7 +853,7 @@ void Vu1AotBlockGen::EmitBlock(int bi) {
     // runs it, cut or whole, from its head). The head is exempt at the function
     // entry (done == 0: the loop checked it) and checked when a back edge
     // returns to it.
-    Line(std::string(bi == 0 ? "if (PS2R_UNLIKELY(done != 0 && " : "if (PS2R_UNLIKELY(") + "static_cast<uint32_t>(done) + " + Dec(n) + "u > budget)) {");
+    Line(std::string((bi == 0 || cluster_) ? "if (PS2R_UNLIKELY(done != 0 && " : "if (PS2R_UNLIKELY(") + "static_cast<uint32_t>(done) + " + Dec(n) + "u > budget)) {");
     EmitExitHead(bi);
     Line("}");
     Line("t = false;");
@@ -587,8 +911,17 @@ void Vu1AotBlockGen::EmitOp(int bi, int i, uint32_t pc) {
     Line("++cycle;");
     EmitStall(i, op, s);
     Line("if (PS2R_UNLIKELY(cycle >= pace_due)) {");
-    Line("xgk->Pace(st.data, cycle);");
-    Line("pace_due = xgk->armed() ? xgk->next_due() : kNever;");
+    // The out-of-line XgKick entries take the clock by reference: a copy goes
+    // (Policy::cycle_local), so the local's address never escapes and the
+    // compiler keeps it in a register across the 30+ call sites of a block.
+    if (policy_.cycle_local) {
+        Line("const Vu1AotClockResult pr = Vu1AotXgkPace(xgk, st.data, cycle);  // cold: preserve_all under clang");
+        Line("cycle = pr.cycle;");
+        Line("pace_due = pr.pace_due;");
+    } else {
+        Line("xgk->Pace(st.data, cycle);");
+        Line("pace_due = xgk->armed() ? xgk->next_due() : kNever;");
+    }
     Line("}");
     // The ring's observers: the STATUS / MAC readers (RetireMacStatus) and the
     // GENERIC words (the interpreter's own pushes) see every earlier result.
@@ -715,7 +1048,7 @@ void Vu1AotBlockGen::EmitStall(int i, const VuBlockOp& op, const VuDecodedSlot& 
 void Vu1AotBlockGen::EmitExitEnd(int last) {
     const VuBlock& blk = *blocks_[static_cast<size_t>(cur_)];
     EmitMaterialize(last - VuBlockTier::kRingWindow + 1, last);
-    Line("store_back();");
+    EmitStoreBack();
     Line("st.native_exit_pc = " + Hex(blk.pc) + "u;");
     Line("st.cur_bundle_pc = " + Hex((blk.pc + 8u * static_cast<uint32_t>(last)) & VuBlockTier::kPcMask) + "u;");
     Line("taken = t;");
@@ -727,7 +1060,7 @@ void Vu1AotBlockGen::EmitExitEnd(int last) {
 // (the incoming edge materialised its writes already); the loop resumes there.
 void Vu1AotBlockGen::EmitExitHead(int bi) {
     const VuBlock& blk = *blocks_[static_cast<size_t>(bi)];
-    Line("store_back();");
+    EmitStoreBack();
     Line("st.native_resume = true;");
     Line("st.native_exit_pc = " + Hex(blk.pc) + "u;");
     Line("return done;");
@@ -754,8 +1087,13 @@ bool Vu1AotBlockGen::EmitChain(uint32_t pc, int last) {
     if (!Chainable(pc)) return false;
     pc &= VuBlockTier::kPcMask;
     EmitMaterialize(last - VuBlockTier::kRingWindow + 1, last);
-    Line("store_back();");
-    Line("VU1_AOT_MUSTTAIL return " + FunctionName(pc) + "(unit, g, taken, target, done);  // chain");
+    EmitStoreBack();
+    if (const std::string* cl = ClusterFnOf(pc)) {
+        Line("st.native_exit_pc = " + Hex(pc) + "u;");
+        Line("VU1_AOT_MUSTTAIL return " + *cl + "(unit, g, taken, target, done);  // chain into the cluster");
+    } else {
+        Line("VU1_AOT_MUSTTAIL return " + FunctionName(pc) + "(unit, g, taken, target, done);  // chain");
+    }
     return true;
 }
 
@@ -1184,7 +1522,13 @@ void Vu1AotBlockGen::EmitLower(const VuBlockOp& op, const VuDecodedSlot& s, uint
         case VUK_L_XITOP: SetVi(vit, "unit.vif_itop()"); return;
         case VUK_L_XGKICK:  // VU1 only
             Line("if (xgk != nullptr) {");
-            Line("xgk->Arm(data, " + Vi(vis) + ", cycle);");
+            if (policy_.cycle_local) {
+                Line("const Vu1AotClockResult ar = Vu1AotXgkArm(xgk, data, " + Vi(vis) + ", cycle);  // cold: preserve_all under clang");
+                Line("cycle = ar.cycle;");
+                Line("pace_due = ar.pace_due;");
+            } else {
+                Line("xgk->Arm(data, " + Vi(vis) + ", cycle);");
+            }
             Line("++st.xgkick_count;");
             Line("st.xgkick_has_fired = true;");
             Line("st.xtop_read_count = 0;");

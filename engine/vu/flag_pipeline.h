@@ -99,9 +99,20 @@ public:
     // FoldLazyRetired on each in issue order: the sticky fold is an OR (any
     // order), the last-retired word is the newest. Batch resets the
     // accumulator.
+    // The caller-owned (register-resident) fold of a block's MAC results
+    // (Vu1AotRegionPolicy::mac_acc). STAGE PERF-1 representation: the Z / S /
+    // U / O lane judgements are NOT formed per result; the accumulators are
+    // the OR of the raw bits (S = the sign of the OR), the unsigned MAX of
+    // |bits| (O = max >= 0x7F800000: an exponent of all ones), the unsigned
+    // MIN of |bits| (Z = min < 0x00800000: a zero exponent) and the unsigned
+    // MIN of |bits| - 1 (U = min < 0x007FFFFF: 1 <= |bits| <= 0x007FFFFF, a
+    // denormal); a lane the dest mask does not select contributes 0 to the OR
+    // / MAX and all-ones to the MINs. Six NEON ops per full-mask result (the
+    // per-result judgement was ~12 with four compares), the same four lane
+    // sets at FoldLazyBatch (where they become the ring's z/s/u/o masks).
     struct LazyAcc {
 #if defined(PS2R_VU_NEON) && PS2R_VU_NEON
-        uint32x4_t z, s, u, o;
+        uint32x4_t s_or, abs_max, abs_min, absm1_min;
 #else
         uint16_t or_mac;
 #endif
@@ -157,7 +168,18 @@ public:
 private:
     void ApplyMacToStatus(VUregs& regs, uint16_t mac);
     void AccumulateLazyEntry(const PendingMac& e);
-    void LazyRingOverflow();
+    // The ring's rare overflow (a ninth undelivered result): cold for the
+    // generated blocks' sake -- under clang the callee saves every register it
+    // touches, so the 30+ call sites of a block keep their file in registers.
+#if defined(__clang__)
+#if __has_attribute(preserve_all)
+#define PS2R_VU_COLD_CALL __attribute__((preserve_all, noinline))
+#endif
+#endif
+#if !defined(PS2R_VU_COLD_CALL)
+#define PS2R_VU_COLD_CALL
+#endif
+    PS2R_VU_COLD_CALL void LazyRingOverflow();
 
     // Hot state first, phased to the host cache line (StallModel::kLineBytes):
     // the clock and the ring counters share one line, the MAC ring (8 x 32 B)
@@ -171,7 +193,11 @@ private:
     bool lazy_;
     alignas(128) PendingMac mac_pending_[kRingDepth] = {};
     alignas(128) PendingClip clip_pending_[kRingDepth] = {};
-    alignas(16) uint32_t lazy_acc_[4][4] = {};  // [Z,S,U,O][lane] all-ones where seen (SIMD fold)
+    // The SIMD fold's accumulators, LazyAcc's representation (STAGE PERF-1): [0] the OR of the raw bits,
+    // [1] the unsigned MAX of |bits|, [2] the unsigned MIN of |bits|, [3] the unsigned MIN of |bits|-1,
+    // per lane; an unselected lane contributes 0 / 0 / ~0 / ~0. ResetLazyAcc sets the neutral values.
+    alignas(16) uint32_t lazy_acc_[4][4] = {{0, 0, 0, 0}, {0, 0, 0, 0}, {~0u, ~0u, ~0u, ~0u}, {~0u, ~0u, ~0u, ~0u}};
+    void ResetLazyAcc();
     uint16_t lazy_or_mac_ = 0;                  // OR of packed words (scalar fold)
     uint32_t lazy_last_bits_[4] = {};
     uint8_t lazy_last_mask_ = 0;

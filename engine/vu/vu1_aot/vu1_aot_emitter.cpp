@@ -102,7 +102,8 @@ std::string Vu1AotEmitter::EmitBlock(VuBlockProgram& prog, const VuBlock& blk, c
 }
 
 std::string Vu1AotEmitter::PolicyName(const Vu1AotBlockGen::Policy& p) {
-    return "blocks=" + Dec(p.block_cap) + ":ops=" + Dec(p.op_cap) + ":taken=" + (p.taken_targets ? "1" : "0") + ":chain=" + (p.chain ? "1" : "0") + ":mac_acc=" + (p.mac_acc ? "1" : "0");
+    return "blocks=" + Dec(p.block_cap) + ":ops=" + Dec(p.op_cap) + ":taken=" + (p.taken_targets ? "1" : "0") + ":chain=" + (p.chain ? "1" : "0") + ":mac_acc=" + (p.mac_acc ? "1" : "0") +
+           ":sb_inline=" + (p.store_back_inline ? "1" : "0") + ":cycle_local=" + (p.cycle_local ? "1" : "0") + ":entry_clamp=" + (p.entry_clamp ? "1" : "0") + ":cluster_ops=" + Dec(p.cluster_ops) + ":clamp_mask=" + (p.clamp_mask ? "1" : "0");
 }
 
 std::string Vu1AotEmitter::EmitBlockSlots(const VuBlock& blk) {
@@ -173,13 +174,44 @@ Vu1AotEmitter::Output Vu1AotEmitter::Emit(VuBlockProgram& prog, const std::vecto
     for (uint32_t pc : emitted) o += "int " + Vu1AotBlockGen::FunctionName(pc) + Vu1AotBlockGen::Signature() + ";\n";
     o += "\n";
     std::vector<std::string> names;
-    for (uint32_t pc : block_pcs) {
-        const VuBlock* blk = VuBlockTier::BuildBlock(prog, (pc & VuBlockTier::kPcMask) >> 3);
-        const std::string fn = Vu1AotBlockGen::FunctionName(blk->pc);
-        o += EmitBlock(prog, *blk, fn, emitted, opt.region);
-        names.push_back(fn);
-        ++out.blocks;
-        out.ops += blk->ops.size();
+    if (opt.region.cluster_ops > 0) {
+        // Policy::cluster_ops: one function per cluster, every block once as a label; the
+        // per-block functions of the exports table are thunks into their cluster.
+        const std::vector<std::vector<uint32_t>> clusters = Vu1AotBlockGen::Clusters(prog, emitted, opt.region, opt.profile);
+        std::vector<std::pair<uint32_t, std::string>> cluster_fn;
+        for (const auto& cl : clusters) {
+            const std::string fn = Vu1AotBlockGen::ClusterFunctionName(cl.front());
+            for (uint32_t pc : cl) cluster_fn.push_back({pc & VuBlockTier::kPcMask, fn});
+        }
+        std::sort(cluster_fn.begin(), cluster_fn.end());
+        for (const auto& cl : clusters) o += "int " + Vu1AotBlockGen::ClusterFunctionName(cl.front()) + Vu1AotBlockGen::ClusterSignature() + ";\n";
+        o += "\n";
+        for (const auto& cl : clusters) o += Vu1AotBlockGen::EmitClusterFunction(prog, cl, Vu1AotBlockGen::ClusterFunctionName(cl.front()), emitted, cluster_fn, opt.region);
+        // The exports table names the cluster function for every block of a cluster (the dispatcher
+        // sets st.native_exit_pc to the block it calls: the cluster's entry switch reads it); a block
+        // no cluster took (a NOP pair) keeps its own region function.
+        for (uint32_t pc : block_pcs) {
+            const VuBlock* blk = VuBlockTier::BuildBlock(prog, (pc & VuBlockTier::kPcMask) >> 3);
+            std::string cl;
+            for (const auto& e : cluster_fn) if (e.first == (blk->pc & VuBlockTier::kPcMask)) cl = e.second;
+            if (cl.empty()) {
+                cl = Vu1AotBlockGen::FunctionName(blk->pc);
+                o += EmitBlock(prog, *blk, cl, emitted, opt.region);
+            }
+            names.push_back(cl);
+            ++out.blocks;
+            out.ops += blk->ops.size();
+        }
+        o += "\n";
+    } else {
+        for (uint32_t pc : block_pcs) {
+            const VuBlock* blk = VuBlockTier::BuildBlock(prog, (pc & VuBlockTier::kPcMask) >> 3);
+            const std::string fn = Vu1AotBlockGen::FunctionName(blk->pc);
+            o += EmitBlock(prog, *blk, fn, emitted, opt.region);
+            names.push_back(fn);
+            ++out.blocks;
+            out.ops += blk->ops.size();
+        }
     }
     o += "const Vu1AotBlockExport kBlocks[] = {\n";
     for (size_t i = 0; i < block_pcs.size(); ++i) {

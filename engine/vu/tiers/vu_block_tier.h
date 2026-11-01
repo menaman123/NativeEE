@@ -188,6 +188,15 @@ public:
 
     uint64_t cycle_cap() const { return cycle_cap_; }
     void set_cycle_cap(uint64_t cap) { cycle_cap_ = cap; }
+    // STAGE PERF-1: a per-block-run observer (the generator's profile pass: block run counts and
+    // edges from a corpus replay with no native code installed, so every block passes the loop).
+    // One predictable null test per block run when unset; never set in play.
+    using BlockObserver = void (*)(void* user, uint32_t pc);
+    struct BlockObserverSlot {
+        BlockObserver fn = nullptr;
+        void* user = nullptr;
+    };
+    void SetBlockObserver(BlockObserver fn, void* user) { block_observer_ = BlockObserverSlot{fn, user}; }
     // Bundles retired across every run of this tier (the catalog's exec count).
     uint64_t bundles() const { return bundles_; }
     size_t table_size() const { return table_.size(); }
@@ -234,6 +243,7 @@ private:
 
     VuInterpreterTier& generic_;
     uint64_t cycle_cap_;
+    BlockObserverSlot block_observer_;
     uint64_t bundles_ = 0;
     Stats stats_;
     std::vector<std::unique_ptr<VuBlockProgram>> table_;

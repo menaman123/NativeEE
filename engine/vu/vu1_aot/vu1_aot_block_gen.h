@@ -51,6 +51,7 @@
 // vs the interpreter) is the oracle and the runtime gate re-verifies every
 // library before install.
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -86,7 +87,68 @@ struct Vu1AotRegionPolicy {
     // edge for its own FoldLazyRetired (a load / OR / store round trip per
     // result and the spills of keeping them). The lazy ring only; the eager
     // one keeps the per-result form. Same sticky bits, same last-retired word.
-    bool mac_acc = false;
+    // Default ON since STAGE PERF-1 (LazyAcc's OR / MAX / MIN form: six NEON
+    // ops per result, no per-result load / OR / store round trip).
+    bool mac_acc = true;
+    // STAGE PERF-1 (the register-resident shape; both default on, the A/B
+    // knobs of the title's generator):
+    // store_back_inline: the store-back of the written registers is emitted
+    // IN PLACE at every exit / chain instead of through a `[&]` lambda. The
+    // lambda captured every local by reference, so the compiler materialised
+    // a capture table of their addresses at function entry and kept every
+    // VF / VI / ACC local IN MEMORY for the whole function (an escaped local
+    // cannot live in a register across a call it may be read by): the hot op
+    // of the main renderer's vertex loop was a stack round trip per operand.
+    bool store_back_inline = true;
+    // cycle_local: the VU clock is a LOCAL `uint64_t cycle` (the function's
+    // own copy of FlagPipeline::cycle()), written to the pipeline before and
+    // read back after every callee that reads or advances the clock (the
+    // stall model, the EFU / FDIV / clip / Q / P pipes, the ring readers, a
+    // GENERIC word) and at every exit. With the reference form every
+    // `++cycle` was a load / add / store to the pipeline, re-done at every
+    // op because the data-memory byte stores (SQ, the unpack) may alias it.
+    bool cycle_local = true;
+    // entry_clamp: a VF the region reads CLAMPED and never writes has its
+    // clamped view computed ONCE at the function entry (`vNc`, valid at every
+    // label and on every path) instead of at its first read in each block
+    // (every label began with the caches dropped: the matrix rows of the
+    // main renderer's vertex loop were re-clamped per vertex, ~9 NEON ops
+    // each). Pure (ClampVec of an unchanged value); re-done after a GENERIC
+    // word's reload (the interpreter may have written any register). OFF by
+    // default: with block_cap 1 it only raises the register pressure (the
+    // Paris corpus bench: 4.62 vs 4.46 ns/bundle); it pays with regions of
+    // several blocks (the loop's invariants clamped once per entry).
+    bool entry_clamp = false;
+    // cluster_ops > 0 (STAGE PERF-1): ONE function per CFG CLUSTER instead of
+    // one region function per block. The TU's blocks are partitioned (BFS over
+    // fall-through and static branch targets, at most cluster_ops ops per
+    // cluster), every block is emitted ONCE as a label of its cluster's
+    // function, the function takes the entry block's pc and begins with a
+    // switch to its label; the exports table's per-block functions are
+    // thunks (a tail call into the cluster). Intra-cluster edges are gotos
+    // with the register file resident -- no store-back, no reload, no second
+    // prologue -- while the text stays the blocks=1 size (the region policy
+    // duplicated every successor into each function that reached it: 2.4-8x
+    // the text, slower in the game). block_cap / op_cap are ignored.
+    int cluster_ops = 0;
+    // clamp_mask (default on): the "known clamped" register mask persisted
+    // ACROSS block functions through Vu1State::vf_clamped. A block's exits
+    // store the mask (the entry mask for the registers the function never
+    // writes, the generator's proof for the ones it wrote: a full-mask
+    // clamped write = clamped), and a clamped read of a register the function
+    // has not written tests the entry mask before clamping (a clamp that
+    // changed nothing sets the register's bit for the blocks after). The
+    // main renderer's vertex blocks clamped their 10-20 matrix / constant
+    // inputs anew at every entry (~9 NEON ops each per vertex).
+    bool clamp_mask = true;
+};
+
+// A block-run profile over a corpus replay (Policy::cluster_ops with a profile: the clusters are
+// grown from the hottest edges, so a hot loop's blocks share one function and the cold blocks stay
+// singletons): block pc -> runs, (from pc, to pc) -> taken edges within one kick.
+struct Vu1AotBlockProfile {
+    std::map<uint32_t, uint64_t> runs;
+    std::map<std::pair<uint32_t, uint32_t>, uint64_t> edges;
 };
 
 class Vu1AotBlockGen {
@@ -111,10 +173,21 @@ public:
     // chain names it; the TU declares every one before the bodies).
     static std::string EmitFunction(VuBlockProgram& prog, const VuBlock& head, const std::string& fn_name,
                                     const std::vector<uint32_t>& emitted, const Policy& policy = Policy{});
+    // Policy::cluster_ops: the partition of `emitted` into clusters (each a vector of block pcs, the
+    // head first; every emitted block in exactly one cluster), and one cluster's function text.
+    // `cluster_fn` maps every emitted block pc to its cluster function's name (the chains target it).
+    static std::vector<std::vector<uint32_t>> Clusters(VuBlockProgram& prog, const std::vector<uint32_t>& emitted,
+                                                       const Policy& policy, const Vu1AotBlockProfile* profile = nullptr);
+    static std::string EmitClusterFunction(VuBlockProgram& prog, const std::vector<uint32_t>& cluster, const std::string& fn_name,
+                                           const std::vector<uint32_t>& emitted,
+                                           const std::vector<std::pair<uint32_t, std::string>>& cluster_fn, const Policy& policy);
+    static std::string ClusterFunctionName(uint32_t head_pc);
     static std::string SlotName(uint32_t block_pc, int k);
     static std::string FunctionName(uint32_t block_pc);
     // The signature of a block function after its name (NativeFn's parameter list).
     static const char* Signature();
+    // A cluster function's signature: NativeFn's parameters plus the entry block's pc.
+    static const char* ClusterSignature();
 
 private:
     Vu1AotBlockGen(VuBlockProgram& prog, std::vector<const VuBlock*> blocks, const std::string& fn_name,
@@ -147,6 +220,14 @@ private:
     void EmitLower(const VuBlockOp& op, const VuDecodedSlot& s, uint32_t pc);
     std::string Prologue() const;
     std::string StoreBack() const;
+    // The store-back at an exit / chain: `store_back();` (the lambda) or its
+    // statements in place (Policy::store_back_inline).
+    void EmitStoreBack();
+    // Policy::cycle_local: a callee that reads or advances the clock sees the
+    // local written to the pipeline first and the local re-read after.
+    static bool TouchesClock(const std::string& line);
+    void SyncClockIn();
+    void SyncClockOut();
     int BlockIndex(uint32_t pc) const;  // -1 = not in the region
 
     // Register naming: a raw read expression, the clamped view (emits the
@@ -175,6 +256,12 @@ private:
     void ReloadAll();
     void Line(const std::string& s);
 
+    // Policy::cluster_ops: this function is a cluster (an entry switch; every edge to a block of
+    // another cluster chains into that cluster's function with the target pc).
+    bool cluster_ = false;
+    const std::vector<std::pair<uint32_t, std::string>>* cluster_fn_ = nullptr;  // pc -> cluster function (sorted by pc)
+    const std::string* ClusterFnOf(uint32_t pc) const;
+
     VuBlockProgram& prog_;
     std::vector<const VuBlock*> blocks_;  // the region, head first
     std::string fn_;
@@ -191,6 +278,12 @@ private:
     bool vi_written_[16] = {};
     int clamped_reads_[32] = {};
     bool vfc_declared_[32] = {};
+    bool entry_clamped_[32] = {};  // Policy::entry_clamp: vNc computed at entry, valid at every label
+    // Policy::clamp_mask: vf_known_[n] = the generator's proof that vN holds clamped bits at this
+    // point (path-sensitive, reset at labels); written_here_[n] = vN may have been written on some
+    // path to this point (reset to vf_written_ at labels).
+    bool vf_known_[32] = {};
+    bool written_here_[32] = {};
     bool acc_used_ = false;
     // The emission state (reset between the passes and at every label).
     bool vfc_valid_[32] = {};

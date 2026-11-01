@@ -120,6 +120,24 @@ public:
         uint64_t seal_wakes_skipped = 0;   // seals that woke no parked producer (the drain thread was kicked instead)
     };
     Ledger ledger() const;
+    // STAGE PERF-1: the worker's PER-FRAME ledger (census only; written by the worker at every FrameMark
+    // it passes, read after Stop or relaxed): between two marks, the VU1 bundles its unit ran, the kicks
+    // (block-tier runs), the wall ns it spent processing Data / Batch segments; the max and the sum over the
+    // frames, and a histogram of the busy ms per frame (kHistBucketNs buckets) for the p99. The "worst
+    // frame" rows of the budget table come from here, not from a run average.
+    struct FrameLedger {
+        static constexpr uint64_t kHistBucketNs = 250000;  // 0.25 ms
+        static constexpr int kHistBuckets = 128;           // 0 .. 32 ms
+        uint64_t frames = 0;
+        uint64_t bundles_sum = 0, bundles_max = 0;
+        uint64_t kicks_sum = 0, kicks_max = 0;
+        uint64_t busy_ns_sum = 0, busy_ns_max = 0;
+        uint64_t xgkick_bytes_sum = 0, xgkick_bytes_max = 0;
+        uint32_t hist[kHistBuckets] = {};
+        // The busy ns at the given percentile (0..100) from the histogram (bucket upper edge).
+        uint64_t BusyNsPercentile(int pct) const;
+    };
+    const FrameLedger& frame_ledger() const { return frame_ledger_; }
     uint64_t StagedRecords() const { return stage_records_; }
     size_t StagedBytes() const { return stage_bytes_.size(); }
     // The staging buffer's high-water capacity (the ONE buffer the producer
@@ -239,6 +257,12 @@ private:
     std::atomic<bool> drain_busy_{false};
     std::shared_ptr<GifMtvuMarker> active_marker_;
     ps2r::Park frame_park_;
+
+    FrameLedger frame_ledger_;              // worker thread writes
+    uint64_t frame_bundles0_ = 0;           // the unit's bundles / kicks / kick bytes at the last mark (worker thread)
+    uint64_t frame_kicks0_ = 0;
+    uint64_t frame_xgk_bytes0_ = 0;
+    uint64_t frame_busy_ns_ = 0;            // ns processing Data / Batch segments since the last mark (worker thread)
 
     std::vector<uint8_t> stage_bytes_;
     size_t stage_records_ = 0;

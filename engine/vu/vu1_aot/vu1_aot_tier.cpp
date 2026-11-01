@@ -161,13 +161,14 @@ void Vu1AotTier::Execute(VuUnit& unit, uint32_t start_pc) {
                 memo_native_ = nullptr;
             }
         }
+        // The run's wall time is the block tier's own ledger (VuBlockTier::Run's FastNowNs pair around the
+        // loop): no second clock pair per kick here (STAGE PERF-1: the steady_clock pair was ~3 % of a kick).
         const uint64_t before = block_.bundles();
-        const auto t0 = std::chrono::steady_clock::now();
+        const uint64_t ns_before = block_.stats().run_ns;
         block_.ExecuteAcquired(unit, pc, *prog);
-        const auto t1 = std::chrono::steady_clock::now();
         ++stats_.native_kicks;
         stats_.native_bundles += block_.bundles() - before;
-        stats_.native_ns += static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+        stats_.native_ns += block_.stats().run_ns - ns_before;
         return;
     }
     // Not verified (yet): the collector sees the kick, the fallback runs it.

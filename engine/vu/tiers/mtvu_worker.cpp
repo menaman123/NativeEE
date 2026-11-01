@@ -6,6 +6,7 @@
 #include "engine/gif/gif_arbiter.h"
 #include "engine/vu/tiers/mtvu_backpressure.h"
 #include "engine/vu/tiers/mtvu_vif_feed.h"
+#include "engine/vu/tiers/vu_tier_dispatch.h"
 #include "engine/vu/vu_chop_round_guard.h"
 #include "engine/vu/vu_unit.h"
 
@@ -230,6 +231,17 @@ MtvuWorker::Ledger MtvuWorker::ledger() const {
     return l;
 }
 
+uint64_t MtvuWorker::FrameLedger::BusyNsPercentile(int pct) const {
+    if (frames == 0) return 0;
+    const uint64_t want = (frames * static_cast<uint64_t>(pct) + 99) / 100;
+    uint64_t seen = 0;
+    for (int b = 0; b < kHistBuckets; ++b) {
+        seen += hist[b];
+        if (seen >= want) return static_cast<uint64_t>(b + 1) * kHistBucketNs;
+    }
+    return busy_ns_max;
+}
+
 // ---- worker thread -----------------------------------------------------------
 
 void MtvuWorker::ReplaySpan(const uint8_t* data, size_t size, bool tte) {
@@ -279,7 +291,29 @@ void MtvuWorker::ProcessSegment(Segment& seg) {
             vif_.ResetVif1Latch();
             inflight_.fetch_sub(1, std::memory_order_release);
             return;
-        case Segment::Op::FrameMark:
+        case Segment::Op::FrameMark: {
+            // The per-frame ledger: this frame's deltas, then the mark.
+            const uint64_t bundles = worker_vu1_.dispatch().bundles();
+            const uint64_t kicks = worker_vu1_.dispatch().block().stats().runs;
+            const uint64_t xgk_bytes = worker_vu1_.xgkick() != nullptr ? worker_vu1_.xgkick()->census().submit_bytes : 0;
+            FrameLedger& fl = frame_ledger_;
+            const uint64_t db = bundles - frame_bundles0_, dk = kicks - frame_kicks0_, dx = xgk_bytes - frame_xgk_bytes0_;
+            frame_bundles0_ = bundles;
+            frame_kicks0_ = kicks;
+            frame_xgk_bytes0_ = xgk_bytes;
+            ++fl.frames;
+            fl.bundles_sum += db;
+            if (db > fl.bundles_max) fl.bundles_max = db;
+            fl.kicks_sum += dk;
+            if (dk > fl.kicks_max) fl.kicks_max = dk;
+            fl.xgkick_bytes_sum += dx;
+            if (dx > fl.xgkick_bytes_max) fl.xgkick_bytes_max = dx;
+            fl.busy_ns_sum += frame_busy_ns_;
+            if (frame_busy_ns_ > fl.busy_ns_max) fl.busy_ns_max = frame_busy_ns_;
+            uint64_t bucket = frame_busy_ns_ / FrameLedger::kHistBucketNs;
+            if (bucket >= static_cast<uint64_t>(FrameLedger::kHistBuckets)) bucket = FrameLedger::kHistBuckets - 1;
+            ++fl.hist[bucket];
+            frame_busy_ns_ = 0;
             frame_marks_passed_.fetch_add(1, std::memory_order_relaxed);
             inflight_.fetch_sub(1, std::memory_order_release);
             if (sync_waiters_.load(std::memory_order_seq_cst) > 0) {
@@ -289,7 +323,9 @@ void MtvuWorker::ProcessSegment(Segment& seg) {
                 cv_idle_.notify_all();
             }
             return;
+        }
         case Segment::Op::Batch: {
+            const uint64_t seg_t0 = ps2r::Park::NowNs();
             active_marker_ = seg.marker;
             worker_vu1_.SetKickDrop(seg.drop_kicks);
             const uint8_t* p = seg.bytes.data();
@@ -309,16 +345,20 @@ void MtvuWorker::ProcessSegment(Segment& seg) {
             active_marker_.reset();
             batch_segments_.fetch_add(1, std::memory_order_relaxed);
             records_.fetch_add(records, std::memory_order_relaxed);
+            frame_busy_ns_ += ps2r::Park::NowNs() - seg_t0;
             break;
         }
-        case Segment::Op::Data:
+        case Segment::Op::Data: {
+            const uint64_t seg_t0 = ps2r::Park::NowNs();
             active_marker_ = seg.marker;
             worker_vu1_.SetKickDrop(seg.drop_kicks);
             ReplaySpan(seg.bytes.data(), seg.bytes.size(), seg.tte);
             worker_vu1_.SetKickDrop(false);
             active_marker_.reset();
             records_.fetch_add(1, std::memory_order_relaxed);
+            frame_busy_ns_ += ps2r::Park::NowNs() - seg_t0;
             break;
+        }
     }
     SealAndRetire(seg);
 }

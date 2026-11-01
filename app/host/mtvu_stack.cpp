@@ -87,13 +87,16 @@ void MtvuStack::FrameSync(uint32_t seq, uint64_t now_ns) {
     // This frame's VIF1 feed is complete (the next openBoundary consumes the
     // note; a boundary without one counts an order violation).
     arbiter_.noteFeedForBoundary();
-    if ((backpressure_.DropMode() || guard_.HoldFrames() != 0) && worker_.IsRunning()) {
-        // The frame's mark behind its last span; the lag it reads decides the
-        // next frame in drop mode (dropped when the worker is > kDropLagFrames
-        // behind) and is the hold arm's depth (round 5: the EE parks while more
-        // than `hold` complete frames are queued ahead of the worker).
+    if (worker_.IsRunning()) {
+        // The frame's mark behind its last span (STAGE PERF-1: in EVERY mode --
+        // the worker's per-frame ledger reads the frame edges from it; a mark
+        // is a count-only segment, no VIF bytes, no marker). The lag it reads
+        // decides the next frame in drop mode (dropped when the worker is >
+        // kDropLagFrames behind) and is the hold arm's depth (round 5: the EE
+        // parks while more than `hold` complete frames are queued ahead of
+        // the worker).
         worker_.SubmitFrameMark();
-        backpressure_.NoteFrameSync(worker_.FrameLag());
+        if (backpressure_.DropMode() || guard_.HoldFrames() != 0) backpressure_.NoteFrameSync(worker_.FrameLag());
     }
     if (defer_boundaries_ && sync_.DeferOn() && worker_.IsRunning()) {
         // Deferred boundary: an ordered slot behind every marker and packet of
@@ -366,5 +369,18 @@ std::string MtvuStack::Census() const {
     s += ",worker_ns=" + std::to_string(l.busy_ns) + "/" + std::to_string(l.wait_ns) + "/" + std::to_string(l.spin_ns) +
          ",worker_segs=" + std::to_string(l.segments) + "/" + std::to_string(l.records) + ",worker_pops=" + std::to_string(l.pops) +
          "/" + std::to_string(l.depth_max) + ",seal_wakes_skipped=" + std::to_string(l.seal_wakes_skipped);
+    // STAGE PERF-1: the per-frame ledger -- the WORST frame's VU1 load and the worker's busy ms per frame
+    // (mean / p99 / max), bundles and kicks per frame (mean / max), PATH1 bytes per frame (mean / max).
+    const MtvuWorker::FrameLedger& fl = worker_.frame_ledger();
+    if (fl.frames > 0) {
+        char buf[256];
+        std::snprintf(buf, sizeof(buf), ",worker_frame=%llu:busy_ms=%.2f/%.2f/%.2f:bundles=%llu/%llu:kicks=%llu/%llu:xgk_kb=%llu/%llu",
+                      static_cast<unsigned long long>(fl.frames), static_cast<double>(fl.busy_ns_sum) / static_cast<double>(fl.frames) / 1e6,
+                      static_cast<double>(fl.BusyNsPercentile(99)) / 1e6, static_cast<double>(fl.busy_ns_max) / 1e6,
+                      static_cast<unsigned long long>(fl.bundles_sum / fl.frames), static_cast<unsigned long long>(fl.bundles_max),
+                      static_cast<unsigned long long>(fl.kicks_sum / fl.frames), static_cast<unsigned long long>(fl.kicks_max),
+                      static_cast<unsigned long long>(fl.xgkick_bytes_sum / fl.frames / 1024), static_cast<unsigned long long>(fl.xgkick_bytes_max / 1024));
+        s += buf;
+    }
     return s;
 }
