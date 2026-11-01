@@ -39,8 +39,12 @@ bool SessionWindow::Open(std::string& error) {
     // attributes in doing so: initialise it first, then request.
     if (!SDL_WasInit(SDL_INIT_VIDEO) && SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) { error = SDL_GetError(); return false; }
     platform::GlContext::RequestAttributes();
-    window_ = SDL_CreateWindow("the title", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        960, 672, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_SHOWN);
+    // video.hidpi -> ALLOW_HIGHDPI: on a Retina / scaled display the drawable is the display's own pixels (2x the
+    // points), so the picture rect the presenter draws into (SessionRuntime::Publish -> PictureRect over
+    // DrawableSize) and the "window" internal-scale factor resolve on real pixels; without it the OS stretches a
+    // points-sized backing store. The menu's ImGui layout stays in points (DisplayFramebufferScale).
+    const Uint32 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_SHOWN | (hidpi_ ? SDL_WINDOW_ALLOW_HIGHDPI : 0u);
+    window_ = SDL_CreateWindow("the title", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 960, 672, flags);
     if (!window_) { error = SDL_GetError(); return false; }
     context_ = SDL_GL_CreateContext(window_);
     if (!context_) { error = SDL_GetError(); return false; }

@@ -330,6 +330,7 @@ const std::vector<Field>& Fields() {
         ENUM_FIELD("video.texture_filter", video.texture_filter, kTextureFilter),
         STR_FIELD("video.texture_pack", video.texture_pack),
         BOOL_FIELD("video.vsync", video.vsync),
+        BOOL_FIELD("video.hidpi", video.hidpi),
     };
     return f;
 }
@@ -363,6 +364,8 @@ bool ExcludedFromFingerprint(const std::string& key) {
     // the same picture, posted earlier; nothing the title executes or an image carries.
     // video.present_relax is WHEN the presenter shows a posted picture (round 5):
     // the same pictures in the same order; nothing the title executes or an image carries.
+    // video.hidpi is the session window's drawable size on a scaled display: host
+    // presentation; nothing the title executes or an image carries.
     // engine.mtvu_early_finish is the host's scheduling of the GS FINISH raise
     // and the boundary under MTVU (E425/E426): images are captured quiesced
     // (nothing pre-raised in flight), so a slot restores under either setting.
@@ -387,7 +390,7 @@ bool ExcludedFromFingerprint(const std::string& key) {
     // executes changes with them.
     return key.compare(0, 8, "harness.") == 0 || key.compare(0, 6, "paths.") == 0 || key.compare(0, 5, "diag.") == 0 ||
            key == "meta.profile" || key == "meta.source_fingerprint" || key == "save.restore_mode" ||
-           key == "engine.mtvu_kick_drop" || key == "engine.mtvu_early_finish" || key == "engine.mtvu_wait_probe" || key == "engine.ee_yield_spin_gate" || key == "engine.ee_fast_dispatch" || key == "engine.cop0_count" || key == "engine.vu1_aot_corpus" || key == "engine.vu1_aot_codegen" || key == "engine.mtvu_depth_hold" || key == "video.capture_wait_ms" || key == "video.present_relax" ||
+           key == "engine.mtvu_kick_drop" || key == "engine.mtvu_early_finish" || key == "engine.mtvu_wait_probe" || key == "engine.ee_yield_spin_gate" || key == "engine.ee_fast_dispatch" || key == "engine.cop0_count" || key == "engine.vu1_aot_corpus" || key == "engine.vu1_aot_codegen" || key == "engine.mtvu_depth_hold" || key == "video.capture_wait_ms" || key == "video.present_relax" || key == "video.hidpi" ||
            key == "engine.vu1_aot_compiler" || key == "engine.vu1_aot_sysroot" || key == "engine.vu1_aot_prelude" || key == "engine.vu1_aot_opt" ||
            key == "engine.vu1_aot_pack" || key == "engine.vu1_aot_region_blocks" || key == "engine.vu1_aot_region_ops" ||
            key == "engine.vu1_aot_region_taken" || key == "engine.vu1_aot_chain" || key == "engine.vu1_aot_mac_acc";

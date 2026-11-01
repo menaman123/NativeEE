@@ -1557,6 +1557,17 @@
       ]
     },
     {
+      "key": "video.hidpi",
+      "section": "video",
+      "name": "hidpi",
+      "type": "bool",
+      "default": "off",
+      "kind": "switch",
+      "user_facing": true,
+      "label": "Sharp on high-resolution displays",
+      "help": "Draws the window at the display's own pixels on a high-resolution screen. Sharper; may cost a little smoothness. Applies when the game starts."
+    },
+    {
       "key": "video.interp",
       "section": "video",
       "name": "interp",

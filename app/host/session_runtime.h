@@ -71,6 +71,8 @@ public:
     ~SessionRuntime();
     bool Open(int volume, bool audio, bool recording, std::string recording_path, std::string& error,
               std::string game_saves_path = {});
+    // Before Open: video.hidpi (SessionWindow::SetHighDpi).
+    void SetHighDpi(bool on) { window_.SetHighDpi(on); }
     void SetHooks(Hooks hooks);
     // Main thread, any time: video.vsync / video.fps_cap readers for the
     // presenter. fps_cap <= 0 presents on every pump (vsync, when on, paces).
