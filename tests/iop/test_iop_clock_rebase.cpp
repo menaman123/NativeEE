@@ -65,10 +65,13 @@ int main() {
         c.OnFrameBoundary();
         CHECK(c.NowUs() == base + 2 * IopClock::kFrameUs, "the second boundary advances another quantum");
     }
-    // The contrast (the former rebase): a bare AdvanceToUs leaves the frame base behind.
+    // The contrast (the former rebase): a bare AdvanceToUs leaves the frame base behind -- on the
+    // pre-FIX-2 clock (frame base not following skips); the default clock now carries the base along
+    // (tests/iop/test_iop_clock.cpp), which is why RebaseToFrame and AdvanceToUs agree on Frames() there.
     {
         IopClock c;
         c.SetPolicy(IopClock::Policy::Frame);
+        c.SetFrameBaseFollowsSkips(false);
         c.AdvanceToUs(base);
         CHECK(c.Frames() == 0, "a bare AdvanceToUs does not move the frame base");
         c.OnFrameBoundary();
@@ -109,10 +112,12 @@ int main() {
         CHECK(beats == 1 && k.Clock().NowUs() == base + kHeartbeatUs,
               "under the boundary pump (inclusive ceiling) the heartbeat beats in the first pump, time at the due");
     }
-    // Without the frame rebase the same kernel scenario never beats (the BUG-066 shape).
+    // Without the frame rebase the same kernel scenario never beats (the BUG-066 shape) -- on the pre-FIX-2
+    // clock; the default clock's AdvanceToUs carries the base along (the general form of this rebase).
     {
         IopKernel k;
         k.Clock().SetPolicy(IopClock::Policy::Frame);
+        k.Clock().SetFrameBaseFollowsSkips(false);
         k.Clock().AdvanceToUs(base);
         int beats = 0;
         k.StartPeriodicTimerUs(kHeartbeatUs, [&]() -> bool { beats++; return true; });

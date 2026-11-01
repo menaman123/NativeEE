@@ -876,6 +876,15 @@
       ]
     },
     {
+      "key": "iop.frame_base_follows_skips",
+      "section": "iop",
+      "name": "frame_base_follows_skips",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
       "key": "iop.restored_timer_due",
       "section": "iop",
       "name": "restored_timer_due",

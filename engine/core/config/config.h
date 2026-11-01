@@ -370,6 +370,17 @@ struct TimeConfig {
 struct IopConfig {
     IopDispatch dispatch = IopDispatch::Frame;   // Frame until BUG-026 closes (PHASE4_PLAN 3.3/5.2)
     IopRestoredTimerDue restored_timer_due = IopRestoredTimerDue::OnePeriod;
+    // Frame policy: a forced advance of the IOP's virtual clock PAST the frame ceiling (a hosted RPC
+    // round trip driven to completion through time-parked threads -- a 989snd bank load is ~360
+    // sceCdReads x 3 ms = ~1 s of IOP time inside one EE boundary; an EE park loop's pumps; a service
+    // charge) moves the FRAME BASE with it, so the next boundary pump runs its one quantum from the new
+    // time. `off` = the pre-fix clock: the base stays behind and every boundary pump is a no-op until the
+    // boundary count catches up -- the IOP is dark for as many boundaries as the skip (65 after a 1.08 s
+    // bank load) while the SPU keeps playing: the level's music streams, started inside that window, run
+    // through their unrefilled halves and 989snd keys them off (the hub music that never played).
+    // Fingerprinted (the schedule of every IOP-visible event after a skip changes). The oracle: the
+    // console's IOP never pauses relative to its SPU.
+    bool frame_base_follows_skips = true;
 };
 
 struct GameConfig {

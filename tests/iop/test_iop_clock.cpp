@@ -63,11 +63,49 @@ int main() {
         CHECK(c.NowUs() == 40000, "forced advance moves time forward");
         c.AdvanceToUs(35000);
         CHECK(c.NowUs() == 40000, "forced advance never moves time backwards");
-        c.AdvanceToUs(60000);   // beyond the ceiling: the caller's bound, not the clock's
-        c.OnFrameBoundary();    // base -> 50001 < 60000: time stays put
+        // FIX-2 (music): an overshoot the next boundary absorbs is not a skip (unchanged rule) ...
+        c.AdvanceToUs(60000);   // beyond the ceiling 50001, within the next boundary's 66668
+        CHECK(c.NowUs() == 60000 && c.Frames() == 2 && c.Skips() == 0, "an overshoot within the next frame leaves the base (no skip)");
+        c.OnFrameBoundary();    // base -> 50001 < 60000: time stays put; this pump's ceiling 66668 covers the rest of the frame
         CHECK(c.NowUs() == 60000 && c.Frames() == 3, "a boundary never moves time backwards past a forced advance");
         c.OnFrameBoundary();
         CHECK(c.NowUs() == 66668, "the next boundary base overtakes the forced advance");
+        // ... but an advance beyond the next boundary's ceiling carries the base to the frame before the
+        // one containing the time, so the next boundary lands in that frame and runs its remainder.
+        // frames 4: base 66668, ceiling 83335, next ceiling 100002. 110000 lies in frame 6 (100002, 116669].
+        c.AdvanceToUs(110000);
+        CHECK(c.NowUs() == 110000 && c.Frames() == 5 && c.FrameCeilingUs() == 100002,
+              "a skip past the next ceiling moves the base to the frame before the time's frame");
+        CHECK(c.Skips() == 1 && c.SkippedFrames() == 1 && c.MaxSkipUs() == 110000 - 100002, "the skip census: one skip, one frame, its depth past the next ceiling");
+        c.OnFrameBoundary();    // base -> 100002 < 110000: time stays; the pump's ceiling 116669 covers the frame's rest
+        CHECK(c.NowUs() == 110000 && c.Frames() == 6 && c.FrameCeilingUs() == 116669, "the boundary after a skip lands in the time's frame (no dark boundary)");
+        c.OnFrameBoundary();
+        CHECK(c.NowUs() == 116669 && c.Frames() == 7, "then full quanta again");
+        c.AdvanceToUs(133336);   // exactly the next ceiling (frames 7: ceiling 133336? no: ceiling = 8*16667 = 133336, next = 150003)
+        CHECK(c.Skips() == 1 && c.Frames() == 7, "an advance at the ceiling is not a skip");
+        c.AdvanceToUs(150003);   // exactly the next boundary's ceiling: inclusive, no base move
+        CHECK(c.Skips() == 1 && c.Frames() == 7 && c.NowUs() == 150003, "an advance exactly to the next ceiling is not a skip");
+        c.AdvanceToUs(150003 + 65 * 16667 + 1);   // the 989snd bank load's ~1.08 s drive
+        // 1233359 lies in frame 74 ((74*k, 75*k]): the base goes to 73 (66 frames on from 7), the next boundary lands in 74.
+        CHECK(c.Frames() == 73 && c.SkippedFrames() == 1 + 66 && (c.Frames() + 2) * IopClock::kFrameUs >= c.NowUs(),
+              "a 65-frame skip moves the base to the frame before the time's: the next boundary's ceiling covers the time");
+    }
+    {
+        // The pre-fix clock (iop.frame_base_follows_skips=off): the base stays behind a skip and the
+        // boundaries that follow are no-ops until the count catches up -- the census still counts the skip.
+        IopClock c;
+        c.SetPolicy(IopClock::Policy::Frame);
+        c.SetFrameBaseFollowsSkips(false);
+        c.OnFrameBoundary();
+        c.OnFrameBoundary();
+        c.AdvanceToUs(110000);   // past the next boundary's ceiling 66668: the caller's bound, not the clock's
+        CHECK(c.Frames() == 2 && c.Skips() == 1 && c.SkippedFrames() == 3, "follow=off: the base stays, the skip is counted (3 frames)");
+        c.OnFrameBoundary();    // base -> 50001 < 110000: time stays put
+        c.OnFrameBoundary();    // base -> 66668: a DARK boundary (its ceiling 83335 is below the time: nothing could run)
+        c.OnFrameBoundary();    // base -> 83335: dark again
+        CHECK(c.NowUs() == 110000 && c.Frames() == 5 && c.FrameCeilingUs() == 100002, "follow=off: three boundaries later the ceiling is still below the time");
+        c.OnFrameBoundary();
+        CHECK(c.NowUs() == 110000 && c.Frames() == 6 && c.FrameCeilingUs() == 116669, "follow=off: the fourth boundary's ceiling finally covers the time");
     }
     {
         IopClock c;

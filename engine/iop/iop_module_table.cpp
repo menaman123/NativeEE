@@ -20,7 +20,9 @@ IopModuleTable::IopModuleTable(IopClock::Policy policy)
 
 IopModuleTable::IopModuleTable(const Config& cfg)
     : IopModuleTable(cfg.iop.dispatch == IopDispatch::Frame ? IopClock::Policy::Frame
-                                                             : IopClock::Policy::Realtime) {}
+                                                             : IopClock::Policy::Realtime) {
+    kernel_.Clock().SetFrameBaseFollowsSkips(cfg.iop.frame_base_follows_skips);
+}
 
 IopModuleTable::~IopModuleTable() { Shutdown(); }
 

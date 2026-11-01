@@ -187,6 +187,7 @@ ROWS = [
     ("input.kbm_pad", "bool", "on", "=", "GUI"),
     ("input.rumble", "bool", "on", "=", "-"),
     ("iop.dispatch", "enum(realtime|frame)", "frame", "=", "PS2_IOP_DISPATCH"),
+    ("iop.frame_base_follows_skips", "bool", "on", "=", "-"),
     ("iop.restored_timer_due", "enum(one_period|at_restore)", "one_period", "=", "-"),
     ("launcher.elf_sha256", "str", "", "=", "-"),
     ("launcher.show", "bool", "on", "=", "-"),
