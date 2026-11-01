@@ -177,7 +177,7 @@ Vu1AotEmitter::Output Vu1AotEmitter::Emit(VuBlockProgram& prog, const std::vecto
     if (opt.region.cluster_ops > 0) {
         // Policy::cluster_ops: one function per cluster, every block once as a label; the
         // per-block functions of the exports table are thunks into their cluster.
-        const std::vector<std::vector<uint32_t>> clusters = Vu1AotBlockGen::Clusters(prog, emitted, opt.region);
+        const std::vector<std::vector<uint32_t>> clusters = Vu1AotBlockGen::Clusters(prog, emitted, opt.region, opt.profile);
         std::vector<std::pair<uint32_t, std::string>> cluster_fn;
         for (const auto& cl : clusters) {
             const std::string fn = Vu1AotBlockGen::ClusterFunctionName(cl.front());

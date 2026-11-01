@@ -42,6 +42,7 @@ public:
         std::string engine_build;   // the g_build_id string the table carries
         std::string note;           // free text for the TU's header comment (the corpus, the toolchain)
         Vu1AotBlockGen::Policy region;  // the region / chaining policy of every function of the TU
+        const Vu1AotBlockProfile* profile = nullptr;  // Policy::cluster_ops: the corpus block profile (null = the SCC partition)
     };
     struct Output {
         std::string source;         // the TU

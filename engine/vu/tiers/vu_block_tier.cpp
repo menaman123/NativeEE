@@ -536,6 +536,7 @@ void VuBlockTier::Loop(VuUnit& unit, uint32_t pc, VuBlockProgram& prog, uint64_t
             consecutive_nops = blk->ds_nop ? 1 : 0;
         }
         ++acc.blocks_run;
+        if (PS2R_UNLIKELY(block_observer_ != nullptr)) block_observer_(block_observer_user_, pc);
         bool taken = false;
         uint32_t target = 0;
         bool cut = false;

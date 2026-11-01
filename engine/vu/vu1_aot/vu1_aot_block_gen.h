@@ -51,6 +51,7 @@
 // vs the interpreter) is the oracle and the runtime gate re-verifies every
 // library before install.
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -142,6 +143,14 @@ struct Vu1AotRegionPolicy {
     bool clamp_mask = true;
 };
 
+// A block-run profile over a corpus replay (Policy::cluster_ops with a profile: the clusters are
+// grown from the hottest edges, so a hot loop's blocks share one function and the cold blocks stay
+// singletons): block pc -> runs, (from pc, to pc) -> taken edges within one kick.
+struct Vu1AotBlockProfile {
+    std::map<uint32_t, uint64_t> runs;
+    std::map<std::pair<uint32_t, uint32_t>, uint64_t> edges;
+};
+
 class Vu1AotBlockGen {
 public:
     using Policy = Vu1AotRegionPolicy;
@@ -168,7 +177,7 @@ public:
     // head first; every emitted block in exactly one cluster), and one cluster's function text.
     // `cluster_fn` maps every emitted block pc to its cluster function's name (the chains target it).
     static std::vector<std::vector<uint32_t>> Clusters(VuBlockProgram& prog, const std::vector<uint32_t>& emitted,
-                                                       const Policy& policy);
+                                                       const Policy& policy, const Vu1AotBlockProfile* profile = nullptr);
     static std::string EmitClusterFunction(VuBlockProgram& prog, const std::vector<uint32_t>& cluster, const std::string& fn_name,
                                            const std::vector<uint32_t>& emitted,
                                            const std::vector<std::pair<uint32_t, std::string>>& cluster_fn, const Policy& policy);

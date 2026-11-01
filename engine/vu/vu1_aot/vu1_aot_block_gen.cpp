@@ -214,11 +214,67 @@ const std::string* Vu1AotBlockGen::ClusterFnOf(uint32_t pc) const {
 // holds; a component larger than the cap is a cluster of its own, whole. Every
 // emitted block lands in exactly one cluster.
 std::vector<std::vector<uint32_t>> Vu1AotBlockGen::Clusters(VuBlockProgram& prog, const std::vector<uint32_t>& emitted,
-                                                            const Policy& policy) {
+                                                            const Policy& policy, const Vu1AotBlockProfile* profile) {
     std::vector<uint32_t> sorted(emitted);
     for (uint32_t& pc : sorted) pc &= VuBlockTier::kPcMask;
     std::sort(sorted.begin(), sorted.end());
     const int n = static_cast<int>(sorted.size());
+    if (profile != nullptr) {
+        // PROFILE-GUIDED: the hottest taken edges first, union-find over the blocks, a merge only while the
+        // joined cluster holds within the op cap; a block no hot edge reaches stays a cluster of its own
+        // (= the blocks=1 shape for the cold code). A NOP pair is never in a cluster.
+        auto index_of = [&](uint32_t pc) -> int {
+            pc &= VuBlockTier::kPcMask;
+            auto it = std::lower_bound(sorted.begin(), sorted.end(), pc);
+            return (it != sorted.end() && *it == pc) ? static_cast<int>(it - sorted.begin()) : -1;
+        };
+        std::vector<int> parent(static_cast<size_t>(n)), ops(static_cast<size_t>(n));
+        std::vector<uint8_t> nop(static_cast<size_t>(n), 0);
+        for (int i = 0; i < n; ++i) {
+            parent[static_cast<size_t>(i)] = i;
+            const VuBlock* b = VuBlockTier::BuildBlock(prog, sorted[static_cast<size_t>(i)] >> 3);
+            ops[static_cast<size_t>(i)] = static_cast<int>(b->ops.size());
+            nop[static_cast<size_t>(i)] = (b->ops[0].flags & VuBlockOp::kNopPair) != 0;
+        }
+        auto find = [&](int x) {
+            while (parent[static_cast<size_t>(x)] != x) {
+                parent[static_cast<size_t>(x)] = parent[static_cast<size_t>(parent[static_cast<size_t>(x)])];
+                x = parent[static_cast<size_t>(x)];
+            }
+            return x;
+        };
+        std::vector<std::pair<uint64_t, std::pair<int, int>>> edges;
+        for (const auto& e : profile->edges) {
+            const int a = index_of(e.first.first), b = index_of(e.first.second);
+            if (a < 0 || b < 0 || a == b || nop[static_cast<size_t>(a)] || nop[static_cast<size_t>(b)]) continue;
+            edges.push_back({e.second, {a, b}});
+        }
+        // Hottest first; ties by the pcs (a deterministic text for a given corpus).
+        std::sort(edges.begin(), edges.end(), [](const auto& x, const auto& y) {
+            if (x.first != y.first) return x.first > y.first;
+            return x.second < y.second;
+        });
+        const int cap = policy.cluster_ops > 0 ? policy.cluster_ops : 1;
+        for (const auto& e : edges) {
+            const int ra = find(e.second.first), rb = find(e.second.second);
+            if (ra == rb) continue;
+            if (ops[static_cast<size_t>(ra)] + ops[static_cast<size_t>(rb)] > cap) continue;
+            parent[static_cast<size_t>(rb)] = ra;
+            ops[static_cast<size_t>(ra)] += ops[static_cast<size_t>(rb)];
+        }
+        std::map<int, std::vector<uint32_t>> groups;
+        for (int i = 0; i < n; ++i) {
+            if (nop[static_cast<size_t>(i)]) continue;
+            groups[find(i)].push_back(sorted[static_cast<size_t>(i)]);
+        }
+        std::vector<std::vector<uint32_t>> out;
+        for (auto& g : groups) {
+            std::sort(g.second.begin(), g.second.end());
+            out.push_back(std::move(g.second));
+        }
+        std::sort(out.begin(), out.end(), [](const auto& x, const auto& y) { return x.front() < y.front(); });
+        return out;
+    }
     auto index_of = [&](uint32_t pc) -> int {
         pc &= VuBlockTier::kPcMask;
         auto it = std::lower_bound(sorted.begin(), sorted.end(), pc);
