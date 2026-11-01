@@ -127,13 +127,212 @@ bool MetalDevice::Init(std::function<void()> swap) {
     }
     executor_ = std::make_unique<MetalDrawExecutor>(*this);
     initialized_ = true;
+    frame_ordinal_ = 0;
+    frame_census_base_ = census_;
+    timing_on_ = false;
+    if (settings_.gpu_timing) {
+        @autoreleasepool {
+            id<MTLDevice> dev = (id<MTLDevice>)device_;
+            if ([dev supportsCounterSampling:MTLCounterSamplingPointAtStageBoundary]) {
+                for (id<MTLCounterSet> cs in dev.counterSets) {
+                    if ([cs.name isEqualToString:MTLCommonCounterSetTimestamp]) {
+                        timestamp_counter_set_ = (void*)[cs retain];
+                        break;
+                    }
+                }
+            }
+            if (timestamp_counter_set_) {
+                // The GPU timestamp clock against the CPU's (ns): two correlated samples ~2 ms apart.
+                MTLTimestamp cpu0 = 0, gpu0 = 0, cpu1 = 0, gpu1 = 0;
+                [dev sampleTimestamps:&cpu0 gpuTimestamp:&gpu0];
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                [dev sampleTimestamps:&cpu1 gpuTimestamp:&gpu1];
+                gpu_ticks_to_ns_ = (gpu1 > gpu0 && cpu1 > cpu0) ? double(cpu1 - cpu0) / double(gpu1 - gpu0) : 1.0;
+                timing_on_ = true;
+                std::fprintf(stderr, "[metal] gpu_timing on: stage-boundary timestamps, %.4f ns/tick\n", gpu_ticks_to_ns_);
+            } else {
+                std::fprintf(stderr, "[metal] gpu_timing requested but stage-boundary counter sampling is unsupported\n");
+            }
+        }
+    }
     return true;
+}
+
+std::vector<MetalFrameStats> MetalDevice::FrameStats() const {
+    std::lock_guard<std::mutex> lk(stats_mu_);
+    return frames_;
+}
+
+std::vector<MetalPassStats> MetalDevice::PassStats() const {
+    std::lock_guard<std::mutex> lk(stats_mu_);
+    std::vector<MetalPassStats> out;
+    out.reserve(pass_stats_.size());
+    for (const auto& kv : pass_stats_) out.push_back(kv.second);
+    return out;
+}
+
+void MetalDevice::AddFrameGpu(uint32_t ordinal, uint64_t gpu_ns, uint64_t frag_ns, uint64_t vtx_ns, uint64_t blit_ns) {
+    std::lock_guard<std::mutex> lk(stats_mu_);
+    if (frames_.size() <= ordinal) frames_.resize(static_cast<size_t>(ordinal) + 1);
+    MetalFrameStats& f = frames_[ordinal];
+    f.gpu_ns += gpu_ns;
+    f.pass_frag_ns += frag_ns;
+    f.pass_vtx_ns += vtx_ns;
+    f.pass_blit_ns += blit_ns;
+}
+
+// Present: the census delta since the frame's start closes frame frame_ordinal_; the next
+// command buffer belongs to the following frame.
+void MetalDevice::CloseFrameStats() {
+    const CallCensus& c = census_;
+    const CallCensus& b = frame_census_base_;
+    auto d32 = [](uint64_t x, uint64_t y) { return static_cast<uint32_t>(y >= x ? y - x : 0); };
+    MetalFrameStats s;
+    s.draw_calls = d32(b.draw_calls, c.draw_calls);
+    s.program_binds = d32(b.program_binds, c.program_binds);
+    s.framebuffer_binds = d32(b.framebuffer_binds, c.framebuffer_binds);
+    s.texture_binds = d32(b.texture_binds, c.texture_binds);
+    s.uploads = d32(b.uploads, c.uploads);
+    s.upload_bytes = d32(b.upload_bytes, c.upload_bytes);
+    s.readbacks = d32(b.readbacks, c.readbacks);
+    s.readback_bytes = d32(b.readback_bytes, c.readback_bytes);
+    s.copies = d32(b.copies, c.copies);
+    s.submits = d32(b.submits, c.submits);
+    s.clears = d32(b.clears, c.clears);
+    s.gpu_wait_ns = c.gpu_wait_ns >= b.gpu_wait_ns ? c.gpu_wait_ns - b.gpu_wait_ns : 0;
+    {
+        std::lock_guard<std::mutex> lk(stats_mu_);
+        if (frames_.size() <= frame_ordinal_) frames_.resize(static_cast<size_t>(frame_ordinal_) + 1);
+        MetalFrameStats& f = frames_[frame_ordinal_];
+        const uint64_t gpu = f.gpu_ns, fr = f.pass_frag_ns, vx = f.pass_vtx_ns, bl = f.pass_blit_ns;
+        f = s;
+        f.gpu_ns = gpu;
+        f.pass_frag_ns = fr;
+        f.pass_vtx_ns = vx;
+        f.pass_blit_ns = bl;
+        if (frames_.size() > 200000) frames_.erase(frames_.begin(), frames_.begin() + 100000);   // a bounded run
+    }
+    frame_census_base_ = c;
+    frame_ordinal_++;
+}
+
+// ---------------------------------------------------------------- gpu_timing
+
+namespace {
+constexpr uint32_t kSamplesPerBuffer = 2048;   // 512 render passes per command buffer
+}
+
+void MetalDevice::AttachRenderTiming(void* render_pass_desc, uint32_t surface, uint32_t w, uint32_t h, uint8_t kind) {
+    if (!timing_on_) return;
+    CbTiming& t = cb_timing_;
+    if (!t.sample_buf) {
+        {
+            std::lock_guard<std::mutex> lk(stats_mu_);
+            if (!free_sample_bufs_.empty()) {
+                t.sample_buf = free_sample_bufs_.back();
+                free_sample_bufs_.pop_back();
+            }
+        }
+        if (!t.sample_buf) {
+            @autoreleasepool {
+                MTLCounterSampleBufferDescriptor* d = [[MTLCounterSampleBufferDescriptor alloc] init];
+                d.counterSet = (id<MTLCounterSet>)timestamp_counter_set_;
+                d.storageMode = MTLStorageModeShared;
+                d.sampleCount = kSamplesPerBuffer;
+                NSError* err = nil;
+                id<MTLCounterSampleBuffer> b = [(id<MTLDevice>)device_ newCounterSampleBufferWithDescriptor:d error:&err];
+                [d release];
+                t.sample_buf = (void*)b;   // +1
+            }
+        }
+        t.used = 0;
+    }
+    if (!t.sample_buf || t.used + 4 > kSamplesPerBuffer) {
+        passes_unsampled_++;
+        t.open_pass = -1;
+        return;
+    }
+    MTLRenderPassDescriptor* rp = (MTLRenderPassDescriptor*)render_pass_desc;
+    MTLRenderPassSampleBufferAttachmentDescriptor* sb = rp.sampleBufferAttachments[0];
+    sb.sampleBuffer = (id<MTLCounterSampleBuffer>)t.sample_buf;
+    sb.startOfVertexSampleIndex = t.used;
+    sb.endOfVertexSampleIndex = t.used + 1;
+    sb.startOfFragmentSampleIndex = t.used + 2;
+    sb.endOfFragmentSampleIndex = t.used + 3;
+    PassMeta m;
+    m.surface = surface;
+    m.width = w;
+    m.height = h;
+    m.kind = kind;
+    m.sample_index = t.used;
+    t.used += 4;
+    t.passes.push_back(m);
+    t.open_pass = static_cast<int32_t>(t.passes.size()) - 1;
+}
+
+void* MetalDevice::NewBlitEncoder() {
+    @autoreleasepool {
+        id<MTLCommandBuffer> cb = (id<MTLCommandBuffer>)cb_;
+        if (timing_on_) {
+            CbTiming& t = cb_timing_;
+            if (!t.sample_buf) {
+                {
+                    std::lock_guard<std::mutex> lk(stats_mu_);
+                    if (!free_sample_bufs_.empty()) {
+                        t.sample_buf = free_sample_bufs_.back();
+                        free_sample_bufs_.pop_back();
+                    }
+                }
+                if (!t.sample_buf) {
+                    MTLCounterSampleBufferDescriptor* d = [[MTLCounterSampleBufferDescriptor alloc] init];
+                    d.counterSet = (id<MTLCounterSet>)timestamp_counter_set_;
+                    d.storageMode = MTLStorageModeShared;
+                    d.sampleCount = kSamplesPerBuffer;
+                    NSError* err = nil;
+                    t.sample_buf = (void*)[(id<MTLDevice>)device_ newCounterSampleBufferWithDescriptor:d error:&err];
+                    [d release];
+                }
+                t.used = 0;
+            }
+            if (t.sample_buf && t.used + 2 <= kSamplesPerBuffer) {
+                MTLBlitPassDescriptor* bp = [MTLBlitPassDescriptor blitPassDescriptor];
+                MTLBlitPassSampleBufferAttachmentDescriptor* sb = bp.sampleBufferAttachments[0];
+                sb.sampleBuffer = (id<MTLCounterSampleBuffer>)t.sample_buf;
+                sb.startOfEncoderSampleIndex = t.used;
+                sb.endOfEncoderSampleIndex = t.used + 1;
+                PassMeta m;
+                m.kind = 3;
+                m.sample_index = t.used;
+                t.used += 2;
+                t.passes.push_back(m);
+                t.open_pass = -1;
+                id<MTLBlitCommandEncoder> b = [cb blitCommandEncoderWithDescriptor:bp];
+                return (void*)[b retain];
+            }
+            passes_unsampled_++;
+        }
+        id<MTLBlitCommandEncoder> b = [cb blitCommandEncoder];
+        return (void*)[b retain];
+    }
+}
+
+void MetalDevice::NoteDraw() {
+    census_.draw_calls++;
+    if (cb_timing_.open_pass >= 0) cb_timing_.passes[static_cast<size_t>(cb_timing_.open_pass)].draws++;
 }
 
 void MetalDevice::Shutdown() {
     if (!initialized_ && !device_) return;
     EndEncoder();
     Commit(/*wait=*/true);
+    // The completion handlers of the committed command buffers write the statistics: all of them
+    // must have run before the device goes.
+    while (handlers_pending_.load(std::memory_order_acquire) != 0) std::this_thread::yield();
+    if (cb_timing_.sample_buf) { [(id)cb_timing_.sample_buf release]; cb_timing_ = CbTiming{}; }
+    for (void* b : free_sample_bufs_) [(id)b release];
+    free_sample_bufs_.clear();
+    if (timestamp_counter_set_) { [(id)timestamp_counter_set_ release]; timestamp_counter_set_ = nullptr; }
+    timing_on_ = false;
     executor_.reset();
     for (auto& kv : surfaces_) ReleaseSurface(kv.second);
     surfaces_.clear();
@@ -193,6 +392,7 @@ void MetalDevice::EndEncoder() {
         [(id)encoder_ release];
         encoder_ = nullptr;
         enc_color_ = enc_depth_ = nullptr;
+        cb_timing_.open_pass = -1;
         if (executor_) executor_->OnEncoderEnded();
     }
     if (blit_) {
@@ -212,13 +412,68 @@ void MetalDevice::Commit(bool wait) {
     const uint64_t serial = serial_;
     std::atomic<uint64_t>* completed = &completed_serial_;
     std::atomic<uint64_t>* gpu_ns = &gpu_ns_;
+    std::atomic<uint32_t>* pending = &handlers_pending_;
+    const uint32_t ordinal = frame_ordinal_;
+    // The pass samples of this command buffer (moved into the handler; the sample buffer
+    // returns to the pool once resolved).
+    void* sample_buf = cb_timing_.sample_buf;
+    const uint32_t used = cb_timing_.used;
+    std::vector<PassMeta> passes = std::move(cb_timing_.passes);
+    cb_timing_ = CbTiming{};
+    const double ticks_to_ns = gpu_ticks_to_ns_;
+    MetalDevice* self = this;
+    pending->fetch_add(1, std::memory_order_relaxed);
     [cb addCompletedHandler:^(id<MTLCommandBuffer> done) {
         const double busy_s = done.GPUEndTime - done.GPUStartTime;
-        if (busy_s > 0) gpu_ns->fetch_add(static_cast<uint64_t>(busy_s * 1e9), std::memory_order_relaxed);
+        const uint64_t busy_ns = busy_s > 0 ? static_cast<uint64_t>(busy_s * 1e9) : 0;
+        if (busy_ns) gpu_ns->fetch_add(busy_ns, std::memory_order_relaxed);
+        uint64_t frag = 0, vtx = 0, blit = 0;
+        if (sample_buf && used) {
+            @autoreleasepool {
+                NSData* data = [(id<MTLCounterSampleBuffer>)sample_buf resolveCounterRange:NSMakeRange(0, used)];
+                const MTLCounterResultTimestamp* ts = data ? (const MTLCounterResultTimestamp*)data.bytes : nullptr;
+                const size_t n = data ? data.length / sizeof(MTLCounterResultTimestamp) : 0;
+                auto span = [&](uint32_t a, uint32_t b) -> uint64_t {
+                    if (!ts || b >= n) return 0;
+                    const uint64_t t0 = ts[a].timestamp, t1 = ts[b].timestamp;
+                    if (t0 == MTLCounterErrorValue || t1 == MTLCounterErrorValue || t1 <= t0) return 0;
+                    return static_cast<uint64_t>(double(t1 - t0) * ticks_to_ns);
+                };
+                std::lock_guard<std::mutex> lk(self->stats_mu_);
+                for (const PassMeta& m : passes) {
+                    const uint64_t key = (static_cast<uint64_t>(m.surface) << 8) | m.kind;
+                    MetalPassStats& ps = self->pass_stats_[key];
+                    ps.surface = m.surface;
+                    ps.width = m.width;
+                    ps.height = m.height;
+                    ps.kind = m.kind;
+                    ps.passes++;
+                    ps.draws += m.draws;
+                    if (m.kind == 3) {
+                        const uint64_t s = span(m.sample_index, m.sample_index + 1);
+                        ps.frag_ns += s;
+                        blit += s;
+                    } else {
+                        const uint64_t v = span(m.sample_index, m.sample_index + 1);
+                        const uint64_t f = span(m.sample_index + 2, m.sample_index + 3);
+                        ps.vtx_ns += v;
+                        ps.frag_ns += f;
+                        vtx += v;
+                        frag += f;
+                    }
+                }
+                self->free_sample_bufs_.push_back(sample_buf);
+            }
+        } else if (sample_buf) {
+            std::lock_guard<std::mutex> lk(self->stats_mu_);
+            self->free_sample_bufs_.push_back(sample_buf);
+        }
+        self->AddFrameGpu(ordinal, busy_ns, frag, vtx, blit);
         // Serials complete in queue order (one queue, in-order execution).
         uint64_t cur = completed->load(std::memory_order_relaxed);
         while (cur < serial && !completed->compare_exchange_weak(cur, serial, std::memory_order_release)) {
         }
+        pending->fetch_sub(1, std::memory_order_release);
     }];
     [cb commit];
     census_.submits++;
@@ -303,6 +558,7 @@ void* MetalDevice::BeginTargetPass(SurfaceId color, SurfaceId depth, bool clear_
         rp.depthAttachment.loadAction = clear_depth ? MTLLoadActionClear : MTLLoadActionLoad;
         rp.depthAttachment.storeAction = MTLStoreActionStore;
         rp.depthAttachment.clearDepth = clear_z;
+        AttachRenderTiming((void*)rp, color.id, c->desc.width, c->desc.height, 0);
         id<MTLRenderCommandEncoder> enc = [(id<MTLCommandBuffer>)cb_ renderCommandEncoderWithDescriptor:rp];
         encoder_ = (void*)[enc retain];
         enc_color_ = c->tex;
@@ -320,10 +576,7 @@ void* MetalDevice::BlitEncoder() {
     if (encoder_) EndEncoder();
     MaybeCommit();
     CommandBuffer();
-    @autoreleasepool {
-        id<MTLBlitCommandEncoder> b = [(id<MTLCommandBuffer>)cb_ blitCommandEncoder];
-        blit_ = (void*)[b retain];
-    }
+    blit_ = NewBlitEncoder();
     return blit_;
 }
 
@@ -572,6 +825,7 @@ void MetalDevice::DrawFullscreen(MetalProgram program, void* color_tex, const Re
         rp.colorAttachments[0].texture = Tex(color_tex);
         rp.colorAttachments[0].loadAction = MTLLoadActionLoad;
         rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+        AttachRenderTiming((void*)rp, 0, w, h, 1);
         id<MTLRenderCommandEncoder> enc = [(id<MTLCommandBuffer>)cb_ renderCommandEncoderWithDescriptor:rp];
         [enc setRenderPipelineState:(id<MTLRenderPipelineState>)ps];
         MTLViewport vp = {0.0, 0.0, static_cast<double>(w), static_cast<double>(h), 0.0, 1.0};
@@ -585,9 +839,10 @@ void MetalDevice::DrawFullscreen(MetalProgram program, void* color_tex, const Re
             if (uniforms && uniform_bytes) [enc setFragmentBytes:uniforms length:uniform_bytes atIndex:0];
             if (tex0) [enc setFragmentTexture:Tex(tex0) atIndex:0];
             [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
-            census_.draw_calls++;
+            NoteDraw();
         }
         [enc endEncoding];
+        cb_timing_.open_pass = -1;
     }
     census_.framebuffer_binds++;
 }
@@ -883,6 +1138,7 @@ void MetalDevice::Present(const ScanoutDesc& desc) {
                 rp.colorAttachments[0].loadAction = MTLLoadActionClear;
                 rp.colorAttachments[0].clearColor = MTLClearColorMake(0.0, 0.0, 0.0, 1.0);
                 rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+                AttachRenderTiming((void*)rp, 0, static_cast<uint32_t>(slot.w), static_cast<uint32_t>(slot.h), 2);
                 id<MTLRenderCommandEncoder> enc = [(id<MTLCommandBuffer>)cb_ renderCommandEncoderWithDescriptor:rp];
                 census_.clears++;
                 if (s && s->tex && ps) {
@@ -900,16 +1156,18 @@ void MetalDevice::Present(const ScanoutDesc& desc) {
                     void* sampler = desc.filter == PresentationFilter::Linear ? present_sampler_linear_ : present_sampler_nearest_;
                     [enc setFragmentSamplerState:(id<MTLSamplerState>)sampler atIndex:0];
                     [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:6];
-                    census_.draw_calls++;
+                    NoteDraw();
                     s->last_gpu_use = serial_;
                 }
                 [enc endEncoding];
-                id<MTLBlitCommandEncoder> b = [(id<MTLCommandBuffer>)cb_ blitCommandEncoder];
+                cb_timing_.open_pass = -1;
+                id<MTLBlitCommandEncoder> b = (id<MTLBlitCommandEncoder>)NewBlitEncoder();
                 [b copyFromTexture:Tex(slot.tex) sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0)
                         sourceSize:MTLSizeMake(slot.w, slot.h, 1) toBuffer:(id<MTLBuffer>)slot.buf destinationOffset:0
                 destinationBytesPerRow:static_cast<NSUInteger>(slot.w) * 4
               destinationBytesPerImage:static_cast<NSUInteger>(slot.w) * slot.h * 4];
                 [b endEncoding];
+                [b release];
             }
             slot.serial = serial_;
             slot.pending = true;
@@ -963,6 +1221,7 @@ void MetalDevice::Present(const ScanoutDesc& desc) {
         presented_fresh_ = false;
         Commit(/*wait=*/false);
     }
+    CloseFrameStats();
     if (swap_) swap_();
 }
 

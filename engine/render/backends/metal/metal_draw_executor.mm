@@ -206,7 +206,7 @@ DrawResult MetalDrawExecutor::DrawHalfwordShuffle(const gs::DrawIr& ir, const gs
     [e setFragmentTexture:T(src->tex) atIndex:0];
     [e setFragmentTexture:T(copy->tex) atIndex:1];
     [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:static_cast<NSUInteger>(first) vertexCount:6];
-    dev_.CensusMut().draw_calls++;
+    dev_.NoteDraw();
     dev_.Touch(*src);
     dev_.Touch(*copy);
     DrawResult r;
@@ -577,7 +577,7 @@ void MetalDrawExecutor::Emit(const gs::DrawIr& ir, Step& s) {
     }
     [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:static_cast<NSUInteger>(s.first)
           vertexCount:static_cast<NSUInteger>(s.tri_verts)];
-    dev_.CensusMut().draw_calls++;
+    dev_.NoteDraw();
     dev_.SplitPassIfDue();   // the GPU starts on this chunk while the CPU encodes the next
 }
 

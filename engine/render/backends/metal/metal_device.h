@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -44,6 +45,42 @@ struct MetalDeviceSettings {
     uint8_t scale = 1;          // default surface scale
     bool shader_depth = true;   // the register program writes the window depth itself (else the rasterizer's)
     uint32_t commit_draws = 256; // draws per command buffer before a mid-frame commit (0 = commit at frame end only)
+    // Per-pass GPU timestamps (MTLCounterSampleBuffer at the stage boundaries of every render /
+    // blit pass) folded per (surface, kind) and per frame: the gpu_pass= / gpu_frame= rows.
+    // Diagnostics: off by default (the sampling costs a little per pass).
+    bool gpu_timing = false;
+};
+
+// One frame's (Present to Present) slice of the backend's work: the call census deltas and
+// the GPU busy time of the command buffers committed inside it (summed when they complete).
+struct MetalFrameStats {
+    uint32_t draw_calls = 0;
+    uint32_t program_binds = 0;      // pipeline-state switches
+    uint32_t framebuffer_binds = 0;  // render passes opened (target switches + clears + re-opens)
+    uint32_t texture_binds = 0;
+    uint32_t uploads = 0;
+    uint32_t upload_bytes = 0;
+    uint32_t readbacks = 0;
+    uint32_t readback_bytes = 0;
+    uint32_t copies = 0;
+    uint32_t submits = 0;
+    uint32_t clears = 0;
+    uint64_t gpu_ns = 0;             // GPU busy of the frame's command buffers (completion handlers)
+    uint64_t gpu_wait_ns = 0;        // CPU time spent waiting for the GPU inside the frame
+    uint64_t pass_frag_ns = 0;       // gpu_timing: sum of the frame's fragment-stage spans
+    uint64_t pass_vtx_ns = 0;        // gpu_timing: sum of the frame's vertex-stage spans
+    uint64_t pass_blit_ns = 0;       // gpu_timing: sum of the frame's blit-encoder spans
+};
+
+// gpu_timing: the per-(surface, kind) fold over the run.
+struct MetalPassStats {
+    uint32_t surface = 0;            // SurfaceId.id of the colour attachment (0 = present / blit)
+    uint32_t width = 0, height = 0;  // physical texels
+    uint8_t kind = 0;                // 0 register-program pass, 1 fullscreen (pack5551 / alpha lane), 2 present, 3 blit
+    uint64_t passes = 0;
+    uint64_t draws = 0;
+    uint64_t vtx_ns = 0;
+    uint64_t frag_ns = 0;            // blit passes: the encoder span
 };
 
 // One surface's Metal objects.
@@ -112,10 +149,21 @@ public:
     // A CAMetalLayer (SDL_Metal_GetLayer) that Present also draws the scanout into; null = offscreen.
     void SetMetalLayer(void* layer);
 
+    // ---- the per-frame / per-pass statistics (the gpu= rows; any thread after the run, or the device's thread) ----
+    // Every frame closed so far (a frame = Present to Present), in order. The GPU busy of a frame's
+    // command buffers lands when they complete: read after Shutdown / a Commit(wait) for final numbers.
+    std::vector<MetalFrameStats> FrameStats() const;
+    // gpu_timing: the per-(surface, kind) fold over the run, unsorted.
+    std::vector<MetalPassStats> PassStats() const;
+    bool GpuTimingActive() const { return timing_on_; }
+    uint64_t PassesUnsampled() const { return passes_unsampled_; }
+
     // ---- the executor's surface (every call below runs on the device's thread) ----
     const MetalSurface* Surface(SurfaceId id) const;
     MetalSurface* SurfaceMut(SurfaceId id);
     CallCensus& CensusMut() { return census_; }
+    // A rasterising call issued: census_.draw_calls++ and the open pass's draw count (gpu_timing).
+    void NoteDraw();
     MetalPipelineCache& Pipelines() { return pipelines_; }
     struct TextureFilterCensus {
         uint64_t owned_draws = 0;
@@ -245,6 +293,41 @@ private:
     std::shared_ptr<const TextureFilterSelection> texture_filter_;
     TextureFilterCensus filter_census_;
     mutable CallCensus census_;
+
+    // ---- per-frame statistics ----
+    // The frame ordinal the open / next command buffer belongs to (advanced by Present).
+    uint32_t frame_ordinal_ = 0;
+    CallCensus frame_census_base_;           // the census at the frame's start
+    mutable std::mutex stats_mu_;            // guards frames_ / pass_stats_ (completion handlers write them)
+    std::vector<MetalFrameStats> frames_;    // frames_[i] = frame i (grown by Present and by completion handlers)
+    void CloseFrameStats();                  // Present: the census delta of the frame that ends
+    void AddFrameGpu(uint32_t ordinal, uint64_t gpu_ns, uint64_t frag_ns, uint64_t vtx_ns, uint64_t blit_ns);
+    // ---- gpu_timing (MTLCounterSampleBuffer) ----
+    struct PassMeta {
+        uint32_t surface = 0, width = 0, height = 0;
+        uint8_t kind = 0;
+        uint32_t draws = 0;
+        uint32_t sample_index = 0;           // first of 4 (render: vtx start/end, frag start/end) or 2 (blit)
+    };
+    struct CbTiming {                        // the open command buffer's samples
+        void* sample_buf = nullptr;          // id<MTLCounterSampleBuffer> (retained; pooled)
+        uint32_t used = 0;                   // sample indices consumed
+        std::vector<PassMeta> passes;
+        int32_t open_pass = -1;              // index into passes of the pass whose draw count is still growing
+    };
+    bool timing_on_ = false;
+    void* timestamp_counter_set_ = nullptr;  // id<MTLCounterSet> (retained)
+    std::vector<void*> free_sample_bufs_;    // id<MTLCounterSampleBuffer> pool (under stats_mu_: handlers return them)
+    std::atomic<uint32_t> handlers_pending_{0};   // completion handlers not yet run (Shutdown waits for 0)
+    CbTiming cb_timing_;
+    uint64_t passes_unsampled_ = 0;
+    double gpu_ticks_to_ns_ = 1.0;
+    std::unordered_map<uint64_t, MetalPassStats> pass_stats_;   // key = surface << 8 | kind
+    // Attaches the sample-buffer slots to a render pass (null-safe when timing is off); the
+    // returned PassMeta* is the pass's record (draw count grows until the encoder ends).
+    void AttachRenderTiming(void* render_pass_desc, uint32_t surface, uint32_t w, uint32_t h, uint8_t kind);
+    void* NewBlitEncoder();                  // a blit encoder with its timing attached (timing off: plain)
+
 };
 
 }  // namespace render
