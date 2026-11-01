@@ -15,6 +15,8 @@ SessionWindow::~SessionWindow() {
     if (context_) {
         SDL_GL_MakeCurrent(window_, context_);
         if (texture_) glDeleteTextures(1, &texture_);
+        for (Staged& st : staged_)
+            if (st.texture) glDeleteTextures(1, &st.texture);
         std::string error;
         if (gui_ready_) gui_.Shutdown(error);
         SDL_GL_DeleteContext(context_);
@@ -113,26 +115,55 @@ int SessionWindow::DisplayRefreshHz() const {
     return current.refresh_rate;
 }
 
-bool SessionWindow::Upload(const std::vector<uint8_t>& rgba, int width, int height) {
+bool SessionWindow::UploadInto(uint32_t& texture, int& tex_w, int& tex_h, const std::vector<uint8_t>& rgba, int width, int height) {
     if (width <= 0 || height <= 0 || width > 8192 || height > 8192 ||
         rgba.size() != static_cast<size_t>(width) * height * 4 || rgba.size() > (64u << 20)) return false;
     SDL_GL_MakeCurrent(window_, context_);
-    if (!texture_) glGenTextures(1, &texture_);
-    glBindTexture(GL_TEXTURE_2D, texture_);
+    if (!texture) glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    if (texture_width_ != width || texture_height_ != height) {
+    if (tex_w != width || tex_h != height) {
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
-        texture_width_ = width;
-        texture_height_ = height;
+        tex_w = width;
+        tex_h = height;
     } else {
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
     }
+    return true;
+}
+
+bool SessionWindow::Upload(const std::vector<uint8_t>& rgba, int width, int height) {
+    if (!UploadInto(texture_, texture_width_, texture_height_, rgba, width, height)) return false;
+    shown_slot_ = -1;
     gui_.SetPicture(texture_, width, height);
     return true;
+}
+
+int SessionWindow::Stage(const std::vector<uint8_t>& rgba, int width, int height) {
+    int slot = -1;
+    for (int i = 0; i < kStagedSlots; i++)
+        if (!staged_[i].taken && i != shown_slot_) { slot = i; break; }
+    if (slot < 0) return -1;
+    Staged& st = staged_[slot];
+    if (!UploadInto(st.texture, st.width, st.height, rgba, width, height)) return -1;
+    st.taken = true;
+    return slot;
+}
+
+void SessionWindow::Show(int slot) {
+    if (slot < 0 || slot >= kStagedSlots || !staged_[slot].taken) return;
+    if (shown_slot_ >= 0 && shown_slot_ != slot) staged_[shown_slot_].taken = false;
+    shown_slot_ = slot;
+    gui_.SetPicture(staged_[slot].texture, staged_[slot].width, staged_[slot].height);
+}
+
+void SessionWindow::Release(int slot) {
+    if (slot < 0 || slot >= kStagedSlots || slot == shown_slot_) return;
+    staged_[slot].taken = false;
 }
 
 void SessionWindow::Render(int& width, int& height) {

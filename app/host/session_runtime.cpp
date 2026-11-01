@@ -249,6 +249,22 @@ bool SessionRuntime::PostMain(std::function<void()> operation) {
     return true;
 }
 
+void SessionRuntime::StageFrame(Frame& frame) {
+    if (frame.rgba.empty() || frame.staged_slot >= 0) return;
+    frame.staged_slot = window_.Stage(frame.rgba, frame.width, frame.height);
+    staged_uploads_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void SessionRuntime::ShowFrame(Frame& frame) {
+    if (frame.staged_slot >= 0) window_.Show(frame.staged_slot);
+    else window_.Upload(frame.rgba, frame.width, frame.height);   // no free slot at arrival: the one-texture path
+}
+
+void SessionRuntime::DropFrame(Frame& frame) {
+    if (frame.staged_slot >= 0) window_.Release(frame.staged_slot);
+    frame.staged_slot = -1;
+}
+
 void SessionRuntime::PostFrame(std::vector<uint8_t> rgba, int width, int height, uint64_t tag) {
     if (width <= 0 || height <= 0 || width > 8192 || height > 8192 ||
         rgba.size() != static_cast<size_t>(width) * height * 4 || rgba.size() > (64u << 20)) return;
@@ -544,11 +560,13 @@ void SessionRuntime::PumpMain() {
         // two pictures inside one period are shown at consecutive edges, not the newer over
         // the older. A third arrival drops the oldest unshown (the game's tick ran; only its
         // picture is not shown).
+        StageFrame(frame);
         if (pending_frame_.rgba.empty()) {
             pending_frame_ = std::move(frame);
         } else {
             if (!queued_frame_.rgba.empty()) {
                 pacer_.Supersede();
+                DropFrame(pending_frame_);
                 pending_frame_ = std::move(queued_frame_);
             }
             queued_frame_ = std::move(frame);
@@ -749,7 +767,7 @@ int SessionRuntime::Run(std::function<int()> game, unsigned shutdown_seconds) {
         // edge: the train slips to it); the fps_cap train below keeps re-drawing the shown
         // picture (the menu, the overlays) between edges.
         if (pacer_.Admit(now, pending_frame_.posted_ns)) {
-            window_.Upload(pending_frame_.rgba, pending_frame_.width, pending_frame_.height);
+            ShowFrame(pending_frame_);
             shown_tag_ = pending_frame_.tag;
             shown_posted_ns_ = pending_frame_.posted_ns;
             doubled_frames_.store(pacer_.Count().doubled, std::memory_order_relaxed);
@@ -805,7 +823,21 @@ int SessionRuntime::Run(std::function<int()> game, unsigned shutdown_seconds) {
         // wakes the pump (PostFrame notifies).
         const uint64_t until = ps2r::Park::NowNs();
         uint64_t to_edge = next_present > until ? next_present - until : 0;
-        if (!pending_frame_.rgba.empty()) to_edge = std::min(to_edge, pacer_.ToNextEdge(until));
+        if (!pending_frame_.rgba.empty()) {
+            // The pacer's edge with a picture waiting: the condition variable's timed wait lands 0.1-1 ms
+            // late (Darwin), straight into the shown instant. Park on the cv until kPreciseEdgeNs before
+            // the edge, then the host's precise timer (mach_wait_until / clock_nanosleep ABSTIME / the
+            // high-resolution waitable timer) to the edge itself -- no busy-wait, a wake within tens of
+            // microseconds. A PostFrame / command during those last 2 ms is pumped right after.
+            constexpr uint64_t kPreciseEdgeNs = 2000000;
+            const uint64_t edge = pacer_.ToNextEdge(until);
+            if (edge <= kPreciseEdgeNs) {
+                if (edge > 0) ps2r::host::PreciseSleepUntilNs(ps2r::host::MonotonicNowNs() + edge);
+                precise_edge_waits_.fetch_add(1, std::memory_order_relaxed);
+                continue;
+            }
+            to_edge = std::min(to_edge, edge - kPreciseEdgeNs);
+        }
         wake_main_.WaitFor(std::min<uint64_t>(4000000, std::max<uint64_t>(to_edge, 200000)), generation);
     }
     ps2r::host::ThreadJoin(thread);
