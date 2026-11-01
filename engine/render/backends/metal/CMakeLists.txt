@@ -14,3 +14,10 @@ target_compile_definitions(ps2r_render_metal PUBLIC PS2R_HAS_METAL=1)
 # The GL arm's title-neutral helpers (VertexConvert, CdCopyPolicy, BlendFfMap, GpuVertex) are shared.
 target_link_libraries(ps2r_render_metal PUBLIC ps2r_render ps2r_render_gl ps2r_gs_ir
     "-framework Metal" "-framework QuartzCore" "-framework Foundation")
+
+# metal_microbench: the GPU roofline microbenchmark (PERF1) -- fill / depth / blend / framebuffer-fetch /
+# texture sample / ALU / upload / readback / command-buffer round trip / render-pass switch rates on this
+# device at the scale-4 surface. Standalone over Metal (no engine objects, no window); rows print as key=value.
+add_executable(metal_microbench metal_microbench.mm)
+target_compile_options(metal_microbench PRIVATE -Wall -Wextra -Werror -fobjc-arc)
+target_link_libraries(metal_microbench PRIVATE "-framework Metal" "-framework Foundation")
