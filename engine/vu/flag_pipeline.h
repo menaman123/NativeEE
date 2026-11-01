@@ -193,7 +193,11 @@ private:
     bool lazy_;
     alignas(128) PendingMac mac_pending_[kRingDepth] = {};
     alignas(128) PendingClip clip_pending_[kRingDepth] = {};
-    alignas(16) uint32_t lazy_acc_[4][4] = {};  // [Z,S,U,O][lane] all-ones where seen (SIMD fold)
+    // The SIMD fold's accumulators, LazyAcc's representation (STAGE PERF-1): [0] the OR of the raw bits,
+    // [1] the unsigned MAX of |bits|, [2] the unsigned MIN of |bits|, [3] the unsigned MIN of |bits|-1,
+    // per lane; an unselected lane contributes 0 / 0 / ~0 / ~0. ResetLazyAcc sets the neutral values.
+    alignas(16) uint32_t lazy_acc_[4][4] = {{0, 0, 0, 0}, {0, 0, 0, 0}, {~0u, ~0u, ~0u, ~0u}, {~0u, ~0u, ~0u, ~0u}};
+    void ResetLazyAcc();
     uint16_t lazy_or_mac_ = 0;                  // OR of packed words (scalar fold)
     uint32_t lazy_last_bits_[4] = {};
     uint8_t lazy_last_mask_ = 0;

@@ -70,20 +70,27 @@ PS2R_FORCE_INLINE void FlagPipeline::PushMacAt(VUregs& regs, uint16_t mac, uint6
 // The lazy fold of one retired result: the Z/S/U/O lane masks OR into the
 // sticky accumulators, the raw lanes become the "last retired" (the MAC word
 // a reader materialises).
+PS2R_FORCE_INLINE void FlagPipeline::ResetLazyAcc() {
+    for (int l = 0; l < 4; ++l) {
+        lazy_acc_[0][l] = 0;
+        lazy_acc_[1][l] = 0;
+        lazy_acc_[2][l] = ~0u;
+        lazy_acc_[3][l] = ~0u;
+    }
+}
+
 PS2R_FORCE_INLINE void FlagPipeline::FoldLazyRetired(const uint32_t bits_in[4], uint8_t mask) {
 #if PS2R_VU_NEON
-    const uint32x4_t bits = vld1q_u32(bits_in);
-    const uint32x4_t expm = vdupq_n_u32(VuFloat::kExpMask);
-    const uint32x4_t exp = vandq_u32(bits, expm);
-    const uint32x4_t z_m = vceqq_u32(exp, vdupq_n_u32(0));
-    const uint32x4_t o_m = vceqq_u32(exp, expm);
-    const uint32x4_t u_m = vandq_u32(z_m, vtstq_u32(bits, vdupq_n_u32(VuFloat::kMantMask)));
-    const uint32x4_t s_m = vreinterpretq_u32_s32(vshrq_n_s32(vreinterpretq_s32_u32(bits), 31));
+    // LazyAcc's representation (the same accumulators FoldLazyBatch merges): the sign OR, |bits| MAX, |bits| MIN, |bits|-1 MIN.
     const uint32x4_t lm = vld1q_u32(VuFloat::kLaneMask[mask & 0xF]);
-    vst1q_u32(lazy_acc_[0], vorrq_u32(vld1q_u32(lazy_acc_[0]), vandq_u32(z_m, lm)));
-    vst1q_u32(lazy_acc_[1], vorrq_u32(vld1q_u32(lazy_acc_[1]), vandq_u32(s_m, lm)));
-    vst1q_u32(lazy_acc_[2], vorrq_u32(vld1q_u32(lazy_acc_[2]), vandq_u32(u_m, lm)));
-    vst1q_u32(lazy_acc_[3], vorrq_u32(vld1q_u32(lazy_acc_[3]), vandq_u32(o_m, lm)));
+    const uint32x4_t raw = vld1q_u32(bits_in);
+    const uint32x4_t bits = vandq_u32(raw, lm);
+    const uint32x4_t abs = vbicq_u32(bits, vdupq_n_u32(VuFloat::kSignBit));
+    const uint32x4_t abs_n = vornq_u32(abs, lm);
+    vst1q_u32(lazy_acc_[0], vorrq_u32(vld1q_u32(lazy_acc_[0]), bits));
+    vst1q_u32(lazy_acc_[1], vmaxq_u32(vld1q_u32(lazy_acc_[1]), abs));
+    vst1q_u32(lazy_acc_[2], vminq_u32(vld1q_u32(lazy_acc_[2]), abs_n));
+    vst1q_u32(lazy_acc_[3], vminq_u32(vld1q_u32(lazy_acc_[3]), vsubq_u32(abs_n, vdupq_n_u32(1))));
 #else
     lazy_or_mac_ |= VuFloat::PackMacBits(bits_in, mask);
 #endif
@@ -130,15 +137,11 @@ PS2R_FORCE_INLINE void FlagPipeline::LazyAcc::Fold(const uint32_t bits_in[4]) {
 
 PS2R_FORCE_INLINE void FlagPipeline::FoldLazyBatch(LazyAcc& acc, const uint32_t last_bits[4], uint8_t last_mask) {
 #if PS2R_VU_NEON
-    // The accumulators -> the ring's lane sets (FoldLazyRetired's z_m / s_m / u_m / o_m over the batch).
-    const uint32x4_t z_m = vcltq_u32(acc.abs_min, vdupq_n_u32(0x00800000u));
-    const uint32x4_t s_m = vreinterpretq_u32_s32(vshrq_n_s32(vreinterpretq_s32_u32(acc.s_or), 31));
-    const uint32x4_t u_m = vcltq_u32(acc.absm1_min, vdupq_n_u32(0x007FFFFFu));
-    const uint32x4_t o_m = vcgeq_u32(acc.abs_max, vdupq_n_u32(VuFloat::kExpMask));
-    vst1q_u32(lazy_acc_[0], vorrq_u32(vld1q_u32(lazy_acc_[0]), z_m));
-    vst1q_u32(lazy_acc_[1], vorrq_u32(vld1q_u32(lazy_acc_[1]), s_m));
-    vst1q_u32(lazy_acc_[2], vorrq_u32(vld1q_u32(lazy_acc_[2]), u_m));
-    vst1q_u32(lazy_acc_[3], vorrq_u32(vld1q_u32(lazy_acc_[3]), o_m));
+    // The same representation: the batch merges with OR / MAX / MIN / MIN.
+    vst1q_u32(lazy_acc_[0], vorrq_u32(vld1q_u32(lazy_acc_[0]), acc.s_or));
+    vst1q_u32(lazy_acc_[1], vmaxq_u32(vld1q_u32(lazy_acc_[1]), acc.abs_max));
+    vst1q_u32(lazy_acc_[2], vminq_u32(vld1q_u32(lazy_acc_[2]), acc.abs_min));
+    vst1q_u32(lazy_acc_[3], vminq_u32(vld1q_u32(lazy_acc_[3]), acc.absm1_min));
 #else
     lazy_or_mac_ = static_cast<uint16_t>(lazy_or_mac_ | acc.or_mac);
 #endif
@@ -211,10 +214,12 @@ PS2R_FORCE_INLINE void FlagPipeline::MaterializeMacStatus(VUregs& regs) {
     uint16_t mac;
 #if PS2R_VU_NEON
     mac = VuFloat::MacFlags4(vld1q_u32(lazy_last_bits_), lazy_last_mask_);
-    any_z = vmaxvq_u32(vld1q_u32(lazy_acc_[0])) != 0;
-    any_s = vmaxvq_u32(vld1q_u32(lazy_acc_[1])) != 0;
-    any_u = vmaxvq_u32(vld1q_u32(lazy_acc_[2])) != 0;
-    any_o = vmaxvq_u32(vld1q_u32(lazy_acc_[3])) != 0;
+    // The sticky judgements over every lane: a sign in the OR; a MAX |bits| with an all-ones exponent;
+    // a MIN |bits| with a zero exponent; a MIN |bits|-1 below the largest denormal (1 <= |bits| <= 0x7FFFFF).
+    any_s = (vmaxvq_u32(vld1q_u32(lazy_acc_[0])) & VuFloat::kSignBit) != 0;
+    any_o = vmaxvq_u32(vld1q_u32(lazy_acc_[1])) >= VuFloat::kExpMask;
+    any_z = vminvq_u32(vld1q_u32(lazy_acc_[2])) < 0x00800000u;
+    any_u = vminvq_u32(vld1q_u32(lazy_acc_[3])) < 0x007FFFFFu;
 #else
     mac = VuFloat::PackMacBits(lazy_last_bits_, lazy_last_mask_);
     any_z = (lazy_or_mac_ & 0x000Fu) != 0;
@@ -233,7 +238,7 @@ PS2R_FORCE_INLINE void FlagPipeline::MaterializeMacStatus(VUregs& regs) {
     if (any_u) status |= vu_status::US;
     if (any_o) status |= vu_status::OS;
     regs.status_flag = status;
-    std::memset(lazy_acc_, 0, sizeof(lazy_acc_));
+    ResetLazyAcc();
     lazy_or_mac_ = 0;
     lazy_have_last_ = false;
 }
