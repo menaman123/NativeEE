@@ -1,5 +1,7 @@
 #include "app/host/clock_census.h"
 
+#include <algorithm>
+
 #include "engine/platform/host/platform.h"
 
 namespace ps2r::app {
@@ -145,6 +147,40 @@ std::string ClockCensus::FootprintKbSeries() const {
 uint64_t ClockCensus::EeCpuTotalMs() const {
     std::lock_guard<std::mutex> lk(mu_);
     return cpu_total_ns_ / 1000000ull;
+}
+
+void ClockCensus::NoteFrameCpu() { NoteFrameCpuAt(ThreadCpuNs()); }
+
+void ClockCensus::NoteFrameCpuAt(uint64_t thread_cpu_ns) {
+    std::lock_guard<std::mutex> lk(mu_);
+    if (have_frame_cpu_ && thread_cpu_ns >= last_frame_cpu_ns_ && frame_cpu_us_.size() < kMaxFrameSamples) {
+        const uint64_t us = (thread_cpu_ns - last_frame_cpu_ns_) / 1000ull;
+        frame_cpu_us_.push_back(us > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<uint32_t>(us));
+    }
+    have_frame_cpu_ = true;
+    last_frame_cpu_ns_ = thread_cpu_ns;
+}
+
+std::string ClockCensus::FrameCpuRow() const {
+    std::vector<uint32_t> v;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (frame_cpu_us_.empty()) return "none";
+        v = frame_cpu_us_;
+    }
+    auto pct = [&](double p) {
+        const size_t k = static_cast<size_t>(p * static_cast<double>(v.size() - 1) + 0.5);
+        std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(k), v.end());
+        return v[k];
+    };
+    // The max and its boundary (1-based: sample i is the frame that ended at boundary i+2) before pct() reorders v.
+    uint32_t mx = 0;
+    size_t mx_at = 0;
+    for (size_t i = 0; i < v.size(); ++i)
+        if (v[i] > mx) { mx = v[i]; mx_at = i + 2; }
+    const uint32_t p50 = pct(0.50), p95 = pct(0.95), p99 = pct(0.99);
+    return "n=" + std::to_string(v.size()) + ":p50=" + std::to_string(p50) + ":p95=" + std::to_string(p95) +
+           ":p99=" + std::to_string(p99) + ":max=" + std::to_string(mx) + ":max_at=" + std::to_string(mx_at);
 }
 
 std::vector<ClockCensus::Window> ClockCensus::Windows() const {

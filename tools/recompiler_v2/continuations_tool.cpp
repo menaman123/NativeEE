@@ -190,9 +190,12 @@ std::vector<FunctionMatch> FindFunctions(const std::string& s) {
         if (!hl) continue;
         const std::string hex = s.substr(i, hl);
         i += hl;
+        // The classic signature, or the --mem-window form (the context parameter restrict-qualified).
         const std::string tail = "\nvoid " + name + "(CpuContext& ctx, uint32_t addr) {";
-        if (!StartsWith(s, i, tail.c_str())) continue;
-        i += tail.size();
+        const std::string tail_mw = "\nvoid " + name + "(CpuContext& PS2R_RECOMP_RESTRICT ctx, uint32_t addr) {";
+        if (StartsWith(s, i, tail.c_str())) i += tail.size();
+        else if (StartsWith(s, i, tail_mw.c_str())) i += tail_mw.size();
+        else continue;
         out.push_back({start, i, name, ParseHex(hex)});
         p = i;
     }
@@ -236,6 +239,10 @@ std::string StripPrologueTokens(const std::string& text) {
         // --vu0-native: the folded COP2 flag locals (inert initialisation).
         if (StartsWith(text, i, "VR_reg _vu0_fl{}; VR_reg _vu0_fo{}; (void)_vu0_fl; (void)_vu0_fo;")) {
             i += std::strlen("VR_reg _vu0_fl{}; VR_reg _vu0_fo{}; (void)_vu0_fl; (void)_vu0_fo;"); continue;
+        }
+        // --mem-window: the hoisted memory window (inert: two pointer reads).
+        if (StartsWith(text, i, "const memory::Window _mw = memory::window(); (void)_mw;")) {
+            i += std::strlen("const memory::Window _mw = memory::window(); (void)_mw;"); continue;
         }
         out.push_back(text[i]);
         ++i;
@@ -311,11 +318,14 @@ bool Collect(const std::string& dir, const std::vector<std::string>& shards, con
             for (const auto& k : kinds) {
                 char num[16];
                 std::snprintf(num, sizeof num, "0x%x", k.first);
-                const std::string expected = std::string("{") +
-                    "ctx.cpuRegs.GPR.r[3].SD[0]=static_cast<int32_t>(" +
-                    "static_cast<int32_t>(ctx.cpuRegs.GPR.r[0].SL[0])+" + num + ");" +
-                    "runtime_syscall_dispatcher(ctx.cpuRegs.GPR.r[3].UL[0],ctx);" + "return;}";
-                if (normalized == expected) wait = k.second;
+                // The $zero read spelled as the register, or as the --zero-fold literal.
+                for (const char* zero : {"ctx.cpuRegs.GPR.r[0].SL[0]", "static_cast<int32_t>(0)"}) {
+                    const std::string expected = std::string("{") +
+                        "ctx.cpuRegs.GPR.r[3].SD[0]=static_cast<int32_t>(" +
+                        "static_cast<int32_t>(" + zero + ")+" + num + ");" +
+                        "runtime_syscall_dispatcher(ctx.cpuRegs.GPR.r[3].UL[0],ctx);" + "return;}";
+                    if (normalized == expected) wait = k.second;
+                }
             }
             records->push_back({address, std::vector<uint32_t>(entries.begin(), entries.end()), wait});
         }

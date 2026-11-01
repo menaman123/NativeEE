@@ -355,6 +355,9 @@ int main(int argc, char** argv) {
     bool legacy_title_stubs = false;   // --legacy-title-stubs: the first title's hardcoded stub blocks
     bool yield_backedges = false;      // --yield-backedges: the engine's in-line yield check at loop back-edges
     bool vu0_native = false;           // --vu0-native: COP2 FMAC ops through the host vector kernels + folded flags
+    bool mem_window = false;           // --mem-window: restrict context + the hoisted memory window per body
+    bool zero_fold = false;            // --zero-fold: reads of $zero emitted as the literal 0
+    bool inline_leaves = false;        // --inline-leaves: trivial straight-line leaf callees emitted at the JAL site
     for (int i = 1; i < argc; ++i) {
         auto need = [&](const char* flag) -> const char* {
             if (i + 1 >= argc) {
@@ -387,6 +390,12 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--no-yield-backedges")) yield_backedges = false;
         else if (!std::strcmp(argv[i], "--vu0-native")) vu0_native = true;
         else if (!std::strcmp(argv[i], "--no-vu0-native")) vu0_native = false;
+        else if (!std::strcmp(argv[i], "--mem-window")) mem_window = true;
+        else if (!std::strcmp(argv[i], "--no-mem-window")) mem_window = false;
+        else if (!std::strcmp(argv[i], "--zero-fold")) zero_fold = true;
+        else if (!std::strcmp(argv[i], "--no-zero-fold")) zero_fold = false;
+        else if (!std::strcmp(argv[i], "--inline-leaves")) inline_leaves = true;
+        else if (!std::strcmp(argv[i], "--no-inline-leaves")) inline_leaves = false;
         // [RECOMP-P4] corpus audit mode (design §9): --audit-corpus is
         // repeatable (one merged run over all files); --audit-out is the
         // deterministic markdown report. Exit 4 when gaps exist (gate-able).
@@ -575,6 +584,9 @@ int main(int argc, char** argv) {
         recompiler.set_legacy_title_stubs(legacy_title_stubs);
         recompiler.set_yield_backedges(yield_backedges);
         recompiler.set_vu0_native(vu0_native);
+        recompiler.set_mem_window(mem_window);
+        recompiler.set_zero_fold(zero_fold);
+        recompiler.set_inline_leaves(inline_leaves);
         recompiler.set_v2_emission(build.config);
         try {
             if (!recompiler.recompile_to_files(out_header, out_cpp,

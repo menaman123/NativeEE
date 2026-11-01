@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <set>
 #include <cstring>   // [W16R1] post-pass tokenizer (strlen)
+#include <cctype>    // --mem-window post-pass (isalnum)
 #include <algorithm> // [U1-WIN] std::sort (hook-list post-pass; Apple libc++ got it transitively)
 #include <iterator>  // [W16R1] post-pass file slurp (istreambuf_iterator)
 
@@ -691,8 +692,20 @@ void Recompiler::write_cpp_infra(std::ofstream& file) {
     file << "// [ATLAS-CALLER-TRACE] Thread-local EE call stack\n";
     file << "struct EeCallFrame { uint32_t func_addr; uint32_t ra_at_entry; };\n";
     file << "static constexpr size_t EE_CALL_STACK_MAX = 128;\n";
-    file << "thread_local EeCallFrame g_ee_call_stack[EE_CALL_STACK_MAX];\n";
-    file << "thread_local size_t g_ee_call_stack_depth = 0;\n\n";
+    if (m_mem_window) {
+        // One thread_local object instead of two: the dispatch's push + pop resolve the
+        // TLS address once (a `_tlv_get_addr` call per thread_local per function on
+        // macOS; recomp_raw_dispatch paid it up to four times per guest call). The
+        // two names keep every other emitted line (and the continuation tools' exact
+        // patches) byte-identical.
+        file << "struct EeShadowStack { size_t depth; EeCallFrame frames[EE_CALL_STACK_MAX]; };\n";
+        file << "thread_local EeShadowStack g_ee_shadow;\n";
+        file << "#define g_ee_call_stack g_ee_shadow.frames\n";
+        file << "#define g_ee_call_stack_depth g_ee_shadow.depth\n\n";
+    } else {
+        file << "thread_local EeCallFrame g_ee_call_stack[EE_CALL_STACK_MAX];\n";
+        file << "thread_local size_t g_ee_call_stack_depth = 0;\n\n";
+    }
 
     file << "extern \"C\" uint32_t ee_get_call_stack_depth() {\n";
     file << "    return (uint32_t)g_ee_call_stack_depth;\n";
@@ -9275,6 +9288,10 @@ bool Recompiler::write_sharded_cpp_files(const std::string& output_cpp,
         // [W16R1][FIX-E2] rewrite the manual raw-string bodies' classic map
         // dispatch into dense-id recomp_call (exact-shape sites only).
         if (rewrite_manual_dispatch_file(shard_path.string()) < 0) return false;
+        // --mem-window: every memory:: access site in the shard -> the Window overload.
+        if (m_mem_window && rewrite_memory_window_file(shard_path.string()) < 0) return false;
+        // --zero-fold: every read of $zero -> the literal 0.
+        if (m_zero_fold && rewrite_zero_fold_file(shard_path.string()) < 0) return false;
         std::cout << "Successfully generated shard " << shard_path.filename().string()
                   << " (" << shard_funcs << " functions)" << std::endl;
     }
@@ -9297,6 +9314,7 @@ bool Recompiler::write_sharded_cpp_files(const std::string& output_cpp,
     // [W16R1][FIX-E1] inject the generator-known hook list (scans the just-
     // emitted init body; fails closed to all-true/classic).
     if (inject_gen_hook_list(output_cpp) < 0) return false;
+    if (m_inline_leaves) std::cout << "[LEAF-INLINE] " << m_inlined_leaf_sites << " JAL site(s) inlined" << std::endl;
     std::cout << "Successfully generated common TU: " << output_cpp
               << " (+" << shard_count << " shards)" << std::endl;
     return true;
@@ -20098,9 +20116,18 @@ if (legacy_title_addr(func, 0x00202ef0)) {
 
 
     file << "// Function: " << func.name << " at 0x" << std::hex << func.base_address << "\n";
-    file << "void " << func.name << "(CpuContext& ctx, uint32_t addr) {\n";
+    if (m_mem_window) {
+        // --mem-window: the restrict-qualified context (a parameter qualifier, not part of
+        // the function type: the raw-body table and the declarations are unchanged) and the
+        // hoisted memory window the shard post-pass routes every access through.
+        file << "void " << func.name << "(CpuContext& PS2R_RECOMP_RESTRICT ctx, uint32_t addr) {\n";
+    } else {
+        file << "void " << func.name << "(CpuContext& ctx, uint32_t addr) {\n";
+    }
     file << "bool branch_taken;\n";
     file << "bool cond;\n";
+    // --mem-window: an inert prologue local (the continuations tools strip it like the others).
+    if (m_mem_window) file << "const memory::Window _mw = memory::window(); (void)_mw;\n";
     if (m_vu0_native) {
         // --vu0-native: the folded MAC/STATUS lane flags of the open FMAC run
         // (the last op's / the OR over the run); vu0n::Commit at the run's end.
@@ -22972,8 +22999,21 @@ void Recompiler::translate_control_flow(const rabbitizer::InstructionR5900& inst
             // path including [JAL-MISS] logging - identical behaviour.
             auto dc_it = m_addr_to_id.find(target_addr);
             if (m_direct_calls && dc_it != m_addr_to_id.end()) {
+                std::vector<const rabbitizer::InstructionR5900*> leaf_body;
+                auto leaf_it = m_inline_leaves ? m_functions.find(target_addr) : m_functions.end();
+                if (leaf_it != m_functions.end() && !m_body_skipped.count(target_addr) &&
+                    trivial_leaf_body(leaf_it->second, leaf_body)) {
+                    // --inline-leaves: the callee's straight-line body in place of the dispatch.
+                    file << "    if (g_recomp_fn_hooked[" << std::dec << dc_it->second << "u]) recomp_hooked_dispatch("
+                         << std::dec << dc_it->second << "u, 0x" << std::hex << target_addr
+                         << "u, ctx); else { // [LEAF-INLINE] " << leaf_it->second.name << "\n";
+                    for (const rabbitizer::InstructionR5900* li : leaf_body) translate_instruction(*li, file);
+                    file << "    } // [LEAF-INLINE] end\n";
+                    ++m_inlined_leaf_sites;
+                } else {
                 file << "    recomp_call(" << std::dec << dc_it->second << "u, 0x"
                      << std::hex << target_addr << "u, ctx); // [R137-DIRECTCALL]\n";
+                }
                 // Preserve the classic post-call goto to the return-address
                 // block. (In the old emission the goto lived in the count()-hit
                 // branch; the miss branch fell through to the same block, so an
@@ -23343,6 +23383,74 @@ void Recompiler::emit_branch_target(uint32_t target_addr, const Function& func, 
     }
 }
 
+
+// --inline-leaves: the trivial-leaf test (rules in recompiler.h).
+bool Recompiler::trivial_leaf_body(const Function& callee,
+                                   std::vector<const rabbitizer::InstructionR5900*>& body) const {
+    using Id = rabbitizer::InstrId::UniqueId;
+    body.clear();
+    if (callee.blocks.size() != 1) return false;
+    const Block& b = callee.blocks[0];
+    const size_t n = b.instructions.size();
+    if (n < 2 || n > kInlineLeafMaxInstrs + 1) return false;   // the jr itself is not counted
+    // The block ends `jr $ra` + one delay-slot instruction.
+    if (!b.instructions[n - 2].isJrRa()) return false;
+    for (size_t i = 0; i < n; ++i) {
+        if (i == n - 2) continue;
+        const rabbitizer::InstructionR5900& in = b.instructions[i];
+        if (in.isNop()) continue;
+        bool ok = false;
+        bool has_rs = true, has_rt = true, has_rd = false;
+        switch (in.getUniqueId()) {
+            case Id::cpu_addu: case Id::cpu_subu: case Id::cpu_and: case Id::cpu_or: case Id::cpu_xor:
+            case Id::cpu_nor: case Id::cpu_slt: case Id::cpu_sltu: case Id::cpu_daddu: case Id::cpu_dsubu:
+            case Id::cpu_sllv: case Id::cpu_srlv: case Id::cpu_srav:
+                ok = true; has_rd = true; break;
+            case Id::cpu_sll: case Id::cpu_srl: case Id::cpu_sra:
+            case Id::cpu_dsll: case Id::cpu_dsrl: case Id::cpu_dsra:
+            case Id::cpu_dsll32: case Id::cpu_dsrl32: case Id::cpu_dsra32:
+                ok = true; has_rs = false; has_rd = true; break;
+            case Id::cpu_addiu: case Id::cpu_andi: case Id::cpu_ori: case Id::cpu_xori:
+            case Id::cpu_slti: case Id::cpu_sltiu: case Id::cpu_daddiu:
+                ok = true; break;
+            case Id::cpu_lui:
+                ok = true; has_rs = false; break;
+            case Id::cpu_lb: case Id::cpu_lbu: case Id::cpu_lh: case Id::cpu_lhu: case Id::cpu_lw: case Id::cpu_lwu:
+            case Id::cpu_ld: case Id::cpu_sb: case Id::cpu_sh: case Id::cpu_sw: case Id::cpu_sd:
+            case Id::r5900_lq: case Id::r5900_sq:
+                ok = true; break;
+            case Id::cpu_lwc1: case Id::cpu_swc1:
+                ok = true; has_rt = false; break;   // rt is the FPR field
+            case Id::cpu_mfc1: case Id::cpu_mtc1:
+                ok = true; has_rs = false; break;   // rt is the GPR
+            case Id::cpu_add_s: case Id::cpu_sub_s: case Id::cpu_mul_s: case Id::cpu_mov_s:
+            case Id::cpu_neg_s: case Id::cpu_abs_s: case Id::cpu_cvt_w_s: case Id::cpu_cvt_s_w:
+                ok = true; has_rs = false; has_rt = false; break;
+            default:
+                ok = false;
+        }
+        if (!ok) return false;
+        // No $sp (the caller's callee-save locals would be substituted) and no $ra / $zero-write operand.
+        auto bad = [](int r) { return r == 29 || r == 31; };
+        if (has_rs && bad(static_cast<int>(in.GetO32_rs()))) return false;
+        if (has_rt && bad(static_cast<int>(in.GetO32_rt()))) return false;
+        if (has_rd && bad(static_cast<int>(in.GetO32_rd()))) return false;
+        if (has_rd && static_cast<int>(in.GetO32_rd()) == 0) return false;   // a $zero write: keep the classic emission
+        if (!has_rd && has_rt && static_cast<int>(in.GetO32_rt()) == 0) {
+            // rt as a destination (ALU-immediate, loads) must not be $zero either.
+            switch (in.getUniqueId()) {
+                case Id::cpu_addiu: case Id::cpu_andi: case Id::cpu_ori: case Id::cpu_xori: case Id::cpu_slti:
+                case Id::cpu_sltiu: case Id::cpu_daddiu: case Id::cpu_lui: case Id::cpu_lb: case Id::cpu_lbu:
+                case Id::cpu_lh: case Id::cpu_lhu: case Id::cpu_lw: case Id::cpu_lwu: case Id::cpu_ld: case Id::r5900_lq:
+                case Id::cpu_mfc1:
+                    return false;
+                default: break;
+            }
+        }
+        body.push_back(&in);
+    }
+    return !body.empty();
+}
 
 // ALL INSTRUCTION TRANSLATIONS BELOW ARE UNCHANGED - PRESERVED EXACTLY
 void Recompiler::translate_instruction(const rabbitizer::InstructionR5900& instr, std::ofstream& file) {
@@ -26303,6 +26411,179 @@ int Recompiler::rewrite_manual_dispatch_file(const std::string& path) {
                   << " residual classic site(s)" << std::endl;
     }
     return rewritten;
+}
+
+// ============================================================================
+// --mem-window shard post-pass (STAGE PERF-1, track ee). Every generated body
+// opens with `const memory::Window _mw = memory::window();`; this pass routes
+// every access site in the shard through the Window overload of the same
+// accessor:  memory::read<T>(A)        -> memory::read<T>(_mw, A)
+//            memory::write<T>(A, V)    -> memory::write<T>(_mw, A, V)
+//            memory::read_quad(A, Q)   -> memory::read_quad(_mw, A, Q)
+//            memory::write_quad(A, Q)  -> memory::write_quad(_mw, A, Q)
+// A textual pass over the emitted shard (the emitter's ~2300 access sites keep
+// their classic spelling, so --no-mem-window stays byte-identical to the
+// pre-flag output). A site the pass cannot shape (no `(` after the template
+// argument list) is left as is and counted; the classic overload still
+// compiles, so nothing silently breaks. Deterministic: a pure function of the
+// shard text.
+// ============================================================================
+int Recompiler::rewrite_memory_window_file(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in.is_open()) {
+        std::cerr << "[MEM-WINDOW] cannot open for rewrite: " << path << std::endl;
+        return -1;
+    }
+    std::string src((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    in.close();
+
+    static const char kNs[] = "memory::";
+    std::string out;
+    out.reserve(src.size() + src.size() / 16);
+    size_t pos = 0;
+    int rewritten = 0, residual = 0;
+    for (;;) {
+        const size_t hit = src.find(kNs, pos);
+        if (hit == std::string::npos) {
+            out.append(src, pos, std::string::npos);
+            break;
+        }
+        // The identifier after the namespace.
+        size_t p = hit + std::strlen(kNs);
+        size_t q = p;
+        while (q < src.size() && (std::isalnum(static_cast<unsigned char>(src[q])) || src[q] == '_')) ++q;
+        const std::string name = src.substr(p, q - p);
+        bool templated = false;
+        if (name == "read" || name == "write") templated = true;
+        else if (name != "read_quad" && name != "write_quad") {
+            // memory::get_pointer and anything else: untouched.
+            out.append(src, pos, q - pos);
+            pos = q;
+            continue;
+        }
+        size_t r = q;
+        bool ok = true;
+        if (templated) {
+            // `<T>` with no nested angle brackets (the emitter writes plain integer types).
+            if (r < src.size() && src[r] == '<') {
+                const size_t close = src.find('>', r);
+                if (close == std::string::npos) ok = false; else r = close + 1;
+            } else {
+                ok = false;
+            }
+        }
+        if (ok && !(r < src.size() && src[r] == '(')) ok = false;
+        if (!ok) {
+            out.append(src, pos, q - pos);
+            pos = q;
+            ++residual;
+            continue;
+        }
+        // Copy through the `(` and insert the window argument.
+        out.append(src, pos, (r + 1) - pos);
+        out += "_mw, ";
+        pos = r + 1;
+        ++rewritten;
+    }
+
+    if (rewritten > 0) {
+        std::ofstream outf(path, std::ios::binary | std::ios::trunc);
+        if (!outf.is_open()) {
+            std::cerr << "[MEM-WINDOW] cannot reopen for write: " << path << std::endl;
+            return -1;
+        }
+        outf << out;
+        outf.close();
+    }
+    std::cout << "[MEM-WINDOW] " << path << ": " << rewritten << " access site(s) -> Window overload, "
+              << residual << " left classic" << std::endl;
+    return rewritten;
+}
+
+// ============================================================================
+// --zero-fold shard post-pass (STAGE PERF-1, track ee). A read of $zero --
+// `ctx.cpuRegs.GPR.r[0].<view>[k]` as an rvalue -- becomes a typed literal 0:
+//   .SD/.SL/.SS/.SC -> static_cast<int64_t/int32_t/int16_t/int8_t>(0)
+//   .UD/.UL/.US/.UC -> static_cast<uint64_t/uint32_t/uint16_t/uint8_t>(0)
+// An assignment target (the view followed by a single `=`) is left as it is
+// (the dsra32 pair writes $zero and re-zeroes it on the next statement; the
+// emission never reads $zero between the two). Address-of / whole-register
+// forms (`&ctx.cpuRegs.GPR.r[0]`, `.UQ`) are untouched: they read the quadword
+// as memory, which the same invariant keeps at 0. Deterministic: a pure
+// function of the shard text.
+// ============================================================================
+int Recompiler::rewrite_zero_fold_file(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in.is_open()) {
+        std::cerr << "[ZERO-FOLD] cannot open for rewrite: " << path << std::endl;
+        return -1;
+    }
+    std::string src((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    in.close();
+
+    static const char kZero[] = "ctx.cpuRegs.GPR.r[0].";
+    std::string out;
+    out.reserve(src.size());
+    size_t pos = 0;
+    int folded = 0, kept = 0;
+    for (;;) {
+        const size_t hit = src.find(kZero, pos);
+        if (hit == std::string::npos) {
+            out.append(src, pos, std::string::npos);
+            break;
+        }
+        size_t p = hit + std::strlen(kZero);
+        // The element view: two letters then `[digits]`.
+        const char* type = nullptr;
+        if (p + 1 < src.size()) {
+            const char a = src[p], b = src[p + 1];
+            if (a == 'S' || a == 'U') {
+                const bool u = a == 'U';
+                if (b == 'D') type = u ? "uint64_t" : "int64_t";
+                else if (b == 'L') type = u ? "uint32_t" : "int32_t";
+                else if (b == 'S') type = u ? "uint16_t" : "int16_t";
+                else if (b == 'C') type = u ? "uint8_t" : "int8_t";
+            }
+        }
+        size_t q = p + 2;
+        if (type && q < src.size() && src[q] == '[') {
+            size_t e = q + 1;
+            while (e < src.size() && std::isdigit(static_cast<unsigned char>(src[e]))) ++e;
+            if (e < src.size() && src[e] == ']' && e > q + 1) {
+                ++e;   // past `]`
+                // An assignment target?  (skip spaces; `=` not followed by `=`)
+                size_t t = e;
+                while (t < src.size() && (src[t] == ' ' || src[t] == '\t')) ++t;
+                const bool assign = t < src.size() && src[t] == '=' && !(t + 1 < src.size() && src[t + 1] == '=');
+                // Address-of or member-of-pointer forms never reach here: `&ctx...r[0])` has no view.
+                if (!assign) {
+                    out.append(src, pos, hit - pos);
+                    out += "static_cast<";
+                    out += type;
+                    out += ">(0)";
+                    pos = e;
+                    ++folded;
+                    continue;
+                }
+                ++kept;
+            }
+        }
+        out.append(src, pos, p - pos);
+        pos = p;
+    }
+
+    if (folded > 0) {
+        std::ofstream outf(path, std::ios::binary | std::ios::trunc);
+        if (!outf.is_open()) {
+            std::cerr << "[ZERO-FOLD] cannot reopen for write: " << path << std::endl;
+            return -1;
+        }
+        outf << out;
+        outf.close();
+    }
+    std::cout << "[ZERO-FOLD] " << path << ": " << folded << " $zero read(s) folded, " << kept
+              << " write(s) kept" << std::endl;
+    return folded;
 }
 
 // ============================================================================

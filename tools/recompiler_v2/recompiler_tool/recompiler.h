@@ -91,6 +91,46 @@ public:
     // emission change.
     void set_vu0_native(bool enabled) { m_vu0_native = enabled; }
 
+    // --mem-window (STAGE PERF-1, track ee): every generated body takes its
+    // context as `CpuContext& PS2R_RECOMP_RESTRICT ctx` (guest RAM never
+    // overlaps the register file, so a guest store cannot change a register)
+    // and opens with `const memory::Window _mw = memory::window();` -- the two
+    // inline memory bases read once per body; the shard post-pass
+    // (rewrite_memory_window_file) rewrites every memory::read/write/
+    // read_quad/write_quad site in the shard to the Window overload. Same
+    // arms, same order, same slow path: the bytes the game sees are the
+    // classic form's. Default OFF: no emission change.
+    void set_mem_window(bool enabled) { m_mem_window = enabled; }
+
+    // --zero-fold (STAGE PERF-1, track ee): every READ of $zero in a generated
+    // body (`ctx.cpuRegs.GPR.r[0].SD[0]` and the other element views, as an
+    // rvalue) is emitted as a typed literal 0 by the shard post-pass
+    // (rewrite_zero_fold_file). $zero is never written by the emission except
+    // the dsra32-form pair `r[0].SD[0] = ...; r[0].UD[0] = 0;` (adjacent, no read
+    // between), so the register reads 0 at every read site; the fold lets the
+    // compiler delete the load and the `+ 0` / `| 0` it fed. Default OFF.
+    void set_zero_fold(bool enabled) { m_zero_fold = enabled; }
+
+    // --inline-leaves (STAGE PERF-1, track ee): a JAL whose constant target is a
+    // TRIVIAL LEAF -- one block, at most kInlineLeafMaxInstrs instructions, every
+    // one of them from the straight-line whitelist (ALU, loads/stores off a
+    // non-stack base, FPU moves/arithmetic; no branch, no call, no syscall, no
+    // COP0/COP2, no $sp/$ra operand), ending in `jr $ra` -- is emitted as
+    //   if (g_recomp_fn_hooked[id]) recomp_hooked_dispatch(id, T, ctx);
+    //   else { <the callee's instructions, translated in place> }
+    // The caller still sets $ra = the return address first (the callee never
+    // reads it here, the call site's successor block is the same), and a body
+    // hooked at run time (FnHooks, update_function_impl, the census) still
+    // takes the classic dispatch -- only the un-hooked raw dispatch (table load,
+    // probe byte, shadow push/pop, trace flag, indirect call) is skipped. The
+    // shadow call stack sees no frame for an inlined leaf: a leaf never parks,
+    // so every chain a savestate captures is unchanged. Default OFF.
+    void set_inline_leaves(bool enabled) { m_inline_leaves = enabled; }
+    static constexpr size_t kInlineLeafMaxInstrs = 8;
+    // The whitelist test (both the leaf shape and each instruction); the
+    // instructions to emit, in order, without the final `jr $ra`.
+    bool trivial_leaf_body(const Function& callee, std::vector<const rabbitizer::InstructionR5900*>& body) const;
+
     // [RECOMP-P3a] v2 emission mode (RECOMP_P0_DESIGN.md §6-§8). When enabled,
     // unpinned functions take the general emission path with the v2 deltas:
     // the body-time special-case chain is bypassed, jr sites emit ELF-read
@@ -140,6 +180,10 @@ private:
     bool m_legacy_title_stubs = false;
     bool m_yield_backedges = false;
     bool m_vu0_native = false;
+    bool m_mem_window = false;
+    bool m_zero_fold = false;
+    bool m_inline_leaves = false;
+    uint64_t m_inlined_leaf_sites = 0;
     // The pc of the branch translate_control_flow is emitting (0 outside it):
     // emit_branch_target compares the target against it to recognise a back-edge.
     uint32_t m_branch_from_pc = 0;
@@ -178,6 +222,12 @@ private:
     // a table-entry T are rewritten; residuals are reported to stderr.
     // Returns rewritten-site count, -1 on I/O failure.
     int rewrite_manual_dispatch_file(const std::string& path);
+    // --mem-window: the shard text post-pass (see set_mem_window). Returns the
+    // number of rewritten sites, -1 on an I/O error.
+    int rewrite_memory_window_file(const std::string& path);
+    // --zero-fold: the shard text post-pass (see set_zero_fold). Returns the number
+    // of folded reads, -1 on an I/O error.
+    int rewrite_zero_fold_file(const std::string& path);
     // [W16R1][FIX-E1] Post-pass over the generated common TU: scan
     // initialize_recompiled_functions for explicit (non-default-form)
     // `recompiled_functions[0x...] = ` assignments -- the generator-known

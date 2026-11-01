@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 FUNCTION = re.compile(r"^// Function: (\w+) at (0x[0-9a-f]+)\n"
-                      r"void \1\(CpuContext& ctx, uint32_t addr\) \{", re.M)
+                      r"void \1\(CpuContext& (?:PS2R_RECOMP_RESTRICT )?ctx, uint32_t addr\) \{", re.M)  # --mem-window: restrict ctx
 # The default registration, in the classic lambda form and in the compact form the
 # generator's --init-parts > 1 emits (`= &FUN_...;` -- the same body, no closure type).
 DEFAULT = re.compile(
@@ -52,6 +52,7 @@ def collect(shards):
                 r"bool branch_taken;|bool cond;|uint64_t _native_saved_r\d+ = 0;|"
                 r"bool _native_valid = false; \(void\)_native_valid;|"
                 r"VR_reg _vu0_fl\{\}; VR_reg _vu0_fo\{\}; \(void\)_vu0_fl; \(void\)_vu0_fo;|"  # --vu0-native fold locals
+                r"const memory::Window _mw = memory::window\(\); \(void\)_mw;|"  # --mem-window: the hoisted memory window
                 r"initialize_recompiled_functions\(\);", "", prologue)
             if prologue.strip() and not audited("prologues", address, raw_prologue):
                 continue
@@ -73,15 +74,17 @@ def collect(shards):
             normalized = re.sub(r"\s+", "", normalized)
             wait = 0
             for syscall, kind in ((0x32, 1), (0x44, 2), (0x56, 3)):
-                expected = (
-                    "{"
-                    "ctx.cpuRegs.GPR.r[3].SD[0]=static_cast<int32_t>("
-                    "static_cast<int32_t>(ctx.cpuRegs.GPR.r[0].SL[0])+"
-                    f"0x{syscall:x});"
-                    "runtime_syscall_dispatcher(ctx.cpuRegs.GPR.r[3].UL[0],ctx);"
-                    "return;}")
-                if normalized == expected:
-                    wait = kind
+                # The $zero read spelled as the register, or as the --zero-fold literal.
+                for zero in ("ctx.cpuRegs.GPR.r[0].SL[0]", "static_cast<int32_t>(0)"):
+                    expected = (
+                        "{"
+                        "ctx.cpuRegs.GPR.r[3].SD[0]=static_cast<int32_t>("
+                        f"static_cast<int32_t>({zero})+"
+                        f"0x{syscall:x});"
+                        "runtime_syscall_dispatcher(ctx.cpuRegs.GPR.r[3].UL[0],ctx);"
+                        "return;}")
+                    if normalized == expected:
+                        wait = kind
             records.append((address, sorted(entries), wait))
     records.sort()
     if len({r[0] for r in records}) != len(records):

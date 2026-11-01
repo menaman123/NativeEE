@@ -51,6 +51,10 @@ public:
     AddressMap& Map() { return map_; }
     MmioRouter& Mmio() { return mmio_; }
     MainMemory& Ram() { return ram_; }
+    // The two inline arms' host bases, fixed for the object's life (the
+    // generated code hoists them once per body: memory::window()).
+    uint8_t* RamBase() const { return ram_base_; }
+    uint8_t* SpadBase() const { return spad_base_; }
 
     // Write observer (Debug builds only; Release compiles the check out): a
     // diagnostics consumer installed by the composition root sees every main-RAM
