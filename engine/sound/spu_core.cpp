@@ -349,9 +349,88 @@ void SpuCore::ApplyQueued() {
     while (ring_.Pop(cmd)) ApplyCommand(cmd);
 }
 
+bool SpuCore::fast_mix_ = true;
+
+// One chunk of the voice-major pump. Per keyed voice: StepRun over the chunk into its buffer, then the
+// gated add into the core's running sum -- voices in ascending index order, exactly the additions of the
+// sample-major loop (a voice that stopped inside the chunk contributed its last sample's +-0 there, an
+// identity add; afterwards it is skipped in both forms). Then the sample-major loop's tail statement for
+// statement (the FMV input at BVOL, the MVOL sweeps, the two clamps, the master gain, the RMS). The MVOL
+// sweep step runs per sample as before (its rate counter is per sample); with no sweep programmed on a
+// core (bit 15 clear) the level is the shadow's constant and the loop is a straight run.
+void SpuCore::MixChunkVoiceMajor(float* out, int n, const uint8_t* ram, const int16_t* fmv_buf, int fmv_n, float fmv_gl,
+                                 float fmv_gr, float avol_l, float avol_r, float master, const uint32_t* vmixl,
+                                 const uint32_t* vmixr, double& sum_sq) {
+    constexpr int kChunk = 128;
+    float core_l[kCores][kChunk], core_r[kCores][kChunk];
+    for (int c = 0; c < kCores; c++)
+        for (int i = 0; i < n; i++) core_l[c][i] = core_r[c][i] = 0.0f;
+    float vl[kChunk], vr[kChunk];
+    for (int vi = 0; vi < kVoices; vi++) {
+        Voice& v = voices_[vi];
+        if (!v.Keyed()) continue;
+        const int core = vi / kVoicesPerCore;
+        const uint32_t bit = 1u << (vi % kVoicesPerCore);
+        bool any_end = false;
+        const int done = v.StepRun(ram, n, vl, vr, any_end);
+        if (any_end) endx_[core].fetch_or(bit, kRelaxed);
+        if (vmixl[core] & bit)
+            for (int i = 0; i < done; i++) core_l[core][i] += vl[i];
+        if (vmixr[core] & bit)
+            for (int i = 0; i < done; i++) core_r[core][i] += vr[i];
+    }
+    ++fast_chunks_;
+    // The external audio input enters core 0's mix at the BVOL gain beside its voices.
+    for (int i = 0; i < fmv_n; i++) {
+        core_l[0][i] += static_cast<float>(fmv_buf[i * 2]) / 32768.0f * fmv_gl;
+        core_r[0][i] += static_cast<float>(fmv_buf[i * 2 + 1]) / 32768.0f * fmv_gr;
+    }
+    // With no MVOL sweep programmed on either core the per-sample step is idempotent (level = the shadow's
+    // fixed gain, counter 0): one step stands for the chunk and the tail runs with constant gains.
+    bool sweeping = false;
+    for (int c = 0; c < kCores; c++)
+        for (int f : {kMvoll, kMvolr})
+            if (core_param_shadow_[c][f].load(kRelaxed) & 0x8000) sweeping = true;
+    if (!sweeping) {
+        StepMasterSweeps();
+        const float m0l = static_cast<float>(mvol_level_[0][0]) / 32768.0f, m0r = static_cast<float>(mvol_level_[0][1]) / 32768.0f;
+        const float m1l = static_cast<float>(mvol_level_[1][0]) / 32768.0f, m1r = static_cast<float>(mvol_level_[1][1]) / 32768.0f;
+        for (int i = 0; i < n; i++) {
+            const float ext_l = std::clamp(core_l[0][i], -1.0f, 1.0f) * m0l * avol_l;
+            const float ext_r = std::clamp(core_r[0][i], -1.0f, 1.0f) * m0r * avol_r;
+            const float mix_l = std::clamp(core_l[1][i] + ext_l, -1.0f, 1.0f) * m1l;
+            const float mix_r = std::clamp(core_r[1][i] + ext_r, -1.0f, 1.0f) * m1r;
+            const float ol = std::clamp(mix_l * master, -1.0f, 1.0f);
+            const float orr = std::clamp(mix_r * master, -1.0f, 1.0f);
+            out[i * 2] = ol;
+            out[i * 2 + 1] = orr;
+            sum_sq += static_cast<double>(ol) * ol + static_cast<double>(orr) * orr;
+        }
+        return;
+    }
+    for (int i = 0; i < n; i++) {
+        StepMasterSweeps();
+        const float m0l = static_cast<float>(mvol_level_[0][0]) / 32768.0f, m0r = static_cast<float>(mvol_level_[0][1]) / 32768.0f;
+        const float m1l = static_cast<float>(mvol_level_[1][0]) / 32768.0f, m1r = static_cast<float>(mvol_level_[1][1]) / 32768.0f;
+        // Core 0 -> (MVOL0) -> core 1's external input (AVOL1) -> + core 1 -> (MVOL1).
+        const float ext_l = std::clamp(core_l[0][i], -1.0f, 1.0f) * m0l * avol_l;
+        const float ext_r = std::clamp(core_r[0][i], -1.0f, 1.0f) * m0r * avol_r;
+        const float mix_l = std::clamp(core_l[1][i] + ext_l, -1.0f, 1.0f) * m1l;
+        const float mix_r = std::clamp(core_r[1][i] + ext_r, -1.0f, 1.0f) * m1r;
+        const float ol = std::clamp(mix_l * master, -1.0f, 1.0f);
+        const float orr = std::clamp(mix_r * master, -1.0f, 1.0f);
+        out[i * 2] = ol;
+        out[i * 2 + 1] = orr;
+        sum_sq += static_cast<double>(ol) * ol + static_cast<double>(orr) * orr;
+    }
+}
+
 void SpuCore::MixInto(float* out, int frames, VoiceSource* source, PcmSource* pcm) {
     ++mix_calls_;
     ApplyQueued();
+    // The voice-major pump serves the composition's shape (no VoiceSource, no trace); the sample-major
+    // loop below is the oracle and the general path.
+    const bool fast = fast_mix_ && !source && !trace_;
     const uint8_t* ram = spu_ram_.get();
     int active = 0;
     for (int vi = 0; vi < kVoices; vi++)
@@ -383,6 +462,11 @@ void SpuCore::MixInto(float* out, int frames, VoiceSource* source, PcmSource* pc
         }
         fmv_frames_mixed_ += static_cast<uint64_t>(fmv_n);
         if (fmv_gl != 0.0f || fmv_gr != 0.0f) fmv_frames_mixed_audible_ += static_cast<uint64_t>(fmv_n);
+        if (fast) {
+            MixChunkVoiceMajor(out + base * 2, n, ram, fmv_buf, fmv_n, fmv_gl, fmv_gr, avol_l, avol_r, master, vmixl, vmixr, sum_sq);
+            RepublishReadbacks();
+            continue;
+        }
         for (int i = 0; i < n; i++) {
             float core_l[kCores] = {0.0f, 0.0f}, core_r[kCores] = {0.0f, 0.0f};
             for (int vi = 0; vi < kVoices; vi++) {

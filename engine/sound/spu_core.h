@@ -118,6 +118,14 @@ public:
     // still drains the queue), so the movie's A/V clock keeps flowing.
     void MixInto(float* stereo_interleaved, int frames, VoiceSource* voices = nullptr, PcmSource* pcm = nullptr);
     uint64_t MixCalls() const { return mix_calls_; }
+    // The voice-major pump (default on): each keyed voice runs a whole 128-frame chunk (Voice::StepRun)
+    // into its own buffer, then the chunk is summed voice by voice in voice order -- the same additions
+    // in the same order as the sample-major loop, so the output is bit-identical (the sample-major loop
+    // stays as the oracle: off, or whenever a VoiceSource or a VoiceTrace is attached). Config
+    // audio.mixer_fast; a host-performance switch, never fingerprinted.
+    static void SetFastMix(bool on) { fast_mix_ = on; }
+    static bool FastMix() { return fast_mix_; }
+    uint64_t FastChunks() const { return fast_chunks_; }
     // Attach / detach the FMV PCM source (nullptr = none; the default).
     void SetFmvInput(FmvPcmInput* input) { fmv_input_ = input; }
     FmvPcmInput* FmvInput() const { return fmv_input_; }
@@ -208,6 +216,8 @@ private:
     static uint32_t ReadbackNax(uint64_t w) { return static_cast<uint32_t>(w); }
 
     void ApplyCommand(const SoundCommand& cmd);
+    void MixChunkVoiceMajor(float* out, int n, const uint8_t* ram, const int16_t* fmv_buf, int fmv_n, float fmv_gl, float fmv_gr,
+                            float avol_l, float avol_r, float master, const uint32_t* vmixl, const uint32_t* vmixr, double& sum_sq);
     void ResetSwitchShadows();
     void ResetRoutingDefaults();
     void StepMasterSweeps();
@@ -246,6 +256,8 @@ private:
     std::atomic<uint64_t> bvol_sets_nonzero_{0};
     std::atomic<uint32_t> bvol_peak_{0};
     uint64_t mix_calls_ = 0; // execution census, deliberately not snapshot state
+    uint64_t fast_chunks_ = 0;   // chunks mixed by the voice-major pump (census)
+    static bool fast_mix_;
     VoiceTrace* trace_ = nullptr;
     uint64_t frames_mixed_ = 0;
     uint64_t trace_level_due_ = 0;

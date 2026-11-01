@@ -1,5 +1,7 @@
 #include "engine/sound/mixer.h"
 
+#include <chrono>
+
 #include "engine/sound/mix_source.h"
 #include "engine/sound/spu_core.h"
 #include "engine/sound/voice_source.h"
@@ -17,6 +19,7 @@ void Mixer::Pump(int frames) {
         return;
     }
     if (out_.size() < static_cast<size_t>(frames) * 2) out_.resize(static_cast<size_t>(frames) * 2);
+    const auto t0 = std::chrono::steady_clock::now();
     if (source_) source_->MixInto(out_.data(), frames);
     else if (core_) {
         if (voices_) voices_->BeginMixTick();
@@ -26,6 +29,9 @@ void Mixer::Pump(int frames) {
         out_frames_ = 0;
         return;
     }
+    const auto ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count());
+    pump_ns_ += ns;
+    if (ns > pump_max_ns_) pump_max_ns_ = ns;
     out_frames_ = frames;
     pumps_++;
     frames_mixed_ += static_cast<uint64_t>(frames);

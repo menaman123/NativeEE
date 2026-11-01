@@ -133,7 +133,10 @@ public:
     // the pacer's census row ("cap=..:admitted=..:held=..:superseded=..:late=..:slipped=..:slip_ms=.."). Any thread
     // for the index; the row is read after Run (main).
     int FrameCapSetting() const { return frame_cap_.load(); }
-    std::string FrameCapCensus() const { return pacer_.CensusRow(); }
+    std::string FrameCapCensus() const {
+        return pacer_.CensusRow() + ":staged_uploads=" + std::to_string(staged_uploads_.load(std::memory_order_relaxed)) +
+               ":precise_edge_waits=" + std::to_string(precise_edge_waits_.load(std::memory_order_relaxed));
+    }
     int DisplayModeState() const { return display_mode_.load(); }
     bool VSyncState() const { return vsync_state_.load(); }
     // The display rate the presenter paces at under render_rate=display (Hz).
@@ -259,7 +262,13 @@ private:
         int width = 0, height = 0;
         uint64_t posted_ns = 0;   // Park::NowNs() at PostFrame (the pacer's lateness input)
         uint64_t tag = 0;         // the producer's ordinal (PostFrame tag; the observer's)
+        int staged_slot = -1;     // SessionWindow::Stage slot the pixels were uploaded into at arrival (-1 = not staged)
     };
+    // A picture entering the two-deep queue is uploaded at once (SessionWindow::Stage) so the pacer's
+    // admission only re-points the window (Show): the edge -> shown path carries no upload.
+    void StageFrame(Frame& frame);
+    void ShowFrame(Frame& frame);
+    void DropFrame(Frame& frame);
     void PumpMain();
     void Publish();
     void ProcessCommands();
@@ -305,6 +314,8 @@ private:
     bool picture_fresh_ = false;   // a picture uploaded since the last draw (the observer's new_picture)
     uint64_t shown_tag_ = 0, shown_posted_ns_ = 0;   // the picture on the window: its PostFrame tag / instant
     std::atomic<uint64_t> presents_{0};
+    std::atomic<uint64_t> staged_uploads_{0};   // pictures uploaded at arrival (SessionWindow::Stage)
+    std::atomic<uint64_t> precise_edge_waits_{0};   // pump wakes taken on the precise timer (the last 2 ms to an edge)
     std::atomic<uint64_t> doubled_frames_{0};   // the pacer's doubled census, published for Publish()
     std::atomic<uint64_t> display_swaps_{0}, display_swap_max_us_{0}, display_swap_total_us_{0};
     Persist persist_;

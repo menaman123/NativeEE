@@ -112,6 +112,13 @@ public:
     // consumed a LOOP_END block (the core latches ENDX). Off voices are silent
     // and do not advance.
     bool Step(const uint8_t* spu_ram, float& out_l, float& out_r);
+    // `n` consecutive Steps into out_l[0..n) / out_r[0..n), stopping early when the voice turns
+    // Off (a LOOP_END without repeat, an envelope that reached 0): returns the number of samples
+    // produced (the rest are not written); `any_end` is the OR of the Steps' return values (the
+    // ENDX latch). Sample for sample the same arithmetic as Step -- the mixer's voice-major pump
+    // (SpuCore::MixInto) is bit-identical to the sample-major one because every output sample here
+    // IS a Step's output; the loop only lets the compiler keep the voice's state in registers.
+    int StepRun(const uint8_t* spu_ram, int n, float* out_l, float* out_r, bool& any_end);
 
     // Hard stop: phase Off, envelope 0.
     void Silence();
@@ -130,6 +137,8 @@ public:
     static int32_t FixedVolumeLevel(uint16_t reg) { return static_cast<int16_t>(static_cast<uint16_t>(reg << 1)); }
 
 private:
+    // Step's body; force-inlined into Step and StepRun (voice.cpp) so the run keeps the state in registers.
+    bool StepImpl(const uint8_t* spu_ram, float& out_l, float& out_r);
     void SetVol(int ch, uint16_t v);
     void LoadBlock(const uint8_t* spu_ram);
     void AdvanceEnvelope();

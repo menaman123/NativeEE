@@ -187,6 +187,7 @@ add_subdirectory(tools/vu1_aot_pack)  # the pre-built VU1 library pack builder /
 add_subdirectory(tools/settings)      # nativeee_settings: the settings file (nativeee.ini) from the command line
 add_subdirectory(tools/perf)          # perf_roofline: the host roofline microbenchmarks (PERF1; the GPU side is the Metal arm's metal_microbench)
 add_subdirectory(tools/perf/ee)       # bench_ee_codegen: the EE-thread codegen roofline (STAGE PERF-1, track ee)
+add_subdirectory(tools/perf/io)       # the io track's roofline microbenchmarks (SPU mixer; PERF-1)
 
 # --- the EE recompiler (DP-23: NEW owns it; P8.8-T transplanted OLD's recompiler_tool_v2
 # byte-identically and proved it regenerates games/<title>/recomp/ byte-for-byte). The

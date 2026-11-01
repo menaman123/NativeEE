@@ -38,6 +38,10 @@ public:
     int OutputFrames() const { return out_frames_; }
     uint64_t Pumps() const { return pumps_; }
     uint64_t FramesMixed() const { return frames_mixed_; }
+    // The pump's wall time (steady clock, two reads per pump): the summed and the longest pump -- the
+    // mixer's budget row (run.meta audio_mixed pump_ms= / pump_max_us=); the pump runs on the EE thread.
+    uint64_t PumpNs() const { return pump_ns_; }
+    uint64_t PumpMaxNs() const { return pump_max_ns_; }
 
 private:
     SpuCore* core_ = nullptr;
@@ -48,6 +52,7 @@ private:
     int out_frames_ = 0;
     uint64_t pumps_ = 0;
     uint64_t frames_mixed_ = 0;
+    uint64_t pump_ns_ = 0, pump_max_ns_ = 0;
 };
 
 }  // namespace ps2r::sound
