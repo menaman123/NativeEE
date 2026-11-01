@@ -3,6 +3,7 @@
 #include <SDL.h>
 #include <algorithm>
 #include <cfenv>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -209,6 +210,18 @@ void SessionRuntime::Publish() {
     if (aspect_) {
         aspect_->SetWindow(status_.window_width, status_.window_height);
         window_.SetPictureAspect(aspect_->Ratio());
+    }
+    if (display_rows_ && status_.window_width > 0 && status_.window_height > 0) {
+        // The host picture: the rect SessionGui draws the picture into, for this drawable and aspect (4:3 when
+        // no aspect model is set -- the same fallback the GUI's PictureRect takes for the 512x448 picture).
+        float x = 0, y = 0, w = 0, h = 0;
+        SessionGui::PictureRect(static_cast<float>(status_.window_width), static_cast<float>(status_.window_height),
+                                512, 448, aspect_ ? aspect_->Ratio() : 0.0, x, y, w, h);
+        const uint64_t packed = PackSize(static_cast<int>(std::lround(w)), static_cast<int>(std::lround(h)));
+        if (packed != present_output_.load()) {
+            present_output_.store(packed);
+            present_output_request_.store(packed);
+        }
     }
     status_.keyboard_input = input_ && input_->KeyboardEnabled();
     keyboard_state_.store(status_.keyboard_input);

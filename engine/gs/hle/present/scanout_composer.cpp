@@ -28,6 +28,19 @@ void ScanoutComposer::SetContentDimensions(int w, int h) {
     content_h_ = h;
 }
 
+void ScanoutComposer::SetPresentOutput(int w, int h) {
+    present_output_ = (w > 0 && h > 0) ? render::Rect{0, 0, w, h} : render::Rect{};
+}
+
+render::Rect ScanoutComposer::OutputRect(const render::Rect& window) const {
+    return present_output_.w > 0 && present_output_.h > 0 ? present_output_ : window;
+}
+
+render::PresentationFilter ScanoutComposer::OutputFilter() const {
+    return present_output_.w > 0 && present_output_.h > 0 ? render::PresentationFilter::Linear
+                                                           : render::PresentationFilter::Surface;
+}
+
 void ScanoutComposer::RestoreView(uint32_t color_key, uint32_t buffer_width, uint32_t format,
                                  int content_width, int content_height) {
     scanout_fbp_ = color_key;
@@ -147,7 +160,8 @@ bool ScanoutComposer::GrabDisplayImpl(render::FenceId* fence, std::vector<uint8_
 
 void ScanoutComposer::PresentBlank(const render::Rect& window) {
     render::ScanoutDesc sd;
-    sd.dst = window;
+    sd.dst = OutputRect(window);
+    sd.filter = OutputFilter();
     be_.Present(sd);
 }
 
@@ -234,7 +248,8 @@ void ScanoutComposer::PresentMirror(const VramImage& vram, uint32_t fbp, uint32_
     render::ScanoutDesc sd;
     sd.source = mirror_tex_;
     sd.src = render::Rect{0, 0, w, h};
-    sd.dst = window;   // row 0 = PS2 top, exactly as a target stores it: the same quad
+    sd.dst = OutputRect(window);   // row 0 = PS2 top, exactly as a target stores it: the same quad
+    sd.filter = OutputFilter();
     be_.Present(sd);
 }
 
@@ -280,7 +295,8 @@ ScanoutComposer::DrawResult ScanoutComposer::DrawScanout(VramImage& vram, const 
         sd.source = t->views.color;
         sd.src = render::Rect{0, 0, std::min(content_w_, t->identity.width) * s,
                               std::min(content_h_, t->identity.height) * s};
-        sd.dst = window;
+        sd.dst = OutputRect(window);
+        sd.filter = OutputFilter();
         be_.Present(sd);
         r.source = Source::Target;
         return r;
