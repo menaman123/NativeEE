@@ -109,14 +109,25 @@ bool ParseIni(const std::string& text, Bindings& out, const char* origin) {
                 if (!ParseFloatStrict(val, b.mouse_sensitivity)) return fail(lineno, line);
             } else if (key == "mouse_decay") {
                 if (!ParseFloatStrict(val, b.mouse_decay)) return fail(lineno, line);
+            } else if (key == "pad_camera") {
+                const std::string v = ToLower(val);
+                if (v == "right")     b.pad_camera_left = false;
+                else if (v == "left") b.pad_camera_left = true;
+                else return fail(lineno, line);
             } else if (key == "key_left_up" || key == "key_left_down" ||
-                       key == "key_left_left" || key == "key_left_right") {
+                       key == "key_left_left" || key == "key_left_right" ||
+                       key == "key_right_up" || key == "key_right_down" ||
+                       key == "key_right_left" || key == "key_right_right") {
                 const int sc = ScancodeFromName(val);
                 if (sc == SDL_SCANCODE_UNKNOWN) return fail(lineno, line);
-                if      (key == "key_left_up")   b.key_left_up = sc;
-                else if (key == "key_left_down") b.key_left_down = sc;
-                else if (key == "key_left_left") b.key_left_left = sc;
-                else                             b.key_left_right = sc;
+                if      (key == "key_left_up")    b.key_left_up = sc;
+                else if (key == "key_left_down")  b.key_left_down = sc;
+                else if (key == "key_left_left")  b.key_left_left = sc;
+                else if (key == "key_left_right") b.key_left_right = sc;
+                else if (key == "key_right_up")   b.key_right_up = sc;
+                else if (key == "key_right_down") b.key_right_down = sc;
+                else if (key == "key_right_left") b.key_right_left = sc;
+                else                              b.key_right_right = sc;
             } else {
                 return fail(lineno, line);
             }
@@ -242,16 +253,19 @@ uint32_t InputMapper::ButtonsFromKeys(const uint8_t* keystate, int numkeys) cons
     return out;
 }
 
-void InputMapper::KeyStickFromKeys(const uint8_t* keystate, int numkeys, float& lx, float& ly) const {
-    lx = 0.f;
-    ly = 0.f;
+void InputMapper::KeyStickFromKeys(const uint8_t* keystate, int numkeys, float& lx, float& ly, float& rx, float& ry) const {
+    lx = ly = rx = ry = 0.f;
     if (!keystate) return;
     auto down = [&](int sc) { return sc > 0 && sc < numkeys && keystate[sc] != 0; };
     // Digital-to-analog at full deflection; opposite keys cancel to centre.
-    if (down(b_.key_left_left))  lx -= 1.f;
-    if (down(b_.key_left_right)) lx += 1.f;
-    if (down(b_.key_left_up))    ly -= 1.f;   // pad y: up = 0x00 = -1
-    if (down(b_.key_left_down))  ly += 1.f;
+    if (down(b_.key_left_left))   lx -= 1.f;
+    if (down(b_.key_left_right))  lx += 1.f;
+    if (down(b_.key_left_up))     ly -= 1.f;   // pad y: up = 0x00 = -1
+    if (down(b_.key_left_down))   ly += 1.f;
+    if (down(b_.key_right_left))  rx -= 1.f;   // the camera stick, the same convention
+    if (down(b_.key_right_right)) rx += 1.f;
+    if (down(b_.key_right_up))    ry -= 1.f;
+    if (down(b_.key_right_down))  ry += 1.f;
 }
 
 uint32_t InputMapper::LogicalForScancode(int scancode) const {

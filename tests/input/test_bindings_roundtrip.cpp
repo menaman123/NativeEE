@@ -67,6 +67,11 @@ static std::string SerializeBindings(const Bindings& b) {
     if (b.key_left_down)  out += std::string("key_left_down = ") + SDL_GetScancodeName((SDL_Scancode)b.key_left_down) + "\n";
     if (b.key_left_left)  out += std::string("key_left_left = ") + SDL_GetScancodeName((SDL_Scancode)b.key_left_left) + "\n";
     if (b.key_left_right) out += std::string("key_left_right = ") + SDL_GetScancodeName((SDL_Scancode)b.key_left_right) + "\n";
+    if (b.key_right_up)    out += std::string("key_right_up = ") + SDL_GetScancodeName((SDL_Scancode)b.key_right_up) + "\n";
+    if (b.key_right_down)  out += std::string("key_right_down = ") + SDL_GetScancodeName((SDL_Scancode)b.key_right_down) + "\n";
+    if (b.key_right_left)  out += std::string("key_right_left = ") + SDL_GetScancodeName((SDL_Scancode)b.key_right_left) + "\n";
+    if (b.key_right_right) out += std::string("key_right_right = ") + SDL_GetScancodeName((SDL_Scancode)b.key_right_right) + "\n";
+    out += std::string("pad_camera = ") + (b.pad_camera_left ? "left" : "right") + "\n";
     out += "[buttons]\n";
     for (const auto& kb : b.key_buttons) {
         const char* name = ButtonName(kb.second);
@@ -96,6 +101,9 @@ static bool BindingsEqual(const Bindings& a, const Bindings& b) {
     return a.key_buttons == b.key_buttons && a.mouse_buttons == b.mouse_buttons &&
            a.key_left_up == b.key_left_up && a.key_left_down == b.key_left_down &&
            a.key_left_left == b.key_left_left && a.key_left_right == b.key_left_right &&
+           a.key_right_up == b.key_right_up && a.key_right_down == b.key_right_down &&
+           a.key_right_left == b.key_right_left && a.key_right_right == b.key_right_right &&
+           a.pad_camera_left == b.pad_camera_left &&
            a.mouse_to_right_stick == b.mouse_to_right_stick && a.mouse_sensitivity == b.mouse_sensitivity &&
            a.mouse_decay == b.mouse_decay && a.gamepad_enabled == b.gamepad_enabled &&
            a.gamepad_deadzone == b.gamepad_deadzone && a.gamepad_sensitivity == b.gamepad_sensitivity &&
@@ -132,6 +140,7 @@ int main(int argc, char** argv) {
         const bool ok = m.LoadConfigText(
             "[sticks]\nmouse = left\nmouse_sensitivity = 0.5\nmouse_decay = 3.25\n"
             "key_left_up = Up\nkey_left_down = Down\nkey_left_left = Left\nkey_left_right = Right\n"
+            "pad_camera = left\nkey_right_up = Keypad 8\nkey_right_down = Keypad 2\nkey_right_left = Keypad 4\nkey_right_right = Keypad 6\n"
             "[buttons]\nselect = Tab\nl3 = Q\nr3 = R\nstart = Return\nup = I\nright = L\ndown = K\nleft = J\n"
             "l2 = Z\nr2 = X\nl1 = C\nr1 = V\ntriangle = Mouse3\ncircle = Mouse2\ncross = Mouse1\nsquare = LCtrl\n"
             "[gamepad]\nenabled = 0\ndeadzone = 0.25\nsensitivity = 1\n",

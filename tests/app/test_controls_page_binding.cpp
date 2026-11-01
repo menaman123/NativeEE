@@ -109,7 +109,11 @@ int main(int argc, char** argv) {
         input.BindMainWake(&wake);
         ControlsPageBinding page(root, &input);
         ControlsSection::Model m = page.Model();
-        CHECK(RowValue(m, "cross") == "Space", "default row: cross = Space (got %s)", RowValue(m, "cross").c_str());
+        CHECK(RowValue(m, "Cross") == "Space", "default row: cross = Space (got %s)", RowValue(m, "Cross").c_str());
+        // The camera rows are on the in-game page too, bound to the camera keys by default.
+        CHECK(RowValue(m, "Camera left (right stick)") == "J" && RowValue(m, "Camera up (right stick)") == "I" &&
+              RowValue(m, "Move up (left stick)") == "W", "default stick rows: camera left = J, camera up = I, move up = W");
+        CHECK(page.Status().find("Camera: the controller's right stick") != std::string::npos, "the status names the camera stick: %s", page.Status().c_str());
         CHECK(m.armed_row() == -1, "nothing armed at start");
         CHECK(!m.offer_key("J"), "an unarmed offer binds nothing");
 
@@ -118,19 +122,21 @@ int main(int argc, char** argv) {
         CHECK((PressAndSample(input, wake, SDL_SCANCODE_J) & kCross) == 0, "default: J -> not CROSS");
 
         // Escape while armed cancels: nothing bound, nothing saved.
-        const int cross = RowIndex(m, "cross");
+        const int cross = RowIndex(m, "Cross");
         CHECK(cross >= 0, "cross row exists");
         m.arm(cross);
         CHECK(m.armed_row() == cross, "cross armed");
         CHECK(m.offer_key("Escape"), "Escape consumed the arm");
         CHECK(m.armed_row() == -1, "Escape disarmed");
-        CHECK(RowValue(m, "cross") == "Space", "Escape bound nothing");
+        CHECK(RowValue(m, "Cross") == "Space", "Escape bound nothing");
         CHECK(page.Saves() == 0, "Escape saved nothing");
 
         // The rebind: cross = J. File written beside the settings file, the live mapper reloaded.
         m.arm(cross);
         CHECK(m.offer_key("J"), "J landed on the armed row");
-        CHECK(RowValue(m, "cross") == "J", "cross = J (got %s)", RowValue(m, "cross").c_str());
+        CHECK(RowValue(m, "Cross") == "J", "cross = J (got %s)", RowValue(m, "Cross").c_str());
+        CHECK(RowValue(m, "Camera left (right stick)").empty(), "J moved off the camera-left row (one key, one control; got '%s')",
+              RowValue(m, "Camera left (right stick)").c_str());
         CHECK(page.Saves() == 1, "one save");
         CHECK(input.BindingsReloads() == 1 && input.BindingsReloadsOk() == 1, "the live mapper took the file (reloads=%llu ok=%llu)",
               (unsigned long long)input.BindingsReloads(), (unsigned long long)input.BindingsReloadsOk());
@@ -143,17 +149,17 @@ int main(int argc, char** argv) {
         CHECK((PressAndSample(input, wake, SDL_SCANCODE_SPACE) & kCross) == 0, "after rebind: Space -> not CROSS");
 
         // A key bound to another row moves: square = J takes J off cross.
-        const int square = RowIndex(m, "square");
+        const int square = RowIndex(m, "Square");
         m.arm(square);
         CHECK(m.offer_key("J"), "J landed on square");
-        CHECK(RowValue(m, "square") == "J" && RowValue(m, "cross").empty(), "J moved: square=%s cross='%s'",
-              RowValue(m, "square").c_str(), RowValue(m, "cross").c_str());
+        CHECK(RowValue(m, "Square") == "J" && RowValue(m, "Cross").empty(), "J moved: square=%s cross='%s'",
+              RowValue(m, "Square").c_str(), RowValue(m, "Cross").c_str());
         CHECK((PressAndSample(input, wake, SDL_SCANCODE_J) & kCross) == 0, "after the move: J is not CROSS");
         CHECK((PressAndSample(input, wake, SDL_SCANCODE_J) & 0x8000) != 0, "after the move: J -> SQUARE");
 
         // A fresh page over the same root reads the file back (what the next start sees).
         ControlsPageBinding again(root, nullptr);
-        CHECK(RowValue(again.Model(), "square") == "J", "the file persists: square = J on reload");
+        CHECK(RowValue(again.Model(), "Square") == "J", "the file persists: square = J on reload");
     }
     SDL_Quit();
     std::printf("ControlsPageLiveRebind: %d checks, %d failures\n", g_checks, g_fails);

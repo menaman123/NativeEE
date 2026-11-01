@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <utility>
 #include <SDL.h>
 
 #include "engine/platform/sdl/input/gamepad_backend.h"
@@ -150,6 +151,13 @@ PadSample InputSystem::Frame(float dt_seconds) {
         NormalizedInput one;
         be->Poll(one);
         if (be == kbm_.get() && !kbm_enabled_) continue;   // polled, discarded
+        if (be == gamepad_.get() && mapper_.Config().pad_camera_left) {
+            // [sticks] pad_camera = left: the controller's left stick is the camera (RX/RY) and its
+            // right stick moves -- a swap of the two converted sticks, read from the live bindings so
+            // a Controls-page rebind applies at the next sample like the key rows do.
+            std::swap(one.lx, one.rx);
+            std::swap(one.ly, one.ry);
+        }
         merged.buttons |= one.buttons;
         merged.lx = Pick(merged.lx, one.lx);
         merged.ly = Pick(merged.ly, one.ly);

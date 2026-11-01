@@ -174,11 +174,13 @@ static void TestT3WasdStick() {
     auto stick = [&](std::initializer_list<const char*> keys) {
         Keys ks;
         for (const char* k : keys) PressKey(ks, ScancodeFromName(k));
-        float lx = 0, ly = 0;
-        m.KeyStickFromKeys(ks.k, SDL_NUM_SCANCODES, lx, ly);
+        float lx = 0, ly = 0, rx = 0, ry = 0;
+        m.KeyStickFromKeys(ks.k, SDL_NUM_SCANCODES, lx, ly, rx, ry);
         NormalizedInput in;
         in.lx = lx;
         in.ly = ly;
+        in.rx = rx;
+        in.ry = ry;
         return m.Map(in, 0.f);
     };
     PadSample st;
@@ -192,6 +194,15 @@ static void TestT3WasdStick() {
     CHECK(st.ly == 0x00 && st.lx == 0xFF, "W+D diagonal (lx=0x%02x ly=0x%02x)", st.lx, st.ly);
     st = stick({});
     CHECK(st.lx == 0x80 && st.ly == 0x80, "no keys => neutral");
+    // The camera keys (key_right_*, default I/K/J/L) drive the right stick the same way; W/S/A/D leave it centred.
+    st = stick({"I"});      CHECK(st.ry == 0x00 && st.lx == 0x80 && st.ly == 0x80, "I => ry 0x00 (got 0x%02x)", st.ry);
+    st = stick({"K"});      CHECK(st.ry == 0xFF, "K => ry 0xFF (got 0x%02x)", st.ry);
+    st = stick({"J"});      CHECK(st.rx == 0x00, "J => rx 0x00 (got 0x%02x)", st.rx);
+    st = stick({"L"});      CHECK(st.rx == 0xFF, "L => rx 0xFF (got 0x%02x)", st.rx);
+    st = stick({"J", "L"}); CHECK(st.rx == 0x80, "J+L => 0x80 (got 0x%02x)", st.rx);
+    st = stick({"W", "L"});
+    CHECK(st.ly == 0x00 && st.rx == 0xFF && st.lx == 0x80 && st.ry == 0x80, "W+L: move up + camera right (lx=0x%02x ly=0x%02x rx=0x%02x ry=0x%02x)", st.lx, st.ly, st.rx, st.ry);
+    st = stick({"D"});      CHECK(st.rx == 0x80 && st.ry == 0x80, "D leaves the camera stick centred");
 }
 
 // ---------------------------------------------------------------------------
@@ -210,6 +221,10 @@ static void TestT5IniParse() {
         CHECK(b.key_left_up == SDL_SCANCODE_W && b.key_left_down == SDL_SCANCODE_S &&
               b.key_left_left == SDL_SCANCODE_A && b.key_left_right == SDL_SCANCODE_D,
               "WASD left-stick keys");
+        CHECK(b.key_right_up == SDL_SCANCODE_I && b.key_right_down == SDL_SCANCODE_K &&
+              b.key_right_left == SDL_SCANCODE_J && b.key_right_right == SDL_SCANCODE_L,
+              "IKJL right-stick (camera) keys");
+        CHECK(!b.pad_camera_left, "pad_camera = right (the controller's right stick is the camera)");
         CHECK(b.gamepad_enabled && std::fabs(b.gamepad_deadzone - 0.15f) < 1e-6, "gamepad enabled, deadzone 0.15");
         CHECK(std::fabs(b.gamepad_sensitivity - 1.33f) < 1e-6, "gamepad sensitivity 1.33");
     }
@@ -220,6 +235,15 @@ static void TestT5IniParse() {
         CHECK(m.Config().key_buttons.size() == 1, "override replaced table");
         CHECK(m.Config().key_buttons[0].first == SDL_SCANCODE_K, "cross = K");
         CHECK(!m.Config().mouse_to_right_stick, "mouse = left honored");
+        CHECK(m.Config().key_right_up == 0 && m.Config().key_left_up == 0, "an override without stick keys has none");
+    }
+    {
+        InputMapper m;
+        CHECK(m.LoadConfigText("[sticks]\npad_camera = left\nkey_right_up = Up\nkey_right_down = Down\n", "camera-left"), "pad_camera/key_right_* accepted");
+        CHECK(m.Config().pad_camera_left, "pad_camera = left honored");
+        CHECK(m.Config().key_right_up == SDL_SCANCODE_UP && m.Config().key_right_down == SDL_SCANCODE_DOWN, "key_right_up/down = arrows");
+        CHECK(m.LoadConfigText("[sticks]\npad_camera = Right\n", "camera-right"), "pad_camera = Right (case-insensitive)");
+        CHECK(!m.Config().pad_camera_left, "pad_camera = right honored");
     }
     {
         InputMapper m;
@@ -230,6 +254,8 @@ static void TestT5IniParse() {
         CHECK(!m.LoadConfigText("cross = Space\n", "bad4"), "key=value before section rejected");
         CHECK(!m.LoadConfigText("[buttons]\ngarbage line\n", "bad5"), "no '=' rejected");
         CHECK(!m.LoadConfigText("[sticks]\nmouse_decay = fast\n", "bad6"), "non-numeric float rejected");
+        CHECK(!m.LoadConfigText("[sticks]\npad_camera = up\n", "bad6b"), "pad_camera other than right|left rejected");
+        CHECK(!m.LoadConfigText("[sticks]\nkey_right_up = NoSuchKeyName\n", "bad6c"), "unresolvable camera key rejected");
         CHECK(!m.LoadConfigText("[gamepad]\ndeadzone = 1.0\n", "bad7"), "deadzone >= 1 rejected");
         CHECK(!m.LoadConfigText("[gamepad]\nsensitivity = 2.5\n", "bad8"), "sensitivity > 2 rejected");
         CHECK(!m.LoadConfigText("[buttons\ncross = Space\n", "bad9"), "unterminated section rejected");

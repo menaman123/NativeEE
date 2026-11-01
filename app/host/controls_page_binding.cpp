@@ -10,14 +10,15 @@ namespace ps2r::app {
 ControlsPageBinding::ControlsPageBinding(std::string bindings_dir, PlatformInput* input)
     : bindings_(std::move(bindings_dir)), input_(input) {
     bindings_.Load();   // the launcher's / a previous session's file when present; the defaults otherwise
-    status_ = "Bindings file: " + bindings_.Path();
+    status_ = std::string("Camera: the controller's ") + (bindings_.CameraOnLeftStick() ? "left" : "right") +
+              " stick, the mouse (left click captures it) and the camera keys below. Bindings file: " + bindings_.Path();
 }
 
 ControlsSection::Model ControlsPageBinding::Model() {
     ControlsSection::Model m;
     m.rows = [this] {
         std::vector<ControlsSection::Row> rows;
-        for (const ControlsBindings::Row& r : bindings_.Keys()) rows.push_back({r.name, r.value});
+        for (const ControlsBindings::Row& r : bindings_.Keys()) rows.push_back({r.label, r.value});
         return rows;
     };
     m.arm = [this](int index) { bindings_.Arm(ControlsBindings::Target::Key, index); };
