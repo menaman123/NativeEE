@@ -60,7 +60,7 @@ public:
         uint64_t native_kicks = 0;     // programs run on the specialised table
         uint64_t fallback_kicks = 0;   // programs run on the fallback tier (status != Verified)
         uint64_t native_bundles = 0;   // bundles retired on the native path
-        uint64_t native_ns = 0;        // wall time of the native runs (steady clock around Execute)
+        uint64_t native_ns = 0;        // wall time of the native runs (the block tier's run_ns ledger over them)
         uint64_t specialized = 0;      // programs whose table was re-resolved (once per image per table life)
         uint64_t native_installs = 0;  // exports tables installed on a program's blocks
         uint64_t native_blocks = 0;    // block functions installed (sum over installs)

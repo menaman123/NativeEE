@@ -87,6 +87,35 @@ struct Vu1AotRegionPolicy {
     // result and the spills of keeping them). The lazy ring only; the eager
     // one keeps the per-result form. Same sticky bits, same last-retired word.
     bool mac_acc = false;
+    // STAGE PERF-1 (the register-resident shape; both default on, the A/B
+    // knobs of the title's generator):
+    // store_back_inline: the store-back of the written registers is emitted
+    // IN PLACE at every exit / chain instead of through a `[&]` lambda. The
+    // lambda captured every local by reference, so the compiler materialised
+    // a capture table of their addresses at function entry and kept every
+    // VF / VI / ACC local IN MEMORY for the whole function (an escaped local
+    // cannot live in a register across a call it may be read by): the hot op
+    // of the main renderer's vertex loop was a stack round trip per operand.
+    bool store_back_inline = true;
+    // cycle_local: the VU clock is a LOCAL `uint64_t cycle` (the function's
+    // own copy of FlagPipeline::cycle()), written to the pipeline before and
+    // read back after every callee that reads or advances the clock (the
+    // stall model, the EFU / FDIV / clip / Q / P pipes, the ring readers, a
+    // GENERIC word) and at every exit. With the reference form every
+    // `++cycle` was a load / add / store to the pipeline, re-done at every
+    // op because the data-memory byte stores (SQ, the unpack) may alias it.
+    bool cycle_local = true;
+    // entry_clamp: a VF the region reads CLAMPED and never writes has its
+    // clamped view computed ONCE at the function entry (`vNc`, valid at every
+    // label and on every path) instead of at its first read in each block
+    // (every label began with the caches dropped: the matrix rows of the
+    // main renderer's vertex loop were re-clamped per vertex, ~9 NEON ops
+    // each). Pure (ClampVec of an unchanged value); re-done after a GENERIC
+    // word's reload (the interpreter may have written any register). OFF by
+    // default: with block_cap 1 it only raises the register pressure (the
+    // Paris corpus bench: 4.62 vs 4.46 ns/bundle); it pays with regions of
+    // several blocks (the loop's invariants clamped once per entry).
+    bool entry_clamp = false;
 };
 
 class Vu1AotBlockGen {
@@ -147,6 +176,14 @@ private:
     void EmitLower(const VuBlockOp& op, const VuDecodedSlot& s, uint32_t pc);
     std::string Prologue() const;
     std::string StoreBack() const;
+    // The store-back at an exit / chain: `store_back();` (the lambda) or its
+    // statements in place (Policy::store_back_inline).
+    void EmitStoreBack();
+    // Policy::cycle_local: a callee that reads or advances the clock sees the
+    // local written to the pipeline first and the local re-read after.
+    static bool TouchesClock(const std::string& line);
+    void SyncClockIn();
+    void SyncClockOut();
     int BlockIndex(uint32_t pc) const;  // -1 = not in the region
 
     // Register naming: a raw read expression, the clamped view (emits the
@@ -191,6 +228,7 @@ private:
     bool vi_written_[16] = {};
     int clamped_reads_[32] = {};
     bool vfc_declared_[32] = {};
+    bool entry_clamped_[32] = {};  // Policy::entry_clamp: vNc computed at entry, valid at every label
     bool acc_used_ = false;
     // The emission state (reset between the passes and at every label).
     bool vfc_valid_[32] = {};

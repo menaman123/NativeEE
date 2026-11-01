@@ -236,6 +236,10 @@ std::string Vu1AotBlockGen::EmitFunction(VuBlockProgram& prog, const VuBlock& he
     gen.EmitBody();  // pass 1: the sets
     gen.body_.clear();
     gen.indent_ = 1;
+    // Policy::entry_clamp: the registers read clamped and never written in the region.
+    for (int n = 1; n < 32; ++n) {
+        gen.entry_clamped_[n] = policy.entry_clamp && gen.clamped_reads_[n] > 0 && !gen.vf_written_[n] && gen.vfc_declared_[n];
+    }
     gen.ResetPassState();
     gen.analysing_ = false;
     gen.EmitBody();  // pass 2: the text
@@ -259,7 +263,7 @@ Vu1AotBlockGen::Vu1AotBlockGen(VuBlockProgram& prog, std::vector<const VuBlock*>
 
 void Vu1AotBlockGen::ResetPassState() {
     for (int n = 0; n < 32; ++n) {
-        vfc_valid_[n] = false;
+        vfc_valid_[n] = entry_clamped_[n];
         for (int l = 0; l < 4; ++l) last_writer_[n][l] = -1;
     }
     acc_clean_ = false;
@@ -351,9 +355,57 @@ void Vu1AotBlockGen::Deliver(int ref) {
 }
 
 void Vu1AotBlockGen::Line(const std::string& s) {
+    // Policy::cycle_local: the statements that reach the pipeline's clock are
+    // bracketed by the two syncs (the text is the generator's own, so the
+    // match is on the callee names it emits).
+    const bool sync = policy_.cycle_local && TouchesClock(s);
+    if (sync) SyncClockIn();
     if (!s.empty() && s[0] == '}' && indent_ > 1) --indent_;
     body_ += std::string(static_cast<size_t>(indent_) * 4, ' ') + s + "\n";
     if (!s.empty() && s.back() == '{') ++indent_;
+    if (sync) SyncClockOut();
+}
+
+// The callees of a generated line that read or advance FlagPipeline::cycle():
+// the stall model's ApplySpec (reads + advances), every FlagPipeline entry
+// except the pure ring pushes / folds (PushMacRawAt takes the issue cycle,
+// FoldLazyRetired / FoldLazyBatch / CommitEagerRetired / PushMacAt / clip_latest
+// read no clock), the interpreter's GENERIC bodies (everything). XgKick::Arm /
+// Pace take the local by reference and need no sync. QueueFmac / QueueIalu
+// take the cycle by value.
+bool Vu1AotBlockGen::TouchesClock(const std::string& line) {
+    if (line.find("stalls.ApplySpec") != std::string::npos) return true;
+    if (line.find("g.Run") != std::string::npos) return true;
+    size_t p = 0;
+    while ((p = line.find("pipes.", p)) != std::string::npos) {
+        const std::string rest = line.substr(p + 6, 24);
+        const bool pure = rest.compare(0, 13, "PushMacRawAt(") == 0 || rest.compare(0, 16, "FoldLazyRetired(") == 0 ||
+                          rest.compare(0, 14, "FoldLazyBatch(") == 0 || rest.compare(0, 19, "CommitEagerRetired(") == 0 ||
+                          rest.compare(0, 10, "PushMacAt(") == 0 || rest.compare(0, 12, "clip_latest(") == 0 ||
+                          rest.compare(0, 6, "cycle(") == 0;
+        if (!pure) return true;
+        p += 6;
+    }
+    return false;
+}
+
+void Vu1AotBlockGen::SyncClockIn() { body_ += std::string(static_cast<size_t>(indent_) * 4, ' ') + "pipes.cycle() = cycle;\n"; }
+void Vu1AotBlockGen::SyncClockOut() { body_ += std::string(static_cast<size_t>(indent_) * 4, ' ') + "cycle = pipes.cycle();\n"; }
+
+void Vu1AotBlockGen::EmitStoreBack() {
+    if (!policy_.store_back_inline) {
+        Line("store_back();");
+        return;
+    }
+    for (int n = 1; n < 32; ++n) {
+        if (vf_written_[n]) Line("regs.VF[" + Dec(n) + "] = v" + Dec(n) + ";");
+    }
+    for (int n = 1; n < 16; ++n) {
+        if (vi_written_[n]) Line("regs.VI[" + Dec(n) + "] = i" + Dec(n) + ";");
+    }
+    if (acc_used_) Line("regs.ACC = acc;");
+    if (policy_.cycle_local) Line("pipes.cycle() = cycle;");
+    Line("st.native_resume = false;");
 }
 
 // ---- registers ------------------------------------------------------------
@@ -439,6 +491,7 @@ void Vu1AotBlockGen::SetVi(int n, const std::string& value_u32) {
 }
 
 void Vu1AotBlockGen::FlushAll() {
+    if (policy_.cycle_local) Line("pipes.cycle() = cycle;");
     for (int n = 1; n < 32; ++n) {
         if (vf_touched_[n]) Line("regs.VF[" + Dec(n) + "] = v" + Dec(n) + ";");
     }
@@ -459,13 +512,22 @@ void Vu1AotBlockGen::ReloadAll() {
         if (vi_touched_[n]) Line("i" + Dec(n) + " = regs.VI[" + Dec(n) + "];");
     }
     if (acc_used_) Line("acc = regs.ACC;");
+    if (policy_.cycle_local) Line("cycle = pipes.cycle();");
+    for (int n = 1; n < 32; ++n) {
+        if (entry_clamped_[n]) {
+            Line("v" + Dec(n) + "c = VuFloat::ClampVec(v" + Dec(n) + ");  // the interpreter may have written it");
+            vfc_valid_[n] = true;
+        }
+    }
     acc_clean_ = false;
 }
 
 std::string Vu1AotBlockGen::Prologue() const {
     std::string o;
     o += "    Vu1State& st = unit.state();\n    VUregs& regs = st.regs;\n    FlagPipeline& pipes = unit.flags();\n"
-         "    StallModel& stalls = unit.stalls();\n    XgKick* const xgk = unit.xgkick();\n    uint64_t& cycle = pipes.cycle();\n"
+         "    StallModel& stalls = unit.stalls();\n    XgKick* const xgk = unit.xgkick();\n" +
+         std::string(policy_.cycle_local ? "    uint64_t cycle = pipes.cycle();  // the function's clock; synced to the pipeline around its readers and at the exits\n"
+                                         : "    uint64_t& cycle = pipes.cycle();\n") +
          "    uint8_t* const data = st.data;\n    const uint32_t mask = unit.mem_mask();\n"
          "    const uint32_t budget = st.native_budget;\n"
          "    taken = false;\n    bool t = false;\n    uint32_t tg = 0;\n"
@@ -477,13 +539,14 @@ std::string Vu1AotBlockGen::Prologue() const {
     for (int n = 1; n < 32; ++n) {
         if (!vf_touched_[n]) continue;
         o += "    VR_reg v" + Dec(n) + " = regs.VF[" + Dec(n) + "];\n";
-        if (vfc_declared_[n]) o += "    VR_reg v" + Dec(n) + "c;\n    (void)v" + Dec(n) + "c;\n";
+        if (entry_clamped_[n]) o += "    VR_reg v" + Dec(n) + "c = VuFloat::ClampVec(v" + Dec(n) + ");  // read clamped, never written here\n";
+        else if (vfc_declared_[n]) o += "    VR_reg v" + Dec(n) + "c;\n    (void)v" + Dec(n) + "c;\n";
     }
     for (int n = 1; n < 16; ++n) {
         if (vi_touched_[n]) o += "    uint16_t i" + Dec(n) + " = regs.VI[" + Dec(n) + "];\n";
     }
     if (acc_used_) o += "    VR_reg acc = regs.ACC;\n";
-    o += StoreBack();
+    if (!policy_.store_back_inline) o += StoreBack();
     return o;
 }
 
@@ -496,6 +559,7 @@ std::string Vu1AotBlockGen::StoreBack() const {
         if (vi_written_[n]) o += "        regs.VI[" + Dec(n) + "] = i" + Dec(n) + ";\n";
     }
     if (acc_used_) o += "        regs.ACC = acc;\n";
+    if (policy_.cycle_local) o += "        pipes.cycle() = cycle;\n";
     o += "        st.native_resume = false;\n    };\n";
     return o;
 }
@@ -513,7 +577,7 @@ void Vu1AotBlockGen::EmitBlock(int bi) {
     const VuBlock& blk = *blocks_[static_cast<size_t>(bi)];
     cur_ = bi;
     for (int n = 0; n < 32; ++n) {
-        vfc_valid_[n] = false;
+        vfc_valid_[n] = entry_clamped_[n];  // a label drops the caches except the entry-clamped (never written) views
         for (int l = 0; l < 4; ++l) last_writer_[n][l] = -1;
     }
     acc_clean_ = false;
@@ -587,8 +651,17 @@ void Vu1AotBlockGen::EmitOp(int bi, int i, uint32_t pc) {
     Line("++cycle;");
     EmitStall(i, op, s);
     Line("if (PS2R_UNLIKELY(cycle >= pace_due)) {");
-    Line("xgk->Pace(st.data, cycle);");
-    Line("pace_due = xgk->armed() ? xgk->next_due() : kNever;");
+    // The out-of-line XgKick entries take the clock by reference: a copy goes
+    // (Policy::cycle_local), so the local's address never escapes and the
+    // compiler keeps it in a register across the 30+ call sites of a block.
+    if (policy_.cycle_local) {
+        Line("const Vu1AotClockResult pr = Vu1AotXgkPace(xgk, st.data, cycle);  // cold: preserve_all under clang");
+        Line("cycle = pr.cycle;");
+        Line("pace_due = pr.pace_due;");
+    } else {
+        Line("xgk->Pace(st.data, cycle);");
+        Line("pace_due = xgk->armed() ? xgk->next_due() : kNever;");
+    }
     Line("}");
     // The ring's observers: the STATUS / MAC readers (RetireMacStatus) and the
     // GENERIC words (the interpreter's own pushes) see every earlier result.
@@ -715,7 +788,7 @@ void Vu1AotBlockGen::EmitStall(int i, const VuBlockOp& op, const VuDecodedSlot& 
 void Vu1AotBlockGen::EmitExitEnd(int last) {
     const VuBlock& blk = *blocks_[static_cast<size_t>(cur_)];
     EmitMaterialize(last - VuBlockTier::kRingWindow + 1, last);
-    Line("store_back();");
+    EmitStoreBack();
     Line("st.native_exit_pc = " + Hex(blk.pc) + "u;");
     Line("st.cur_bundle_pc = " + Hex((blk.pc + 8u * static_cast<uint32_t>(last)) & VuBlockTier::kPcMask) + "u;");
     Line("taken = t;");
@@ -727,7 +800,7 @@ void Vu1AotBlockGen::EmitExitEnd(int last) {
 // (the incoming edge materialised its writes already); the loop resumes there.
 void Vu1AotBlockGen::EmitExitHead(int bi) {
     const VuBlock& blk = *blocks_[static_cast<size_t>(bi)];
-    Line("store_back();");
+    EmitStoreBack();
     Line("st.native_resume = true;");
     Line("st.native_exit_pc = " + Hex(blk.pc) + "u;");
     Line("return done;");
@@ -754,7 +827,7 @@ bool Vu1AotBlockGen::EmitChain(uint32_t pc, int last) {
     if (!Chainable(pc)) return false;
     pc &= VuBlockTier::kPcMask;
     EmitMaterialize(last - VuBlockTier::kRingWindow + 1, last);
-    Line("store_back();");
+    EmitStoreBack();
     Line("VU1_AOT_MUSTTAIL return " + FunctionName(pc) + "(unit, g, taken, target, done);  // chain");
     return true;
 }
@@ -1184,7 +1257,13 @@ void Vu1AotBlockGen::EmitLower(const VuBlockOp& op, const VuDecodedSlot& s, uint
         case VUK_L_XITOP: SetVi(vit, "unit.vif_itop()"); return;
         case VUK_L_XGKICK:  // VU1 only
             Line("if (xgk != nullptr) {");
-            Line("xgk->Arm(data, " + Vi(vis) + ", cycle);");
+            if (policy_.cycle_local) {
+                Line("const Vu1AotClockResult ar = Vu1AotXgkArm(xgk, data, " + Vi(vis) + ", cycle);  // cold: preserve_all under clang");
+                Line("cycle = ar.cycle;");
+                Line("pace_due = ar.pace_due;");
+            } else {
+                Line("xgk->Arm(data, " + Vi(vis) + ", cycle);");
+            }
             Line("++st.xgkick_count;");
             Line("st.xgkick_has_fired = true;");
             Line("st.xtop_read_count = 0;");
