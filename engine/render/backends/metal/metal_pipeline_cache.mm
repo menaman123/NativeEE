@@ -87,6 +87,7 @@ void* MetalPipelineCache::Pipeline(MetalProgram program, bool color, bool depth,
             case MetalProgram::Const: fs = MetalShaderSources::kConstFragment; break;
             case MetalProgram::NearestColor: fs = MetalShaderSources::kNearestColorFragment; break;
             case MetalProgram::NearestDepth: fs = MetalShaderSources::kNearestDepthFragment; break;
+            case MetalProgram::IndexedAlpha: fs = MetalShaderSources::kIndexedAlphaFragment; break;
             default: return nullptr;
         }
         id<MTLFunction> vf = Function(lib, vs);

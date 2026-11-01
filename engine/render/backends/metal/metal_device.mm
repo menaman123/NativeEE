@@ -1126,6 +1126,51 @@ MetalDevice::PickTexture* MetalDevice::EncodeNearestPick(MetalSurface& src, cons
     return pick;
 }
 
+// The indexed read of a scaled attachment at its logical resolution, on the GPU: one render pass over the
+// logical-size destination (an Rgba8 attachment the caller owns), the palette on texture 1. Same pass shape
+// as EncodeNearestPick; the destination's previous contents are not loaded (every texel is written).
+bool MetalDevice::DecodeIndexedAlpha(SurfaceId src_id, const Rect& rect, int step, SurfaceId clut_id, SurfaceId dst_id) {
+    MetalSurface* src = SurfaceMut(src_id);
+    MetalSurface* clut = SurfaceMut(clut_id);
+    MetalSurface* dst = SurfaceMut(dst_id);
+    if (!src || !src->tex || !clut || !clut->tex || !dst || !dst->tex || !dst->desc.renderable) return false;
+    if (step < 2 || rect.w <= 0 || rect.h <= 0 || rect.w % step || rect.h % step) return false;
+    if (rect.x < 0 || rect.y < 0 || uint32_t(rect.x) >= src->desc.width || uint32_t(rect.y) >= src->desc.height) return false;
+    if (src->desc.format != SurfaceFormat::Rgba8 || dst->desc.format != SurfaceFormat::Rgba8) return false;
+    const uint32_t w = static_cast<uint32_t>(rect.w / step), h = static_cast<uint32_t>(rect.h / step);
+    if (dst->desc.width != w || dst->desc.height != h) return false;
+    void* ps = pipelines_.Pipeline(MetalProgram::IndexedAlpha, true, false);
+    if (!ps) return false;
+    MetalNearestUniforms u;
+    u.origin_x = rect.x;
+    u.origin_y = rect.y;
+    u.step = step;
+    EndEncoder();
+    MaybeCommit();
+    CommandBuffer();
+    @autoreleasepool {
+        MTLRenderPassDescriptor* rp = [MTLRenderPassDescriptor renderPassDescriptor];
+        rp.colorAttachments[0].texture = Tex(dst->tex);
+        rp.colorAttachments[0].loadAction = MTLLoadActionDontCare;
+        rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+        AttachRenderTiming((void*)rp, dst_id.id, w, h, 1);
+        id<MTLRenderCommandEncoder> enc = [(id<MTLCommandBuffer>)cb_ renderCommandEncoderWithDescriptor:rp];
+        [enc setRenderPipelineState:(id<MTLRenderPipelineState>)ps];
+        MTLViewport vp = {0.0, 0.0, static_cast<double>(w), static_cast<double>(h), 0.0, 1.0};
+        [enc setViewport:vp];
+        [enc setFragmentBytes:&u length:sizeof(u) atIndex:0];
+        [enc setFragmentTexture:Tex(src->tex) atIndex:0];
+        [enc setFragmentTexture:Tex(clut->tex) atIndex:1];
+        [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+        NoteDraw();
+        [enc endEncoding];
+        cb_timing_.open_pass = -1;
+    }
+    census_.framebuffer_binds++;
+    src->last_gpu_use = clut->last_gpu_use = dst->last_gpu_use = serial_;
+    return true;
+}
+
 bool MetalDevice::ReadbackNearest(SurfaceId sid, const Rect& rect, int step, void* out, size_t stride, int sub_x, int sub_y) {
     MetalSurface* s = SurfaceMut(sid);
     if (!s || !s->tex || !out) return false;

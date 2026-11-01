@@ -7,10 +7,18 @@
 // User's Manual 3.4.7 / 2.7.3). Both rows hold the entries with the alpha byte
 // as the CLUT stores it (the pipeline's one alpha convention; row 0
 // used to be the x2 "GPU domain" copy, row 1 the raw bytes the self-read
-// HIGHLIGHT2 case needed -- the two rows are now identical). A PSMT8H read applies the CSM1
-// reorder twice (an involution, so it is the identity); a T8-of-CT16 read folds
-// it once. Entries are keyed by (cbp, fold) and rebuilt only when the CLUT bytes'
-// hash changes; the bytes always come from the composed VRAM view.
+// HIGHLIGHT2 case needed -- the two rows are now identical). Entry i is read where
+// ClutLayout::ReadClut32 reads it (the ONE CSM1 reorder of the tree, applied once:
+// within each 32-group entries 8-15 and 16-23 swap places) for every 8-bit index
+// format -- PSMT8H and T8-of-CT16 alike: the index format never changes where the
+// CLUT buffer stores an entry. (An earlier form applied the reorder twice for a
+// PSMT8H read, i.e. not at all: its palette had entries 8-15 and 16-23 swapped
+// against the CPU decoder's, so the GPU self-serve of an indexed target read was
+// never byte-identical to the deposit-then-decode route -- the ramp of a shadow
+// palette read 06 06 07 08 03 03 04 05 where the decoder read 03 03 04 05 06 06 07
+// 08.) `fold_single` is kept as a key for callers; it no longer changes the bytes.
+// Entries are keyed by (cbp, fold) and rebuilt only when the CLUT bytes' hash
+// changes; the bytes always come from the composed VRAM view.
 #pragma once
 
 #include <cstdint>

@@ -93,6 +93,7 @@ public:
     static constexpr const char* kConstFragment = "const_fragment";
     static constexpr const char* kNearestColorFragment = "nearest_color_fragment";
     static constexpr const char* kNearestDepthFragment = "nearest_depth_fragment";
+    static constexpr const char* kIndexedAlphaFragment = "indexed_alpha_fragment";
 };
 
 }  // namespace render

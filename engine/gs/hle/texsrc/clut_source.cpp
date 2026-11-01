@@ -22,11 +22,12 @@ void ClutSource::DropAll() {
 
 void ClutSource::Build(const uint8_t* clut, bool fold_single, uint8_t* out) {
     // The 1 KiB window is the CLUT buffer at cbp with buffer width 1 (64 pixels):
-    // entry i at grid (g % 16, g / 16), g = its CSM1 position, addressed as CT32
-    // relative to the window start.
+    // entry i at grid (g % 16, g / 16), g = its CSM1 position (ClutLayout::Csm1Index,
+    // once -- the position ReadClut32 reads), addressed as CT32 relative to the
+    // window start. The same bytes for every 8-bit index format (see the header).
+    (void)fold_single;
     for (uint32_t i = 0; i < 256; i++) {
-        const uint32_t g = fold_single ? ClutLayout::Csm1Index(i)
-                                       : ClutLayout::Csm1Index(ClutLayout::Csm1Index(i));
+        const uint32_t g = ClutLayout::Csm1Index(i);
         const uint32_t elem = PsmLayout::PixelAddress(Psm::CT32, g % 16, g / 16, 0, 1);
         const uint32_t off = (elem * 4) % kClutBytes;
         const uint8_t r = clut[off], gg = clut[off + 1], b = clut[off + 2], a = clut[off + 3];

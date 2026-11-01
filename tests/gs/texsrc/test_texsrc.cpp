@@ -167,18 +167,24 @@ void ClutSourceVsReference() {
         CHECK(t.id != 0);
         const auto& s = be.At(t);
         CHECK(s.desc.width == 256 && s.desc.height == 2);
-        // CPU reference: entry i at CSM1 grid position (folded once / twice).
+        // CPU reference: entry i is the word ClutLayout::ReadClut32 reads (the decoder's palette), for
+        // either key -- the GPU palette and the CPU decode of the same CLUT must agree byte for byte.
+        std::vector<uint8_t> view(VramImage::kBytes);
+        vram.ReadView(0, VramImage::kBytes, view.data());
         for (uint32_t i = 0; i < 256; i++) {
-            const uint32_t g = fold ? ClutLayout::Csm1Index(i) : ClutLayout::Csm1Index(ClutLayout::Csm1Index(i));
-            const uint32_t off = PsmLayout::PixelAddress(Psm::CT32, g % 16, g / 16, 0, 1) * 4;
+            const uint32_t word = ClutLayout::ReadClut32(view.data(), cbp / PsmLayout::kBlockBytes, false, 256, i);
             const uint8_t* p0 = &s.rgba[i * 4];
             const uint8_t* p1 = &s.rgba[(256 + i) * 4];
-            const bool ok0 = p0[0] == bytes[off] && p0[1] == bytes[off + 1] && p0[2] == bytes[off + 2] &&
-                             p0[3] == bytes[off + 3];   // the stored-alpha convention: the stored byte, both rows
-            const bool ok1 = p1[0] == bytes[off] && p1[3] == bytes[off + 3];
+            const bool ok0 = p0[0] == (word & 0xFF) && p0[1] == ((word >> 8) & 0xFF) && p0[2] == ((word >> 16) & 0xFF) &&
+                             p0[3] == ((word >> 24) & 0xFF);   // the stored-alpha convention: the stored byte, both rows
+            const bool ok1 = p1[0] == (word & 0xFF) && p1[3] == ((word >> 24) & 0xFF);
             if (!ok0 || !ok1) { CHECK(ok0 && ok1); break; }
         }
-        if (!fold) CHECK(be.At(t).rgba[0] == bytes[0]);   // double fold == identity: entry 0 at 0
+        // Entry 9 (the second row of eight in the first 32-group) lives at grid position 17.
+        {
+            const uint32_t off = PsmLayout::PixelAddress(Psm::CT32, 17 % 16, 17 / 16, 0, 1) * 4;
+            CHECK(s.rgba[9 * 4] == bytes[off]);
+        }
     }
     CHECK(cs.Count() == 2);
     const int uploads = be.uploads;
