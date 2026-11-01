@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "engine/platform/host/platform.h"
+
 namespace ps2r::sound {
 
 namespace {
@@ -21,10 +23,10 @@ int ReleaseShift(uint16_t a2) { return a2 & 0x1F; }
 
 constexpr uint16_t kPitchMax = 0x3FFF;
 
-}  // namespace
-
-int32_t Voice::RateStep(bool exponential, bool decrease, int shift, int step, int32_t level, uint32_t& counter,
-                        int32_t floor, int32_t ceiling) {
+// Voice::RateStep's body, force-inlined into the per-sample envelope / sweep steps (the exported
+// RateStep below is the same function for the core's master sweeps and the eager ENVX).
+PS2R_FORCE_INLINE int32_t RateStepImpl(bool exponential, bool decrease, int shift, int step, int32_t level, uint32_t& counter,
+                                       int32_t floor, int32_t ceiling) {
     uint32_t counter_inc = 0x8000u >> std::max(0, shift - 11);
     int32_t level_inc = step * (1 << std::max(0, 11 - shift));
     if (exponential) {
@@ -40,6 +42,13 @@ int32_t Voice::RateStep(bool exponential, bool decrease, int shift, int step, in
     return level;
 }
 
+}  // namespace
+
+int32_t Voice::RateStep(bool exponential, bool decrease, int shift, int step, int32_t level, uint32_t& counter,
+                        int32_t floor, int32_t ceiling) {
+    return RateStepImpl(exponential, decrease, shift, step, level, counter, floor, ceiling);
+}
+
 void Voice::SetLsax(uint32_t byte_addr) {
     lsax_ = byte_addr & ~0xFu;
     loop_mode_ = true;
@@ -50,7 +59,7 @@ void Voice::SetVol(int ch, uint16_t v) {
     if (!(v & 0x8000)) vol_[ch] = FixedVolumeLevel(v);
 }
 
-void Voice::AdvanceSweep(int ch) {
+PS2R_FORCE_INLINE void Voice::AdvanceSweep(int ch) {
     const uint16_t reg = vol_reg_[ch];
     if (!(reg & 0x8000)) return;
     const bool exp = (reg & 0x4000) != 0;
@@ -178,10 +187,10 @@ void Voice::LoadBlock(const uint8_t* spu_ram) {
     if ((block_flags_ & VagDecoder::kFlagLoopStart) && !loop_mode_) lsax_ = nax_;
 }
 
-void Voice::AdvanceEnvelope() {
+PS2R_FORCE_INLINE void Voice::AdvanceEnvelope() {
     switch (phase_) {
         case EnvPhase::Attack:
-            env_ = RateStep(AttackMode(adsr1_) != 0, false, AttackShift(adsr1_), 7 - AttackStep(adsr1_), env_, env_counter_, 0, kEnvMax);
+            env_ = RateStepImpl(AttackMode(adsr1_) != 0, false, AttackShift(adsr1_), 7 - AttackStep(adsr1_), env_, env_counter_, 0, kEnvMax);
             if (env_ >= kEnvMax) {
                 env_ = kEnvMax;
                 phase_ = EnvPhase::Decay;
@@ -190,7 +199,7 @@ void Voice::AdvanceEnvelope() {
             break;
         case EnvPhase::Decay: {
             const int32_t target = (SustainLevel(adsr1_) + 1) << 11;
-            env_ = RateStep(true, true, DecayShift(adsr1_), -8, env_, env_counter_, 0, kEnvMax);
+            env_ = RateStepImpl(true, true, DecayShift(adsr1_), -8, env_, env_counter_, 0, kEnvMax);
             if (env_ <= target) {
                 phase_ = EnvPhase::Sustain;
                 env_counter_ = 0;
@@ -200,12 +209,12 @@ void Voice::AdvanceEnvelope() {
         case EnvPhase::Sustain: {
             const bool decr = SustainDecrease(adsr2_) != 0;
             const int step = decr ? ~(7 - SustainStep(adsr2_)) : 7 - SustainStep(adsr2_);
-            env_ = RateStep(SustainMode(adsr2_) != 0, decr, SustainShift(adsr2_), step, env_, env_counter_, 0, kEnvMax);
+            env_ = RateStepImpl(SustainMode(adsr2_) != 0, decr, SustainShift(adsr2_), step, env_, env_counter_, 0, kEnvMax);
             if (env_ <= 0) Stop();   // a sustain that decays to silence ends the voice
             break;
         }
         case EnvPhase::Release:
-            env_ = RateStep(ReleaseMode(adsr2_) != 0, true, ReleaseShift(adsr2_), -8, env_, env_counter_, 0, kEnvMax);
+            env_ = RateStepImpl(ReleaseMode(adsr2_) != 0, true, ReleaseShift(adsr2_), -8, env_, env_counter_, 0, kEnvMax);
             if (env_ <= 0) Stop();
             break;
         case EnvPhase::Off:
@@ -293,7 +302,7 @@ constexpr int16_t kGauss[512] = {
 
 }  // namespace
 
-bool Voice::Step(const uint8_t* spu_ram, float& out_l, float& out_r) {
+PS2R_FORCE_INLINE bool Voice::StepImpl(const uint8_t* spu_ram, float& out_l, float& out_r) {
     out_l = 0.0f;
     out_r = 0.0f;
     if (phase_ == EnvPhase::Off) return false;
@@ -339,6 +348,19 @@ bool Voice::Step(const uint8_t* spu_ram, float& out_l, float& out_r) {
     out_l = sf * (static_cast<float>(vol_[0]) / 32768.0f);
     out_r = sf * (static_cast<float>(vol_[1]) / 32768.0f);
     return endx;
+}
+
+bool Voice::Step(const uint8_t* spu_ram, float& out_l, float& out_r) { return StepImpl(spu_ram, out_l, out_r); }
+
+int Voice::StepRun(const uint8_t* spu_ram, int n, float* out_l, float* out_r, bool& any_end) {
+    int i = 0;
+    bool end = false;
+    for (; i < n; i++) {
+        if (phase_ == EnvPhase::Off) break;
+        end |= StepImpl(spu_ram, out_l[i], out_r[i]);
+    }
+    any_end = end;
+    return i;
 }
 
 }  // namespace ps2r::sound
