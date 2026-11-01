@@ -296,6 +296,11 @@ std::string LauncherSettings::DrawDataPage(const std::string& game_files_dir, co
         Persist("qol.fast_forward", std::to_string(ff));
     }
     ImGui::TextDisabled("In-engine cutscenes run N times faster while R2 is held; the game clock itself stays at 60 Hz.");
+    ImGui::Spacing();
+    ImGui::SeparatorText("Mods");
+    if (ImGui::Checkbox("Testing aids: the in-game 'Mods (for testing)' menu section -- level select + skip cutscene (mods.enabled)", &cfg_.mods.enabled))
+        PersistBool("mods.enabled", cfg_.mods.enabled);
+    ImGui::TextDisabled("Backspace, or Select + Start on the controller, skips the movie or cutscene playing. Off is the game as it ships.");
     return request;
 }
 
