@@ -141,15 +141,22 @@ bool ReadbackEngine::BeginDeferredColorSync(render::Backend& be, RenderTarget& t
     Psm psm;
     if (!PsmOf(enc_psm, &psm)) return false;
     Deferred d;
-    d.fence = be.BeginReadback(t.views.color, pr);
+    // The point-sampled read at the logical resolution when the backend has the pass (1 / s^2 of the
+    // bytes; the encode samples the same texels), else the physical rows.
+    int read_scale = s;
+    if (s > 1) {
+        d.fence = be.BeginReadbackNearest(t.views.color, pr, s);
+        if (d.fence.id) read_scale = 1;
+    }
+    if (d.fence.id == 0) d.fence = be.BeginReadback(t.views.color, pr);
     if (d.fence.id == 0) return false;
-    d.pr = pr;
+    d.pr = read_scale == 1 ? render::Rect{rows.x0, rows.y0, rows.x1 - rows.x0, rows.y1 - rows.y0} : pr;
     d.rows = rows;
     d.fbw = uint32_t(t.identity.width);
     d.enc_psm = enc_psm;
     d.dest_fbp = dest_fbp == kSameFbp ? t.identity.fbp : dest_fbp;
     d.batch_epoch = batch_epoch;
-    d.scale = s;
+    d.scale = read_scale;
     d.keep16 = (psm == Psm::CT16) ? t.coherence.sync_keep_mask16 : uint16_t(0);
     uint32_t fbo_bpp = RenderTarget::FrameBitsPerPixel(enc_psm);
     if (fbo_bpp == 0) fbo_bpp = 32;
@@ -182,6 +189,7 @@ uint32_t ReadbackEngine::CompleteDeferred(render::Backend& be, VramImage& vram, 
     const size_t stride = static_cast<size_t>(d.pr.w) * 4;
     pixels_.assign(stride * d.pr.h, 0);
     if (!be.PollReadback(d.fence, pixels_.data(), stride)) return 0;
+    pixels_scale_ = d.scale;   // 1 = the point-sampled read's logical rows
     EncodeTarget et;
     et.scale = d.scale;
     et.keep16 = d.keep16;
@@ -221,7 +229,7 @@ uint32_t ReadbackEngine::SyncRtToVram(render::Backend& be, RenderTarget& t, Vram
     if (!rows.Empty() && EncodesColorPsm(enc_psm)) {
         const int s = t.identity.scale;
         render::Rect pr{rows.x0 * s, rows.y0 * s, (rows.x1 - rows.x0) * s, (rows.y1 - rows.y0) * s};
-        ReadColorRows(be, t.views.color, pr);
+        ReadColorRows(be, t.views.color, pr, s);
         // The encode stride is the target width; only a rescue may narrow it.
         const uint32_t fbw = (rescue && rescue_fbw) ? rescue_fbw : uint32_t(w);
         staged = EncodeColorRows(t, vram, batch_epoch, rows, fbw, rescue != nullptr, enc_psm,
@@ -240,8 +248,18 @@ void ReadbackEngine::OfferPixels(render::SurfaceId color, int pw, int ph, const 
     offer_.rgba = rgba;
 }
 
-void ReadbackEngine::ReadColorRows(render::Backend& be, render::SurfaceId color, const render::Rect& pr) {
+void ReadbackEngine::ReadColorRows(render::Backend& be, render::SurfaceId color, const render::Rect& pr, int scale) {
     const size_t stride = static_cast<size_t>(pr.w) * 4;
+    pixels_scale_ = scale;
+    if (scale > 1 && !OfferCovers(color, pr)) {
+        // The logical rows straight from the GPU (the nearest pass): 1 / scale^2 of the bytes.
+        const size_t lstride = static_cast<size_t>(pr.w / scale) * 4;
+        pixels_.assign(lstride * static_cast<size_t>(pr.h / scale), 0);
+        if (be.ReadbackNearest(color, pr, scale, pixels_.data(), lstride)) {
+            pixels_scale_ = 1;
+            return;
+        }
+    }
     pixels_.assign(stride * pr.h, 0);
     if (OfferCovers(color, pr)) {
         // The same attachment, unchanged since the grab: its rows (bottom-up, offer stride).
@@ -278,7 +296,9 @@ uint32_t ReadbackEngine::EncodeColorRows(const EncodeTarget& t, VramImage& vram,
     Psm psm;
     if (!PsmOf(enc_psm, &psm)) return 0;
     const uint32_t fbp = dest_fbp;   // the deposit base (the target's own unless overridden)
-    const int s = t.scale;
+    // The read's step: physical rows of a scale-s attachment are sampled at (x * s, y * s); a point-sampled
+    // (nearest) read already holds those texels as logical rows (step 1). mark_only never reads pixels_.
+    const int s = t.mark_only ? t.scale : pixels_scale_;
     const int rw = rows.x1 - rows.x0, rh = rows.y1 - rows.y0;
     const int pw = rw * s;
     const uint32_t bpp = Swizzle::LinearBitsPerPixel(psm) / 8;
@@ -396,11 +416,19 @@ uint32_t ReadbackEngine::DepositAlt16Lane(render::Backend& be, RenderTarget& t, 
     const int x0 = std::max(0, rect.x0), y0 = std::max(0, rect.y0);
     const int x1 = std::min(w, rect.x1), y1 = std::min(h, rect.y1);
     if (x1 <= x0 || y1 <= y0) return 0;
-    const int s = t.identity.scale;
+    int s = t.identity.scale;
     const int rw = x1 - x0, rh = y1 - y0;
     render::Rect pr{x0 * s, y0 * s, rw * s, rh * s};
-    pixels_.assign(static_cast<size_t>(pr.w) * pr.h * 4, 0);
-    be.Readback(t.views.alt16, pr, pixels_.data(), static_cast<size_t>(pr.w) * 4);
+    bool read = false;
+    if (s > 1) {
+        pixels_.assign(static_cast<size_t>(rw) * rh * 4, 0);
+        read = be.ReadbackNearest(t.views.alt16, pr, s, pixels_.data(), static_cast<size_t>(rw) * 4);
+        if (read) s = 1;   // the logical rows
+    }
+    if (!read) {
+        pixels_.assign(static_cast<size_t>(pr.w) * pr.h * 4, 0);
+        be.Readback(t.views.alt16, pr, pixels_.data(), static_cast<size_t>(pr.w) * 4);
+    }
     const uint32_t fbw = (draw_fbw > 0 && draw_fbw <= 1024)
                              ? draw_fbw
                              : (t.identity.render_fbw ? t.identity.render_fbw : uint32_t(w));
@@ -456,8 +484,18 @@ uint32_t ReadbackEngine::SyncZToVram(render::Backend& be, RenderTarget& t, VramI
     if (!rows.Empty()) {
         const int s = t.identity.scale;
         render::Rect pr{rows.x0 * s, rows.y0 * s, (rows.x1 - rows.x0) * s, (rows.y1 - rows.y0) * s};
-        depth_.assign(static_cast<size_t>(pr.w) * pr.h, 0.0f);
-        be.Readback(t.views.depth, pr, depth_.data(), static_cast<size_t>(pr.w) * sizeof(float));
+        depth_scale_ = s;
+        bool read = false;
+        if (s > 1) {
+            const int lw = rows.x1 - rows.x0, lh = rows.y1 - rows.y0;
+            depth_.assign(static_cast<size_t>(lw) * lh, 0.0f);
+            read = be.ReadbackNearest(t.views.depth, pr, s, depth_.data(), static_cast<size_t>(lw) * sizeof(float));
+            if (read) depth_scale_ = 1;
+        }
+        if (!read) {
+            depth_.assign(static_cast<size_t>(pr.w) * pr.h, 0.0f);
+            be.Readback(t.views.depth, pr, depth_.data(), static_cast<size_t>(pr.w) * sizeof(float));
+        }
         // The whole depth buffer syncs in its NATIVE format at its native address.
         staged = EncodeZRows(t, vram, batch_epoch, rows, 0x30u | (c.last_zpsm & 0xFu));
     }
@@ -470,7 +508,7 @@ uint32_t ReadbackEngine::EncodeZRows(RenderTarget& t, VramImage& vram, uint64_t 
     Psm zpsm;
     if (!PsmOf(zpsm_field, &zpsm) || !PixelConvert::IsZ(zpsm)) return 0;
     const uint32_t zbp = t.coherence.last_zbp;
-    const int s = t.identity.scale;
+    const int s = depth_scale_;   // the read's step (SyncZToVram)
     const int rw = rows.x1 - rows.x0, rh = rows.y1 - rows.y0;
     const int pw = rw * s;
     const uint32_t bpp = Swizzle::LinearBitsPerPixel(zpsm) / 8;
