@@ -3,8 +3,20 @@
 // and for the VU1 HLE library.
 //
 // PS2 rules carried here:
-//  * the VU has no NaN/Inf/denormal: a result whose exponent is all-ones is
-//    clamped to +/-MAX_FLOAT (sign kept) and a denormal is flushed to +/-0;
+//  * the VU has no NaN/Inf/denormal: a denormal is flushed to +/-0; a lane whose
+//    exponent field is all-ones is NOT a NaN/Inf but the number +/-2^128 * 1.m
+//    (the VU's range reaches exponent 255). The IEEE lane kernels cannot carry
+//    such a value, so an FMAC result lane that comes out with an all-ones
+//    exponent -- an exponent-255 operand propagated, or a genuine overflow -- is
+//    recomputed in double and re-encoded with the VU's rules (ExactLane):
+//    truncation toward zero, a magnitude in [2^128, 2^129) as exponent 255, a
+//    magnitude past that to +/-MAX_FLOAT (the overflow value the engine and
+//    PCSX2 share), a denormal to +/-0. Sly 2's shadow-volume VU1 programs tag
+//    vertices by MFIR-ing an integer into the w field and carrying it through
+//    MUL / MADD by 1.0 and 0.0; hardware keeps the pattern bit for bit, and
+//    clamping it to MAX_FLOAT dropped every clipped shadow face (fix-lighting).
+//    Q, P and the I register still clamp an IEEE NaN/Inf to +/-MAX_FLOAT
+//    (ClampFloat): their producers are IEEE scalar paths.
 //  * MAC flags (Z/S/U/O per lane) are judged on the RAW result bits before the
 //    clamp: S = sign bit (so -0 sets S), Z = exponent zero (true zero AND
 //    denormal), U = denormal, O = exponent all-ones;
@@ -45,12 +57,30 @@ public:
     static float Bits2F(uint32_t bits);
     static uint32_t F2Bits(float f);
 
-    // Clamp: NaN/Inf -> +/-MAX_FLOAT, denormal -> +/-0, else unchanged.
+    // The register-level clamp: denormal -> +/-0, else unchanged (an all-ones
+    // exponent is a legitimate VU value, see above).
     static uint32_t ClampBits1(uint32_t bits);
     // True when ClampBits1 is the identity for sure (exponent neither 0 nor
     // all-ones); a true zero also clamps to itself but is not claimed here.
     static bool IsNormalExp(uint32_t bits);
+    // The IEEE-producer clamp (Q, P, I, the FDIV/EFU results): NaN/Inf ->
+    // +/-MAX_FLOAT, denormal -> +/-0, else unchanged.
     static float ClampFloat(float v);
+    static uint32_t ClampIeeeBits1(uint32_t bits);
+    // ---- exponent-255 lanes (the VU's top binade) ----
+    enum FmacKind : int { kFmacAdd = 0, kFmacSub, kFmacMul, kFmacFma, kFmacFms };
+    // The VU value of a raw lane (exponent 255 included; a denormal is 0).
+    static double LaneToDouble(uint32_t bits);
+    // Re-encode a double with the VU's rules (truncation, exponent 255 kept,
+    // overflow to +/-MAX_FLOAT, denormal to +/-0).
+    static uint32_t DoubleToLane(double r);
+    // One FMAC lane evaluated exactly: a+b, a-b, a*b, c+a*b, c-a*b.
+    static uint32_t ExactLane(FmacKind kind, uint32_t a, uint32_t b, uint32_t c);
+    // Every lane of `r` whose exponent is all-ones recomputed exactly from the
+    // raw operands (`c` may be null for the two-operand kinds).
+    static void FixExp255Lanes(VR_reg& r, FmacKind kind, const VR_reg& a, const VR_reg& b, const VR_reg* c);
+    // True when some lane of `r` has an all-ones exponent.
+    static bool AnyExp255(const VR_reg& r);
     // ACC is re-clamped in place before every upper instruction.
     static void ClampStoreACC(VR_reg& acc);
     // dst lanes selected by `mask` take the clamped result bits.

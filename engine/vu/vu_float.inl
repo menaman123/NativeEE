@@ -19,13 +19,31 @@ PS2R_FORCE_INLINE uint32_t VuFloat::F2Bits(float f) {
 
 PS2R_FORCE_INLINE uint32_t VuFloat::ClampBits1(uint32_t bits) {
     const uint32_t exp = bits & kExpMask;
+    if (exp == 0 && (bits & kMantMask) != 0) return bits & kSignBit;    // denormal -> +/-0
+    return bits;                                                         // exponent 255 is a VU value
+}
+
+PS2R_FORCE_INLINE uint32_t VuFloat::ClampIeeeBits1(uint32_t bits) {
+    const uint32_t exp = bits & kExpMask;
     if (exp == kExpMask) return (bits & kSignBit) | kMaxFloatBits;      // NaN / Inf -> +/-MAX
     if (exp == 0 && (bits & kMantMask) != 0) return bits & kSignBit;    // denormal -> +/-0
     return bits;
 }
 
 PS2R_FORCE_INLINE float VuFloat::ClampFloat(float v) {
-    return Bits2F(ClampBits1(F2Bits(v)));
+    return Bits2F(ClampIeeeBits1(F2Bits(v)));
+}
+
+PS2R_FORCE_INLINE bool VuFloat::AnyExp255(const VR_reg& r) {
+    return ((r.I[0] & kExpMask) == kExpMask) || ((r.I[1] & kExpMask) == kExpMask) ||
+           ((r.I[2] & kExpMask) == kExpMask) || ((r.I[3] & kExpMask) == kExpMask);
+}
+
+PS2R_FORCE_INLINE void VuFloat::FixExp255Lanes(VR_reg& r, FmacKind kind, const VR_reg& a, const VR_reg& b, const VR_reg* c) {
+    for (int k = 0; k < 4; ++k) {
+        if ((r.I[k] & kExpMask) != kExpMask) continue;
+        r.I[k] = ExactLane(kind, a.I[k], b.I[k], c ? c->I[k] : 0u);
+    }
 }
 
 // The FDIV unit's STATUS bits (D/I and their sticky twins DS/IS) land when Q
@@ -76,30 +94,35 @@ PS2R_FORCE_INLINE VR_reg VuFloat::ClampVec(const VR_reg& v) {
 PS2R_FORCE_INLINE VR_reg VuFloat::Add4(const VR_reg& a, const VR_reg& b) {
     VR_reg r;
     vst1q_f32(r.F, vaddq_f32(vld1q_f32(a.F), vld1q_f32(b.F)));
+    if (PS2R_UNLIKELY(AnyExp255(r))) FixExp255Lanes(r, kFmacAdd, a, b, nullptr);
     return r;
 }
 
 PS2R_FORCE_INLINE VR_reg VuFloat::Sub4(const VR_reg& a, const VR_reg& b) {
     VR_reg r;
     vst1q_f32(r.F, vsubq_f32(vld1q_f32(a.F), vld1q_f32(b.F)));
+    if (PS2R_UNLIKELY(AnyExp255(r))) FixExp255Lanes(r, kFmacSub, a, b, nullptr);
     return r;
 }
 
 PS2R_FORCE_INLINE VR_reg VuFloat::Mul4(const VR_reg& a, const VR_reg& b) {
     VR_reg r;
     vst1q_f32(r.F, vmulq_f32(vld1q_f32(a.F), vld1q_f32(b.F)));
+    if (PS2R_UNLIKELY(AnyExp255(r))) FixExp255Lanes(r, kFmacMul, a, b, nullptr);
     return r;
 }
 
 PS2R_FORCE_INLINE VR_reg VuFloat::Fma4(const VR_reg& a, const VR_reg& b, const VR_reg& c) {
     VR_reg r;
     vst1q_f32(r.F, vfmaq_f32(vld1q_f32(c.F), vld1q_f32(a.F), vld1q_f32(b.F)));  // c + a*b, one rounding
+    if (PS2R_UNLIKELY(AnyExp255(r))) FixExp255Lanes(r, kFmacFma, a, b, &c);
     return r;
 }
 
 PS2R_FORCE_INLINE VR_reg VuFloat::Fms4(const VR_reg& a, const VR_reg& b, const VR_reg& c) {
     VR_reg r;
     vst1q_f32(r.F, vfmsq_f32(vld1q_f32(c.F), vld1q_f32(a.F), vld1q_f32(b.F)));  // c - a*b, one rounding = fma(-a, b, c)
+    if (PS2R_UNLIKELY(AnyExp255(r))) FixExp255Lanes(r, kFmacFms, a, b, &c);
     return r;
 }
 
@@ -168,30 +191,35 @@ PS2R_FORCE_INLINE VR_reg VuFloat::ClampVec(const VR_reg& v) {
 PS2R_FORCE_INLINE VR_reg VuFloat::Add4(const VR_reg& a, const VR_reg& b) {
     VR_reg r;
     for (int k = 0; k < 4; ++k) r.F[k] = a.F[k] + b.F[k];
+    if (PS2R_UNLIKELY(AnyExp255(r))) FixExp255Lanes(r, kFmacAdd, a, b, nullptr);
     return r;
 }
 
 PS2R_FORCE_INLINE VR_reg VuFloat::Sub4(const VR_reg& a, const VR_reg& b) {
     VR_reg r;
     for (int k = 0; k < 4; ++k) r.F[k] = a.F[k] - b.F[k];
+    if (PS2R_UNLIKELY(AnyExp255(r))) FixExp255Lanes(r, kFmacSub, a, b, nullptr);
     return r;
 }
 
 PS2R_FORCE_INLINE VR_reg VuFloat::Mul4(const VR_reg& a, const VR_reg& b) {
     VR_reg r;
     for (int k = 0; k < 4; ++k) r.F[k] = a.F[k] * b.F[k];
+    if (PS2R_UNLIKELY(AnyExp255(r))) FixExp255Lanes(r, kFmacMul, a, b, nullptr);
     return r;
 }
 
 PS2R_FORCE_INLINE VR_reg VuFloat::Fma4(const VR_reg& a, const VR_reg& b, const VR_reg& c) {
     VR_reg r;
     for (int k = 0; k < 4; ++k) r.F[k] = std::fmaf(a.F[k], b.F[k], c.F[k]);
+    if (PS2R_UNLIKELY(AnyExp255(r))) FixExp255Lanes(r, kFmacFma, a, b, &c);
     return r;
 }
 
 PS2R_FORCE_INLINE VR_reg VuFloat::Fms4(const VR_reg& a, const VR_reg& b, const VR_reg& c) {
     VR_reg r;
     for (int k = 0; k < 4; ++k) r.F[k] = std::fmaf(-a.F[k], b.F[k], c.F[k]);
+    if (PS2R_UNLIKELY(AnyExp255(r))) FixExp255Lanes(r, kFmacFms, a, b, &c);
     return r;
 }
 
@@ -252,11 +280,8 @@ PS2R_FORCE_INLINE uint32x4_t VuFloat::ClampBits4(uint32x4_t bits) {
     // denormal (exponent 0, mantissa != 0) <=> 1 <= m <= 0x007FFFFF <=> (m - 1) <u 0x007FFFFF.
     const uint32x4_t m = vandq_u32(bits, vdupq_n_u32(~kSignBit));
     const uint32x4_t sign = vandq_u32(bits, vdupq_n_u32(kSignBit));
-    const uint32x4_t is_naninf = vcgeq_u32(m, vdupq_n_u32(kExpMask));
     const uint32x4_t is_denorm = vcltq_u32(vsubq_u32(m, vdupq_n_u32(1u)), vdupq_n_u32(kMantMask));
-    uint32x4_t r = vbslq_u32(is_naninf, vorrq_u32(sign, vdupq_n_u32(kMaxFloatBits)), bits);
-    r = vbslq_u32(is_denorm, sign, r);
-    return r;
+    return vbslq_u32(is_denorm, sign, bits);  // an all-ones exponent is a VU value: kept
 }
 
 PS2R_FORCE_INLINE uint16_t VuFloat::MacFlags4(uint32x4_t bits, uint8_t mask) {

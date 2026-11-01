@@ -60,3 +60,43 @@ uint32_t VuFloat::ClipNf(uint32_t xb_u, uint32_t yb_u, uint32_t zb_u, uint32_t w
     if ((int32_t)(zb ^ (int32_t)0x80000000) > value) nf |= 0x20;
     return nf;
 }
+
+// ------------------------------------------------------------------ exponent-255 lanes
+// The VU value of a raw lane: sign * 2^(exp-127) * 1.mantissa for exp >= 1 (exp 255 = the 2^128
+// binade, no NaN/Inf), +/-0 for exp 0 (denormals flush).
+double VuFloat::LaneToDouble(uint32_t bits) {
+    const int exp = static_cast<int>((bits >> 23) & 0xFFu);
+    const double sign = (bits & kSignBit) ? -1.0 : 1.0;
+    if (exp == 0) return sign * 0.0;
+    const double mant = static_cast<double>(0x00800000u | (bits & kMantMask));  // 1.m * 2^23
+    return sign * std::ldexp(mant, exp - 127 - 23);
+}
+
+// Re-encode with the VU's rules: the exact magnitude truncated toward zero to 24 bits; the binade
+// 2^128 kept as exponent 255; anything past it the engine's +/-MAX_FLOAT; a result below the normal
+// range +/-0 (sign kept).
+uint32_t VuFloat::DoubleToLane(double r) {
+    const uint32_t sign = std::signbit(r) ? kSignBit : 0u;
+    const double a = std::fabs(r);
+    if (!(a > 0.0)) return sign;                      // zero (a NaN cannot arise from finite operands)
+    int e = 0;
+    const double m = std::frexp(a, &e);               // a = m * 2^e, m in [0.5, 1)
+    const int expf = e - 1 + 127;                     // a = (2m) * 2^(e-1), 2m in [1, 2)
+    if (expf > 255) return sign | kMaxFloatBits;      // overflow
+    if (expf < 1) return sign;                        // denormal / underflow -> +/-0
+    const uint32_t mant24 = static_cast<uint32_t>(std::ldexp(m, 24));  // truncation: [2^23, 2^24)
+    return sign | (static_cast<uint32_t>(expf) << 23) | (mant24 & kMantMask);
+}
+
+uint32_t VuFloat::ExactLane(FmacKind kind, uint32_t a, uint32_t b, uint32_t c) {
+    const double da = LaneToDouble(a), db = LaneToDouble(b);
+    double r = 0.0;
+    switch (kind) {
+        case kFmacAdd: r = da + db; break;
+        case kFmacSub: r = da - db; break;
+        case kFmacMul: r = da * db; break;                       // 24 x 24 bits: exact in double
+        case kFmacFma: r = LaneToDouble(c) + da * db; break;
+        case kFmacFms: r = LaneToDouble(c) - da * db; break;
+    }
+    return DoubleToLane(r);
+}

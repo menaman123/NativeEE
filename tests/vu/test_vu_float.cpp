@@ -36,33 +36,72 @@ static void TestBitsPunning() {
 }
 
 static void TestClamp() {
+    // The register-level clamp: denormals flush, every other pattern -- the exponent-255 binade (an IEEE
+    // Inf / NaN pattern) included -- is a VU value and stays.
     CHECK(VuFloat::ClampBits1(kPosZero) == kPosZero);
     CHECK(VuFloat::ClampBits1(kNegZero) == kNegZero);        // -0 survives (sign kept, no mantissa)
     CHECK(VuFloat::ClampBits1(kPosDenorm) == kPosZero);      // denormal -> +0
     CHECK(VuFloat::ClampBits1(kNegDenorm) == kNegZero);      // denormal -> -0
     CHECK(VuFloat::ClampBits1(kMinNormal) == kMinNormal);    // smallest normal unchanged
-    CHECK(VuFloat::ClampBits1(kPosInf) == kPosMax);
-    CHECK(VuFloat::ClampBits1(kNegInf) == kNegMax);
-    CHECK(VuFloat::ClampBits1(kNaN) == kPosMax);
-    CHECK(VuFloat::ClampBits1(kNegNaN) == kNegMax);
+    CHECK(VuFloat::ClampBits1(kPosInf) == kPosInf);          // 2^128: kept
+    CHECK(VuFloat::ClampBits1(kNegInf) == kNegInf);
+    CHECK(VuFloat::ClampBits1(kNaN) == kNaN);                // -2^128 * 1.5: kept
+    CHECK(VuFloat::ClampBits1(kNegNaN) == kNegNaN);
     CHECK(VuFloat::ClampBits1(kPosMax) == kPosMax);
     CHECK(VuFloat::ClampBits1(kOne) == kOne && VuFloat::ClampBits1(kNegOne) == kNegOne);
+    // The IEEE-producer clamp (Q / P / I / FDIV / EFU results) keeps the +/-MAX rule.
     CHECK(VuFloat::F2Bits(VuFloat::ClampFloat(VuFloat::Bits2F(kNegInf))) == kNegMax);
+    CHECK(VuFloat::ClampIeeeBits1(kNaN) == kPosMax && VuFloat::ClampIeeeBits1(kNegNaN) == kNegMax);
+    CHECK(VuFloat::ClampIeeeBits1(kPosDenorm) == kPosZero && VuFloat::ClampIeeeBits1(kOne) == kOne);
 
     VR_reg acc;
     acc.I[0] = kPosInf; acc.I[1] = kNegDenorm; acc.I[2] = kOne; acc.I[3] = kNaN;
     VuFloat::ClampStoreACC(acc);
-    CHECK(acc.I[0] == kPosMax && acc.I[1] == kNegZero && acc.I[2] == kOne && acc.I[3] == kPosMax);
+    CHECK(acc.I[0] == kPosInf && acc.I[1] == kNegZero && acc.I[2] == kOne && acc.I[3] == kNaN);
 
     VR_reg dst;
     dst.I[0] = 0x11111111u; dst.I[1] = 0x22222222u; dst.I[2] = 0x33333333u; dst.I[3] = 0x44444444u;
     const uint32_t res[4] = {kPosInf, kPosDenorm, kNegInf, kTwo};
     VuFloat::WriteMaskClamp(dst, res, 0xA);  // X and Z
-    CHECK(dst.I[0] == kPosMax && dst.I[1] == 0x22222222u && dst.I[2] == kNegMax && dst.I[3] == 0x44444444u);
+    CHECK(dst.I[0] == kPosInf && dst.I[1] == 0x22222222u && dst.I[2] == kNegInf && dst.I[3] == 0x44444444u);
     VuFloat::WriteMaskClamp(dst, res, 0x5);  // Y and W
     CHECK(dst.I[1] == kPosZero && dst.I[3] == kTwo);
     VuFloat::WriteMaskClamp(dst, res, 0x0);
-    CHECK(dst.I[0] == kPosMax && dst.I[3] == kTwo);
+    CHECK(dst.I[0] == kPosInf && dst.I[3] == kTwo);
+}
+
+// The exponent-255 binade through the FMAC kernels: Sly 2's shadow-volume programs MFIR a 16-bit tag into a
+// vertex's w (0xFFFF9000 = -2^128 * 1.9453125), carry it through MULA by 1.0 and MADD + 0.0 and read the low
+// 16 bits back with ILW. Hardware keeps the pattern bit for bit; an IEEE kernel would make it a NaN.
+static void TestExp255() {
+    const uint32_t kTag = 0xFFFF9000u, kTagPos = 0x7FFF9000u;
+    CHECK(VuFloat::LaneToDouble(kPosInf) == 340282366920938463463374607431768211456.0);  // 2^128
+    CHECK(VuFloat::DoubleToLane(VuFloat::LaneToDouble(kTag)) == kTag);
+    CHECK(VuFloat::DoubleToLane(VuFloat::LaneToDouble(kTagPos)) == kTagPos);
+    CHECK(VuFloat::DoubleToLane(VuFloat::LaneToDouble(kNegMax)) == kNegMax);
+    CHECK(VuFloat::DoubleToLane(1.0) == kOne && VuFloat::DoubleToLane(-1.0) == kNegOne);
+    CHECK(VuFloat::DoubleToLane(0.0) == kPosZero && VuFloat::DoubleToLane(-0.0) == kNegZero);
+    CHECK(VuFloat::DoubleToLane(VuFloat::LaneToDouble(kPosDenorm)) == kPosZero);
+    CHECK(VuFloat::DoubleToLane(VuFloat::LaneToDouble(kPosInf) * 2.0) == kPosMax);     // past the binade: overflow value
+    CHECK(VuFloat::DoubleToLane(-VuFloat::LaneToDouble(kPosInf) * 4.0) == kNegMax);
+    CHECK(VuFloat::DoubleToLane(1.0 / 3.0) == 0x3EAAAAAAu);                             // truncation, not rounding
+
+    VR_reg one, zero, tag;
+    for (int k = 0; k < 4; ++k) { one.I[k] = kOne; zero.I[k] = kPosZero; tag.I[k] = kOne; }
+    tag.I[3] = kTag;
+    const VR_reg acc = VuFloat::Mul4(tag, one);              // MULA.xyzw vf, vf07(w = 1.0)
+    CHECK(acc.I[3] == kTag && acc.I[0] == kOne);
+    const VR_reg out = VuFloat::Fma4(zero, one, acc);        // MADD.xyzw vf25, vf08(w = 0.0), vf00.w
+    CHECK(out.I[3] == kTag && out.I[0] == kOne);
+    CHECK((out.I[3] & 0xF000u) == 0x9000u);                   // the clipper's ILW.w test
+    // A genuine overflow still lands on the overflow value; a tag times 0 is 0; a tag plus itself overflows.
+    VR_reg big; for (int k = 0; k < 4; ++k) big.I[k] = kPosMax;
+    CHECK(VuFloat::Mul4(big, big).I[0] == kPosMax);
+    CHECK(VuFloat::Mul4(tag, zero).I[3] == kNegZero || VuFloat::Mul4(tag, zero).I[3] == kPosZero);
+    CHECK(VuFloat::Add4(tag, tag).I[3] == kNegMax);
+    CHECK(VuFloat::Sub4(tag, tag).I[3] == kPosZero);
+    CHECK(VuFloat::Fms4(one, one, tag).I[3] == kTag);         // -2^128*1.945 - 1: the 1 is below the lsb
+    CHECK(VuFloat::Mul4(tag, one).I[3] == kTag);
 }
 
 static void TestLaneMask() {
@@ -214,6 +253,7 @@ static void TestChopGuard() {
 int main() {
     TestBitsPunning();
     TestClamp();
+    TestExp255();
     TestLaneMask();
     TestMacFlags();
     TestQStatus();

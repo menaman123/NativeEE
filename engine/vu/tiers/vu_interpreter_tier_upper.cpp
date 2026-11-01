@@ -1,7 +1,8 @@
 // VuInterpreterTier -- the upper (FMAC) word and the FDIV-pipe bodies.
 //
 // PS2 rules: every upper instruction reads clamped copies of VF[fs]/VF[ft]
-// (NaN/Inf -> +/-MAX, denormal -> +/-0) and re-clamps ACC in place; the
+// (denormal -> +/-0; an exponent-255 lane is a VU value, vu_float.h) and
+// re-clamps ACC in place; the lane arithmetic is VuFloat's kernels; the
 // MAC/STATUS flags are judged on the RAW result before the written lanes are
 // clamped; a write to VF00 is dropped but its flags still issue; MAX/MINI
 // compare raw bits as integers and set no flags; the MADD/MSUB family is a
@@ -22,21 +23,26 @@ using vu_status::DS;
 using vu_status::I;
 using vu_status::IS;
 
-inline float Fma(float a, float b, float c) { return std::fmaf(a, b, c); }
+// The lane arithmetic goes through VuFloat's four-lane kernels (the same bodies the cached and
+// generated tiers call), so the VU's exponent-255 rule (vu_float.h) is one implementation.
+using OpKind = VuFloat::FmacKind;
+constexpr OpKind OpAdd = VuFloat::kFmacAdd;
+constexpr OpKind OpSub = VuFloat::kFmacSub;
+constexpr OpKind OpMul = VuFloat::kFmacMul;
 
-// result.k = op(src1.k, scalar) for the four lanes.
-template <typename Op>
-inline void Lanes1(VR_reg& result, const VR_reg& src1, float s, Op op) {
-    for (int k = 0; k < 4; ++k) result.F[k] = op(src1.F[k], s);
+inline VR_reg Lanes(OpKind op, const VR_reg& a, const VR_reg& b) {
+    switch (op) {
+        case VuFloat::kFmacAdd: return VuFloat::Add4(a, b);
+        case VuFloat::kFmacSub: return VuFloat::Sub4(a, b);
+        default: return VuFloat::Mul4(a, b);
+    }
 }
-template <typename Op>
-inline void Lanes2(VR_reg& result, const VR_reg& src1, const VR_reg& src2, Op op) {
-    for (int k = 0; k < 4; ++k) result.F[k] = op(src1.F[k], src2.F[k]);
-}
-
-inline float OpAdd(float a, float b) { return a + b; }
-inline float OpSub(float a, float b) { return a - b; }
-inline float OpMul(float a, float b) { return a * b; }
+// result = op(src1, scalar broadcast) for the four lanes.
+inline void Lanes1(VR_reg& result, const VR_reg& src1, float s, OpKind op) { result = Lanes(op, src1, VuFloat::Splat4(s)); }
+inline void Lanes2(VR_reg& result, const VR_reg& src1, const VR_reg& src2, OpKind op) { result = Lanes(op, src1, src2); }
+// (x, y, z) -> (y, z, x) and (z, x, y) for the outer-product family; w carried.
+inline VR_reg RotYZX(const VR_reg& v) { VR_reg r; r.I[0] = v.I[1]; r.I[1] = v.I[2]; r.I[2] = v.I[0]; r.I[3] = v.I[3]; return r; }
+inline VR_reg RotZXY(const VR_reg& v) { VR_reg r; r.I[0] = v.I[2]; r.I[1] = v.I[0]; r.I[2] = v.I[1]; r.I[3] = v.I[3]; return r; }
 
 }  // namespace
 
@@ -70,12 +76,8 @@ void VuInterpreterTier::RunUpper(VuUnit& u, uint32_t upper) {
         const uint32_t b4[4] = {bits, bits, bits, bits};
         VuFloat::ApplyMinMaxRaw(regs.VF[fd], regs.VF[fs], b4, dest, protect_fd, fn);
     };
-    auto madd_s = [&](float s) {
-        for (int k = 0; k < 4; ++k) result.F[k] = Fma(src1.F[k], s, acc.F[k]);
-    };
-    auto msub_s = [&](float s) {
-        for (int k = 0; k < 4; ++k) result.F[k] = Fma(-src1.F[k], s, acc.F[k]);
-    };
+    auto madd_s = [&](float s) { result = VuFloat::Fma4(src1, VuFloat::Splat4(s), acc); };
+    auto msub_s = [&](float s) { result = VuFloat::Fms4(src1, VuFloat::Splat4(s), acc); };
 
     const float bc_val = src2.F[bc];
     switch (func) {
@@ -107,21 +109,19 @@ void VuInterpreterTier::RunUpper(VuUnit& u, uint32_t upper) {
         case 0x27: msub_s(VuFloat::ClampFloat(VuFloat::Bits2F(regs.I))); write_fd(); break;                 // MSUBi
         case 0x28: Lanes2(result, src1, src2, OpAdd); write_fd(); break;                                    // ADD
         case 0x29:                                                                                          // MADD
-            for (int k = 0; k < 4; ++k) result.F[k] = Fma(src1.F[k], src2.F[k], acc.F[k]);
+            result = VuFloat::Fma4(src1, src2, acc);
             write_fd();
             break;
         case 0x2A: Lanes2(result, src1, src2, OpMul); write_fd(); break;                                    // MUL
         case 0x2B: VuFloat::ApplyMinMaxRaw(regs.VF[fd], regs.VF[fs], regs.VF[ft].I, dest, protect_fd, VuFloat::FpMax); break;  // MAX
         case 0x2C: Lanes2(result, src1, src2, OpSub); write_fd(); break;                                    // SUB
         case 0x2D:                                                                                          // MSUB
-            for (int k = 0; k < 4; ++k) result.F[k] = Fma(-src1.F[k], src2.F[k], acc.F[k]);
+            result = VuFloat::Fms4(src1, src2, acc);
             write_fd();
             break;
         case 0x2E:                                                                                          // OPMSUB
-            result.x = Fma(-src1.y, src2.z, acc.x);
-            result.y = Fma(-src1.z, src2.x, acc.y);
-            result.z = Fma(-src1.x, src2.y, acc.z);
-            result.w = acc.w;
+            result = VuFloat::Fms4(RotYZX(src1), RotZXY(src2), acc);  // x: acc.x - s1.y*s2.z, y: acc.y - s1.z*s2.x, z: acc.z - s1.x*s2.y
+            result.I[3] = acc.I[3];
             write_fd();
             break;
         case 0x2F: VuFloat::ApplyMinMaxRaw(regs.VF[fd], regs.VF[fs], regs.VF[ft].I, dest, protect_fd, VuFloat::FpMin); break;  // MINI
@@ -163,20 +163,20 @@ void VuInterpreterTier::RunSpecial2Upper(VuUnit& u, uint32_t upper) {
             if (dest & (8u >> k)) regs.ACC.I[k] = VuFloat::ClampBits1(regs.ACC.I[k]);
         }
     };
-    auto acc_s = [&](float s, float (*op)(float, float)) {
-        for (int k = 0; k < 4; ++k) regs.ACC.F[k] = op(s1.F[k], s);
+    auto acc_s = [&](float s, OpKind op) {
+        regs.ACC = Lanes(op, s1, VuFloat::Splat4(s));
         acc_tail();
     };
-    auto acc_v = [&](float (*op)(float, float)) {
-        for (int k = 0; k < 4; ++k) regs.ACC.F[k] = op(s1.F[k], s2.F[k]);
+    auto acc_v = [&](OpKind op) {
+        regs.ACC = Lanes(op, s1, s2);
         acc_tail();
     };
     auto acc_madd_s = [&](float s) {
-        for (int k = 0; k < 4; ++k) regs.ACC.F[k] = Fma(s1.F[k], s, acc_c.F[k]);
+        regs.ACC = VuFloat::Fma4(s1, VuFloat::Splat4(s), acc_c);
         acc_tail();
     };
     auto acc_msub_s = [&](float s) {
-        for (int k = 0; k < 4; ++k) regs.ACC.F[k] = Fma(-s1.F[k], s, acc_c.F[k]);
+        regs.ACC = VuFloat::Fms4(s1, VuFloat::Splat4(s), acc_c);
         acc_tail();
     };
     auto write_ft_vec = [&](const VR_reg& v) {
@@ -237,7 +237,7 @@ void VuInterpreterTier::RunSpecial2Upper(VuUnit& u, uint32_t upper) {
         case 0x0A:
             if (bc == 0) acc_v(OpAdd);                      // ADDA
             else if (bc == 1) {                             // MADDA
-                for (int k = 0; k < 4; ++k) regs.ACC.F[k] = Fma(s1.F[k], s2.F[k], acc_c.F[k]);
+                regs.ACC = VuFloat::Fma4(s1, s2, acc_c);
                 acc_tail();
             } else if (bc == 2) acc_v(OpMul);               // MULA
             else acc_tail();                                // unrecognised: the tail still issues the current ACC's flags
@@ -245,12 +245,11 @@ void VuInterpreterTier::RunSpecial2Upper(VuUnit& u, uint32_t upper) {
         case 0x0B:
             if (bc == 0) acc_v(OpSub);                      // SUBA
             else if (bc == 1) {                             // MSUBA
-                for (int k = 0; k < 4; ++k) regs.ACC.F[k] = Fma(-s1.F[k], s2.F[k], acc_c.F[k]);
+                regs.ACC = VuFloat::Fms4(s1, s2, acc_c);
                 acc_tail();
             } else if (bc == 2) {                           // OPMULA (w untouched)
-                regs.ACC.x = s1.y * s2.z;
-                regs.ACC.y = s1.z * s2.x;
-                regs.ACC.z = s1.x * s2.y;
+                const VR_reg m = VuFloat::Mul4(RotYZX(s1), RotZXY(s2));  // x: s1.y*s2.z, y: s1.z*s2.x, z: s1.x*s2.y
+                regs.ACC.I[0] = m.I[0]; regs.ACC.I[1] = m.I[1]; regs.ACC.I[2] = m.I[2];
                 acc_tail();
             }
             break;                                          // bc 3: NOP
