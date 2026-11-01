@@ -310,6 +310,77 @@ static void RunPart2(int programs) {
     if (!g_fail) std::printf("  part 2: %d programs, %d bundles, eager == lazy through the interpreter\n", programs, total_bundles);
 }
 
+// Part 3 (STAGE PERF-1): the register-resident LazyAcc (the generated blocks'
+// mac_acc fold: OR / unsigned MAX / unsigned MIN accumulators, the lane sets
+// formed once at FoldLazyBatch) against the per-result FoldLazyRetired on the
+// same lazy pipeline: random results drawn from every float class (zero, -0,
+// denormal, normal, MAX, inf, NaN of either sign) under every dest mask must
+// materialise the same MAC and STATUS words.
+static uint32_t RndLaneBits() {
+    const uint32_t sign = Rnd(2) ? VuFloat::kSignBit : 0u;
+    switch (Rnd(8)) {
+        case 0: return sign;                                             // +/-0
+        case 1: return sign | (1u + Rnd(VuFloat::kMantMask));            // denormal
+        case 2: return sign | VuFloat::kExpMask;                         // inf
+        case 3: return sign | VuFloat::kExpMask | (1u + Rnd(VuFloat::kMantMask));  // NaN
+        case 4: return sign | VuFloat::kMaxFloatBits;                    // MAX
+        case 5: return sign | 0x00800000u;                               // the smallest normal
+        case 6: return sign | 0x007FFFFFu;                               // the largest denormal
+        default: return sign | (0x00800000u + Rnd(0x7F000000u - 1u));    // normal
+    }
+}
+
+template <int M>
+static void FoldAccM(FlagPipeline::LazyAcc& acc, const uint32_t bits[4]) { acc.Fold<M>(bits); }
+static void FoldAcc(FlagPipeline::LazyAcc& acc, const uint32_t bits[4], int m) {
+    switch (m) {
+        case 0: FoldAccM<0>(acc, bits); break; case 1: FoldAccM<1>(acc, bits); break; case 2: FoldAccM<2>(acc, bits); break;
+        case 3: FoldAccM<3>(acc, bits); break; case 4: FoldAccM<4>(acc, bits); break; case 5: FoldAccM<5>(acc, bits); break;
+        case 6: FoldAccM<6>(acc, bits); break; case 7: FoldAccM<7>(acc, bits); break; case 8: FoldAccM<8>(acc, bits); break;
+        case 9: FoldAccM<9>(acc, bits); break; case 10: FoldAccM<10>(acc, bits); break; case 11: FoldAccM<11>(acc, bits); break;
+        case 12: FoldAccM<12>(acc, bits); break; case 13: FoldAccM<13>(acc, bits); break; case 14: FoldAccM<14>(acc, bits); break;
+        default: FoldAccM<15>(acc, bits); break;
+    }
+}
+
+static void RunPart3(int batches) {
+    int results = 0;
+    for (int b = 0; b < batches && !g_fail; ++b) {
+        FlagPipeline per_result(true), batched(true);
+        VUregs ra{}, rb{};
+        ra.status_flag = rb.status_flag = static_cast<uint16_t>(Rnd(0x1000));  // the FDIV bits and old sticky bits survive
+        // A prefix folded per result on both (the batch joins an already-fed accumulator).
+        const int prefix = static_cast<int>(Rnd(3));
+        for (int i = 0; i < prefix; ++i) {
+            uint32_t bits[4] = {RndLaneBits(), RndLaneBits(), RndLaneBits(), RndLaneBits()};
+            const uint8_t m = static_cast<uint8_t>(Rnd(16));
+            per_result.FoldLazyRetired(bits, m);
+            batched.FoldLazyRetired(bits, m);
+        }
+        FlagPipeline::LazyAcc acc;
+        acc.Reset();
+        const int n = 1 + static_cast<int>(Rnd(12));
+        uint32_t last[4] = {0, 0, 0, 0};
+        uint8_t last_m = 0;
+        for (int i = 0; i < n; ++i) {
+            uint32_t bits[4] = {RndLaneBits(), RndLaneBits(), RndLaneBits(), RndLaneBits()};
+            const int m = static_cast<int>(Rnd(16));
+            per_result.FoldLazyRetired(bits, static_cast<uint8_t>(m));
+            FoldAcc(acc, bits, m);
+            std::memcpy(last, bits, sizeof(last));
+            last_m = static_cast<uint8_t>(m);
+            ++results;
+        }
+        batched.FoldLazyBatch(acc, last, last_m);
+        per_result.MaterializeMacStatus(ra);
+        batched.MaterializeMacStatus(rb);
+        CHECK(ra.mac_flag == rb.mac_flag);
+        CHECK(ra.status_flag == rb.status_flag);
+        if (g_fail) std::printf("  part 3 batch %d diverged: mac %04x/%04x status %04x/%04x\n", b, ra.mac_flag, rb.mac_flag, ra.status_flag, rb.status_flag);
+    }
+    if (!g_fail) std::printf("  part 3: LazyAcc batch fold == per-result fold over %d batches / %d results\n", batches, results);
+}
+
 int main(int argc, char** argv) {
     const int sequences = (argc > 1) ? std::atoi(argv[1]) : 250;
     const int programs = (argc > 2) ? std::atoi(argv[2]) : 120;
@@ -332,6 +403,7 @@ int main(int argc, char** argv) {
     }
     TestUpdateEntryPoint();
     if (!g_fail) RunPart2(programs);
+    if (!g_fail) RunPart3(20000);
     if (g_fail) {
         std::printf("VuLazyFlagsAlgebra: FAIL (%d)\n", g_fail);
         return 1;

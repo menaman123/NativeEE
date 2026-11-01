@@ -37,38 +37,9 @@ void FlagPipeline::SetClipImmediate(VUregs& regs, uint32_t imm24) {
 
 void FlagPipeline::AccumulateLazyEntry(const PendingMac& e) { FoldLazyRetired(e.bits, e.mask); }
 
-void FlagPipeline::MaterializeMacStatus(VUregs& regs) {
-    if (!lazy_have_last_) return;
-    bool any_z, any_s, any_u, any_o;
-    uint16_t mac;
-#if PS2R_VU_LAZY_NEON
-    mac = VuFloat::MacFlags4(vld1q_u32(lazy_last_bits_), lazy_last_mask_);
-    any_z = vmaxvq_u32(vld1q_u32(lazy_acc_[0])) != 0;
-    any_s = vmaxvq_u32(vld1q_u32(lazy_acc_[1])) != 0;
-    any_u = vmaxvq_u32(vld1q_u32(lazy_acc_[2])) != 0;
-    any_o = vmaxvq_u32(vld1q_u32(lazy_acc_[3])) != 0;
-#else
-    mac = VuFloat::PackMacBits(lazy_last_bits_, lazy_last_mask_);
-    any_z = (lazy_or_mac_ & 0x000Fu) != 0;
-    any_s = (lazy_or_mac_ & 0x00F0u) != 0;
-    any_u = (lazy_or_mac_ & 0x0F00u) != 0;
-    any_o = (lazy_or_mac_ & 0xF000u) != 0;
-#endif
-    regs.mac_flag = mac;
-    uint16_t status = static_cast<uint16_t>(regs.status_flag & 0xFF0u);
-    if (mac & 0x000Fu) status |= vu_status::Z;
-    if (mac & 0x00F0u) status |= vu_status::S;
-    if (mac & 0x0F00u) status |= vu_status::U;
-    if (mac & 0xF000u) status |= vu_status::O;
-    if (any_z) status |= vu_status::ZS;
-    if (any_s) status |= vu_status::SS;
-    if (any_u) status |= vu_status::US;
-    if (any_o) status |= vu_status::OS;
-    regs.status_flag = status;
-    std::memset(lazy_acc_, 0, sizeof(lazy_acc_));
-    lazy_or_mac_ = 0;
-    lazy_have_last_ = false;
-}
+// (MaterializeMacStatus: flag_pipeline.inl -- a STATUS / MAC reader's
+// per-op entry in the generated blocks; out of line it made the caller spill
+// its register file around every FSAND of the vertex loop.)
 
 void FlagPipeline::LazyRingOverflow() {
     AccumulateLazyEntry(mac_pending_[mac_head_]);
@@ -109,28 +80,9 @@ void FlagPipeline::SetQPending(bool valid, uint64_t retire, float value, uint16_
 }
 
 // ---------------------------------------------------------------- P latch
-
-float FlagPipeline::VisibleP(VUregs& regs) {
-    if (p_pending_valid_ && p_pending_retire_ <= vu_cycle_) {
-        regs.P = p_pending_value_;
-        p_pending_valid_ = false;
-    }
-    return regs.P;
-}
-
-void FlagPipeline::ReleasePEarly(VUregs& regs) {
-    if (!p_pending_valid_) return;
-    if (p_pending_retire_ - 1 > vu_cycle_) vu_cycle_ = p_pending_retire_ - 1;
-    regs.P = p_pending_value_;
-    p_pending_valid_ = false;
-}
-
-void FlagPipeline::PushP(VUregs& regs, float value, int cycles) {
-    ReleasePEarly(regs);  // back-to-back EFU: the in-flight P is released one cycle early
-    p_pending_valid_ = true;
-    p_pending_retire_ = vu_cycle_ + static_cast<uint64_t>(cycles);
-    p_pending_value_ = value;
-}
+// (VisibleP / ReleasePEarly / PushP: flag_pipeline.inl -- the generated blocks
+// call them per EFU op; as out-of-line calls they made the caller spill its
+// whole register file around every WAITP / MFP of the vertex loop.)
 
 void FlagPipeline::FlushPPipe(VUregs& regs) {
     if (!p_pending_valid_) return;

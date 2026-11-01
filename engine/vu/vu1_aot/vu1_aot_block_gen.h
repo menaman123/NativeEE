@@ -86,7 +86,9 @@ struct Vu1AotRegionPolicy {
     // edge for its own FoldLazyRetired (a load / OR / store round trip per
     // result and the spills of keeping them). The lazy ring only; the eager
     // one keeps the per-result form. Same sticky bits, same last-retired word.
-    bool mac_acc = false;
+    // Default ON since STAGE PERF-1 (LazyAcc's OR / MAX / MIN form: six NEON
+    // ops per result, no per-result load / OR / store round trip).
+    bool mac_acc = true;
     // STAGE PERF-1 (the register-resident shape; both default on, the A/B
     // knobs of the title's generator):
     // store_back_inline: the store-back of the written registers is emitted

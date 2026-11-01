@@ -97,7 +97,10 @@ PS2R_FORCE_INLINE void FlagPipeline::FoldLazyRetired(const uint32_t bits_in[4], 
 // nothing and a partial one is a vector constant, not a table load).
 PS2R_FORCE_INLINE void FlagPipeline::LazyAcc::Reset() {
 #if PS2R_VU_NEON
-    z = s = u = o = vdupq_n_u32(0);
+    s_or = vdupq_n_u32(0);
+    abs_max = vdupq_n_u32(0);
+    abs_min = vdupq_n_u32(~0u);
+    absm1_min = vdupq_n_u32(~0u);
 #else
     or_mac = 0;
 #endif
@@ -107,24 +110,19 @@ template <int M>
 PS2R_FORCE_INLINE void FlagPipeline::LazyAcc::Fold(const uint32_t bits_in[4]) {
     static_assert(M >= 0 && M <= 15, "a dest mask");
 #if PS2R_VU_NEON
-    const uint32x4_t bits = vld1q_u32(bits_in);
-    const uint32x4_t expm = vdupq_n_u32(VuFloat::kExpMask);
-    const uint32x4_t exp = vandq_u32(bits, expm);
-    uint32x4_t z_m = vceqq_u32(exp, vdupq_n_u32(0));
-    uint32x4_t o_m = vceqq_u32(exp, expm);
-    uint32x4_t u_m = vandq_u32(z_m, vtstq_u32(bits, vdupq_n_u32(VuFloat::kMantMask)));
-    uint32x4_t s_m = vreinterpretq_u32_s32(vshrq_n_s32(vreinterpretq_s32_u32(bits), 31));
+    uint32x4_t bits = vld1q_u32(bits_in);
+    uint32x4_t abs = vbicq_u32(bits, vdupq_n_u32(VuFloat::kSignBit));
+    uint32x4_t abs_n = abs;  // the MIN view: unselected lanes neutral (all ones)
     if constexpr (M != 15) {
         const uint32x4_t lm = {(M & 8) ? ~0u : 0u, (M & 4) ? ~0u : 0u, (M & 2) ? ~0u : 0u, (M & 1) ? ~0u : 0u};
-        z_m = vandq_u32(z_m, lm);
-        o_m = vandq_u32(o_m, lm);
-        u_m = vandq_u32(u_m, lm);
-        s_m = vandq_u32(s_m, lm);
+        bits = vandq_u32(bits, lm);
+        abs = vandq_u32(abs, lm);
+        abs_n = vornq_u32(abs_n, lm);
     }
-    z = vorrq_u32(z, z_m);
-    s = vorrq_u32(s, s_m);
-    u = vorrq_u32(u, u_m);
-    o = vorrq_u32(o, o_m);
+    s_or = vorrq_u32(s_or, bits);
+    abs_max = vmaxq_u32(abs_max, abs);
+    abs_min = vminq_u32(abs_min, abs_n);
+    absm1_min = vminq_u32(absm1_min, vsubq_u32(abs_n, vdupq_n_u32(1)));
 #else
     or_mac = static_cast<uint16_t>(or_mac | VuFloat::PackMacBits(bits_in, static_cast<uint8_t>(M)));
 #endif
@@ -132,10 +130,15 @@ PS2R_FORCE_INLINE void FlagPipeline::LazyAcc::Fold(const uint32_t bits_in[4]) {
 
 PS2R_FORCE_INLINE void FlagPipeline::FoldLazyBatch(LazyAcc& acc, const uint32_t last_bits[4], uint8_t last_mask) {
 #if PS2R_VU_NEON
-    vst1q_u32(lazy_acc_[0], vorrq_u32(vld1q_u32(lazy_acc_[0]), acc.z));
-    vst1q_u32(lazy_acc_[1], vorrq_u32(vld1q_u32(lazy_acc_[1]), acc.s));
-    vst1q_u32(lazy_acc_[2], vorrq_u32(vld1q_u32(lazy_acc_[2]), acc.u));
-    vst1q_u32(lazy_acc_[3], vorrq_u32(vld1q_u32(lazy_acc_[3]), acc.o));
+    // The accumulators -> the ring's lane sets (FoldLazyRetired's z_m / s_m / u_m / o_m over the batch).
+    const uint32x4_t z_m = vcltq_u32(acc.abs_min, vdupq_n_u32(0x00800000u));
+    const uint32x4_t s_m = vreinterpretq_u32_s32(vshrq_n_s32(vreinterpretq_s32_u32(acc.s_or), 31));
+    const uint32x4_t u_m = vcltq_u32(acc.absm1_min, vdupq_n_u32(0x007FFFFFu));
+    const uint32x4_t o_m = vcgeq_u32(acc.abs_max, vdupq_n_u32(VuFloat::kExpMask));
+    vst1q_u32(lazy_acc_[0], vorrq_u32(vld1q_u32(lazy_acc_[0]), z_m));
+    vst1q_u32(lazy_acc_[1], vorrq_u32(vld1q_u32(lazy_acc_[1]), s_m));
+    vst1q_u32(lazy_acc_[2], vorrq_u32(vld1q_u32(lazy_acc_[2]), u_m));
+    vst1q_u32(lazy_acc_[3], vorrq_u32(vld1q_u32(lazy_acc_[3]), o_m));
 #else
     lazy_or_mac_ = static_cast<uint16_t>(lazy_or_mac_ | acc.or_mac);
 #endif
@@ -185,7 +188,9 @@ PS2R_FORCE_INLINE uint32_t FlagPipeline::VisibleClip(VUregs& regs) {
     if (due > 0) {
         regs.clip_flag = clip_pending_[due - 1].value;
         clip_pending_n_ -= due;
-        if (clip_pending_n_ > 0) std::memmove(&clip_pending_[0], &clip_pending_[due], sizeof(PendingClip) * static_cast<size_t>(clip_pending_n_));
+        // The shift as a bounded loop (<= kRingDepth entries): a variable-length
+        // memmove is an out-of-line call, and this runs per FCAND of a vertex loop.
+        for (int i = 0; i < clip_pending_n_; ++i) clip_pending_[i] = clip_pending_[i + due];
     }
     return regs.clip_flag;
 }
@@ -198,6 +203,39 @@ PS2R_FORCE_INLINE void FlagPipeline::PushClip(VUregs& regs, uint32_t value) {
         clip_pending_n_ = kRingDepth - 1;
     }
     clip_pending_[clip_pending_n_++] = PendingClip{vu_cycle_ + kClipDelay, clip_latest_};
+}
+
+PS2R_FORCE_INLINE void FlagPipeline::MaterializeMacStatus(VUregs& regs) {
+    if (!lazy_have_last_) return;
+    bool any_z, any_s, any_u, any_o;
+    uint16_t mac;
+#if PS2R_VU_NEON
+    mac = VuFloat::MacFlags4(vld1q_u32(lazy_last_bits_), lazy_last_mask_);
+    any_z = vmaxvq_u32(vld1q_u32(lazy_acc_[0])) != 0;
+    any_s = vmaxvq_u32(vld1q_u32(lazy_acc_[1])) != 0;
+    any_u = vmaxvq_u32(vld1q_u32(lazy_acc_[2])) != 0;
+    any_o = vmaxvq_u32(vld1q_u32(lazy_acc_[3])) != 0;
+#else
+    mac = VuFloat::PackMacBits(lazy_last_bits_, lazy_last_mask_);
+    any_z = (lazy_or_mac_ & 0x000Fu) != 0;
+    any_s = (lazy_or_mac_ & 0x00F0u) != 0;
+    any_u = (lazy_or_mac_ & 0x0F00u) != 0;
+    any_o = (lazy_or_mac_ & 0xF000u) != 0;
+#endif
+    regs.mac_flag = mac;
+    uint16_t status = static_cast<uint16_t>(regs.status_flag & 0xFF0u);
+    if (mac & 0x000Fu) status |= vu_status::Z;
+    if (mac & 0x00F0u) status |= vu_status::S;
+    if (mac & 0x0F00u) status |= vu_status::U;
+    if (mac & 0xF000u) status |= vu_status::O;
+    if (any_z) status |= vu_status::ZS;
+    if (any_s) status |= vu_status::SS;
+    if (any_u) status |= vu_status::US;
+    if (any_o) status |= vu_status::OS;
+    regs.status_flag = status;
+    std::memset(lazy_acc_, 0, sizeof(lazy_acc_));
+    lazy_or_mac_ = 0;
+    lazy_have_last_ = false;
 }
 
 // THE reader entry (FS* / FM*): retire, then materialise the lazy fold (a
@@ -214,6 +252,28 @@ PS2R_FORCE_INLINE float FlagPipeline::VisibleQ(VUregs& regs) {
         q_pending_valid_ = false;
     }
     return VuFloat::ClampFloat(regs.Q);
+}
+
+PS2R_FORCE_INLINE float FlagPipeline::VisibleP(VUregs& regs) {
+    if (p_pending_valid_ && p_pending_retire_ <= vu_cycle_) {
+        regs.P = p_pending_value_;
+        p_pending_valid_ = false;
+    }
+    return regs.P;
+}
+
+PS2R_FORCE_INLINE void FlagPipeline::ReleasePEarly(VUregs& regs) {
+    if (!p_pending_valid_) return;
+    if (p_pending_retire_ - 1 > vu_cycle_) vu_cycle_ = p_pending_retire_ - 1;
+    regs.P = p_pending_value_;
+    p_pending_valid_ = false;
+}
+
+PS2R_FORCE_INLINE void FlagPipeline::PushP(VUregs& regs, float value, int cycles) {
+    ReleasePEarly(regs);  // back-to-back EFU: the in-flight P is released one cycle early
+    p_pending_valid_ = true;
+    p_pending_retire_ = vu_cycle_ + static_cast<uint64_t>(cycles);
+    p_pending_value_ = value;
 }
 
 PS2R_FORCE_INLINE void FlagPipeline::FlushQPipe(VUregs& regs) {
