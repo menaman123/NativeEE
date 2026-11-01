@@ -100,6 +100,21 @@ public:
     std::string FootprintKbSeries() const;
     // The game thread's CPU time over every boundary noted so far (ms).
     uint64_t EeCpuTotalMs() const;
+    // The per-frame distribution of the game thread's CPU time (STAGE PERF-1,
+    // track ee: the EE unit's budget row). NoteFrameCpu runs at EVERY boundary
+    // (wall-locked or not: the headless lanes too); the composition passes the
+    // EE unit's CPU clock -- every guest thread's CPU summed
+    // (EeRunToken::TotalCpuNs), the calling thread's own by default -- and the
+    // delta since the previous call is kept in microseconds (the first call only
+    // seeds; capped at kMaxFrameSamples frames). The row:
+    //   n=<frames>:p50=<us>:p95=<us>:p99=<us>:max=<us>:max_at=<boundary of the max>
+    // -- the WORST frame the EE produced on the lane, not the average, and
+    // independent of the host's load (CPU time, not wall). "none" before the
+    // second boundary.
+    void NoteFrameCpu();
+    void NoteFrameCpuAt(uint64_t thread_cpu_ns);   // explicit-time form (tests)
+    std::string FrameCpuRow() const;
+    static constexpr size_t kMaxFrameSamples = 1u << 20;
     std::vector<Window> Windows() const;
     // The latest completed window's values (0 before the first completes).
     uint32_t LatestGameHz() const;
@@ -124,6 +139,9 @@ private:
     uint64_t last_footprint_ = 0;
     bool have_memory_ = false;
     uint64_t cpu_total_ns_ = 0;
+    std::vector<uint32_t> frame_cpu_us_;   // per-frame CPU deltas (us), FrameCpuRow's data
+    bool have_frame_cpu_ = false;
+    uint64_t last_frame_cpu_ns_ = 0;       // the game thread's CPU clock at the previous NoteFrameCpu
     Window current_{};
     std::vector<Window> done_;
 };

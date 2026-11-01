@@ -70,6 +70,11 @@ public:
     // CPU per run independent of what the host's other processes did to the
     // wall (eecode round 4).
     std::string CpuCensus() const;
+    // Every guest thread's CPU time so far, summed (ns): the completed incarnations plus
+    // the live snapshots; the calling guest thread's own snapshot is refreshed first, so
+    // at a boundary (every other guest thread blocked, their snapshots current) the
+    // delta between two calls is the EE unit's CPU for the frame (ClockCensus::NoteFrameCpu).
+    uint64_t TotalCpuNs();
     uint64_t CpuNs(int tid) const;
     // Refreshes the calling guest thread's live CPU snapshot (BlockBegin -- the parks go
     // through it -- and WaitVblank call it: every way a guest thread leaves the CPU).

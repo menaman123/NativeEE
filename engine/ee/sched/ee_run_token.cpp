@@ -590,6 +590,13 @@ uint64_t EeRunToken::CpuNs(int tid) const {
     return cpu_ns_[tid].load(std::memory_order_relaxed) + cpu_live_ns_[tid].load(std::memory_order_relaxed);
 }
 
+uint64_t EeRunToken::TotalCpuNs() {
+    SnapshotCpu();
+    uint64_t total = 0;
+    for (int tid = 0; tid < kMaxTid; ++tid) total += CpuNs(tid);
+    return total;
+}
+
 std::string EeRunToken::CpuCensus() const {
     std::string out;
     uint64_t total = 0;
