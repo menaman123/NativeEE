@@ -65,7 +65,10 @@ struct MetalFrameStats {
     uint32_t copies = 0;
     uint32_t submits = 0;
     uint32_t clears = 0;
-    uint64_t gpu_ns = 0;             // GPU busy of the frame's command buffers (completion handlers)
+    uint64_t gpu_ns = 0;             // GPU busy of the frame's command buffers (completion handlers; overlapping buffers over-count)
+    uint64_t gpu_span_ns = 0;        // the frame's GPU wall: last GPUEndTime - first GPUStartTime over its command buffers
+    double gpu_start_s = 0, gpu_end_s = 0;   // (internal) the span's bounds
+    uint64_t frag_invocations = 0;   // gpu_timing + statistics: fragment shader invocations of the frame's render passes
     uint64_t gpu_wait_ns = 0;        // CPU time spent waiting for the GPU inside the frame
     uint64_t pass_frag_ns = 0;       // gpu_timing: sum of the frame's fragment-stage spans
     uint64_t pass_vtx_ns = 0;        // gpu_timing: sum of the frame's vertex-stage spans
@@ -81,6 +84,8 @@ struct MetalPassStats {
     uint64_t draws = 0;
     uint64_t vtx_ns = 0;
     uint64_t frag_ns = 0;            // blit passes: the encoder span
+    uint64_t frag_invocations = 0;   // fragment shader invocations (statistics counters; 0 when unsupported)
+    uint64_t frags_passed = 0;       // fragments that passed every test (statistics counters)
 };
 
 // One surface's Metal objects.
@@ -301,7 +306,8 @@ private:
     mutable std::mutex stats_mu_;            // guards frames_ / pass_stats_ (completion handlers write them)
     std::vector<MetalFrameStats> frames_;    // frames_[i] = frame i (grown by Present and by completion handlers)
     void CloseFrameStats();                  // Present: the census delta of the frame that ends
-    void AddFrameGpu(uint32_t ordinal, uint64_t gpu_ns, uint64_t frag_ns, uint64_t vtx_ns, uint64_t blit_ns);
+    void AddFrameGpu(uint32_t ordinal, uint64_t gpu_ns, double start_s, double end_s, uint64_t frag_ns, uint64_t vtx_ns,
+                     uint64_t blit_ns, uint64_t frag_invocations);
     // ---- gpu_timing (MTLCounterSampleBuffer) ----
     struct PassMeta {
         uint32_t surface = 0, width = 0, height = 0;
@@ -311,13 +317,17 @@ private:
     };
     struct CbTiming {                        // the open command buffer's samples
         void* sample_buf = nullptr;          // id<MTLCounterSampleBuffer> (retained; pooled)
+        void* stat_buf = nullptr;            // id<MTLCounterSampleBuffer> of the statistics set, same indices (null = unsupported)
         uint32_t used = 0;                   // sample indices consumed
         std::vector<PassMeta> passes;
         int32_t open_pass = -1;              // index into passes of the pass whose draw count is still growing
     };
     bool timing_on_ = false;
     void* timestamp_counter_set_ = nullptr;  // id<MTLCounterSet> (retained)
+    void* statistic_counter_set_ = nullptr;  // id<MTLCounterSet> (retained; null when the device has none)
     std::vector<void*> free_sample_bufs_;    // id<MTLCounterSampleBuffer> pool (under stats_mu_: handlers return them)
+    std::vector<void*> free_stat_bufs_;      // the statistics buffers' pool
+    bool TakeSampleBuffers();                // cb_timing_ gets a timestamp (+ statistics) buffer from the pools / new
     std::atomic<uint32_t> handlers_pending_{0};   // completion handlers not yet run (Shutdown waits for 0)
     CbTiming cb_timing_;
     uint64_t passes_unsampled_ = 0;
