@@ -36,8 +36,9 @@ void ControlsSection::Draw(SessionControls& controls, const SessionControls::Sna
         ImGui::TextDisabled("Key bindings are configured when the session starts (the launcher's Controls page).");
         return;
     }
-    ImGui::TextDisabled("Click a PS2 button, then press the key for it. Backspace unbinds, Escape cancels. "
-                        "A key bound to another row moves. Changes apply at once and persist.");
+    ImGui::TextDisabled("Click a PS2 control, then press the key for it. Backspace unbinds, Escape cancels. "
+                        "A key bound to another row moves. Changes apply at once and persist. "
+                        "The sticks: Move = W A S D / the controller's left stick, Camera = I J K L, the mouse / the right stick.");
     const std::vector<Row> rows = model_.rows();
     const int armed = model_.armed_row ? model_.armed_row() : -1;
     if (ImGui::BeginTable("controls_keys", 4, ImGuiTableFlags_SizingStretchSame)) {

@@ -125,17 +125,24 @@ void LauncherSettings::OfferPadControl(const std::string& control_name) {
     if (bindings_.OfferPadControl(control_name)) SaveBindings();
 }
 
+void LauncherSettings::OfferPadStick(const std::string& stick_name) {
+    if (bindings_.OfferPadStick(stick_name)) SaveBindings();
+}
+
 // One press-to-bind table: a button per PS2 control; the armed one is amber
 // and reads "press ...". Clicking the armed row disarms it.
 void LauncherSettings::DrawBindingTable(const char* id, ControlsBindings::Target target,
                                         const std::vector<ControlsBindings::Row>& rows) {
     if (!ImGui::BeginTable(id, 4, ImGuiTableFlags_SizingStretchSame)) return;
-    const char* prompt = target == ControlsBindings::Target::Pad ? "press a pad button..." : "press a key...";
+    const char* prompt = target == ControlsBindings::Target::Pad     ? "press a pad button..."
+                         : target == ControlsBindings::Target::Stick ? "push a stick..."
+                                                                     : "press a key...";
     for (size_t i = 0; i < rows.size(); i++) {
         ImGui::TableNextColumn();
         const bool armed = bindings_.Armed() == target && bindings_.ArmedRow() == static_cast<int>(i);
         const bool unbound = rows[i].value.empty() || rows[i].value == "none";
-        const std::string label = std::string(rows[i].name) + ": " + (armed ? prompt : (unbound ? "(unbound)" : rows[i].value)) +
+        const std::string shown = target == ControlsBindings::Target::Stick ? rows[i].value + " stick" : rows[i].value;
+        const std::string label = std::string(rows[i].label) + ": " + (armed ? prompt : (unbound ? "(unbound)" : shown)) +
                                   "##" + id + std::to_string(i);
         if (armed) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.5f, 0.1f, 1));
         if (ImGui::Button(label.c_str(), ImVec2(-1, 0))) bindings_.Arm(target, static_cast<int>(i));
@@ -158,12 +165,19 @@ void LauncherSettings::DrawControlsPage(const std::vector<std::string>& controll
     if (ImGui::SliderFloat("Stick sensitivity", &bindings_.Sensitivity(), 0.5f, 2.0f, "%.2f")) { /* preview */ }
     if (ImGui::IsItemDeactivatedAfterEdit()) SaveBindings();
     ImGui::Spacing();
+    ImGui::SeparatorText("Gamepad sticks (click a role, then push the stick for it)");
+    ImGui::TextDisabled("Move is the left stick and Camera the right stick (the DualShock 2 layout) in every part of the game; "
+                        "binding a stick to one role gives the other role the other stick.");
+    DrawBindingTable("sticks", ControlsBindings::Target::Stick, bindings_.Sticks());
+    ImGui::Spacing();
     ImGui::SeparatorText("Gamepad buttons (click a PS2 button, then press the pad button or trigger for it)");
     ImGui::TextDisabled("Default: SDL's standard layout = the DualShock 2 layout (A cross, B circle, X square, Y triangle). "
                         "A control bound to another row moves; Escape cancels.");
     DrawBindingTable("pad", ControlsBindings::Target::Pad, bindings_.Pad());
     ImGui::Spacing();
     ImGui::SeparatorText("Keyboard bindings (click, then press a key; Backspace unbinds, Escape cancels)");
+    ImGui::TextDisabled("%s", bindings_.MouseIsCamera() ? "The mouse turns the camera (left click captures it, Escape releases); the camera keys add to it."
+                                                        : "The mouse drives the left stick (bindings.ini: mouse = left).");
     DrawBindingTable("keys", ControlsBindings::Target::Key, bindings_.Keys());
     ImGui::TextDisabled("Saved to %s, beside your settings file.", bindings_.Path().c_str());
 }

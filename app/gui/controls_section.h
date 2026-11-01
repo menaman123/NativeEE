@@ -19,7 +19,7 @@ namespace ps2r::app {
 class ControlsSection {
 public:
     struct Row {
-        std::string name;    // PS2 button (cross, square, ...)
+        std::string name;    // the row's label (the PS2 control: "Cross", "Camera up (right stick)", ...)
         std::string value;   // the bound key's SDL name; "" = unbound
     };
     struct Model {

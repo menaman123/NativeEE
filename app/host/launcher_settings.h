@@ -48,13 +48,16 @@ public:
     // Returns a request: "" | "change-disc" | "open-folder" | "re-extract".
     std::string DrawDataPage(const std::string& game_files_dir, const std::string& disc_path, const std::string& stamp_state);
 
-    // Press-to-bind: the launcher forwards key names while a KEY row is armed
-    // and pad control names (ControlsBindings::PadControlFromEvent) while a
-    // PAD row is armed; either lands the binding and writes bindings.ini.
+    // Press-to-bind: the launcher forwards key names while a KEY row is armed,
+    // pad control names (ControlsBindings::PadControlFromEvent) while a PAD row
+    // is armed and stick names (PadStickFromEvent) while a STICK row is armed;
+    // each lands the binding and writes bindings.ini.
     bool KeyBindingArmed() const { return bindings_.Armed() == ControlsBindings::Target::Key; }
     bool PadBindingArmed() const { return bindings_.Armed() == ControlsBindings::Target::Pad; }
+    bool StickBindingArmed() const { return bindings_.Armed() == ControlsBindings::Target::Stick; }
     void OfferKey(const std::string& sdl_key_name);
     void OfferPadControl(const std::string& control_name);
+    void OfferPadStick(const std::string& stick_name);
     void CancelBinding() { bindings_.Disarm(); }
     const ControlsBindings& Bindings() const { return bindings_; }
 

@@ -85,7 +85,7 @@ void KeyboardMouseBackend::Poll(NormalizedInput& out) {
     // key state only while focused (SDL reports none without focus anyway).
     if ((focused_ || any_inject) && effective && mapper_) {
         out.buttons |= mapper_->ButtonsFromKeys(effective, numkeys);
-        mapper_->KeyStickFromKeys(effective, numkeys, out.lx, out.ly);
+        mapper_->KeyStickFromKeys(effective, numkeys, out.lx, out.ly, out.rx, out.ry);
     }
 
     int mdx = 0, mdy = 0;

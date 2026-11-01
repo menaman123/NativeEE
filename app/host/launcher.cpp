@@ -254,8 +254,12 @@ void Launcher::PumpEvents() {
             if (screen_ == Screen::NeedDisc || screen_ == Screen::Ready) StartExtraction(image_path_);
         } else if (e.type == SDL_KEYDOWN && settings_ && settings_->KeyBindingArmed() && !e.key.repeat) {
             settings_->OfferKey(SDL_GetScancodeName(e.key.keysym.scancode));
-        } else if (e.type == SDL_KEYDOWN && settings_ && settings_->PadBindingArmed() && e.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
-            settings_->CancelBinding();   // Escape leaves the armed pad row as it was
+        } else if (e.type == SDL_KEYDOWN && settings_ && (settings_->PadBindingArmed() || settings_->StickBindingArmed()) &&
+                   e.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
+            settings_->CancelBinding();   // Escape leaves the armed pad / stick row as it was
+        } else if (e.type == SDL_CONTROLLERAXISMOTION && settings_ && settings_->StickBindingArmed()) {
+            // Push-to-bind a stick role: a left or right stick axis past half travel names the stick.
+            settings_->OfferPadStick(ControlsBindings::PadStickFromEvent(e.caxis.axis, e.caxis.value));
         } else if ((e.type == SDL_CONTROLLERBUTTONDOWN || e.type == SDL_CONTROLLERAXISMOTION) && settings_ && settings_->PadBindingArmed()) {
             // Press-to-bind from the pad: a button edge, or a trigger past 25 % travel.
             const std::string control = e.type == SDL_CONTROLLERBUTTONDOWN

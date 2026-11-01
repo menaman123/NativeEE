@@ -23,8 +23,11 @@ struct PadSample;
 struct Bindings {
     std::vector<std::pair<int, uint32_t>> key_buttons;     // SDL scancode -> LogicalButton bit
     std::vector<std::pair<int, uint32_t>> mouse_buttons;   // 0=L 1=M 2=R -> LogicalButton bit
-    int   key_left_up = 0, key_left_down = 0, key_left_left = 0, key_left_right = 0;
+    int   key_left_up = 0, key_left_down = 0, key_left_left = 0, key_left_right = 0;      // [sticks] key_left_* (move)
+    int   key_right_up = 0, key_right_down = 0, key_right_left = 0, key_right_right = 0;  // [sticks] key_right_* (camera)
     bool  mouse_to_right_stick = true;    // [sticks] mouse = right|left
+    bool  pad_camera_left = false;        // [sticks] pad_camera = right|left: the controller stick that drives the
+                                          // camera (RX/RY); left = the controller's two sticks swapped
     float mouse_sensitivity    = 0.35f;   // stick units per 100 px
     float mouse_decay          = 12.0f;   // per-second exponential decay rate
     bool  gamepad_enabled      = true;
@@ -57,8 +60,9 @@ public:
 
     // Active-high LogicalButton bits for a raw SDL key-state array.
     uint32_t ButtonsFromKeys(const uint8_t* keystate, int numkeys) const;
-    // Digital left-stick keys -> floats; opposite keys cancel to 0.
-    void KeyStickFromKeys(const uint8_t* keystate, int numkeys, float& lx, float& ly) const;
+    // Digital stick keys -> floats (key_left_* -> lx/ly, key_right_* -> rx/ry);
+    // opposite keys cancel to 0.
+    void KeyStickFromKeys(const uint8_t* keystate, int numkeys, float& lx, float& ly, float& rx, float& ry) const;
     // LogicalButton bits bound to one scancode.
     uint32_t LogicalForScancode(int scancode) const;
 
