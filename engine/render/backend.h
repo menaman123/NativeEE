@@ -276,6 +276,13 @@ public:
     // PollReadback = unknown handle. Caps::staging_readback says the read is truly
     // deferred (a caller may overlap work between Begin and Poll).
     virtual FenceId BeginReadback(SurfaceId id, const Rect& rect) = 0;
+    // The point-sampled forms (a scaled attachment read at its logical resolution): texel (x, y) of the
+    // result is physical texel (rect.x + x * step, rect.y + y * step) for x < rect.w / step, y < rect.h / step
+    // -- exactly the texels a caller sampling the physical read at `step` would take, at 1 / step^2 of the
+    // bytes. `out` rows are (rect.w / step) texels apart by `stride` bytes (0 = packed), the format as
+    // Readback's. A backend without the pass returns false / a null fence: the caller takes the physical read.
+    virtual bool ReadbackNearest(SurfaceId, const Rect&, int, void*, size_t) { return false; }
+    virtual FenceId BeginReadbackNearest(SurfaceId, const Rect&, int) { return FenceId{}; }
     virtual bool ReadbackReady(FenceId) { return true; }
     virtual bool PollReadback(FenceId fence, void* out, size_t stride) = 0;
     // A missing nonzero source or invalid explicit source rectangle refuses

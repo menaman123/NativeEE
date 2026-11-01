@@ -79,6 +79,8 @@ public:
         bool coalesce = true;              // --no-coalesce: every record delivered as it arrives (DrawIrQueueConsumer::SetCoalesce)
         bool metal = false;                // --backend metal: the Metal device (macOS builds; exit 77 when absent)
         bool metal_hw_depth = false;       // --metal-hw-depth: the rasterizer's depth instead of the shader-written one
+        bool metal_gpu_timing = false;   // --metal-gpu-timing: per-pass GPU timestamps (gpu_pass row)
+        bool metal_plain_arms = false;   // --metal-plain-arms: the register program without its exact fast arms (A/B)
         uint32_t metal_commit_draws = 256; // --metal-commit-draws N: draws per command buffer (0 = one per frame)
         uint32_t trace_draw = 0xFFFFFFFFu; // --trace-draw N@F: print draw N (0-based) of frame F (registers + vertices) on stderr
         uint32_t trace_draw_frame = 0;

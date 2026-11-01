@@ -41,6 +41,12 @@ struct MetalFragUniforms {
     // The colour write mask applied IN the program (bit 0 R, 1 G, 2 B, 3 A): a masked channel
     // writes the destination value back (the attachment is always fully writable).
     int32_t color_mask = 0xF;
+    // Exact fast arms (function constants mirror them): fst_q1 = every vertex of the draw carries q == 1.0
+    // (UV mode: VertexConvert writes 1.0f), so 1/q is 1.0 and the divide is folded; tex_pow2 bit 0 / 1 =
+    // tex_size_x / tex_size_y is a power of two, so the texel -> normalised divide is the multiply by the
+    // exact reciprocal tex_inv_x / tex_inv_y (the same IEEE value).
+    int32_t fst_q1 = 0, tex_pow2 = 0;
+    float tex_inv_x = 1.f, tex_inv_y = 1.f;
 };
 
 struct MetalVertUniforms {
@@ -63,6 +69,10 @@ struct MetalAlphaLaneUniforms {
     int32_t ex0 = 0, ey0 = 0, ex1 = 0, ey1 = 0;
 };
 
+struct MetalNearestUniforms {
+    int32_t origin_x = 0, origin_y = 0, step = 1;
+};
+
 struct MetalConstUniforms {
     float r = 0.f, g = 0.f, b = 0.f, a = 0.f;
 };
@@ -81,6 +91,8 @@ public:
     static constexpr const char* kAlphaLaneFragment = "alpha_lane_fragment";
     static constexpr const char* kHalfwordFragment = "halfword_fragment";
     static constexpr const char* kConstFragment = "const_fragment";
+    static constexpr const char* kNearestColorFragment = "nearest_color_fragment";
+    static constexpr const char* kNearestDepthFragment = "nearest_depth_fragment";
 };
 
 }  // namespace render

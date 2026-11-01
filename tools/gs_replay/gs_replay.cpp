@@ -30,7 +30,7 @@ int Usage() {
     std::fprintf(stderr,
                  "usage: gs_replay stream <in.gsstream> [--scale N] [--warmup N] [--max-frames N]\n"
                  "                 [--csv f] [--json f] [--dump-ppm DIR] [--dump-frames a-b[:step]] [--no-grab] [--deferred-grab] [--phash]\n"
-                 "                 [--quiet] [--sync-capture] [--swap] [--cd-barrier] [--backend gl|metal] [--metal-hw-depth] [--metal-commit-draws N] [--trace-draw N@F]\n"
+                 "                 [--quiet] [--sync-capture] [--swap] [--cd-barrier] [--backend gl|metal] [--metal-hw-depth] [--metal-commit-draws N] [--metal-gpu-timing] [--metal-plain-arms] [--trace-draw N@F]\n"
                  "                 [--force-shader-blend] [--draw-limit N[@F]] [--no-coalesce] [--unified-blend|--no-unified-blend]\n"
                  "                 (exit 77 = no GL / Metal device)\n");
     return 2;
@@ -73,6 +73,8 @@ int MainStream(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--no-unified-blend")) opt.unified_blend = 0;
         else if (!std::strcmp(argv[i], "--unified-blend")) opt.unified_blend = 1;
         else if (!std::strcmp(argv[i], "--metal-hw-depth")) opt.metal_hw_depth = true;
+        else if (!std::strcmp(argv[i], "--metal-gpu-timing")) opt.metal_gpu_timing = true;
+        else if (!std::strcmp(argv[i], "--metal-plain-arms")) opt.metal_plain_arms = true;
         else if (!std::strcmp(argv[i], "--trace-draw") && i + 1 < argc) {
             char* end = nullptr;
             opt.trace_draw = static_cast<uint32_t>(std::strtoul(argv[++i], &end, 0));

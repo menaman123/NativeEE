@@ -365,6 +365,8 @@ void MetalDevice::Shutdown() {
     free_readback_bufs_.clear();
     for (auto& kv : scratch_depth_) [Tex(kv.second) release];
     scratch_depth_.clear();
+    for (PickTexture& p : pick_pool_) if (p.tex) [Tex(p.tex) release];
+    pick_pool_.clear();
     for (CaptureSlot& c : capture_) {
         if (c.tex) [Tex(c.tex) release];
         if (c.buf) [(id)c.buf release];
@@ -1033,6 +1035,144 @@ FenceId MetalDevice::BeginReadback(SurfaceId sid, const Rect& rect) {   // `sid`
         census_.readbacks++;
         census_.readback_bytes += bytes;
     }
+    const uint64_t f = next_fence_++;
+    readbacks_[f] = pr;
+    return FenceId{f};
+}
+
+MetalDevice::PickTexture* MetalDevice::AcquirePickTexture(uint32_t w, uint32_t h, bool depth_source) {
+    for (PickTexture& p : pick_pool_)
+        if (p.tex && p.w == w && p.h == h && p.depth_source == depth_source && GpuIdle(p.serial)) return &p;
+    if (pick_pool_.size() >= 16) {
+        // Bounded: drop the oldest idle entry of another size (the pool follows the live target set).
+        for (size_t i = 0; i < pick_pool_.size(); ++i) {
+            if (GpuIdle(pick_pool_[i].serial)) {
+                [Tex(pick_pool_[i].tex) release];
+                pick_pool_.erase(pick_pool_.begin() + static_cast<long>(i));
+                break;
+            }
+        }
+        if (pick_pool_.size() >= 16) return nullptr;
+    }
+    PickTexture p;
+    @autoreleasepool {
+        MTLTextureDescriptor* d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:depth_source ? MTLPixelFormatR32Float : MTLPixelFormatRGBA8Unorm
+                                                                                     width:w height:h mipmapped:NO];
+        d.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+        d.storageMode = MTLStorageModePrivate;
+        p.tex = (void*)[(id<MTLDevice>)device_ newTextureWithDescriptor:d];
+    }
+    if (!p.tex) return nullptr;
+    p.w = w;
+    p.h = h;
+    p.depth_source = depth_source;
+    pick_pool_.push_back(p);
+    return &pick_pool_.back();
+}
+
+MetalDevice::PickTexture* MetalDevice::EncodeNearestPick(MetalSurface& src, const Rect& rect, int step) {
+    if (step < 2 || rect.w <= 0 || rect.h <= 0 || rect.w % step || rect.h % step) return nullptr;
+    if (rect.x < 0 || rect.y < 0 || uint64_t(rect.x) + uint32_t(rect.w) > src.desc.width ||
+        uint64_t(rect.y) + uint32_t(rect.h) > src.desc.height)
+        return nullptr;
+    const bool depth = src.desc.format == SurfaceFormat::Depth32f;
+    if (!depth && src.desc.format != SurfaceFormat::Rgba8) return nullptr;
+    const uint32_t w = static_cast<uint32_t>(rect.w / step), h = static_cast<uint32_t>(rect.h / step);
+    PickTexture* pick = AcquirePickTexture(w, h, depth);
+    if (!pick) return nullptr;
+    void* ps = pipelines_.Pipeline(depth ? MetalProgram::NearestDepth : MetalProgram::NearestColor, true, false);
+    if (!ps) return nullptr;
+    MetalNearestUniforms u;
+    u.origin_x = rect.x;
+    u.origin_y = rect.y;
+    u.step = step;
+    EndEncoder();
+    MaybeCommit();
+    CommandBuffer();
+    @autoreleasepool {
+        MTLRenderPassDescriptor* rp = [MTLRenderPassDescriptor renderPassDescriptor];
+        rp.colorAttachments[0].texture = Tex(pick->tex);
+        rp.colorAttachments[0].loadAction = MTLLoadActionDontCare;
+        rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+        AttachRenderTiming((void*)rp, 0, w, h, 1);
+        id<MTLRenderCommandEncoder> enc = [(id<MTLCommandBuffer>)cb_ renderCommandEncoderWithDescriptor:rp];
+        [enc setRenderPipelineState:(id<MTLRenderPipelineState>)ps];
+        MTLViewport vp = {0.0, 0.0, static_cast<double>(w), static_cast<double>(h), 0.0, 1.0};
+        [enc setViewport:vp];
+        [enc setFragmentBytes:&u length:sizeof(u) atIndex:0];
+        [enc setFragmentTexture:Tex(src.tex) atIndex:0];
+        [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+        NoteDraw();
+        [enc endEncoding];
+        cb_timing_.open_pass = -1;
+    }
+    census_.framebuffer_binds++;
+    src.last_gpu_use = serial_;
+    pick->serial = serial_;
+    return pick;
+}
+
+bool MetalDevice::ReadbackNearest(SurfaceId sid, const Rect& rect, int step, void* out, size_t stride) {
+    MetalSurface* s = SurfaceMut(sid);
+    if (!s || !s->tex || !out) return false;
+    PickTexture* pick = EncodeNearestPick(*s, rect, step);
+    if (!pick) return false;
+    const size_t bpp = 4;   // RGBA8 bytes or one float
+    const size_t row_bytes = static_cast<size_t>(pick->w) * bpp;
+    const size_t dst_stride = stride ? stride : row_bytes;
+    void* buf = ReadbackBuffer(row_bytes * pick->h);
+    if (!buf) return false;
+    id<MTLBlitCommandEncoder> b = (id<MTLBlitCommandEncoder>)BlitEncoder();
+    [b copyFromTexture:Tex(pick->tex) sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0)
+            sourceSize:MTLSizeMake(pick->w, pick->h, 1) toBuffer:(id<MTLBuffer>)buf destinationOffset:0
+            destinationBytesPerRow:row_bytes destinationBytesPerImage:row_bytes * pick->h];
+    pick->serial = serial_;
+    Commit(/*wait=*/true);
+    const uint8_t* src = static_cast<const uint8_t*>([(id<MTLBuffer>)buf contents]);
+    if (dst_stride == row_bytes) {
+        std::memcpy(out, src, row_bytes * pick->h);
+    } else {
+        for (uint32_t r = 0; r < pick->h; ++r)
+            std::memcpy(static_cast<uint8_t*>(out) + dst_stride * r, src + row_bytes * r, std::min(row_bytes, dst_stride));
+    }
+    census_.readbacks++;
+    census_.readback_bytes += row_bytes * pick->h;
+    return true;
+}
+
+FenceId MetalDevice::BeginReadbackNearest(SurfaceId sid, const Rect& rect, int step) {
+    MetalSurface* s = SurfaceMut(sid);
+    if (!s || !s->tex || s->desc.format != SurfaceFormat::Rgba8) return FenceId{};
+    PickTexture* pick = EncodeNearestPick(*s, rect, step);
+    if (!pick) return FenceId{};
+    PendingReadback pr;
+    pr.stride = static_cast<size_t>(pick->w) * 4;
+    pr.rows = static_cast<int>(pick->h);
+    const size_t bytes = pr.stride * static_cast<size_t>(pr.rows);
+    for (size_t i = 0; i < free_readback_bufs_.size(); ++i) {
+        if (free_readback_bufs_[i].second >= bytes) {
+            pr.buf = free_readback_bufs_[i].first;
+            free_readback_bufs_[i] = free_readback_bufs_.back();
+            free_readback_bufs_.pop_back();
+            break;
+        }
+    }
+    if (!pr.buf) {
+        @autoreleasepool {
+            pr.buf = (void*)[(id<MTLDevice>)device_ newBufferWithLength:std::max<size_t>(bytes, 1u << 16)
+                                                                 options:MTLResourceStorageModeShared];
+        }
+        if (!pr.buf) return FenceId{};
+    }
+    id<MTLBlitCommandEncoder> b = (id<MTLBlitCommandEncoder>)BlitEncoder();
+    [b copyFromTexture:Tex(pick->tex) sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0)
+            sourceSize:MTLSizeMake(pick->w, pick->h, 1) toBuffer:(id<MTLBuffer>)pr.buf destinationOffset:0
+            destinationBytesPerRow:pr.stride destinationBytesPerImage:bytes];
+    pr.serial = serial_;
+    pick->serial = serial_;
+    Commit(/*wait=*/false);
+    census_.readbacks++;
+    census_.readback_bytes += bytes;
     const uint64_t f = next_fence_++;
     readbacks_[f] = pr;
     return FenceId{f};

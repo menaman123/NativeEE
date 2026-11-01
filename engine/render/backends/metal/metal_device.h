@@ -49,6 +49,9 @@ struct MetalDeviceSettings {
     // blit pass) folded per (surface, kind) and per frame: the gpu_pass= / gpu_frame= rows.
     // Diagnostics: off by default (the sampling costs a little per pass).
     bool gpu_timing = false;
+    // The exact fast arms of the register program (kFstQ1 / kTexPow2*: divides folded where the IEEE result is
+    // the same). Off = the plain program (the A/B oracle; output identical by construction).
+    bool exact_arms = true;
 };
 
 // One frame's (Present to Present) slice of the backend's work: the call census deltas and
@@ -130,6 +133,11 @@ public:
     void WriteAlphaLane(SurfaceId dst, const Rect& dst_rect, SurfaceId lane, const Rect& exclude) override;
     void Readback(SurfaceId id, const Rect& rect, void* out, size_t stride) override;
     FenceId BeginReadback(SurfaceId id, const Rect& rect) override;
+    // The point-sampled reads (backend.h): a NearestColor / NearestDepth pass into a pooled logical-size
+    // texture (Private), then the blit into the readback buffer. Rgba8 and Depth32f sources; a rect
+    // not a multiple of `step` or another format returns false / a null fence (the caller's physical read).
+    bool ReadbackNearest(SurfaceId id, const Rect& rect, int step, void* out, size_t stride) override;
+    FenceId BeginReadbackNearest(SurfaceId id, const Rect& rect, int step) override;
     bool ReadbackReady(FenceId fence) override;
     bool PollReadback(FenceId fence, void* out, size_t stride) override;
     void Present(const ScanoutDesc& desc) override;
@@ -170,6 +178,7 @@ public:
     // A rasterising call issued: census_.draw_calls++ and the open pass's draw count (gpu_timing).
     void NoteDraw();
     MetalPipelineCache& Pipelines() { return pipelines_; }
+    const MetalDeviceSettings& Settings() const { return settings_; }
     struct TextureFilterCensus {
         uint64_t owned_draws = 0;
         uint64_t enhanced_draws = 0;
@@ -239,6 +248,18 @@ private:
     // A shared buffer of at least `bytes` for the colour readbacks (the blit encoder linearises
     // the texture on the GPU; the CPU copies rows out after completion).
     void* ReadbackBuffer(size_t bytes);
+    // A pooled Private texture of (w, h, format) whose last use the GPU has finished (or a new one), for
+    // the nearest-pick pass; `serial` on return = the serial it is handed to.
+    struct PickTexture {
+        void* tex = nullptr;     // id<MTLTexture> (retained)
+        uint32_t w = 0, h = 0;
+        bool depth_source = false;   // R32Float (a depth source) vs RGBA8
+        uint64_t serial = 0;
+    };
+    PickTexture* AcquirePickTexture(uint32_t w, uint32_t h, bool depth_source);
+    // Encodes the pick pass of `src` over `rect` at `step` into a pick texture; null when refused.
+    PickTexture* EncodeNearestPick(MetalSurface& src, const Rect& rect, int step);
+    std::vector<PickTexture> pick_pool_;
     void ReleaseSurface(MetalSurface& s);
     void DrawFullscreen(MetalProgram program, void* color_tex, const Rect& scissor, const void* uniforms, size_t uniform_bytes,
                         void* tex0, uint32_t w, uint32_t h);

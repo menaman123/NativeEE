@@ -52,6 +52,8 @@ bool StreamReplayDriver::CreateContext() {
         render::MetalDeviceSettings ms;
         ms.shader_depth = !opt_.metal_hw_depth;
         ms.commit_draws = opt_.metal_commit_draws;
+        ms.gpu_timing = opt_.metal_gpu_timing;
+        ms.exact_arms = !opt_.metal_plain_arms;
         metal_ = std::make_unique<render::MetalDevice>(ms);
         if (!metal_->Init([this] { PresentWindow(); })) return false;
         be_ = metal_.get();
@@ -424,6 +426,35 @@ void StreamReplayDriver::WriteOutputs() const {
                     static_cast<unsigned long long>(c->readback_bytes), static_cast<unsigned long long>(c->readback_waits),
                     static_cast<unsigned long long>(c->buffer_maps),
                     static_cast<unsigned long long>(c->submits), static_cast<double>(c->gpu_ns) * 1e-6);
+#if defined(PS2R_HAS_METAL)
+    if (metal_) {
+        // The Metal arm's per-frame GPU wall (last GPUEndTime - first GPUStartTime of the frame's command buffers; the
+        // gpu_ms sum above over-counts in-flight buffers) and, under --metal-gpu-timing, the per-pass fold.
+        const std::vector<render::MetalFrameStats> fs = metal_->FrameStats();
+        std::vector<double> span, frag;
+        for (size_t i = first; i < fs.size(); ++i) {
+            span.push_back(static_cast<double>(fs[i].gpu_span_ns) * 1e-6);
+            frag.push_back(static_cast<double>(fs[i].pass_frag_ns) * 1e-6);
+        }
+        std::printf("[GSSTREAM] gpu_span_ms p50=%.3f p95=%.3f max=%.3f frag_ms_p50=%.3f frames=%zu\n", Percentile(span, 0.50),
+                    Percentile(span, 0.95), Percentile(span, 1.0), Percentile(frag, 0.50), span.size());
+        if (metal_->GpuTimingActive()) {
+            std::vector<render::MetalPassStats> ps = metal_->PassStats();
+            std::sort(ps.begin(), ps.end(), [](const render::MetalPassStats& a, const render::MetalPassStats& b) {
+                return a.frag_ns + a.vtx_ns > b.frag_ns + b.vtx_ns;
+            });
+            const double nf = fs.empty() ? 1.0 : static_cast<double>(fs.size());
+            std::printf("[GSSTREAM] gpu_pass (per frame, all frames):");
+            size_t shown = 0;
+            for (const render::MetalPassStats& p : ps) {
+                if (shown++ >= 8) break;
+                std::printf(" %s%u:%ux%u:passes=%.1f:draws=%.0f:frag_ms=%.2f:vtx_ms=%.2f", p.kind == 2 ? "present" : p.kind == 3 ? "blit" : p.kind == 1 ? "fs" : "surf",
+                            p.surface, p.width, p.height, p.passes / nf, p.draws / nf, p.frag_ns / 1e6 / nf, p.vtx_ns / 1e6 / nf);
+            }
+            std::printf("\n");
+        }
+    }
+#endif
     if (pipe_) pipe_->EmitCounters(stdout);
     {
         const gs::DrawCoalescer::Counters& k = consumer_->CoalesceCount();
