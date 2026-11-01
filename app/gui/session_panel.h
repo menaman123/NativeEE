@@ -4,6 +4,7 @@
 
 #include "app/gui/controls_section.h"
 #include "app/gui/display_section.h"
+#include "app/gui/mods_section.h"
 #include "app/gui/savestate_browser.h"
 #include "app/gui/sound_section.h"
 #include "app/gui/triage_section.h"
@@ -37,6 +38,7 @@ private:
     SoundSection sound_;
     DisplaySection display_;
     ControlsSection controls_page_;
+    ModsSection mods_;
     TriageSection triage_;
     uint64_t notice_id_ = 0;
     SessionControls::Phase notice_phase_ = SessionControls::Phase::Queued;

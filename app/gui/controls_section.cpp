@@ -32,6 +32,8 @@ void ControlsSection::Draw(SessionControls& controls, const SessionControls::Sna
         if (ImGui::Checkbox("Invert camera Y (up / down)", &invert_y)) controls.Submit(Action::SetInvertCameraY, invert_y ? 1 : 0);
         ImGui::EndDisabled();
     }
+    if (snapshot.capabilities.mods)
+        ImGui::TextUnformatted("Skip cutscene (Mods): Backspace on the keyboard; Select + Start together on the controller.");
     if (!HasModel()) {
         ImGui::TextDisabled("Key bindings are configured when the session starts (the launcher's Controls page).");
         return;

@@ -216,6 +216,7 @@ void SessionPanel::Draw(SessionControls& controls, const SessionControls::Snapsh
         display_.Draw(controls, snapshot);
         controls_page_.Draw(controls, snapshot);
         sound_.Draw(controls, snapshot);
+        mods_.Draw(controls, snapshot);
         DrawReproduction(controls, snapshot);
         DrawRecording(controls, snapshot);
         triage_.Draw(snapshot);

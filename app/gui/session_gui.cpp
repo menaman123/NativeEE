@@ -115,6 +115,14 @@ SessionGui::EventResult SessionGui::ProcessEvent(const SDL_Event& event) {
             panel_.Controls().OfferKey(SDL_GetScancodeName(event.key.keysym.scancode));
             return CaptureResult(true);
         }
+        // Backspace with the menu CLOSED = the Mods section's Skip cutscene (mods.enabled; the same
+        // ModsSkipCutscene request the button and the controller's Select + Start submit). With the
+        // menu open Backspace stays the menu's (an armed key row unbinds; a text field edits).
+        if (key == SDLK_BACKSPACE && event.type == SDL_KEYDOWN && event.key.repeat == 0 && !controls_.MenuOpen() &&
+            controls_.Read().capabilities.mods) {
+            controls_.Submit(SessionControls::Action::ModsSkipCutscene);
+            return CaptureResult(true);
+        }
         if (key == SDLK_ESCAPE && event.type == SDL_KEYDOWN && event.key.repeat == 0) {
             const auto snapshot = controls_.Read();
             // Escape with the menu CLOSED is the window close (the same Close request the
