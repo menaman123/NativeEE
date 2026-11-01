@@ -71,6 +71,8 @@ public:
     ~SessionRuntime();
     bool Open(int volume, bool audio, bool recording, std::string recording_path, std::string& error,
               std::string game_saves_path = {});
+    // Before Open: video.hidpi (SessionWindow::SetHighDpi).
+    void SetHighDpi(bool on) { window_.SetHighDpi(on); }
     void SetHooks(Hooks hooks);
     // Main thread, any time: video.vsync / video.fps_cap readers for the
     // presenter. fps_cap <= 0 presents on every pump (vsync, when on, paces).
@@ -145,6 +147,14 @@ public:
     // since the last take (1..4; 0 = none pending). The caller applies it on
     // the backend owner between frames (VideoStack::ApplyScale).
     int TakeScaleRequest() { return scale_request_.exchange(0); }
+    // Game owner, at its frame boundary: the HOST PICTURE size the presenter wants the display quad drawn
+    // at -- the rect the picture occupies in the window's drawable for the current aspect (SessionGui::
+    // PictureRect) -- when it changed since the last take (0 = none pending; w in the high half, h in the
+    // low half). The caller applies it on the backend owner between frames (VideoStack::SetPresentOutput):
+    // the present is then a bilinear resample of the scaled target into exactly the pixels the window shows.
+    // Published only once the Display rows are configured (a play composition with a window).
+    uint64_t TakePresentOutputRequest() { return present_output_request_.exchange(0); }
+    static uint64_t PackSize(int w, int h) { return (static_cast<uint64_t>(static_cast<uint32_t>(w)) << 32) | static_cast<uint32_t>(h); }
     // Main thread before Run: the title supports an uncapped frame rate; `seed` is video.frame_limit
     // (60 = the console's pacing, 0 = unlimited, 61..1000 = the limit). Off the console's pacing the
     // presenter shows every picture as it arrives (frame cap off) so the extra frames reach the window.
@@ -301,6 +311,7 @@ private:
     std::atomic<bool> perf_overlay_{false}, fullscreen_state_{false}, keyboard_state_{true}, vsync_state_{false},
         motion_blur_{true};
     bool display_rows_ = false;
+    std::atomic<uint64_t> present_output_{0}, present_output_request_{0};   // PackSize(w, h) of the host picture
     std::atomic<int> scale_setting_{1}, effective_scale_{1}, scale_request_{0}, aspect_setting_{0}, render_rate_{0},
         display_mode_{0}, frame_cap_{2}, frame_limit_{60};
     // The presented-frame cadence (video.frame_cap): the pacer admits the OLDEST waiting

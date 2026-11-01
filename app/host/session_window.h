@@ -14,6 +14,9 @@ class SessionWindow {
 public:
     explicit SessionWindow(SessionControls& controls);
     ~SessionWindow();
+    // Before Open: video.hidpi -- the drawable at the display's own pixels on a scaled display
+    // (SDL_WINDOW_ALLOW_HIGHDPI); default off (a points-sized drawable).
+    void SetHighDpi(bool on) { hidpi_ = on; }
     bool Open(std::string& error);
     SessionGui::EventResult HandleEvent(const SDL_Event& event);
     bool SetFullscreen(bool enabled, std::string& error);
@@ -72,6 +75,7 @@ private:
     bool UploadInto(uint32_t& texture, int& tex_w, int& tex_h, const std::vector<uint8_t>& rgba, int width, int height);
     bool fullscreen_ = false, gui_ready_ = false, vsync_ = false;
     int display_mode_ = 0;
+    bool hidpi_ = false;
 };
 
 }  // namespace ps2r::app

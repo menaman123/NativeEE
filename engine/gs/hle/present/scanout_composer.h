@@ -114,6 +114,20 @@ public:
     uint32_t LastGrabFbp() const { return last_grab_fbp_; }
     bool LastGrabFallback() const { return last_grab_fallback_; }
 
+    // The HOST picture (a play session with a window): when set (w, h > 0) every
+    // present draws the display quad into {0, 0, w, h} -- the rect the picture
+    // occupies in the window's drawable -- sampled LINEAR, instead of into the CRTC
+    // raster `window` with the target's own (nearest) sampler. A target rendered at
+    // scale s then reaches the window at the window's resolution (the internal
+    // scale is visible), and at scale 1 the bilinear resample is the one the session
+    // window applied to the 512x448 picture anyway. The device's present capture must
+    // follow the same size (Backend::SetWindowSize, the owner's call). 0, 0 = off:
+    // the headless and harness rows keep the CRTC raster, and the GRAB (the frames
+    // lane, the frame dump's f<key>.ppm) never reads this quad either way.
+    void SetPresentOutput(int w, int h);
+    int PresentOutputW() const { return present_output_.w; }
+    int PresentOutputH() const { return present_output_.h; }
+
     // The display quad into `window` (see the header comment); `crtc` is the EE
     // register snapshot, `frame_count` the renderer's present counter (target
     // ages), `gfx_epoch` the current processing epoch.
@@ -137,9 +151,14 @@ private:
     int last_grab_step_ = 1;
     bool native_grab_ = false;
     void PresentMirror(const VramImage& vram, uint32_t fbp, uint32_t fbw, uint32_t psm, const render::Rect& window);
+    // The present's destination and sampler: the host picture when SetPresentOutput is on, else `window` as the
+    // target samples (PresentationFilter::Surface).
+    render::Rect OutputRect(const render::Rect& window) const;
+    render::PresentationFilter OutputFilter() const;
 
     render::Backend& be_;
     RenderTargetCache& targets_;
+    render::Rect present_output_{};   // {0,0,0,0} = off
     uint32_t scanout_fbp_ = 0;
     uint32_t dispfb_fbw_ = 0;
     uint32_t dispfb_psm_ = 0;

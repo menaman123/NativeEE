@@ -9,7 +9,7 @@ bool DisplaySequence::ModeOf(const std::string& mode, SessionControls::Action& a
     if (mode == "windowed") { action = Action::SetDisplayMode; value = 0; return true; }
     if (mode == "fullscreen") { action = Action::SetDisplayMode; value = 1; return true; }
     if (mode == "borderless") { action = Action::SetDisplayMode; value = 2; return true; }
-    if (mode.size() == 6 && mode.compare(0, 5, "scale") == 0 && mode[5] >= '1' && mode[5] <= '4') {
+    if (mode.size() == 6 && mode.compare(0, 5, "scale") == 0 && mode[5] >= '0' && mode[5] <= '4') {   // 0 = window
         action = Action::SetScale;
         value = mode[5] - '0';
         return true;

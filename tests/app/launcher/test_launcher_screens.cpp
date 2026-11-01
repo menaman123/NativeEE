@@ -111,7 +111,8 @@ const char* kManifest = R"JSON({
       { "key": "video.fullscreen", "label": "Display mode", "kind": "choice", "default": "windowed", "help": "A window, the whole screen, or a frameless window.", "choices": [ {"value": "windowed", "label": "Windowed"}, {"value": "fullscreen", "label": "Full screen"}, {"value": "borderless", "label": "Borderless"} ] },
       { "key": "video.backend", "label": "Graphics", "kind": "choice", "default": "auto", "choices": [ {"value": "auto", "label": "Auto"}, {"value": "metal", "label": "Metal", "platforms": ["macos"]}, {"value": "gl", "label": "OpenGL"} ] },
       { "key": "video.frame_cap", "label": "Frame rate", "kind": "choice", "default": "60", "help": "The game always runs at its normal speed.", "choices": [ {"value": "30"}, {"value": "60"}, {"value": "off", "label": "Off"} ] },
-      { "key": "video.vsync", "label": "Vertical sync", "kind": "switch", "default": "off", "locked_by": { "key": "video.frame_cap", "value": "off", "help": "Off while the frame rate is not capped." } } ] },
+      { "key": "video.vsync", "label": "Vertical sync", "kind": "switch", "default": "off", "locked_by": { "key": "video.frame_cap", "value": "off", "help": "Off while the frame rate is not capped." } },
+      { "key": "video.scale", "label": "Internal resolution", "kind": "choice", "default": "1", "first_run": "0", "help": "How finely the game is drawn. Native follows the window.", "choices": [ {"value": "0", "label": "Native (window)"}, {"value": "1", "label": "1x"}, {"value": "2", "label": "2x"}, {"value": "3", "label": "3x"}, {"value": "4", "label": "4x"} ] } ] },
     { "title": "Sound", "rows": [
       { "key": "audio.interpolation", "label": "Sound quality", "kind": "choice", "default": "linear", "choices": [ {"value": "linear", "label": "Standard"}, {"value": "gaussian", "label": "Smooth"} ] } ] } ] },
   "licences": [ { "label": "Licence", "file": "LICENSE" } ]
@@ -233,6 +234,10 @@ private slots:
         QVERIFY(setup->findChild<QLabel*>("setup_folder_memcards_help")->text().contains("Inside the game folder"));
         QVERIFY(setup->settingsRow("video.frame_cap"));
         QVERIFY(setup->settingsRow("video.vsync"));
+        // a first_run row is pre-selected to the manifest's first-run value (not the game's default) and waits for the folder
+        QCOMPARE(setup->settingsRow("video.scale")->value(), QStringLiteral("0"));
+        QCOMPARE(setup->pendingSettings().value("video.scale"), QStringLiteral("0"));
+        QCOMPARE(app_->settingValue("video.scale"), QStringLiteral("1"));   // no folder yet: the game's own default
         QVERIFY(!setup->advancedOpen());
         QVERIFY(!setup->targetSelector()->isVisible());
         QVERIFY(!setup->progress()->isVisible());
@@ -352,6 +357,7 @@ private slots:
         QVERIFY(app_->gameFolder()->chosen());
         QVERIFY(app_->gameFolder()->path().endsWith("/Documents/Example Game"));
         QCOMPARE(IniSettings(app_->settingsFilePath()).get("video.frame_cap"), QStringLiteral("30"));
+        QCOMPARE(IniSettings(app_->settingsFilePath()).get("video.scale"), QStringLiteral("0"));   // the first-run seed
         QVERIFY(setup->pendingSettings().isEmpty());
         // ...and the folder choices as the keys the game reads: the memory cards inside (absolute in the file), the
         // save states where they were chosen
@@ -377,6 +383,7 @@ private slots:
         QCOMPARE(setup->leaveButton()->text(), QStringLiteral("Go to the launcher"));
         QCOMPARE(setup->discCard()->statusText(), QStringLiteral("Ready to play."));
         QCOMPARE(IniSettings(app_->settingsFilePath()).get("video.frame_cap"), QStringLiteral("30"));   // written again after the build
+        QCOMPARE(IniSettings(app_->settingsFilePath()).get("video.scale"), QStringLiteral("0"));       // (the pipeline's fresh file had neither)
         QCOMPARE(IniSettings(app_->settingsFilePath()).get("paths.save_dir"), home_.path() + "/My save states");   // and the folders (D-L13)
         QCOMPARE(IniSettings(app_->settingsFilePath()).get("paths.mc_dir"), app_->gameFolder()->path() + "/memcards");
         QCOMPARE(app_->gameFolder()->saveStatesFolder(), home_.path() + "/My save states/savestates");

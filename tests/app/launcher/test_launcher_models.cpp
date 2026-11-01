@@ -97,7 +97,8 @@ const char* kManifest = R"JSON({
   "settings": { "groups": [ { "title": "Picture", "rows": [
     { "key": "video.frame_cap", "label": "Frame rate", "kind": "choice", "default": "60", "choices": [ {"value": "30"}, {"value": "60"}, {"value": "off", "label": "Off"} ] },
     { "key": "video.vsync", "label": "Vertical sync", "kind": "switch", "default": "off", "locked_by": { "key": "video.frame_cap", "value": "off", "help": "Off while the frame rate is not capped." } },
-    { "key": "video.backend", "label": "Graphics", "kind": "choice", "default": "auto", "choices": [ {"value": "auto"}, {"value": "metal", "platforms": ["macos"]}, {"value": "gl", "label": "OpenGL"} ] } ] } ] }
+    { "key": "video.backend", "label": "Graphics", "kind": "choice", "default": "auto", "choices": [ {"value": "auto"}, {"value": "metal", "platforms": ["macos"]}, {"value": "gl", "label": "OpenGL"} ] },
+    { "key": "video.scale", "label": "Internal resolution", "kind": "choice", "default": "1", "first_run": "0", "choices": [ {"value": "0", "label": "Native"}, {"value": "1", "label": "1x"}, {"value": "4", "label": "4x"} ] } ] } ] }
 })JSON";
 }  // namespace
 
@@ -151,9 +152,13 @@ private slots:
         QVERIFY(manifest_.subfolder("memcards")->help.contains("Inside the game folder"));
         QVERIFY(!manifest_.subfolder("nothing"));
         QCOMPARE(manifest_.unsupported().size(), 1);
-        QCOMPARE(manifest_.allSettingsRows().size(), 3);
+        QCOMPARE(manifest_.allSettingsRows().size(), 4);
         QCOMPARE(manifest_.allSettingsRows()[1].lockedBy.key, QStringLiteral("video.frame_cap"));
         QCOMPARE(manifest_.allSettingsRows()[2].choices[1].platforms, QStringList{"macos"});
+        // first_run: the value a NEW game folder starts with; `default` stays the game's own (what an absent key means)
+        QVERIFY(manifest_.allSettingsRows()[2].firstRun.isEmpty());
+        QCOMPARE(manifest_.allSettingsRows()[3].defaultValue, QStringLiteral("1"));
+        QCOMPARE(manifest_.allSettingsRows()[3].firstRun, QStringLiteral("0"));
         TitleManifest bad;
         QVERIFY(!bad.loadJson(QJsonObject{{"id", "X"}}, &err));
         QVERIFY(!err.isEmpty());

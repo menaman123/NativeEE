@@ -120,6 +120,8 @@ QString LauncherApp::settingValue(const QString& key) const {
     return QString();
 }
 
+bool LauncherApp::settingWritten(const QString& key) const { return settings_ && settings_->has(key); }
+
 bool LauncherApp::setSettingValue(const QString& key, const QString& value, QString* error) {
     if (!folder_->chosen() || !settings_) { if (error) *error = QStringLiteral("Choose where the game lives first."); return false; }
     if (!settings_->set(key, value, error)) return false;
@@ -193,6 +195,7 @@ bool LauncherApp::prepare(const QString& isoPath, const QString& targetId, QStri
     req.binaryName = t ? t->binary : manifest_->binaryName();
     req.logPath = appData_->logPath("prepare");
     req.appDataFolder = appData_->root();
+    req.configPath = folder_->configPath();
     if (!preparer_->start(req, error)) return false;
     preparingIso_ = isoPath;
     preparingTarget_ = target;

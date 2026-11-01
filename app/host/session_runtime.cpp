@@ -3,6 +3,7 @@
 #include <SDL.h>
 #include <algorithm>
 #include <cfenv>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -197,7 +198,8 @@ void SessionRuntime::Publish() {
             scale_request_.store(native);
         }
     }
-    status_.scale = effective_scale_.load();
+    status_.scale = scale_setting_.load();
+    status_.effective_scale = effective_scale_.load();
     status_.aspect = aspect_setting_.load();
     status_.render_rate = render_rate_.load();
     status_.frame_cap = frame_cap_.load();
@@ -209,6 +211,18 @@ void SessionRuntime::Publish() {
     if (aspect_) {
         aspect_->SetWindow(status_.window_width, status_.window_height);
         window_.SetPictureAspect(aspect_->Ratio());
+    }
+    if (display_rows_ && status_.window_width > 0 && status_.window_height > 0) {
+        // The host picture: the rect SessionGui draws the picture into, for this drawable and aspect (4:3 when
+        // no aspect model is set -- the same fallback the GUI's PictureRect takes for the 512x448 picture).
+        float x = 0, y = 0, w = 0, h = 0;
+        SessionGui::PictureRect(static_cast<float>(status_.window_width), static_cast<float>(status_.window_height),
+                                512, 448, aspect_ ? aspect_->Ratio() : 0.0, x, y, w, h);
+        const uint64_t packed = PackSize(static_cast<int>(std::lround(w)), static_cast<int>(std::lround(h)));
+        if (packed != present_output_.load()) {
+            present_output_.store(packed);
+            present_output_request_.store(packed);
+        }
     }
     status_.keyboard_input = input_ && input_->KeyboardEnabled();
     keyboard_state_.store(status_.keyboard_input);
@@ -394,7 +408,7 @@ void SessionRuntime::ProcessCommands() {
                 } else {
                     effective_scale_.store(0);   // Publish resolves the native factor and requests it
                 }
-                detail = request.value != 0 ? "Internal scale applied at the next frame." : "Internal scale follows the window.";
+                detail = request.value != 0 ? "Internal resolution applied at the next frame." : "Internal resolution follows the window.";
                 if (persist_) persist_("video.scale", std::to_string(request.value));
                 break;
             case Action::SetVSync:

@@ -34,6 +34,8 @@ int main() {
     CHECK(DisplaySequence::ModeOf("borderless", a, v) && a == Action::SetDisplayMode && v == 2, "borderless");
     CHECK(DisplaySequence::ModeOf("scale1", a, v) && a == Action::SetScale && v == 1, "scale1");
     CHECK(DisplaySequence::ModeOf("scale4", a, v) && a == Action::SetScale && v == 4, "scale4");
+    CHECK(DisplaySequence::ModeOf("scale0", a, v) && a == Action::SetScale && v == 0, "scale0 (window)");
+    CHECK(!DisplaySequence::ModeOf("scale5", a, v), "scale5 rejected");
     CHECK(DisplaySequence::ModeOf("vsync", a, v) && a == Action::SetVSync && v == 1, "vsync");
     CHECK(DisplaySequence::ModeOf("novsync", a, v) && a == Action::SetVSync && v == 0, "novsync");
     CHECK(!DisplaySequence::ModeOf("scale5", a, v), "scale5 is not a mode");

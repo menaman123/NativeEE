@@ -90,6 +90,12 @@ void FakePrepareRunner::tick() {
             f.write("#!/bin/sh\nexit 0\n");
             f.setPermissions(f.permissions() | QFileDevice::ExeOwner | QFileDevice::ExeUser);
         }
+        // the pipeline's fresh options file (paths only): what the launcher re-applies the player's choices over
+        if (!request_.configPath.isEmpty()) {
+            QFile ini(request_.configPath);
+            if (ini.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
+                ini.write(QStringLiteral("# options -- written by the fake pipeline\npaths.user_data = %1\n").arg(request_.cacheFolder).toUtf8());
+        }
         writeLog(QStringLiteral("done: %1").arg(binary));
         emit finished(binary);
     }

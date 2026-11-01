@@ -1557,6 +1557,15 @@
       ]
     },
     {
+      "key": "video.hidpi",
+      "section": "video",
+      "name": "hidpi",
+      "type": "bool",
+      "default": "off",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
       "key": "video.interp",
       "section": "video",
       "name": "interp",

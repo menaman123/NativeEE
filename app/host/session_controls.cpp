@@ -297,7 +297,7 @@ const char* SessionControls::ActionLabel(Action action) {
         case Action::SetRecording: return "Input recording";
         case Action::SetPerfOverlay: return "Performance overlay";
         case Action::SetDisplayMode: return "Display mode";
-        case Action::SetScale: return "Internal scale";
+        case Action::SetScale: return "Internal resolution";
         case Action::SetVSync: return "VSync";
         case Action::SetAspect: return "Aspect ratio";
         case Action::SetRenderRate: return "Render rate";

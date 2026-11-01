@@ -262,7 +262,7 @@ bool ConfigValidator::Validate(const Config& c, bool harness_window_requested, s
             return Refuse(err, "harness.display_sequence requires a window (--harness-window): a headless leg has no display to change");
         // "<frame>:<mode>[,<frame>:<mode>...]", frame > 0, mode one of the Display
         // page's requests (the composition root's DisplaySequence names the same set).
-        static const char* const kModes[] = {"windowed", "fullscreen", "borderless", "scale1", "scale2", "scale3", "scale4",
+        static const char* const kModes[] = {"windowed", "fullscreen", "borderless", "scale0", "scale1", "scale2", "scale3", "scale4",
                                              "vsync", "novsync", "aspect_auto", "aspect_4_3", "aspect_16_9", "aspect_16_10",
                                              "aspect_21_9", "aspect_32_9", "filter_title", "filter_point", "filter_bilinear", "filter_trilinear",
                                              "aniso1", "aniso2", "aniso4", "aniso8", "aniso16", "overlay", "nooverlay", "rate60",
@@ -297,7 +297,7 @@ bool ConfigValidator::Validate(const Config& c, bool harness_window_requested, s
             }
             if (!ok)
                 return Refuse(err, "harness.display_sequence must be <frame>:<mode>[,...] with frame > 0 and mode one of "
-                                   "windowed|fullscreen|borderless|scale1..scale4|vsync|novsync|aspect_<auto|4_3|16_9|16_10|21_9|32_9>|"
+                                   "windowed|fullscreen|borderless|scale0..scale4|vsync|novsync|aspect_<auto|4_3|16_9|16_10|21_9|32_9>|"
                                    "filter_<title|point|bilinear|trilinear>|aniso<1|2|4|8|16>|overlay|nooverlay|rate60|ratedisplay|"
                                    "capoff|cap30|cap60|kbm|nokbm|fps<60..1000>|fpsunlimited|[no]invertx|[no]inverty|[no]blur|volume<0..100> "
                                    "(e.g. 300:borderless,600:windowed)");

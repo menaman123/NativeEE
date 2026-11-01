@@ -41,7 +41,7 @@ void DisplaySection::Draw(SessionControls& controls, const SessionControls::Snap
     static const char* const kAspects[] = {"Auto (window)", "4:3", "16:9", "16:10", "21:9", "32:9"};
     static const char* const kRates[] = {"60 (one frame per game tick)", "Display rate"};
     static const char* const kCaps[] = {"Off (as the game produces)", "30 (every other field, steady)", "60 (every field)"};
-    static const char* const kScales[] = {"Native window", "1x", "2x", "3x", "4x"};
+    static const char* const kScales[] = {"Window", "1x", "2x", "3x", "4x"};   // the launcher page uses the same words
     static const char* const kFilters[] = {"Title (as the game set it)", "Point", "Bilinear", "Trilinear"};
     static const char* const kAniso[] = {"Off", "2x", "4x", "8x", "16x"};
     static const int kAnisoValues[] = {1, 2, 4, 8, 16};
@@ -50,7 +50,7 @@ void DisplaySection::Draw(SessionControls& controls, const SessionControls::Snap
     if (caps.fullscreen) Combo(controls, snapshot, Action::SetDisplayMode, "Display mode", kModes, 3, r.display_mode);
     if (caps.display_rows) {
         Combo(controls, snapshot, Action::SetAspect, "Aspect ratio", kAspects, 6, r.aspect);
-        Combo(controls, snapshot, Action::SetScale, "Internal scale", kScales, 5, r.scale);
+        Combo(controls, snapshot, Action::SetScale, "Internal resolution", kScales, 5, r.scale);
         Combo(controls, snapshot, Action::SetRenderRate, "Render rate", kRates, 2, r.render_rate);
         if (caps.frame_limit)
             Combo(controls, snapshot, Action::SetFrameLimit, "Frame rate", kLimits, 6, r.frame_limit, kLimitValues);
@@ -79,8 +79,8 @@ void DisplaySection::Draw(SessionControls& controls, const SessionControls::Snap
             controls.Submit(Action::SetPerfOverlay, overlay ? 1 : 0);
         ImGui::EndDisabled();
     }
-    ImGui::TextDisabled("Applied live by the presenter and saved to the settings file (ps2r.ini). Window %dx%d.",
-                        r.window_width, r.window_height);
+    ImGui::TextDisabled("Applied live by the presenter and saved to the settings file (ps2r.ini). Window %dx%d, drawn at %dx.",
+                        r.window_width, r.window_height, r.effective_scale);
 }
 
 }  // namespace ps2r::app

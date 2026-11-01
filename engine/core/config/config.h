@@ -117,6 +117,13 @@ struct VideoConfig {
     // sharp. Applied live from the Display page; persisted.
     bool         motion_blur = true;
     bool         vsync = false;
+    // video.hidpi: the session window's drawable at the display's own pixels on a scaled (Retina)
+    // display (SDL_WINDOW_ALLOW_HIGHDPI), so the host picture and a `window` internal scale resolve
+    // on real pixels. Off: a points-sized drawable the OS stretches. Default off: the present
+    // capture grows 4x (11 MB/frame at 1920x1344 on the Paris lane; 60 Hz held, doubled frames
+    // 0.7-2.1 % -> 3.4-4.1 %, the pacing judge's RED). Read at window creation; host presentation
+    // only, not part of the deterministic fingerprint.
+    bool         hidpi = false;
     FullscreenMode fullscreen = FullscreenMode::Windowed;
     RenderRate   render_rate = RenderRate::Tick60;
     FrameCap     frame_cap = FrameCap::Hz60;
@@ -675,7 +682,7 @@ struct HarnessConfig {
     // <mode> exactly as the menu widget does (SessionControls), so the swap runs
     // on the presenter's thread between two presented frames while the game
     // thread keeps ticking. Format "<frame>:<mode>[,<frame>:<mode>...]", mode one
-    // of windowed | fullscreen | borderless | scale1..scale4 | vsync | novsync,
+    // of windowed | fullscreen | borderless | scale0..scale4 | vsync | novsync,
     // frame > 0; "" = off. `--set` only, harness armed (a window-less leg has no
     // display to change).
     std::string display_sequence;

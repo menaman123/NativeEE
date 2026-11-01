@@ -107,6 +107,7 @@ SetupPage::SetupPage(LauncherApp* app, DetailsSheet* details, QWidget* parent) :
     connect(app_->preparer(), &PrepareRunner::finished, this, [this](const QString&) {
         if (state_ != Building) return;
         // the pipeline writes a fresh options file: the player's choices from this window go in after it
+        for (auto it = chosen_.cbegin(); it != chosen_.cend(); ++it) pending_.insert(it.key(), it.value());
         flushSettings();
         progress_->setProgress(1000, 1000);
         progress_->setText(QStringLiteral("Your game is ready"));
@@ -231,6 +232,7 @@ QWidget* SetupPage::buildSettings(QWidget* parent) {
             auto* row = new SettingsRow(forThisMachine(spec), box);
             connect(row, &SettingsRow::valueChanged, this, [this](const QString& key, const QString& value) {
                 pending_[key] = value;
+                chosen_[key] = value;
                 // a game folder already chosen (a returning player): the file is written at once, as on the Settings page
                 if (app_->gameFolder()->chosen()) { QString err; if (app_->setSettingValue(key, value, &err)) pending_.remove(key); }
                 applyLocks();
@@ -415,7 +417,20 @@ void SetupPage::refreshFolder() {
     folderNote_->setText(sentences.join(' '));
 }
 
+void SetupPage::seedFirstRun() {
+    // A row the manifest marks first_run: a new game folder starts with that value (pre-selected here, written when the
+    // folder exists), not the game's own default. A folder that already has the key keeps it.
+    for (SettingsRow* r : rows_) {
+        const SettingsRowSpec& spec = r->spec();
+        if (spec.firstRun.isEmpty() || chosen_.contains(spec.key) || app_->settingWritten(spec.key)) continue;
+        chosen_[spec.key] = spec.firstRun;
+        pending_[spec.key] = spec.firstRun;
+    }
+    flushSettings();
+}
+
 void SetupPage::refreshSettingsRows() {
+    seedFirstRun();
     for (SettingsRow* r : rows_) {
         const QString key = r->spec().key;
         r->setValue(pending_.contains(key) ? pending_.value(key) : app_->settingValue(key));
