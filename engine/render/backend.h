@@ -203,6 +203,7 @@ struct CallCensus {
     uint64_t prompt_timeouts = 0;    // ... and the ones whose wait ran out (read back one present late as before)
     uint64_t prompt_wait_ns = 0;     // the bounded waits' total time
     uint64_t prompt_skipped = 0;     // ... and the presents the gate kept from waiting (read one present late)
+    uint64_t split_draws = 0;        // draws issued twice for the alpha-fail population split (afail != KEEP under a real ATST)
     uint64_t state_sets = 0;         // fixed-function state calls ISSUED (blend / depth / mask / scissor / viewport / enable)
     uint64_t uniform_sets = 0;       // uniform calls ISSUED (the shadow caches skip the rest)
 };

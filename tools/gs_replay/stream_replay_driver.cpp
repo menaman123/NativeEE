@@ -420,14 +420,15 @@ void StreamReplayDriver::WriteOutputs() const {
                 n ? static_cast<double>(submits) / static_cast<double>(n) : 0.0);
     if (const render::CallCensus* c = be_->Census())
         std::printf("[GSSTREAM] census draw_calls=%llu passes=%llu program_binds=%llu texture_binds=%llu clears=%llu copies=%llu "
-                    "uploads=%llu readbacks=%llu readback_bytes=%llu readback_waits=%llu buffer_maps=%llu submits=%llu gpu_ms=%.1f\n",
+                    "uploads=%llu readbacks=%llu readback_bytes=%llu readback_waits=%llu buffer_maps=%llu submits=%llu gpu_ms=%.1f split_draws=%llu\n",
                     static_cast<unsigned long long>(c->draw_calls), static_cast<unsigned long long>(c->framebuffer_binds),
                     static_cast<unsigned long long>(c->program_binds), static_cast<unsigned long long>(c->texture_binds),
                     static_cast<unsigned long long>(c->clears), static_cast<unsigned long long>(c->copies),
                     static_cast<unsigned long long>(c->uploads), static_cast<unsigned long long>(c->readbacks),
                     static_cast<unsigned long long>(c->readback_bytes), static_cast<unsigned long long>(c->readback_waits),
                     static_cast<unsigned long long>(c->buffer_maps),
-                    static_cast<unsigned long long>(c->submits), static_cast<double>(c->gpu_ns) * 1e-6);
+                    static_cast<unsigned long long>(c->submits), static_cast<double>(c->gpu_ns) * 1e-6,
+                    static_cast<unsigned long long>(c->split_draws));
 #if defined(PS2R_HAS_METAL)
     if (metal_) {
         // The Metal arm's per-frame GPU wall (last GPUEndTime - first GPUStartTime of the frame's command buffers; the

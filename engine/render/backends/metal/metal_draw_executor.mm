@@ -124,6 +124,7 @@ DrawResult MetalDrawExecutor::Draw(const gs::DrawIr& ir, const gs::TextureSource
     if (s.first < 0) return none;
     ColorMaskState(ir, s);
     if (gs::AlphaFailMask::SplitsPopulations(ir.raster.test)) {
+        dev_.CensusMut().split_draws++;
         u_.afail_pass = 1;
         Emit(ir, s);
         Step fail = s;
