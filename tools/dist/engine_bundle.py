@@ -526,7 +526,18 @@ def main(argv):
     for src, rel in T.external_includes.items():
         shutil.copytree(src, os.path.join(out, rel), dirs_exist_ok=True)
     tdir = os.path.join(games_dir, title)
-    for rel in ["TITLE_INPUTS.sha256", "recomp/MANIFEST.sha256"] + TITLE_TABLES:
+    # The recomp pin the bundle ships MUST be the one this build verified its generated output against (the
+    # recompile command's flags choose the pin: MANIFEST.sha256 for the all-classic emission, MANIFEST.vu0_native.sha256
+    # for the default set) -- read it off the ps2r_title_recomp verify step's -DMANIFEST= rather than assume a name.
+    recomp_manifest_rel = "recomp/MANIFEST.sha256"
+    for b in ninja.builds:
+        cmd = b["vars"].get("COMMAND", "")
+        if "-DLABEL=ps2r_title_recomp " in cmd + " ":
+            m = re.search(r"-DMANIFEST=(\S+)", cmd)
+            if m:
+                recomp_manifest_rel = "recomp/" + os.path.basename(m.group(1))
+            break
+    for rel in ["TITLE_INPUTS.sha256", recomp_manifest_rel] + TITLE_TABLES:
         p = os.path.join(tdir, rel)
         if os.path.isdir(p):
             shutil.copytree(p, os.path.join(out, "title", title, rel), dirs_exist_ok=True)
@@ -578,7 +589,7 @@ def main(argv):
                       "machine uses the pinned compiler archive of the same release (BUNDLE.json compile/link templates take ${cxx})"},
         "title": dict(title_profile, id=title, binary_name=binary_name + (".exe" if a.platform.startswith("windows") else ""),
                       inputs_table="${bundle}/title/%s/TITLE_INPUTS.sha256" % title,
-                      recomp_manifest="${bundle}/title/%s/recomp/MANIFEST.sha256" % title,
+                      recomp_manifest="${bundle}/title/%s/%s" % (title, recomp_manifest_rel),
                       iop_manifests={d: "${bundle}/title/%s/iop/%s/MANIFEST.sha256" % (title, d)
                                      for d in (sorted(os.listdir(iop_dir)) if os.path.isdir(iop_dir) else [])
                                      if os.path.exists(os.path.join(iop_dir, d, "MANIFEST.sha256"))},

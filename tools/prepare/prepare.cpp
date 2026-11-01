@@ -582,13 +582,14 @@ std::string PrepareRunner::Substitute(const std::string& text, const std::map<st
 }
 
 bool PrepareRunner::IsPrepared(const std::string& folder, const std::string& elf_sha256, const std::string& release_tag,
-                               std::string* binary_path) {
+                               std::string* binary_path, const std::string& bundle_sha256) {
     std::string text;
     if (!ReadFile(fs::path(folder) / "cache" / "prepared.json", &text)) return false;
     try {
         const json j = json::parse(text);
         if (j.value("elf_sha256", "") != elf_sha256) return false;
         if (!release_tag.empty() && j.value("release_tag", "") != release_tag) return false;
+        if (!bundle_sha256.empty() && j.value("bundle_sha256", "") != bundle_sha256) return false;
         const std::string bin = j.value("binary_path", "");
         if (bin.empty() || !fs::exists(bin)) return false;
         if (j.value("binary_sha256", "") != Sha256File(bin)) return false;
@@ -738,7 +739,7 @@ bool PrepareRunner::Run() {
 
     // a prepared binary for this (disc, release) already? (the stamp)
     std::string ready;
-    if (!options_.force && IsPrepared(options_.folder, report_.elf_sha256, report_.release_tag, &ready)) {
+    if (!options_.force && IsPrepared(options_.folder, report_.elf_sha256, report_.release_tag, &ready, bundle_asset.sha256)) {
         report_.cache_hit = true;
         report_.binary_path = ready;
         report_.ini_path = (I.folder / "nativeee.ini").string();

@@ -69,7 +69,7 @@ int main(int argc, char** argv) {
     auto stamp = [&](const std::string& elf, const std::string& tag, const std::string& sha) {
         std::ofstream s(folder / "cache" / "prepared.json", std::ios::trunc);
         s << "{\"elf_sha256\":\"" << elf << "\",\"release_tag\":\"" << tag << "\",\"binary_path\":\"" << (folder / "sly2").string()
-          << "\",\"binary_sha256\":\"" << sha << "\"}\n";
+          << "\",\"binary_sha256\":\"" << sha << "\",\"bundle_sha256\":\"bbbb\"}\n";
     };
     stamp("abc", "v1", "0000");
     Check(!PrepareRunner::IsPrepared(folder.string(), "abc", "v1", &bin), "IsPrepared false when the binary's hash differs");
@@ -91,6 +91,8 @@ int main(int argc, char** argv) {
             Check(PrepareRunner::IsPrepared(folder.string(), "abc", "", &bin), "IsPrepared ignores the tag when none is asked");
             Check(!PrepareRunner::IsPrepared(folder.string(), "other-disc", "v1", &bin), "IsPrepared false for another disc");
             Check(!PrepareRunner::IsPrepared(folder.string(), "abc", "v2", &bin), "IsPrepared false for another release");
+            Check(PrepareRunner::IsPrepared(folder.string(), "abc", "v1", &bin, "bbbb"), "IsPrepared true for the stamped bundle");
+            Check(!PrepareRunner::IsPrepared(folder.string(), "abc", "v1", &bin, "cccc"), "IsPrepared false for another engine bundle under the same tag");
         } else {
             std::printf("skip IsPrepared true case (no shasum)\n");
         }

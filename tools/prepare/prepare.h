@@ -103,8 +103,10 @@ public:
     static std::string HostPlatform();
     // The stamp a Run leaves; true when `folder` holds a binary prepared from a disc with `elf_sha256`
     // for `release_tag` (and the binary is still there). The launcher's "ready to play" test.
+    // `bundle_sha256` ("" = do not check) must match the stamp's: a release re-cut under the same tag with a
+    // different engine bundle is NOT prepared (the Run that resolved the index knows the bundle's digest).
     static bool IsPrepared(const std::string& folder, const std::string& elf_sha256, const std::string& release_tag,
-                           std::string* binary_path);
+                           std::string* binary_path, const std::string& bundle_sha256 = "");
     // Substitute ${name} placeholders (public for the tests).
     static std::string Substitute(const std::string& text, const std::map<std::string, std::string>& vars);
 
