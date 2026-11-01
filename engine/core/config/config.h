@@ -682,7 +682,7 @@ struct HarnessConfig {
     // <mode> exactly as the menu widget does (SessionControls), so the swap runs
     // on the presenter's thread between two presented frames while the game
     // thread keeps ticking. Format "<frame>:<mode>[,<frame>:<mode>...]", mode one
-    // of windowed | fullscreen | borderless | scale1..scale4 | vsync | novsync,
+    // of windowed | fullscreen | borderless | scale0..scale4 | vsync | novsync,
     // frame > 0; "" = off. `--set` only, harness armed (a window-less leg has no
     // display to change).
     std::string display_sequence;

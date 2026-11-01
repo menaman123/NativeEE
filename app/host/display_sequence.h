@@ -38,7 +38,7 @@ public:
     };
     static constexpr uint64_t kSettleBoundaries = 6;   // 100 ms after the presenter reported the swap done
     // "<frame>:<mode>[,...]" -> steps in the order written (frame > 0; mode one of
-    // windowed | fullscreen | borderless | scale1..scale4 | vsync | novsync |
+    // windowed | fullscreen | borderless | scale0..scale4 | vsync | novsync |
     // aspect_auto | aspect_4_3 | aspect_16_9 | aspect_16_10 | aspect_21_9 |
     // filter_title | filter_point | filter_bilinear | filter_trilinear | aniso1|2|4|8|16 |
     // overlay | nooverlay | rate60 | ratedisplay | capoff | cap30 | cap60 -- the Display page's rows;
