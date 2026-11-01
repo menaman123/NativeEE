@@ -20,6 +20,10 @@ TextureResolver::TextureResolver(render::Backend& be, VramImage& vram, RenderTar
     : be_(be), vram_(vram), targets_(targets), refresher_(refresher), layout_(layout),
       cache_(be), owned_(be), clut_(be) {}
 
+TextureResolver::~TextureResolver() {
+    if (idx_scratch_.id) be_.DestroySurface(idx_scratch_);
+}
+
 bool TextureResolver::Is16BitClass(uint32_t psm) {
     return psm == 0x02 || psm == 0x0A || psm == 0x32 || psm == 0x3A;
 }
@@ -497,7 +501,13 @@ bool TextureResolver::MatchIndexed(const DrawIr& ir, const Context& ctx, RenderT
     targets_.FlushPending(PendingRtSyncLedger::Reason::Ftt, v.cbp % VramImage::kBytes, VramImage::kPageBytes);
     const render::SurfaceId clut = clut_.Ensure(v.cbp, false, vram_);
     if (!clut.id) return false;
-    if (fmt == 4 && selfrd && t.identity.scale > 1) return false;   // native-texel self serve only
+    // The scaled self serve: the shader's UV-addressed read of the physical copy picks one texel per logical
+    // texel but ignores the read's filter, so it is not the deposit-then-decode route's bytes when the draw
+    // samples between texels (Paris: the apply quad is offset half a texel; 0.5 % of the pixels differ). The
+    // GPU decode below IS that route's texture (CLUT[alpha] at the deposit's texels, logical size), sampled
+    // like the uploaded one -- without the synchronous readback + CPU decode + upload that drained the GPU
+    // once per frame at every scale > 1. A backend without the pass takes the deposit + decode.
+    if (fmt == 4 && selfrd && t.identity.scale > 1) return ServeIndexedGpu(ir, ctx, t, clut, out);
     out->owner.kind = TextureSource::OwnerKind::Surface;
     out->owner.surface = surface.id ? surface : t.views.color;
     out->owner.fmt_case = fmt;
@@ -511,6 +521,137 @@ bool TextureResolver::MatchIndexed(const DrawIr& ir, const Context& ctx, RenderT
     out->transform.draw_scale = t.identity.scale;
     out->owner.clut = clut;
     out->owner.partner = partner_tex;
+    return true;
+}
+
+// The indexed self-read of a scaled 32-bit target, decoded on the GPU. The region is derived exactly as the
+// decode fallback derives it (the same UV sub-rect and the same transform fields), the destination is the
+// resolver's one logical-size scratch texture (re-rendered at every such read: its content is this frame's),
+// and the source texels are the deposit's (physical (x * s, y * s) for logical (x, y)). CT32 targets only: a
+// CT24 target's deposit keeps VRAM's byte 3, not the attachment's alpha. The deposit itself is queued, not
+// skipped (below). False = the caller's decline path (deposit + decode).
+bool TextureResolver::ServeIndexedGpu(const DrawIr& ir, const Context& ctx, RenderTarget& t,
+                                      render::SurfaceId clut, TextureSource* out) {
+    (void)ctx;
+    const TexReadView& v = ir.tex;
+    if (t.identity.render_psm != 0x00 || !t.views.HasColor() || !clut.id) return false;
+    const int s = t.identity.scale;
+    const int tex_w = 1 << v.tw, tex_h = 1 << v.th;
+    ContentKey::Rect rgn;
+    (void)DeriveRegion(ir, tex_w, tex_h, &rgn);
+    const bool sub = ContentKey::IsSubRect(v, rgn);
+    const int x0 = sub ? rgn.x0 : 0, y0 = sub ? rgn.y0 : 0;
+    const int dw = sub ? rgn.w : tex_w, dh = sub ? rgn.h : tex_h;
+    // The region may run past the target (the UV bbox is block-aligned: Sly 2's apply quad reads 576 x 256 of a
+    // 512 x 448 target); the pass clamps the source texel to the attachment there. The CPU decode would read
+    // whatever VRAM aliases those columns -- texels the draw does not sample (its UVs end at the target's edge).
+    if (dw <= 0 || dh <= 0 || x0 < 0 || y0 < 0 || x0 >= t.identity.width || y0 >= t.identity.height) return false;
+    if (idx_scratch_.id && (idx_scratch_w_ != dw || idx_scratch_h_ != dh)) {
+        be_.DestroySurface(idx_scratch_);
+        idx_scratch_ = render::SurfaceId{};
+    }
+    if (!idx_scratch_.id) {
+        render::SurfaceDesc d;
+        d.width = static_cast<uint32_t>(dw);
+        d.height = static_cast<uint32_t>(dh);
+        d.format = render::SurfaceFormat::Rgba8;
+        d.renderable = true;
+        d.scale = 1;
+        idx_scratch_ = be_.CreateSurface(d);
+        if (!idx_scratch_.id) return false;
+        idx_scratch_w_ = dw;
+        idx_scratch_h_ = dh;
+    }
+    // The decline path's deposit refreshes the mirror's DRAWN rows and resets the drawn rect; its decode then
+    // reads the mirror everywhere. This route reproduces that state evolution without the drain: the drawn
+    // rows come from the attachment through the pass, the region's rows inside the target but outside the
+    // drawn rect are decoded from the mirror and uploaded over the pass's texels (a few rows of a few hundred
+    // texels: the apply quad's block-aligned region runs past the drawn field), the parts beyond the target
+    // keep the pass's edge-clamped texels (never sampled: the read's UVs end at the target), and the deposit
+    // itself is queued (SyncDrawnDeferred: the GPU read in flight, the encode at the image's gate or the frame
+    // end -- the sync deposit where deferral is off, e.g. the lockstep harness). Declines when the deposit
+    // would not run, or when the decode would substitute a healed palette for an all-zero CLUT.
+    const CoherenceState& c = t.coherence;
+    if (!c.HasValidContent() || !c.HasDrawnSinceSync()) return false;
+    LogicalRect dr;
+    dr.x0 = std::max(0, c.drawn_since_sync.x0);
+    dr.y0 = std::max(0, c.drawn_since_sync.y0);
+    dr.x1 = std::min(t.identity.width, c.drawn_since_sync.x1);
+    dr.y1 = std::min(t.identity.height, c.drawn_since_sync.y1);
+    const int rx0 = x0, ry0 = y0, rx1 = std::min(x0 + dw, t.identity.width), ry1 = std::min(y0 + dh, t.identity.height);
+    const int ix0 = std::max(rx0, dr.x0), iy0 = std::max(ry0, dr.y0), ix1 = std::min(rx1, dr.x1), iy1 = std::min(ry1, dr.y1);
+    if (dr.Empty() || ix1 <= ix0 || iy1 <= iy0) return false;   // nothing of the region was drawn: the decode's bytes
+    {
+        uint8_t cb[ClutSource::kClutBytes];
+        vram_.ReadView(v.cbp, ClutSource::kClutBytes, cb);
+        bool zero = true;
+        for (uint8_t b : cb) if (b) { zero = false; break; }
+        if (zero && heal_.HasCached(v.cbp)) return false;   // the decode would heal: not these bytes
+    }
+    FlushPendingUnderRead(v, t);   // the decline path's first step: a deferred 16-bit writeback under the read lands
+    // The mirror's part: the region (inside the target) minus the drawn rect, as up to four bands, read now --
+    // before the deposit is queued over the drawn rows (their bytes are not these).
+    struct Band { int x0, y0, x1, y1; };
+    Band bands[4];
+    int nb = 0;
+    if (iy0 > ry0) bands[nb++] = Band{rx0, ry0, rx1, iy0};
+    if (iy1 < ry1) bands[nb++] = Band{rx0, iy1, rx1, ry1};
+    if (ix0 > rx0) bands[nb++] = Band{rx0, iy0, ix0, iy1};
+    if (ix1 < rx1) bands[nb++] = Band{ix1, iy0, rx1, iy1};
+    std::vector<uint32_t> patch[4];
+    {
+        uint32_t fp_start = 0, fp_size = 0;
+        ContentKey::Footprint(v, &fp_start, &fp_size);
+        Scratch(view_, VramImage::kBytes);
+        auto read_span = [this](uint32_t start, uint32_t size) {
+            if (size == 0) return;
+            if (size > VramImage::kBytes) size = VramImage::kBytes;
+            const uint32_t a = start % VramImage::kBytes;
+            const uint32_t first = std::min<uint32_t>(size, VramImage::kBytes - a);
+            vram_.ReadView(a, first, view_.data() + a);
+            if (first < size) vram_.ReadView(0, size - first, view_.data());
+        };
+        if (nb) read_span(fp_start, fp_size);
+        read_span(v.cbp, VramImage::kPageBytes);
+        // The decode's palette read, for its heal-cache bookkeeping (a good palette becomes the cached one).
+        uint32_t pal[256];
+        TextureDecoder::ReadPalette(view_.data(), v, &heal_, &layout_, pal);
+        for (int i = 0; i < nb; ++i) {
+            const Band& b = bands[i];
+            TextureDecoder::DecodeRect(view_.data(), v, b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0, &heal_, &layout_, &patch[i]);
+        }
+    }
+    const render::Rect pr{x0 * s, y0 * s, dw * s, dh * s};
+    if (!be_.DecodeIndexedAlpha(t.views.color, pr, s, clut, idx_scratch_)) return false;
+    census_.gpu_idx_decodes++;
+    for (int i = 0; i < nb; ++i) {
+        const Band& b = bands[i];
+        const int bw = b.x1 - b.x0, bh = b.y1 - b.y0;
+        if (bw <= 0 || bh <= 0 || patch[i].size() < static_cast<size_t>(bw) * bh) continue;
+        render::Rect ur;
+        ur.x = b.x0 - x0;
+        ur.y = b.y0 - y0;
+        ur.w = bw;
+        ur.h = bh;
+        be_.Upload(idx_scratch_, ur, patch[i].data(), static_cast<size_t>(bw) * 4);
+        census_.gpu_idx_patch_texels += static_cast<uint64_t>(bw) * bh;
+    }
+    // The deposit, queued: the drawn rows' GPU read in flight, the mirror's bytes and the drawn rect's reset
+    // exactly as the sync deposit leaves them (the sync form where deferral is off).
+    targets_.SyncDrawnDeferred(t, ir.vram_epoch, 0x00u);
+    out->owner.kind = TextureSource::OwnerKind::Decoded;
+    out->owner.surface = idx_scratch_;
+    out->owner.fmt_case = 4;   // the indexed class (ResolveRead unbinds a fmt-0 self-read: a colour serve of the own target)
+    out->owner.levels = 0;
+    out->transform.mip_levels = 0;
+    out->transform.uv_native = true;   // the decline path's sampling: native texel centres
+    if (sub) {
+        out->transform.region.applied = true;
+        out->transform.region.u0 = rgn.x0;
+        out->transform.region.v0 = rgn.y0;
+        out->transform.region.w = dw;
+        out->transform.region.h = dh;
+    }
     return true;
 }
 

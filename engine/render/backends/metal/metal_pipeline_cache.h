@@ -27,6 +27,7 @@ enum class MetalProgram : uint8_t {
     Const,          // DrawConstQuad
     NearestColor,   // the point-sampled readback pass (RGBA8 / R8 source -> same-format attachment)
     NearestDepth,   // ... of a Depth32f source -> an R32Float attachment
+    IndexedAlpha,   // DecodeIndexedAlpha: CLUT[alpha of the point-sampled source texel] -> an RGBA8 attachment
     kCount
 };
 

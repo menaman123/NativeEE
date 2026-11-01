@@ -108,6 +108,8 @@ public:
         uint64_t owned_misses = 0;       // reads over an owned slot the bind does not describe
         uint64_t decode_ns = 0;          // CPU time inside the texel decode of the miss path (all levels)
         uint64_t upload_ns = 0;          // time inside the backend calls of the miss path (create + uploads)
+        uint64_t gpu_idx_decodes = 0;    // indexed self-reads of a scaled target decoded on the GPU (no deposit)
+        uint64_t gpu_idx_patch_texels = 0;   // ... texels of those regions outside the drawn rect, decoded from the mirror
     };
     // The warm-up census: the decode fallback's work per 1 s window of the
     // consumer's clock, from the first frame end on (RollWarmWindow, called once
@@ -128,6 +130,7 @@ public:
 
     TextureResolver(render::Backend& be, VramImage& vram, RenderTargetCache& targets,
                     TargetRefresher& refresher, const VramLayout& layout);
+    ~TextureResolver();   // frees the GPU-decode scratch through the backend (the caches free their own)
 
     TextureSource ResolveRead(const DrawIr& ir, const Context& ctx);
     // After a draw: the rows it rendered ARE the VRAM content, so the decoded
@@ -191,6 +194,10 @@ private:
     bool MatchTarget(const DrawIr& ir, const Context& ctx, RenderTarget& t, TextureSource* out);
     bool MatchColor(const DrawIr& ir, const Context& ctx, RenderTarget& t, TextureSource* out);
     bool MatchIndexed(const DrawIr& ir, const Context& ctx, RenderTarget& t, TextureSource* out);
+    // The indexed self-read of a scaled 32-bit-class target served as a GPU decode into the logical-size
+    // scratch texture (the bytes the deposit-then-decode route would upload): true = `out` filled.
+    bool ServeIndexedGpu(const DrawIr& ir, const Context& ctx, RenderTarget& t, render::SurfaceId clut,
+                         TextureSource* out);
     bool LaneLiveRescue(const DrawIr& ir, const Context& ctx, RenderTarget& t,
                         render::SurfaceId* lane1, render::SurfaceId* lane2) const;
     bool MatchDepth(const DrawIr& ir, const Context& ctx, TextureSource* out);
@@ -237,6 +244,8 @@ private:
     std::vector<std::vector<uint8_t>> mip_win_;       // one hashed window per authored mip level
     std::vector<ContentKey::MipInput> mip_in_;
     std::vector<uint32_t> texels_;
+    render::SurfaceId idx_scratch_;                   // the GPU-decoded indexed self-read (one logical-size texture)
+    int idx_scratch_w_ = 0, idx_scratch_h_ = 0;
     Census census_;
     WarmWindow warm_cur_;
     std::vector<WarmWindow> warm_done_;

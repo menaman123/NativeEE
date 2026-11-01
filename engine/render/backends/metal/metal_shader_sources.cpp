@@ -628,6 +628,20 @@ fragment float nearest_depth_fragment(FsData in [[stage_in]], constant NearestUn
     return u_src.read(uint2(sp));
 }
 
+// The indexed read of a scaled 32-bit-class attachment at its logical resolution: output texel p = palette
+// row 0 at the stored alpha byte of source texel (origin + p * step) -- the bytes the deposit-then-decode
+// route produces (the nearest readback at sub (0, 0), then CLUT[alpha]); unorm8 in, unorm8 out: exact.
+fragment float4 indexed_alpha_fragment(FsData in [[stage_in]], constant NearestUniforms& U [[buffer(0)]],
+                                       texture2d<float> u_src [[texture(0)]], texture2d<float> u_clut [[texture(1)]]) {
+    int2 p = int2(in.position.xy);
+    int2 sp = int2(U.origin_x, U.origin_y) + p * U.step;
+    int2 dim = int2(u_src.get_width(), u_src.get_height());
+    sp = clamp(sp, int2(0), dim - 1);
+    float4 src = u_src.read(uint2(sp));
+    uint idx = uint(floor(src.a * 255.0 + 0.5));
+    return u_clut.read(uint2(idx, 0u));
+}
+
 // ---------------------------------------------------------------- the scanout quad
 struct ScanoutUniforms {
     float u0, v0, u1, v1;

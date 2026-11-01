@@ -146,6 +146,7 @@ public:
     // not a multiple of `step` or another format returns false / a null fence (the caller's physical read).
     bool ReadbackNearest(SurfaceId id, const Rect& rect, int step, void* out, size_t stride, int sub_x = 0, int sub_y = 0) override;
     FenceId BeginReadbackNearest(SurfaceId id, const Rect& rect, int step, int sub_x = 0, int sub_y = 0) override;
+    bool DecodeIndexedAlpha(SurfaceId src, const Rect& rect, int step, SurfaceId clut, SurfaceId dst) override;
     bool ReadbackReady(FenceId fence) override;
     bool PollReadback(FenceId fence, void* out, size_t stride) override;
     void Present(const ScanoutDesc& desc) override;
