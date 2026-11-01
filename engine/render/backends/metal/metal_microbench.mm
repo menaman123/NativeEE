@@ -49,6 +49,12 @@ fragment float4 fs_alu(V in [[stage_in]], constant float4& c [[buffer(0)]]) {
     for (int i = 0; i < 16; ++i) { a = fma(a, b, c); b = fma(b, a, c); a = fma(a, c, b); b = fma(b, c, a); }
     return a + b;
 }
+// per-pixel varying colour AND depth from the noise texture: defeats attachment compression, so a load/store pass moves real bytes
+struct NoiseOut { float4 c [[color(0)]]; float d [[depth(any)]]; };
+fragment NoiseOut fs_noise(V in [[stage_in]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]], constant float4& c [[buffer(0)]]) {
+    float4 v = t.sample(s, in.uv * 7.0 + c.w);
+    NoiseOut o; o.c = v * c.y; o.d = fract(v.x + c.w); return o;
+}
 struct FbIn { float4 dst [[color(0)]]; };
 fragment float4 fs_fbfetch(V in [[stage_in]], FbIn fb, constant float4& c [[buffer(0)]]) {
     // the register program's shape: read the destination, blend, write
@@ -328,6 +334,80 @@ int main(int argc, char** argv) {
                 }
             });
             std::printf("gpu_renderpass_switch_rgba8_depth32f_us=%.1f (per encoder, load+store, %ux%u)\n", s / passes * 1e6, b.w, b.h);
+        }
+        // render-pass ATTACHMENT TRAFFIC: N encoders each with ONE full-screen additive draw, colour+depth load+store (every
+        // tile touched -> every pass loads and stores the whole attachments: 4 x 14.7 MB at scale 4), vs the same N draws in
+        // ONE encoder; the difference per pass = the tile load/store cost of a full-screen pass -- the roofline of "passes per
+        // frame" on a TBDR. Variants: colour-only (no depth attachment) and dontcare (load clear / store dontcare) for the bound.
+        {
+            const int passes = quick ? 16 : 48;
+            auto run = [&](bool with_depth, bool loadstore, int enc_per_pass) {
+                return b.GpuSeconds([&](id<MTLCommandBuffer> cb) {
+                    id<MTLRenderCommandEncoder> enc = nil;
+                    for (int i = 0; i < passes; ++i) {
+                        if (!enc || enc_per_pass) {
+                            if (enc) [enc endEncoding];
+                            MTLRenderPassDescriptor* rp = [MTLRenderPassDescriptor renderPassDescriptor];
+                            rp.colorAttachments[0].texture = colour;
+                            rp.colorAttachments[0].loadAction = loadstore ? MTLLoadActionLoad : MTLLoadActionClear;
+                            rp.colorAttachments[0].storeAction = loadstore ? MTLStoreActionStore : MTLStoreActionDontCare;
+                            if (with_depth) {
+                                rp.depthAttachment.texture = depth;
+                                rp.depthAttachment.loadAction = loadstore ? MTLLoadActionLoad : MTLLoadActionClear;
+                                rp.depthAttachment.storeAction = loadstore ? MTLStoreActionStore : MTLStoreActionDontCare;
+                            }
+                            enc = [cb renderCommandEncoderWithDescriptor:rp];
+                            [enc setRenderPipelineState:with_depth ? p_solid_d : p_solid];
+                            float d = 0.5f; [enc setVertexBytes:&d length:sizeof d atIndex:0];
+                        }
+                        float cc[4] = {0.01f, 0.01f, 0.01f, 0.5f * (1.0f - 0.001f * float(i))};
+                        [enc setFragmentBytes:cc length:16 atIndex:0];
+                        [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+                    }
+                    if (enc) [enc endEncoding];
+                });
+            };
+            const double one_enc = run(true, true, 0), per_pass_ls = run(true, true, 1), per_pass_dc = run(true, false, 1), col_ls = run(false, true, 1);
+            // the same with per-pixel NOISE colour + depth written (fs_noise): incompressible attachments
+            auto p_noise = b.Pipe("fs_noise", MTLPixelFormatRGBA8Unorm, MTLPixelFormatDepth32Float, 0);
+            MTLDepthStencilDescriptor* dd = [[MTLDepthStencilDescriptor alloc] init];
+            dd.depthCompareFunction = MTLCompareFunctionAlways; dd.depthWriteEnabled = YES;
+            id<MTLDepthStencilState> ds_w = [b.dev newDepthStencilStateWithDescriptor:dd];
+            MTLSamplerDescriptor* sd = [[MTLSamplerDescriptor alloc] init];
+            sd.sAddressMode = MTLSamplerAddressModeRepeat; sd.tAddressMode = MTLSamplerAddressModeRepeat;
+            id<MTLSamplerState> samp = [b.dev newSamplerStateWithDescriptor:sd];
+            auto run_noise = [&](int enc_per_pass) {
+                return b.GpuSeconds([&](id<MTLCommandBuffer> cb) {
+                    id<MTLRenderCommandEncoder> enc = nil;
+                    for (int i = 0; i < passes; ++i) {
+                        if (!enc || enc_per_pass) {
+                            if (enc) [enc endEncoding];
+                            MTLRenderPassDescriptor* rp = [MTLRenderPassDescriptor renderPassDescriptor];
+                            rp.colorAttachments[0].texture = colour; rp.colorAttachments[0].loadAction = MTLLoadActionLoad; rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+                            rp.depthAttachment.texture = depth; rp.depthAttachment.loadAction = MTLLoadActionLoad; rp.depthAttachment.storeAction = MTLStoreActionStore;
+                            enc = [cb renderCommandEncoderWithDescriptor:rp];
+                            [enc setRenderPipelineState:p_noise];
+                            [enc setDepthStencilState:ds_w];
+                            [enc setFragmentTexture:src atIndex:0]; [enc setFragmentSamplerState:samp atIndex:0];
+                            float d = 0.5f; [enc setVertexBytes:&d length:sizeof d atIndex:0];
+                        }
+                        float cc[4] = {1.0f, 1.0f, 0.0f, 0.013f * float(i)};
+                        [enc setFragmentBytes:cc length:16 atIndex:0];
+                        [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+                    }
+                    if (enc) [enc endEncoding];
+                });
+            };
+            const double noise_one = run_noise(0), noise_pp = run_noise(1);
+            std::printf("gpu_fullscreen_pass_loadstore_noise_rgba8_d32f_ms=%.3f (per pass incl. its noise draw; the draw alone %.3f; incompressible colour+depth)\n",
+                        noise_pp / passes * 1e3, noise_one / passes * 1e3);
+            std::printf("gpu_attachment_traffic_noise_gbps=%.1f\n", 4.0 * double(b.w) * b.h * 4 / ((noise_pp - noise_one) / passes) / 1e9);
+            std::printf("gpu_fullscreen_pass_loadstore_rgba8_d32f_ms=%.3f (per full-screen pass incl. its draw; the draw alone %.3f; N=%d, %ux%u: colour+depth load+store = %.1f MB per pass)\n",
+                        per_pass_ls / passes * 1e3, one_enc / passes * 1e3, passes, b.w, b.h, 4.0 * double(b.w) * b.h * 4 / 1e6);
+            std::printf("gpu_fullscreen_pass_clear_dontcare_rgba8_d32f_ms=%.3f (per pass; no attachment traffic)\n", per_pass_dc / passes * 1e3);
+            std::printf("gpu_fullscreen_pass_loadstore_rgba8_only_ms=%.3f (per pass; colour load+store only)\n", col_ls / passes * 1e3);
+            std::printf("gpu_attachment_traffic_gbps=%.1f (the load+store bytes of the colour+depth pass over its extra time)\n",
+                        4.0 * double(b.w) * b.h * 4 / ((per_pass_ls - one_enc) / passes) / 1e9);
         }
         // small-draw rate: 4096 draws of an 8x8 quad in one encoder (the per-draw fixed cost)
         {
