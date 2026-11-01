@@ -60,7 +60,7 @@ std::string RowValue(const ControlsSection::Model& m, const char* name) {
 
 // One key press (down, then up after the game thread sampled) through PlatformInput's real
 // route: the owner (this thread) handles the events and services the game thread's Sample.
-uint16_t PressAndSample(PlatformInput& input, ps2r::Park& wake, SDL_Scancode scancode) {
+PadProtocol::Input PressAndSampleAll(PlatformInput& input, ps2r::Park& wake, SDL_Scancode scancode) {
     SDL_Event key{};
     key.type = SDL_KEYDOWN;
     key.key.keysym.scancode = scancode;
@@ -89,7 +89,37 @@ uint16_t PressAndSample(PlatformInput& input, ps2r::Park& wake, SDL_Scancode sca
         if (!done2.load()) wake.WaitFor(1000000, generation);
     }
     game2.join();
-    return sample.buttons;
+    return sample;
+}
+
+uint16_t PressAndSample(PlatformInput& input, ps2r::Park& wake, SDL_Scancode scancode) {
+    return PressAndSampleAll(input, wake, scancode).buttons;
+}
+
+// A HELD key sampled once: the stick keys read SDL's keyboard-state array (a pushed KEYDOWN never
+// reaches it), so the hold travels the harness's injection overlay (PlatformInput::HoldKey), the
+// route NATIVEEE_KEY_SCRIPT uses -- then the real key -> InputMapper -> DualShock path.
+PadProtocol::Input HoldAndSample(PlatformInput& input, ps2r::Park& wake, SDL_Scancode scancode) {
+    input.HoldKey(scancode, true);
+    std::atomic<bool> done{false};
+    PadProtocol::Input sample{};
+    std::thread game([&] { sample = input.Sample(); done.store(true); wake.Notify(); });
+    while (!done.load()) {
+        const auto generation = wake.Generation();
+        input.ServicePending();
+        if (!done.load()) wake.WaitFor(1000000, generation);
+    }
+    game.join();
+    input.HoldKey(scancode, false);
+    std::atomic<bool> done2{false};
+    std::thread game2([&] { input.Sample(); done2.store(true); wake.Notify(); });
+    while (!done2.load()) {
+        const auto generation = wake.Generation();
+        input.ServicePending();
+        if (!done2.load()) wake.WaitFor(1000000, generation);
+    }
+    game2.join();
+    return sample;
 }
 
 }  // namespace
@@ -120,6 +150,16 @@ int main(int argc, char** argv) {
         // Baseline: Space samples as CROSS, J as nothing.
         CHECK((PressAndSample(input, wake, SDL_SCANCODE_SPACE) & kCross) != 0, "default: Space -> CROSS");
         CHECK((PressAndSample(input, wake, SDL_SCANCODE_J) & kCross) == 0, "default: J -> not CROSS");
+        // The camera keys reach the DualShock 2 right stick through the real route: J = RX full left, I = RY full up
+        // (the pad bytes the title's camera reads); W is the left stick only.
+        {
+            const PadProtocol::Input j = HoldAndSample(input, wake, SDL_SCANCODE_J);
+            CHECK(j.rx == 0x00 && j.ry == 0x80 && j.lx == 0x80 && j.ly == 0x80, "default: J -> rx 0x00 (camera left; got lx=%02x ly=%02x rx=%02x ry=%02x)", j.lx, j.ly, j.rx, j.ry);
+            const PadProtocol::Input i = HoldAndSample(input, wake, SDL_SCANCODE_I);
+            CHECK(i.ry == 0x00 && i.rx == 0x80, "default: I -> ry 0x00 (camera up; got rx=%02x ry=%02x)", i.rx, i.ry);
+            const PadProtocol::Input w = HoldAndSample(input, wake, SDL_SCANCODE_W);
+            CHECK(w.ly == 0x00 && w.rx == 0x80 && w.ry == 0x80, "default: W -> ly 0x00, the camera stick centred (got ly=%02x rx=%02x ry=%02x)", w.ly, w.rx, w.ry);
+        }
 
         // Escape while armed cancels: nothing bound, nothing saved.
         const int cross = RowIndex(m, "Cross");
@@ -144,8 +184,9 @@ int main(int argc, char** argv) {
         CHECK(ini.find("cross") != std::string::npos && ini.find("= J") != std::string::npos, "bindings.ini has cross = J:\n%s", ini.c_str());
         CHECK(page.Status().find("applied to the pad") != std::string::npos, "status names the live apply: %s", page.Status().c_str());
 
-        // The pad now: J -> CROSS, Space -> nothing (no restart, the same PlatformInput).
+        // The pad now: J -> CROSS and no longer the camera, Space -> nothing (no restart, the same PlatformInput).
         CHECK((PressAndSample(input, wake, SDL_SCANCODE_J) & kCross) != 0, "after rebind: J -> CROSS");
+        CHECK(HoldAndSample(input, wake, SDL_SCANCODE_J).rx == 0x80, "after rebind: J no longer turns the camera");
         CHECK((PressAndSample(input, wake, SDL_SCANCODE_SPACE) & kCross) == 0, "after rebind: Space -> not CROSS");
 
         // A key bound to another row moves: square = J takes J off cross.
