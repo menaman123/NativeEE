@@ -1566,6 +1566,15 @@
       "user_facing": false
     },
     {
+      "key": "video.metal_hw_depth",
+      "section": "video",
+      "name": "metal_hw_depth",
+      "type": "bool",
+      "default": "off",
+      "kind": "switch",
+      "user_facing": false
+    },
+    {
       "key": "video.motion_blur",
       "section": "video",
       "name": "motion_blur",

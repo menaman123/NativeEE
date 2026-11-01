@@ -25,6 +25,8 @@ enum class MetalProgram : uint8_t {
     AlphaLane,      // WriteAlphaLane
     Halfword,       // the half-word shuffle (ps2_vertex + halfword_fragment)
     Const,          // DrawConstQuad
+    NearestColor,   // the point-sampled readback pass (RGBA8 / R8 source -> same-format attachment)
+    NearestDepth,   // ... of a Depth32f source -> an R32Float attachment
     kCount
 };
 
@@ -64,11 +66,14 @@ struct MetalSpecKey {
     uint8_t fba = 0;
     uint8_t mask_all = 0;
     uint8_t scanmsk = 0;
+    uint8_t fst_q1 = 0;       // UV-mode draw: q == 1.0 at every vertex (1/q folded)
+    uint8_t tex_pow2 = 0;     // bit 0: tex_size_x a power of two, bit 1: tex_size_y (the divide folded to a multiply)
+    uint8_t diag = 0;         // MetalDeviceSettings::diag_fragment (0..3; measurement only)
 };
 inline uint32_t PackSpecKey(const MetalSpecKey& k) {
     return k.use_texture | (k.tex_path << 1) | (k.fog << 3) | (k.alpha_test << 4) | (k.date << 5) | (k.zsrc << 6) |
            (k.blend << 7) | (k.fbmsk16 << 8) | (k.fbmsk32 << 9) | (k.ct16 << 10) | (k.fba << 11) | (k.mask_all << 12) |
-           (k.scanmsk << 13);
+           (k.scanmsk << 13) | (k.fst_q1 << 14) | ((k.tex_pow2 & 3u) << 15) | ((k.diag & 3u) << 17);
 }
 
 class MetalPipelineCache {

@@ -91,6 +91,8 @@ struct FragUniforms {
     int zsrc_en, zsrc_num, zsrc_den;
     int clut_raw;
     int color_mask;
+    int fst_q1, tex_pow2;
+    float tex_inv_x, tex_inv_y;
 };
 
 // PS2R_SHADER_DEPTH (a compile-time macro of the library): 1 = the fragment writes the
@@ -114,6 +116,10 @@ constant bool kCt16 [[function_constant(9)]];         // fb16 or ct16q
 constant bool kFba [[function_constant(10)]];
 constant bool kMaskAll [[function_constant(11)]];     // color_mask == 0xF
 constant bool kScanmsk [[function_constant(12)]];
+constant bool kFstQ1 [[function_constant(13)]];        // q == 1.0 at every vertex: 1/q folded to 1.0
+constant bool kTexPow2X [[function_constant(14)]];     // tex_size_x a power of two: x / tex_size_x == x * tex_inv_x
+constant bool kTexPow2Y [[function_constant(15)]];
+constant int kDiag [[function_constant(16)]];          // measurement only: 1 = vertex colour out, 2 = texture block only
 
 struct FragOut {
     float4 color [[color(0)]];
@@ -182,12 +188,17 @@ fragment FragOut ps2_fragment(RasterData in [[stage_in]],
 
     float4 result;
     const float2 tex_size = float2(U.tex_size_x, U.tex_size_y);
+    if (kDiag == 1) { out.color = in.color; return out; }
 
     if (kUseTexture) {
-        float inv_q = (in.texcoord.z != 0.0) ? (1.0 / in.texcoord.z) : 1.0;
-        float2 uvn_rt = in.texcoord.xy * inv_q;
+        // UV-mode draws carry q = 1.0 at every vertex (an interpolated constant): 1/q is exactly 1.0.
+        float inv_q = kFstQ1 ? 1.0 : ((in.texcoord.z != 0.0) ? (1.0 / in.texcoord.z) : 1.0);
+        float2 uvn_rt = kFstQ1 ? in.texcoord.xy : in.texcoord.xy * inv_q;
         if (U.uv_native != 0) uvn_rt = NativeCenter(uvn_rt, U.draw_scale, frag_xy);
-        float2 uv = uvn_rt / tex_size;
+        // A power-of-two texture size divides exactly as the multiply by its reciprocal.
+        float2 uv;
+        uv.x = kTexPow2X ? uvn_rt.x * U.tex_inv_x : uvn_rt.x / tex_size.x;
+        uv.y = kTexPow2Y ? uvn_rt.y * U.tex_inv_y : uvn_rt.y / tex_size.y;
         if (U.flip_v != 0) uv.y = 1.0 - uv.y;
 
         float4 vc = floor(in.color * 255.0 + 0.5);
@@ -354,6 +365,7 @@ fragment FragOut ps2_fragment(RasterData in [[stage_in]],
     }
 
     result = clamp(result, 0.0, 1.0);
+    if (kDiag == 2) { out.color = result; return out; }
 
     // --- PS2 fog (PRIM.FGE + FOGCOL) ---
     if (kFog) {
@@ -590,6 +602,30 @@ fragment float4 halfword_fragment(RasterData in [[stage_in]], float4 dst_in [[co
     int word = (U.dest_hi != 0) ? ((dst & 0xFFFF) | (new_half << 16)) : ((dst & int(0xFFFF0000u)) | new_half);
     return float4(float(word & 0xFF), float((word >> 8) & 0xFF), float((word >> 16) & 0xFF),
                   float((word >> 24) & 0xFF)) / 255.0;
+}
+
+// The point-sampled readback: output texel p = source texel (origin + p * step); colour as the bytes are,
+// depth as the stored float into an R32Float attachment (exact).
+struct NearestUniforms {
+    int origin_x, origin_y, step;
+};
+
+fragment float4 nearest_color_fragment(FsData in [[stage_in]], constant NearestUniforms& U [[buffer(0)]],
+                                       texture2d<float> u_src [[texture(0)]]) {
+    int2 p = int2(in.position.xy);
+    int2 sp = int2(U.origin_x, U.origin_y) + p * U.step;
+    int2 dim = int2(u_src.get_width(), u_src.get_height());
+    sp = clamp(sp, int2(0), dim - 1);
+    return u_src.read(uint2(sp));
+}
+
+fragment float nearest_depth_fragment(FsData in [[stage_in]], constant NearestUniforms& U [[buffer(0)]],
+                                      depth2d<float> u_src [[texture(0)]]) {
+    int2 p = int2(in.position.xy);
+    int2 sp = int2(U.origin_x, U.origin_y) + p * U.step;
+    int2 dim = int2(u_src.get_width(), u_src.get_height());
+    sp = clamp(sp, int2(0), dim - 1);
+    return u_src.read(uint2(sp));
 }
 
 // ---------------------------------------------------------------- the scanout quad

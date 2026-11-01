@@ -349,13 +349,16 @@ void TargetRefresher::RefreshAlphaMerge(RenderTarget& t, int y0, int y1, uint32_
     if (AlphaMergeOnGpu(t, y0, y1)) return;
     ++alpha_merges_cpu_;
     pixels_.assign(static_cast<size_t>(w) * s * h * s * 4, 0);
-    be_.Readback(t.views.color, render::Rect{0, y0 * s, w * s, h * s}, pixels_.data(), size_t(w) * s * 4);
-    if (s != 1) {
-        // Fold the physical rows onto the logical grid (nearest texel).
-        for (int y = 0; y < h; ++y)
-            for (int x = 0; x < w; ++x)
-                std::memcpy(pixels_.data() + (size_t(y) * w + x) * 4,
-                            pixels_.data() + (size_t(y) * s * w * s + size_t(x) * s) * 4, 4);
+    // The logical grid straight from the GPU (the nearest pass) when the backend has it; else the physical
+    // rows folded onto it (nearest texel) -- the same bytes.
+    if (s == 1 || !be_.ReadbackNearest(t.views.color, render::Rect{0, y0 * s, w * s, h * s}, s, pixels_.data(), size_t(w) * 4)) {
+        be_.Readback(t.views.color, render::Rect{0, y0 * s, w * s, h * s}, pixels_.data(), size_t(w) * s * 4);
+        if (s != 1) {
+            for (int y = 0; y < h; ++y)
+                for (int x = 0; x < w; ++x)
+                    std::memcpy(pixels_.data() + (size_t(y) * w + x) * 4,
+                                pixels_.data() + (size_t(y) * s * w * s + size_t(x) * s) * 4, 4);
+        }
     }
     const LogicalRect& newer = t.coherence.main_drawn_since_deposit;
     for (int y = 0; y < h; ++y) {
@@ -395,12 +398,14 @@ void TargetRefresher::RefreshCt16(RenderTarget& t, int y0, int y1, uint32_t bw, 
     }
     if (any_keep) {
         std::vector<uint8_t> att(static_cast<size_t>(w) * s * h * s * 4);
-        be_.Readback(t.views.color, render::Rect{0, y0 * s, w * s, h * s}, att.data(), size_t(w) * s * 4);
+        int rs = s;   // the read's step: 1 when the nearest pass served the logical rows
+        if (s > 1 && be_.ReadbackNearest(t.views.color, render::Rect{0, y0 * s, w * s, h * s}, s, att.data(), size_t(w) * 4)) rs = 1;
+        else be_.Readback(t.views.color, render::Rect{0, y0 * s, w * s, h * s}, att.data(), size_t(w) * s * 4);
         for (int y = 0; y < h; ++y) {
             if (!keep[size_t(y)]) continue;
             for (int x = 0; x < w; ++x)
                 std::memcpy(pixels_.data() + (size_t(y) * w + x) * 4,
-                            att.data() + (size_t(y) * s * w * s + size_t(x) * s) * 4, 4);
+                            att.data() + (size_t(y) * rs * w * rs + size_t(x) * rs) * 4, 4);
         }
     }
     // The band's 5551 halfwords out of the mirror in one swizzle walk, then the

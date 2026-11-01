@@ -85,6 +85,8 @@ void* MetalPipelineCache::Pipeline(MetalProgram program, bool color, bool depth,
             case MetalProgram::AlphaLane: fs = MetalShaderSources::kAlphaLaneFragment; break;
             case MetalProgram::Halfword: vs = MetalShaderSources::kPs2Vertex; fs = MetalShaderSources::kHalfwordFragment; break;
             case MetalProgram::Const: fs = MetalShaderSources::kConstFragment; break;
+            case MetalProgram::NearestColor: fs = MetalShaderSources::kNearestColorFragment; break;
+            case MetalProgram::NearestDepth: fs = MetalShaderSources::kNearestDepthFragment; break;
             default: return nullptr;
         }
         id<MTLFunction> vf = Function(lib, vs);
@@ -96,11 +98,13 @@ void* MetalPipelineCache::Pipeline(MetalProgram program, bool color, bool depth,
             int tex_path = static_cast<int>((spec >> 1) & 3u);
             b = (spec & 1u) != 0;        [cv setConstantValue:&b type:MTLDataTypeBool atIndex:0];
             [cv setConstantValue:&tex_path type:MTLDataTypeInt atIndex:1];
-            for (int i = 2; i <= 12; ++i) {
-                const int bit = i + 1;   // fog = bit 3 ... scanmsk = bit 13
+            for (int i = 2; i <= 15; ++i) {
+                const int bit = i + 1;   // fog = bit 3 ... scanmsk = bit 13, fst_q1 = bit 14, tex_pow2 x/y = bits 15/16
                 b = ((spec >> bit) & 1u) != 0;
                 [cv setConstantValue:&b type:MTLDataTypeBool atIndex:static_cast<NSUInteger>(i)];
             }
+            int diag = static_cast<int>((spec >> 17) & 3u);
+            [cv setConstantValue:&diag type:MTLDataTypeInt atIndex:16];
             NSError* ferr = nil;
             ff = [lib newFunctionWithName:[NSString stringWithUTF8String:fs] constantValues:cv error:&ferr];
             [cv release];
@@ -115,7 +119,8 @@ void* MetalPipelineCache::Pipeline(MetalProgram program, bool color, bool depth,
         d.vertexFunction = vf;
         d.fragmentFunction = ff;
         if (color) {
-            d.colorAttachments[0].pixelFormat = MTLPixelFormatRGBA8Unorm;
+            // The nearest-depth pass writes the stored float into an R32Float attachment; `depth` = false there.
+            d.colorAttachments[0].pixelFormat = program == MetalProgram::NearestDepth ? MTLPixelFormatR32Float : MTLPixelFormatRGBA8Unorm;
             d.colorAttachments[0].blendingEnabled = NO;   // the program blends (framebuffer fetch)
             d.colorAttachments[0].writeMask = MTLColorWriteMaskAll;
         }

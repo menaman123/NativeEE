@@ -31,7 +31,7 @@ int Usage() {
     std::fprintf(stderr,
                  "usage: gs_replay stream <in.gsstream> [--scale N] [--warmup N] [--max-frames N]\n"
                  "                 [--csv f] [--json f] [--dump-ppm DIR] [--dump-frames a-b[:step]] [--no-grab] [--deferred-grab] [--phash]\n"
-                 "                 [--quiet] [--sync-capture] [--swap] [--cd-barrier] [--backend gl|metal] [--metal-hw-depth] [--metal-commit-draws N] [--trace-draw N@F]\n"
+                 "                 [--quiet] [--sync-capture] [--swap] [--cd-barrier] [--backend gl|metal] [--metal-hw-depth] [--metal-commit-draws N] [--metal-gpu-timing] [--metal-plain-arms] [--trace-draw N@F]\n"
                  "                 [--force-shader-blend] [--draw-limit N[@F]] [--no-coalesce] [--unified-blend|--no-unified-blend]\n"
                  "                 [--draw-mult K] [--loop N] [--gpu-sync]   (the STRESS lane: every draw delivered K times; the capture replayed N times)\n"
                  "                 (exit 77 = no GL / Metal device)\n"
@@ -97,6 +97,10 @@ int MainStream(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--draw-mult") && i + 1 < argc) opt.draw_mult = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 0));
         else if (!std::strcmp(argv[i], "--loop") && i + 1 < argc) opt.loop = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 0));
         else if (!std::strcmp(argv[i], "--gpu-sync")) opt.gpu_sync = true;
+        else if (!std::strcmp(argv[i], "--metal-gpu-timing")) opt.metal_gpu_timing = true;
+        else if (!std::strcmp(argv[i], "--metal-plain-arms")) opt.metal_plain_arms = true;
+        else if (!std::strcmp(argv[i], "--metal-shared-rt")) opt.metal_shared_rt = true;
+        else if (!std::strcmp(argv[i], "--metal-diag-frag") && i + 1 < argc) opt.metal_diag_fragment = std::atoi(argv[++i]);
         else if (!std::strcmp(argv[i], "--trace-draw") && i + 1 < argc) {
             char* end = nullptr;
             opt.trace_draw = static_cast<uint32_t>(std::strtoul(argv[++i], &end, 0));

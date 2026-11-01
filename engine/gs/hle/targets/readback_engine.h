@@ -161,8 +161,13 @@ private:
                                                                uint64_t batch_epoch) const;
 
     // The pixels_ fill for `pr` of `color`: the offer when it covers the rect,
-    // else the backend's readback.
-    void ReadColorRows(render::Backend& be, render::SurfaceId color, const render::Rect& pr);
+    // else the backend's readback -- point-sampled at `scale` when the backend offers it
+    // (pixels_scale_ = 1: the rows are logical), else physical (pixels_scale_ = scale).
+    void ReadColorRows(render::Backend& be, render::SurfaceId color, const render::Rect& pr, int scale);
+    // The step the encode samples pixels_ / depth_ at (1 = logical rows; s = physical rows of a
+    // scale-s attachment: texel (x * s, y * s) of the logical pixel).
+    int pixels_scale_ = 1;
+    int depth_scale_ = 1;
 
     struct Offer {
         render::SurfaceId color;

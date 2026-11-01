@@ -55,6 +55,7 @@ void DrawRouteTrace::Note(const DrawIr& ir, const TextureSource& src, const rend
     l.zte = r.test.zte; l.ztst = r.test.ztst; l.zmsk = r.zbuf.zmsk; l.date = r.test.date;
     l.colclamp = r.colclamp; l.pabe = r.pabe; l.fba = r.fba;
     l.fbp = r.frame.fbp; l.fbmsk = r.frame.fbmsk;
+    l.zbp = r.zbuf.zbp;
     l.tbp = ir.tex.tbp; l.tpsm = ir.tex.psm; l.cbp = ir.tex.cbp;
     l.verts = static_cast<uint32_t>(ir.verts.size());
     if (!ir.verts.empty()) {
@@ -117,11 +118,11 @@ void DrawRouteTrace::Write(std::FILE* f) const {
         std::fprintf(f,
                      "seq=%u vf=%u prim=%u abe=%u tex=%u ALPHA=%u%u%u%u fix=%02x tfx=%u tcc=%u "
                      "TEST(ate=%u atst=%u aref=%02x afail=%u date=%u zte=%u ztst=%u) zmsk=%u cc=%u pabe=%u fba=%u "
-                     "FRAME=%06x fbmsk=%08x TEX=%06x psm=%u cbp=%06x owner=%s fmt=%u verts=%u rgba0=%08x "
+                     "FRAME=%06x ZBUF=%06x fbmsk=%08x TEX=%06x psm=%u cbp=%06x owner=%s fmt=%u verts=%u rgba0=%08x "
                      "drew=%u blend=%s rtcopy=%u copied=%u wrap=%u m16=%u ns=%llu rb=%u cp=%u up=%u upb=%u dc=%u ss=%u us=%u\n",
                      l.seq, l.src_frame, l.prim, l.abe, l.tex, l.a, l.b, l.c, l.d, l.fix, l.tfx, l.tcc, l.ate,
                      l.atst, l.aref, l.afail, l.date, l.zte, l.ztst, l.zmsk, l.colclamp, l.pabe, l.fba, l.fbp,
-                     l.fbmsk, l.tbp, l.tpsm, l.cbp, owner, l.fmt_case, l.verts, l.rgba0, l.drew ? 1 : 0, blend,
+                     l.zbp, l.fbmsk, l.tbp, l.tpsm, l.cbp, owner, l.fmt_case, l.verts, l.rgba0, l.drew ? 1 : 0, blend,
                      l.needs_rt_copy ? 1 : 0, l.cd_copied ? 1 : 0, l.wrap_route ? 1 : 0,
                      l.fbmsk16_exact ? 1 : 0, (unsigned long long)l.cost.ns, l.cost.readbacks, l.cost.copies,
                      l.cost.uploads, l.cost.upload_bytes, l.cost.draw_calls, l.cost.state_sets, l.cost.uniform_sets);

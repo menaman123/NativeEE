@@ -248,6 +248,7 @@ void DrawPipeline::ClearFrame(Frame* out) {
     out->source = ScanoutComposer::Source::None;
     out->source_fbp = kNoFbp;
     out->source_fallback = false;
+    out->grab_step = 1;
 }
 
 bool DrawPipeline::CompletePendingGrab(Frame* out) {
@@ -266,6 +267,7 @@ bool DrawPipeline::CompletePendingGrab(Frame* out) {
     out->source = pg.source;
     out->source_fbp = pg.source_fbp;
     out->source_fallback = pg.source_fallback;
+    out->grab_step = pg.grab_step;
     return true;
 }
 
@@ -309,6 +311,7 @@ void DrawPipeline::FrameEndGrab(bool ee_frame_end, Frame* out) {
             pending_grab_.source = d_.scanout->LastGrabSource();
             pending_grab_.source_fbp = d_.scanout->LastGrabFbp();
             pending_grab_.source_fallback = d_.scanout->LastGrabFallback();
+            pending_grab_.grab_step = d_.scanout->LastGrabStep();
         } else {
             out->w = w;
             out->h = h;
@@ -316,6 +319,7 @@ void DrawPipeline::FrameEndGrab(bool ee_frame_end, Frame* out) {
             out->source = d_.scanout->LastGrabSource();
             out->source_fbp = d_.scanout->LastGrabFbp();
             out->source_fallback = d_.scanout->LastGrabFallback();
+            out->grab_step = d_.scanout->LastGrabStep();
         }
         return;
     }
@@ -326,6 +330,7 @@ void DrawPipeline::FrameEndGrab(bool ee_frame_end, Frame* out) {
         out->source = d_.scanout->LastGrabSource();
         out->source_fbp = d_.scanout->LastGrabFbp();
         out->source_fallback = d_.scanout->LastGrabFallback();
+        out->grab_step = d_.scanout->LastGrabStep();
         if (!out->grabbed || out->w <= 0 || out->h <= 0) {
             out->rgba.clear();
             out->w = out->h = 0;
@@ -337,7 +342,7 @@ void DrawPipeline::FrameEndGrab(bool ee_frame_end, Frame* out) {
             // The grab just read the whole attachment: the scanout deposit that
             // follows (DrawScanout -> SyncDrawn) takes its rows from it instead of a
             // second GPU read; revoked after the present (OnFrameEnd).
-            if (const RenderTarget* t = d_.cache->Find(out->source_fbp))
+            if (const RenderTarget* t = d_.cache->Find(out->source_fbp); t && out->grab_step == 1)
                 d_.cache->Readback().OfferPixels(t->views.color, out->w, out->h, &out->rgba);
         }
     }

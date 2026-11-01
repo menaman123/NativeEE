@@ -102,6 +102,15 @@ public:
     // target's base and whether it was the most-recently-drawn fallback (not the
     // target at the scanout base).
     Source LastGrabSource() const { return last_grab_; }
+    // The step the last Target grab was point-sampled at (1 = the physical rows; s = one texel per
+    // logical pixel, texel (x*s, y*s): the native grab -- the same texels FrameHasher::HashNativeScale
+    // takes from the physical rows at scale s, so the frames-lane hash is unchanged with the hash scale 1).
+    int LastGrabStep() const { return last_grab_step_; }
+    // Native grabs (the hash lane without a frame dump): a Target grab of a scaled attachment reads the
+    // logical texels through Backend::ReadbackNearest / BeginReadbackNearest (1 / s^2 of the bytes);
+    // off = the physical rows (the frame dump's image, the full-pixel oracle).
+    void SetNativeGrab(bool on) { native_grab_ = on; }
+    bool NativeGrab() const { return native_grab_; }
     uint32_t LastGrabFbp() const { return last_grab_fbp_; }
     bool LastGrabFallback() const { return last_grab_fallback_; }
 
@@ -125,6 +134,8 @@ private:
                              bool* stale_display);
     bool GrabLocalMemory(const VramImage& vram, std::vector<uint8_t>* out, int* w, int* h);
     bool GrabDisplayImpl(render::FenceId* fence, std::vector<uint8_t>* out, int* w, int* h, const VramImage* vram);
+    int last_grab_step_ = 1;
+    bool native_grab_ = false;
     void PresentMirror(const VramImage& vram, uint32_t fbp, uint32_t fbw, uint32_t psm, const render::Rect& window);
 
     render::Backend& be_;

@@ -203,6 +203,7 @@ struct CallCensus {
     uint64_t prompt_timeouts = 0;    // ... and the ones whose wait ran out (read back one present late as before)
     uint64_t prompt_wait_ns = 0;     // the bounded waits' total time
     uint64_t prompt_skipped = 0;     // ... and the presents the gate kept from waiting (read one present late)
+    uint64_t split_draws = 0;        // draws issued twice for the alpha-fail population split (afail != KEEP under a real ATST)
     uint64_t state_sets = 0;         // fixed-function state calls ISSUED (blend / depth / mask / scissor / viewport / enable)
     uint64_t uniform_sets = 0;       // uniform calls ISSUED (the shadow caches skip the rest)
 };
@@ -276,6 +277,14 @@ public:
     // PollReadback = unknown handle. Caps::staging_readback says the read is truly
     // deferred (a caller may overlap work between Begin and Poll).
     virtual FenceId BeginReadback(SurfaceId id, const Rect& rect) = 0;
+    // The point-sampled forms (a scaled attachment read at its logical resolution): texel (x, y) of the
+    // result is physical texel (rect.x + x * step + sub_x, rect.y + y * step + sub_y) for x < rect.w / step,
+    // y < rect.h / step (0 <= sub < step) -- exactly the texels a caller sampling the physical read at
+    // `step` would take, at 1 / step^2 of the bytes. `out` rows are (rect.w / step) texels apart by `stride`
+    // bytes (0 = packed), the format as Readback's. A backend without the pass returns false / a null
+    // fence: the caller takes the physical read.
+    virtual bool ReadbackNearest(SurfaceId, const Rect&, int, void*, size_t, int /*sub_x*/ = 0, int /*sub_y*/ = 0) { return false; }
+    virtual FenceId BeginReadbackNearest(SurfaceId, const Rect&, int, int /*sub_x*/ = 0, int /*sub_y*/ = 0) { return FenceId{}; }
     virtual bool ReadbackReady(FenceId) { return true; }
     virtual bool PollReadback(FenceId fence, void* out, size_t stride) = 0;
     // A missing nonzero source or invalid explicit source rectangle refuses

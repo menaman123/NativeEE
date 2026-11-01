@@ -124,6 +124,7 @@ DrawResult MetalDrawExecutor::Draw(const gs::DrawIr& ir, const gs::TextureSource
     if (s.first < 0) return none;
     ColorMaskState(ir, s);
     if (gs::AlphaFailMask::SplitsPopulations(ir.raster.test)) {
+        dev_.CensusMut().split_draws++;
         u_.afail_pass = 1;
         Emit(ir, s);
         Step fail = s;
@@ -206,7 +207,7 @@ DrawResult MetalDrawExecutor::DrawHalfwordShuffle(const gs::DrawIr& ir, const gs
     [e setFragmentTexture:T(src->tex) atIndex:0];
     [e setFragmentTexture:T(copy->tex) atIndex:1];
     [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:static_cast<NSUInteger>(first) vertexCount:6];
-    dev_.CensusMut().draw_calls++;
+    dev_.NoteDraw();
     dev_.Touch(*src);
     dev_.Touch(*copy);
     DrawResult r;
@@ -310,6 +311,23 @@ void MetalDrawExecutor::TextureUniforms(const gs::DrawIr& ir, const gs::TextureS
     } else {
         u_.tex_size_x = static_cast<float>(t.uv_tex_w);
         u_.tex_size_y = static_cast<float>(t.uv_tex_h);
+    }
+    // The exact fast arms: q == 1.0 on every vertex of a UV-mode draw (VertexConvert::UvFixed), and a
+    // power-of-two texture size whose reciprocal is exact.
+    u_.fst_q1 = (s.has_texture && ir.tex.fst) ? 1 : 0;
+    u_.tex_pow2 = 0;
+    u_.tex_inv_x = u_.tex_inv_y = 1.f;
+    if (s.has_texture) {
+        auto pow2 = [](float v, float* inv) {
+            if (!(v > 0.f)) return false;
+            int e = 0;
+            const float m = std::frexp(v, &e);
+            if (m != 0.5f) return false;          // exactly 2^(e-1)
+            *inv = std::ldexp(1.f, 1 - e);        // exact
+            return true;
+        };
+        if (pow2(u_.tex_size_x, &u_.tex_inv_x)) u_.tex_pow2 |= 1;
+        if (pow2(u_.tex_size_y, &u_.tex_inv_y)) u_.tex_pow2 |= 2;
     }
     u_.tfx = tex.enabled ? static_cast<int>(ir.tex.tfx) : 0;
     const int levels = rt ? 0 : t.mip_levels;
@@ -577,7 +595,7 @@ void MetalDrawExecutor::Emit(const gs::DrawIr& ir, Step& s) {
     }
     [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:static_cast<NSUInteger>(s.first)
           vertexCount:static_cast<NSUInteger>(s.tri_verts)];
-    dev_.CensusMut().draw_calls++;
+    dev_.NoteDraw();
     dev_.SplitPassIfDue();   // the GPU starts on this chunk while the CPU encodes the next
 }
 
@@ -602,6 +620,11 @@ MetalSpecKey MetalDrawExecutor::SpecKey() const {
     k.fba = u_.fba != 0 ? 1 : 0;
     k.mask_all = u_.color_mask == 0xF ? 1 : 0;
     k.scanmsk = (u_.scanmsk == 2 || u_.scanmsk == 3) ? 1 : 0;
+    if (k.use_texture && dev_.Settings().exact_arms) {
+        k.fst_q1 = u_.fst_q1 ? 1 : 0;
+        k.tex_pow2 = static_cast<uint8_t>(u_.tex_pow2 & 3);
+    }
+    k.diag = static_cast<uint8_t>(dev_.Settings().diag_fragment & 3);
     return k;
 }
 
