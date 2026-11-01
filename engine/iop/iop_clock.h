@@ -37,7 +37,25 @@ public:
     void OnFrameBoundary();
     // Frame: forced advance to an absolute deadline (all threads time-parked:
     // jump to the earliest due). Never moves time backwards. No-op otherwise.
+    // With the frame base following (SetFrameBaseFollowsSkips, the default), an
+    // advance beyond what the NEXT boundary can absorb (past (frames+2)*kFrameUs)
+    // carries the frame base to the frame before the one containing the new
+    // time: the next boundary lands in that frame and runs its remainder, the
+    // one after runs a full quantum -- no boundary pump is ever a no-op. An
+    // overshoot within the next frame is left to that boundary (its shortened
+    // quantum keeps IOP time continuous), as before. Without following (the
+    // pre-FIX-2 clock) the base stays behind and every boundary pump is a no-op
+    // until the boundary count catches up: a 1 s skip = 65 dark boundaries while
+    // the SPU plays on (the 989snd bank load that killed the hub music).
     void AdvanceToUs(uint64_t t);
+    void SetFrameBaseFollowsSkips(bool on) { follow_skips_ = on; }
+    bool FrameBaseFollowsSkips() const { return follow_skips_; }
+    // Census: forced advances beyond the next boundary's ceiling, the frames
+    // they skipped (base moves, or -- not following -- the dark boundaries they
+    // cost), and the longest single skip past that ceiling in microseconds.
+    uint64_t Skips() const { return skips_; }
+    uint64_t SkippedFrames() const { return skipped_frames_; }
+    uint64_t MaxSkipUs() const { return max_skip_us_; }
     // Frame: a savestate restore -- the restored image's vsync frame count IS
     // this clock's frame count: the frame base becomes `frames` and time moves
     // (forward-only, as every advance) to that base, so the NEXT boundary
@@ -66,6 +84,8 @@ private:
     std::chrono::steady_clock::time_point start_ = std::chrono::steady_clock::now();
     uint64_t virtual_us_ = 0;
     uint64_t frames_ = 0;
+    bool     follow_skips_ = true;
+    uint64_t skips_ = 0, skipped_frames_ = 0, max_skip_us_ = 0;
 };
 
 }  // namespace ps2r::iop

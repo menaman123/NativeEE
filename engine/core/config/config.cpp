@@ -266,6 +266,7 @@ const std::vector<Field>& Fields() {
         BOOL_FIELD("input.invert_camera_y", input.invert_camera_y),
         ENUM_FIELD("iop.dispatch", iop.dispatch, kIop),
         ENUM_FIELD("iop.restored_timer_due", iop.restored_timer_due, kTimerDue),
+        BOOL_FIELD("iop.frame_base_follows_skips", iop.frame_base_follows_skips),
         BOOL_FIELD("loader.ring_cache", loader.ring_cache),
         STR_FIELD("log.channels", log.channels),
         INT_FIELD("log.ring_events", log.ring_events),
