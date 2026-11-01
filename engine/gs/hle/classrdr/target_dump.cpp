@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <vector>
 
 #include "engine/gs/hle/ir/draw_ir.h"
 #include "engine/gs/hle/targets/render_target_cache.h"
@@ -72,6 +73,29 @@ void TargetDump::Write(const DrawIr& ir, RenderTargetCache& cache, render::Backe
         std::fwrite(scratch_.data(), 1, scratch_.size(), f);
         std::fclose(f);
         ++written_;
+    }
+    // The depth plane the same draw tests against (the Z buffer a DATE / stencil-counter
+    // volume face is Z-tested on): `rt_<fbp>_<ordinal>_<pre|post>_z.pgm`, P5 MAXVAL 65535 is
+    // too narrow for a 32-bit Z, so the plane goes out as a raw little-endian uint32 image
+    // behind a one-line header: `Z32 <w> <h>\n` then w*h values of PS2 z = round(d * 2^32).
+    if (t->views.depth.id) {
+        const render::SurfaceDesc dz = be.DescribeSurface(t->views.depth);
+        if (dz.width && dz.height) {
+            std::vector<float> depth(static_cast<size_t>(dz.width) * dz.height, 0.0f);
+            be.Readback(t->views.depth, render::Rect{0, 0, static_cast<int32_t>(dz.width), static_cast<int32_t>(dz.height)},
+                        depth.data(), static_cast<size_t>(dz.width) * sizeof(float));
+            std::snprintf(name, sizeof name, "/rt_%06x_%04u_%s_z.bin", req_.fbp, ordinal_, post ? "post" : "pre");
+            if (std::FILE* zf = std::fopen((req_.dir + name).c_str(), "wb")) {
+                std::fprintf(zf, "Z32 %u %u\n", dz.width, dz.height);
+                std::vector<uint32_t> z(depth.size());
+                for (size_t i = 0; i < depth.size(); ++i) {
+                    const double v = static_cast<double>(depth[i]) * 4294967296.0;
+                    z[i] = v <= 0.0 ? 0u : (v >= 4294967295.0 ? 0xFFFFFFFFu : static_cast<uint32_t>(v));
+                }
+                std::fwrite(z.data(), sizeof(uint32_t), z.size(), zf);
+                std::fclose(zf);
+            }
+        }
     }
     if (std::FILE* ix = std::fopen((req_.dir + "/rt_dump_index.txt").c_str(), "a")) {
         std::fprintf(ix,
