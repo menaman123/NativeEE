@@ -33,7 +33,7 @@ int Usage() {
                  "                 [--csv f] [--json f] [--dump-ppm DIR] [--dump-frames a-b[:step]] [--no-grab] [--deferred-grab] [--phash]\n"
                  "                 [--quiet] [--sync-capture] [--swap] [--cd-barrier] [--backend gl|metal] [--metal-hw-depth] [--metal-commit-draws N] [--trace-draw N@F]\n"
                  "                 [--force-shader-blend] [--draw-limit N[@F]] [--no-coalesce] [--unified-blend|--no-unified-blend]\n"
-                 "                 [--draw-mult K] [--loop N]   (the STRESS lane: every draw delivered K times; the capture replayed N times)\n"
+                 "                 [--draw-mult K] [--loop N] [--gpu-sync]   (the STRESS lane: every draw delivered K times; the capture replayed N times)\n"
                  "                 (exit 77 = no GL / Metal device)\n"
                  "       gs_replay census <in.gsstream> [--csv f] [--full-frac F] [--frame-height H] [--top N] [--max-frames N] [--quiet]\n"
                  "                 (the per-frame draw census of the capture: no GPU)\n");
@@ -96,6 +96,7 @@ int MainStream(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--metal-hw-depth")) opt.metal_hw_depth = true;
         else if (!std::strcmp(argv[i], "--draw-mult") && i + 1 < argc) opt.draw_mult = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 0));
         else if (!std::strcmp(argv[i], "--loop") && i + 1 < argc) opt.loop = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 0));
+        else if (!std::strcmp(argv[i], "--gpu-sync")) opt.gpu_sync = true;
         else if (!std::strcmp(argv[i], "--trace-draw") && i + 1 < argc) {
             char* end = nullptr;
             opt.trace_draw = static_cast<uint32_t>(std::strtoul(argv[++i], &end, 0));

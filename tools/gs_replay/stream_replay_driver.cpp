@@ -89,6 +89,11 @@ void StreamReplayDriver::BuildScene() {
     vram_->SetGateTrace(opt_.gate_trace);
     refresher_ = std::make_unique<gs::TargetRefresher>(*be_, *vram_, *cache_);
     resolver_ = std::make_unique<gs::TextureResolver>(*be_, *vram_, *cache_, *refresher_, layout_);
+    if (opt_.gpu_sync) {
+        render::SurfaceDesc sd;
+        sd.width = 4; sd.height = 4; sd.format = render::SurfaceFormat::Rgba8;
+        sync_surface_ = be_->CreateSurface(sd);
+    }
     scanout_ = std::make_unique<gs::ScanoutComposer>(*be_, *cache_);
     presenter_ = std::make_unique<gs::Presenter>(*scanout_);
     gs::DrawPipeline::Deps deps;
@@ -180,9 +185,17 @@ void StreamReplayDriver::ChainHash(const FrameStat& st) {
 }
 
 void StreamReplayDriver::OnFrameDone(const gs::JobRec& vsync) {
+    double sync_ms = 0;
+    if (opt_.gpu_sync && be_) {
+        const double s0 = NowMs();
+        uint32_t px = 0;
+        be_->Readback(sync_surface_, render::Rect{0, 0, 1, 1}, &px, 4);   // drains the queue (synchronous)
+        sync_ms = NowMs() - s0;
+    }
     const double t = NowMs();
     FrameStat st;
     st.ms = t - frame_t0_;
+    st.sync_ms = sync_ms;
     frame_t0_ = t;
     st.draws = frame_draws_;
     st.jobs = frame_jobs_;
@@ -456,14 +469,14 @@ void StreamReplayDriver::WriteOutputs() const {
     std::printf("STREAM_HASH %016llx\n", static_cast<unsigned long long>(stream_hash_));
     if (opt_.csv_path) {
         if (std::FILE* f = std::fopen(opt_.csv_path, "w")) {
-            std::fprintf(f, "frame,ms,draws,jobs,hash,grabbed,readbacks,copies,draw_calls,submits,gpu_ms,phash\n");
+            std::fprintf(f, "frame,ms,draws,jobs,hash,grabbed,readbacks,copies,draw_calls,submits,gpu_ms,phash,sync_ms\n");
             for (size_t i = 0; i < frames_.size(); ++i) {
                 const FrameStat& s = frames_[i];
-                std::fprintf(f, "%zu,%.4f,%u,%u,%016llx,%d,%llu,%llu,%llu,%llu,%.4f,%016llx\n", i, s.ms, s.draws, s.jobs,
+                std::fprintf(f, "%zu,%.4f,%u,%u,%016llx,%d,%llu,%llu,%llu,%llu,%.4f,%016llx,%.4f\n", i, s.ms, s.draws, s.jobs,
                              static_cast<unsigned long long>(s.hash), s.grabbed ? 1 : 0,
                              static_cast<unsigned long long>(s.readbacks), static_cast<unsigned long long>(s.copies),
                              static_cast<unsigned long long>(s.draw_calls), static_cast<unsigned long long>(s.submits),
-                             static_cast<double>(s.gpu_ns) * 1e-6, static_cast<unsigned long long>(s.phash));
+                             static_cast<double>(s.gpu_ns) * 1e-6, static_cast<unsigned long long>(s.phash), s.sync_ms);
             }
             std::fclose(f);
         }

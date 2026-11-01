@@ -90,12 +90,18 @@ public:
         // image each pass; the frame rows run on).
         uint32_t draw_mult = 1;
         uint32_t loop = 1;
+        // --gpu-sync: at every frame boundary a 1x1 synchronous readback of a scratch surface drains the GPU queue
+        // (MetalDevice::Readback waits for completion), so the row's `ms` is the SERIALISED CPU-encode + GPU time of
+        // the frame and `sync_ms` the drain wait alone (= the GPU's backlog past the CPU at the boundary; GPU time per
+        // frame ~ ms when GPU-bound). The lane is then not pipelined: a bracket row, not the throughput row.
+        bool gpu_sync = false;
         uint32_t draw_limit = 0;           // --draw-limit N[@F]: only the first N draws of frame F (default: every dumped frame) reach the consumer (0 = all; a bisection aid)
         uint32_t draw_limit_frame = kDrawLimitDumpRange;
     };
     static constexpr uint32_t kDrawLimitDumpRange = 0xFFFFFFFFu;
     struct FrameStat {
         double ms = 0;
+        double sync_ms = 0;      // --gpu-sync: the boundary drain wait included in ms
         uint32_t draws = 0;
         uint32_t jobs = 0;
         uint64_t hash = 0;
@@ -143,6 +149,7 @@ private:
     std::unique_ptr<render::MetalDevice> metal_;
 #endif
     render::Backend* be_ = nullptr;   // gl_ or *metal_
+    render::SurfaceId sync_surface_{};   // --gpu-sync's 4x4 scratch (readback target)
     std::string renderer_name_, api_name_;
     gs::VramLayout layout_{};
     std::unique_ptr<gs::VramImage> vram_;

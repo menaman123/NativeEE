@@ -287,6 +287,29 @@ int main(int argc, char** argv) {
             }
             std::printf("gpu_cmdbuf_commit_wait_roundtrip_us=%.0f\n", best_us);
         }
+        // GPUStartTime/GPUEndTime overlap: N command buffers of equal work committed back to back without waiting --
+        // sum of the per-buffer spans vs the wall span of the batch. The engine's gs_backend gpu_ms row is the SUM; a
+        // factor > 1 says by how much that row over-counts when several buffers are in flight.
+        {
+            const int n = quick ? 8 : 16;
+            std::vector<id<MTLCommandBuffer>> cbs;
+            for (int i = 0; i < n; ++i) {
+                id<MTLCommandBuffer> cb = [b.q commandBuffer];
+                MTLRenderPassDescriptor* rp = [MTLRenderPassDescriptor renderPassDescriptor];
+                rp.colorAttachments[0].texture = colour; rp.colorAttachments[0].loadAction = MTLLoadActionLoad; rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+                id<MTLRenderCommandEncoder> enc = [cb renderCommandEncoderWithDescriptor:rp];
+                [enc setRenderPipelineState:p_solid];
+                float d = 0.5f; [enc setVertexBytes:&d length:sizeof d atIndex:0];
+                for (int k = 0; k < 4; ++k) { [enc setFragmentBytes:c_solid length:16 atIndex:0]; [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3]; }
+                [enc endEncoding];
+                [cb commit];
+                cbs.push_back(cb);
+            }
+            for (auto cb : cbs) [cb waitUntilCompleted];
+            double sum = 0, t0 = 1e30, t1 = 0;
+            for (auto cb : cbs) { sum += cb.GPUEndTime - cb.GPUStartTime; t0 = std::min(t0, cb.GPUStartTime); t1 = std::max(t1, cb.GPUEndTime); }
+            std::printf("gpu_cmdbuf_span_sum_over_wall=%.2f (%d buffers x 4 full-screen draws in flight: sum %.2f ms, wall %.2f ms)\n", sum / (t1 - t0), n, sum * 1e3, (t1 - t0) * 1e3);
+        }
         // render-pass switch cost: N encoders of one small draw each (load/store of the scale-4 target per pass)
         {
             const int passes = quick ? 32 : 128;
