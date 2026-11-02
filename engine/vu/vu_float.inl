@@ -35,8 +35,12 @@ PS2R_FORCE_INLINE float VuFloat::ClampFloat(float v) {
 }
 
 PS2R_FORCE_INLINE bool VuFloat::AnyExp255(const VR_reg& r) {
+#if PS2R_VU_SSE
+    return AnyExp255S(_mm_loadu_ps(r.F));
+#else
     return ((r.I[0] & kExpMask) == kExpMask) || ((r.I[1] & kExpMask) == kExpMask) ||
            ((r.I[2] & kExpMask) == kExpMask) || ((r.I[3] & kExpMask) == kExpMask);
+#endif
 }
 
 PS2R_FORCE_INLINE void VuFloat::FixExp255Lanes(VR_reg& r, FmacKind kind, const VR_reg& a, const VR_reg& b, const VR_reg* c) {
@@ -161,64 +165,113 @@ PS2R_FORCE_INLINE VR_reg VuFloat::Itof4Scaled(const VR_reg& src, float scale) {
     return r;
 }
 #else
+// Scalar kernels; on x86-64 (PS2R_VU_SSE) the hot ones take their SSE2 twins (rules in vu_float.h).
+#if PS2R_VU_SSE
+#define PS2R_VU_LD(p) _mm_loadu_si128(reinterpret_cast<const __m128i*>(p))
+#define PS2R_VU_ST(p, v) _mm_storeu_si128(reinterpret_cast<__m128i*>(p), (v))
+#endif
 PS2R_FORCE_INLINE void VuFloat::ClampStoreACC(VR_reg& acc) {
+#if PS2R_VU_SSE
+    PS2R_VU_ST(acc.I, ClampBits4S(PS2R_VU_LD(acc.I)));
+#else
     if (IsNormalExp(acc.I[0]) && IsNormalExp(acc.I[1]) && IsNormalExp(acc.I[2]) && IsNormalExp(acc.I[3])) return;
     for (int k = 0; k < 4; ++k) acc.I[k] = ClampBits1(acc.I[k]);
+#endif
 }
 
 PS2R_FORCE_INLINE void VuFloat::WriteMaskClamp(VR_reg& dst, const uint32_t result_bits[4], uint8_t mask) {
+#if PS2R_VU_SSE
+    const __m128i lm = PS2R_VU_LD(kLaneMask[mask & 0xF]);
+    const __m128i v = ClampBits4S(PS2R_VU_LD(result_bits));
+    PS2R_VU_ST(dst.I, _mm_or_si128(_mm_and_si128(lm, v), _mm_andnot_si128(lm, PS2R_VU_LD(dst.I))));
+#else
     if (mask & 8) dst.I[0] = ClampBits1(result_bits[0]);
     if (mask & 4) dst.I[1] = ClampBits1(result_bits[1]);
     if (mask & 2) dst.I[2] = ClampBits1(result_bits[2]);
     if (mask & 1) dst.I[3] = ClampBits1(result_bits[3]);
+#endif
 }
 
 PS2R_FORCE_INLINE uint16_t VuFloat::PackMacBits(const uint32_t bits[4], uint8_t mask) {
+#if PS2R_VU_SSE
+    return MacFlags4S(PS2R_VU_LD(bits), mask);
+#else
     uint16_t m = 0;
     if (mask & 8) m |= MacFlags1(bits[0], 3);
     if (mask & 4) m |= MacFlags1(bits[1], 2);
     if (mask & 2) m |= MacFlags1(bits[2], 1);
     if (mask & 1) m |= MacFlags1(bits[3], 0);
     return m;
+#endif
 }
 
 PS2R_FORCE_INLINE VR_reg VuFloat::ClampVec(const VR_reg& v) {
     VR_reg r;
+#if PS2R_VU_SSE
+    PS2R_VU_ST(r.I, ClampBits4S(PS2R_VU_LD(v.I)));
+#else
     for (int k = 0; k < 4; ++k) r.I[k] = ClampBits1(v.I[k]);
+#endif
     return r;
 }
 
 PS2R_FORCE_INLINE VR_reg VuFloat::Add4(const VR_reg& a, const VR_reg& b) {
     VR_reg r;
+#if PS2R_VU_SSE
+    const __m128 v = _mm_add_ps(_mm_loadu_ps(a.F), _mm_loadu_ps(b.F));
+    _mm_storeu_ps(r.F, v);
+    if (PS2R_UNLIKELY(AnyExp255S(v))) FixExp255Lanes(r, kFmacAdd, a, b, nullptr);
+#else
     for (int k = 0; k < 4; ++k) r.F[k] = a.F[k] + b.F[k];
     if (PS2R_UNLIKELY(AnyExp255(r))) FixExp255Lanes(r, kFmacAdd, a, b, nullptr);
+#endif
     return r;
 }
 
 PS2R_FORCE_INLINE VR_reg VuFloat::Sub4(const VR_reg& a, const VR_reg& b) {
     VR_reg r;
+#if PS2R_VU_SSE
+    const __m128 v = _mm_sub_ps(_mm_loadu_ps(a.F), _mm_loadu_ps(b.F));
+    _mm_storeu_ps(r.F, v);
+    if (PS2R_UNLIKELY(AnyExp255S(v))) FixExp255Lanes(r, kFmacSub, a, b, nullptr);
+#else
     for (int k = 0; k < 4; ++k) r.F[k] = a.F[k] - b.F[k];
     if (PS2R_UNLIKELY(AnyExp255(r))) FixExp255Lanes(r, kFmacSub, a, b, nullptr);
+#endif
     return r;
 }
 
 PS2R_FORCE_INLINE VR_reg VuFloat::Mul4(const VR_reg& a, const VR_reg& b) {
     VR_reg r;
+#if PS2R_VU_SSE
+    const __m128 v = _mm_mul_ps(_mm_loadu_ps(a.F), _mm_loadu_ps(b.F));
+    _mm_storeu_ps(r.F, v);
+    if (PS2R_UNLIKELY(AnyExp255S(v))) FixExp255Lanes(r, kFmacMul, a, b, nullptr);
+#else
     for (int k = 0; k < 4; ++k) r.F[k] = a.F[k] * b.F[k];
     if (PS2R_UNLIKELY(AnyExp255(r))) FixExp255Lanes(r, kFmacMul, a, b, nullptr);
+#endif
     return r;
 }
 
 PS2R_FORCE_INLINE VR_reg VuFloat::Fma4(const VR_reg& a, const VR_reg& b, const VR_reg& c) {
     VR_reg r;
-    for (int k = 0; k < 4; ++k) r.F[k] = std::fmaf(a.F[k], b.F[k], c.F[k]);
+#if PS2R_VU_X86_FMA
+    if (PS2R_LIKELY(g_vu_x86_fma)) VuFmadd4Hw(a.F, b.F, c.F, r.F);
+    else
+#endif
+        for (int k = 0; k < 4; ++k) r.F[k] = std::fmaf(a.F[k], b.F[k], c.F[k]);
     if (PS2R_UNLIKELY(AnyExp255(r))) FixExp255Lanes(r, kFmacFma, a, b, &c);
     return r;
 }
 
 PS2R_FORCE_INLINE VR_reg VuFloat::Fms4(const VR_reg& a, const VR_reg& b, const VR_reg& c) {
     VR_reg r;
-    for (int k = 0; k < 4; ++k) r.F[k] = std::fmaf(-a.F[k], b.F[k], c.F[k]);
+#if PS2R_VU_X86_FMA
+    if (PS2R_LIKELY(g_vu_x86_fma)) VuFnmadd4Hw(a.F, b.F, c.F, r.F);
+    else
+#endif
+        for (int k = 0; k < 4; ++k) r.F[k] = std::fmaf(-a.F[k], b.F[k], c.F[k]);
     if (PS2R_UNLIKELY(AnyExp255(r))) FixExp255Lanes(r, kFmacFms, a, b, &c);
     return r;
 }
@@ -273,6 +326,42 @@ PS2R_FORCE_INLINE uint32_t VuFloat::FtoiSat(float f) {
 inline uint32_t VuFloat::Itof0(uint32_t lane_bits) {
     return F2Bits(static_cast<float>(static_cast<int32_t>(lane_bits)));
 }
+
+#if PS2R_VU_SSE
+PS2R_FORCE_INLINE __m128i VuFloat::ClampBits4S(__m128i bits) {
+    // ClampBits4's rule: denormal <=> (m - 1) <u 0x007FFFFF on the magnitude m; SSE2 has no unsigned compare,
+    // so both sides are biased by 2^31 and compared signed.
+    const __m128i bias = _mm_set1_epi32(static_cast<int>(kSignBit));
+    const __m128i m = _mm_andnot_si128(bias, bits);
+    const __m128i sign = _mm_and_si128(bits, bias);
+    const __m128i mm1 = _mm_xor_si128(_mm_sub_epi32(m, _mm_set1_epi32(1)), bias);
+    const __m128i is_denorm = _mm_cmplt_epi32(mm1, _mm_set1_epi32(static_cast<int>(kMantMask ^ kSignBit)));
+    return _mm_or_si128(_mm_and_si128(is_denorm, sign), _mm_andnot_si128(is_denorm, bits));  // exponent 255 kept
+}
+
+PS2R_FORCE_INLINE uint16_t VuFloat::MacFlags4S(__m128i bits, uint8_t mask) {
+    // The MAC word puts lane 0 (x) at each field's bit 3: the lanes are reversed first, then the four per-lane
+    // masks (all-ones / zero) are packed to bytes in field order Z S U O, so one byte movemask IS the word.
+    const __m128i rb = _mm_shuffle_epi32(bits, _MM_SHUFFLE(0, 1, 2, 3));
+    const __m128i expm = _mm_set1_epi32(static_cast<int>(kExpMask));
+    const __m128i zero = _mm_setzero_si128();
+    const __m128i exp = _mm_and_si128(rb, expm);
+    const __m128i z = _mm_cmpeq_epi32(exp, zero);
+    const __m128i o = _mm_cmpeq_epi32(exp, expm);
+    const __m128i u = _mm_andnot_si128(_mm_cmpeq_epi32(_mm_and_si128(rb, _mm_set1_epi32(static_cast<int>(kMantMask))), zero), z);
+    const __m128i s = _mm_srai_epi32(rb, 31);   // the raw sign, -0 included
+    const __m128i bytes = _mm_packs_epi16(_mm_packs_epi32(z, s), _mm_packs_epi32(u, o));
+    const unsigned lanes = (mask & 0xFu) * 0x1111u;
+    return static_cast<uint16_t>(static_cast<unsigned>(_mm_movemask_epi8(bytes)) & lanes);
+}
+
+PS2R_FORCE_INLINE bool VuFloat::AnyExp255S(__m128 v) {
+    // In the float domain (no bypass from an FP result): |v| masked to its exponent equals +Inf's pattern
+    // exactly when the exponent is all-ones; every other masked lane is a finite number or zero.
+    const __m128 expm = _mm_castsi128_ps(_mm_set1_epi32(static_cast<int>(kExpMask)));
+    return _mm_movemask_ps(_mm_cmpeq_ps(_mm_and_ps(v, expm), expm)) != 0;
+}
+#endif
 
 #if PS2R_VU_NEON
 PS2R_FORCE_INLINE uint32x4_t VuFloat::ClampBits4(uint32x4_t bits) {

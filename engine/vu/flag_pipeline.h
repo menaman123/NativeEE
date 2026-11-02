@@ -35,7 +35,8 @@ public:
     static constexpr int kEfuEatanxy = 54, kEfuEatanxz = 54, kEfuEsum = 12, kEfuErcpr = 12;
     static constexpr int kEfuEsqrt = 12, kEfuErsqrt = 18, kEfuEsin = 29, kEfuEatan = 54, kEfuEexp = 44;
 
-#if defined(PS2R_SIMD) && PS2R_SIMD
+#if (defined(PS2R_SIMD) && PS2R_SIMD) || PS2R_VU_SSE
+    // the SIMD builds' ring: NEON on arm64, the SSE2 lane kernels on x86-64 (PackMacBits is the fold there)
     static constexpr bool kDefaultLazy = true;
 #else
     static constexpr bool kDefaultLazy = false;
@@ -171,7 +172,9 @@ private:
     // The ring's rare overflow (a ninth undelivered result): cold for the
     // generated blocks' sake -- under clang the callee saves every register it
     // touches, so the 30+ call sites of a block keep their file in registers.
-#if defined(__clang__)
+    // Not on Windows: clang has no preserve_all lowering for x86-64 Windows (clang
+    // 18 crashes generating code for the callee, with no diagnostic).
+#if defined(__clang__) && !defined(_WIN32)
 #if __has_attribute(preserve_all)
 #define PS2R_VU_COLD_CALL __attribute__((preserve_all, noinline))
 #endif

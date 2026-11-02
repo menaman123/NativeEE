@@ -145,6 +145,58 @@ static void TestMacFlags() {
         }
     }
 #endif
+#if PS2R_VU_SSE
+    // The SSE2 twins against the scalar per-lane rules (MacFlags1 / ClampBits1 are scalar on every build): the
+    // edge patterns in every lane position, then 1M pseudo-random lanes biased toward the exponent ends.
+    const uint32_t edges[] = {kOne, kNegOne, kPosZero, kNegZero, kPosDenorm, kNegDenorm, kPosInf, kNegInf, kNaN, kNegNaN,
+                              kMinNormal, kPosMax, 0x00000001u, 0x807FFFFFu, 0x7F800001u, 0xFF7FFFFFu};
+    auto check4 = [](const uint32_t s[4]) {
+        uint32_t out[4];
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(out), VuFloat::ClampBits4S(_mm_loadu_si128(reinterpret_cast<const __m128i*>(s))));
+        VR_reg v;
+        for (int k = 0; k < 4; ++k) v.I[k] = s[k];
+        const VR_reg cv = VuFloat::ClampVec(v);
+        bool any255 = false;
+        for (int k = 0; k < 4; ++k) {
+            CHECK(out[k] == VuFloat::ClampBits1(s[k]));
+            CHECK(cv.I[k] == VuFloat::ClampBits1(s[k]));
+            any255 = any255 || (s[k] & VuFloat::kExpMask) == VuFloat::kExpMask;
+        }
+        CHECK(VuFloat::AnyExp255(v) == any255);
+        for (int m = 0; m < 16; ++m) {
+            uint16_t ref = 0;
+            for (int k = 0; k < 4; ++k)
+                if (m & (8 >> k)) ref = static_cast<uint16_t>(ref | VuFloat::MacFlags1(s[k], 3 - k));
+            CHECK(VuFloat::PackMacBits(s, static_cast<uint8_t>(m)) == ref);
+            VR_reg dst;
+            for (int k = 0; k < 4; ++k) dst.I[k] = 0x12345678u + static_cast<uint32_t>(k);
+            VuFloat::WriteMaskClamp(dst, s, static_cast<uint8_t>(m));
+            for (int k = 0; k < 4; ++k)
+                CHECK(dst.I[k] == ((m & (8 >> k)) ? VuFloat::ClampBits1(s[k]) : 0x12345678u + static_cast<uint32_t>(k)));
+        }
+    };
+    for (uint32_t e : edges)
+        for (int pos = 0; pos < 4; ++pos) {
+            uint32_t s[4] = {kOne, kNegZero, kPosDenorm, kPosInf};
+            s[pos] = e;
+            check4(s);
+        }
+    uint64_t x = 0x9E3779B97F4A7C15ull;
+    for (int i = 0; i < 250000; ++i) {
+        uint32_t s[4];
+        for (int k = 0; k < 4; ++k) {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            uint32_t b = static_cast<uint32_t>(x >> 16);
+            const uint32_t pick = static_cast<uint32_t>(x) & 3u;
+            if (pick == 0) b &= 0x807FFFFFu;          // exponent 0: zeros and denormals
+            else if (pick == 1) b |= 0x7F800000u;     // exponent 255
+            s[k] = b;
+        }
+        check4(s);
+    }
+#endif
 }
 
 static void TestQStatus() {
@@ -267,6 +319,8 @@ int main() {
     }
 #if defined(PS2R_SIMD) && PS2R_SIMD && defined(__aarch64__)
     std::printf("VuFloatRules: PASS (scalar + NEON ClampBits4/MacFlags4 twins)\n");
+#elif PS2R_VU_SSE
+    std::printf("VuFloatRules: PASS (scalar + SSE2 ClampBits4S/MacFlags4S twins)\n");
 #else
     std::printf("VuFloatRules: PASS (scalar)\n");
 #endif

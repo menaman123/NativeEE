@@ -3,6 +3,43 @@
 
 #include <cmath>
 
+#if PS2R_VU_X86_FMA
+#include <immintrin.h>
+
+#include "engine/platform/host/platform.h"
+#endif
+
+#if PS2R_VU_X86_FMA
+namespace {
+bool DetectFma3() {
+    bool sse4_2 = false, avx2 = false, fma3 = false, neon = false;
+    const char* arch = nullptr;
+    return ps2r::host::CpuDetect(&sse4_2, &avx2, &fma3, &neon, &arch) && fma3;
+}
+}  // namespace
+
+const bool g_vu_x86_fma = DetectFma3();
+
+// The only FMA-encoded code of the build: called only when g_vu_x86_fma (header rule). Clang / GCC: the
+// function is compiled for FMA, so the fused builtin is the vfmadd instruction (clang-cl's <immintrin.h>
+// hides the FMA intrinsics from a TU not compiled for FMA); cl.exe takes the intrinsics as they are.
+#if defined(__clang__) || defined(__GNUC__)
+__attribute__((target("fma"))) void VuFmadd4Hw(const float* a, const float* b, const float* c, float* r) {
+    for (int k = 0; k < 4; ++k) r[k] = __builtin_fmaf(a[k], b[k], c[k]);
+}
+__attribute__((target("fma"))) void VuFnmadd4Hw(const float* a, const float* b, const float* c, float* r) {
+    for (int k = 0; k < 4; ++k) r[k] = __builtin_fmaf(-a[k], b[k], c[k]);
+}
+#else
+void VuFmadd4Hw(const float* a, const float* b, const float* c, float* r) {
+    _mm_storeu_ps(r, _mm_fmadd_ps(_mm_loadu_ps(a), _mm_loadu_ps(b), _mm_loadu_ps(c)));
+}
+void VuFnmadd4Hw(const float* a, const float* b, const float* c, float* r) {
+    _mm_storeu_ps(r, _mm_fnmadd_ps(_mm_loadu_ps(a), _mm_loadu_ps(b), _mm_loadu_ps(c)));   // -(a*b) + c
+}
+#endif
+#endif
+
 alignas(16) const uint32_t VuFloat::kLaneMask[16][4] = {
     {0u, 0u, 0u, 0u},     {0u, 0u, 0u, ~0u},     {0u, 0u, ~0u, 0u},     {0u, 0u, ~0u, ~0u},
     {0u, ~0u, 0u, 0u},    {0u, ~0u, 0u, ~0u},    {0u, ~0u, ~0u, 0u},    {0u, ~0u, ~0u, ~0u},

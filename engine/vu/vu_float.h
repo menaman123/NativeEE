@@ -41,6 +41,31 @@
 #define PS2R_VU_NEON 0
 #endif
 
+// x86-64 without NEON: Fma4 / Fms4 are four fused multiply-adds per op. The shipped binary targets the
+// baseline ISA (no global -mfma), where std::fmaf is an out-of-line C runtime call per lane -- the VU1
+// programs are mostly MADD / MSUB, so that call was most of a VU bundle's cost. The FMA3 instruction is
+// chosen at RUN TIME instead (CpuDetect's fma3, the root CMakeLists' rule): one vfmadd / vfnmadd for the
+// four lanes, out of line in vu_float.cpp (the only TU compiled for FMA). A correctly rounded fused
+// multiply-add is the same bits either way, so the scalar loop stays the fallback with identical results.
+// x86-64 without NEON: the lane kernels' SSE2 twins (PS2R_VU_SSE). SSE2 is part of the x86-64 baseline, so
+// unlike FMA they need no run-time choice. Each is the scalar kernel's twin, bit for bit (test_vu_float drives
+// both over the edge patterns), as the NEON bodies are on arm64.
+#if !PS2R_VU_NEON && (defined(__x86_64__) || defined(_M_X64) || defined(_M_AMD64))
+#include <emmintrin.h>
+#define PS2R_VU_SSE 1
+#else
+#define PS2R_VU_SSE 0
+#endif
+
+#if !PS2R_VU_NEON && (defined(__x86_64__) || defined(_M_X64) || defined(_M_AMD64))
+#define PS2R_VU_X86_FMA 1
+extern const bool g_vu_x86_fma;                                            // the CPU has FMA3 (and the OS saves YMM)
+void VuFmadd4Hw(const float* a, const float* b, const float* c, float* r);   // r = c + a*b, one rounding
+void VuFnmadd4Hw(const float* a, const float* b, const float* c, float* r);  // r = c - a*b, one rounding
+#else
+#define PS2R_VU_X86_FMA 0
+#endif
+
 class VuFloat {
 public:
     using MinMaxFn = uint32_t (*)(uint32_t, uint32_t);
@@ -141,6 +166,13 @@ public:
 #if PS2R_VU_NEON
     static uint32x4_t ClampBits4(uint32x4_t bits);
     static uint16_t MacFlags4(uint32x4_t bits, uint8_t mask);
+#endif
+#if PS2R_VU_SSE
+    // The SSE2 twins of ClampBits1 / PackMacBits on four lanes (x = lane 0).
+    static __m128i ClampBits4S(__m128i bits);
+    static uint16_t MacFlags4S(__m128i bits, uint8_t mask);
+    // AnyExp255 on a result still in a register (the FMAC kernels' check before the store is read back).
+    static bool AnyExp255S(__m128 v);
 #endif
 };
 

@@ -273,8 +273,8 @@ static void TestLatencyTable() {
     CHECK(FlagPipeline::kEfuEsum == 12 && FlagPipeline::kEfuErcpr == 12 && FlagPipeline::kEfuEsqrt == 12);
     CHECK(FlagPipeline::kEfuErsqrt == 18 && FlagPipeline::kEfuEsin == 29 && FlagPipeline::kEfuEatan == 54);
     CHECK(FlagPipeline::kEfuEexp == 44);
-#if defined(PS2R_SIMD) && PS2R_SIMD
-    CHECK(FlagPipeline::kDefaultLazy);
+#if (defined(PS2R_SIMD) && PS2R_SIMD) || PS2R_VU_SSE
+    CHECK(FlagPipeline::kDefaultLazy);   // the SIMD builds' ring: NEON on arm64, SSE2 on x86-64
 #else
     CHECK(!FlagPipeline::kDefaultLazy);
 #endif
