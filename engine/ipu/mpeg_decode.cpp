@@ -312,21 +312,24 @@ namespace {
 struct IdctBasis {
     float cos[8][8];
     float c0;
-    IdctBasis() {
-        for (int x = 0; x < 8; x++) {
-            for (int u = 0; u < 8; u++) {
-                volatile int vx = x, vu = u;
-                const int xx = vx, uu = vu;
-                cos[x][u] = cosf((2.0f * xx + 1.0f) * uu * kPi / 16.0f);
-            }
-        }
-        volatile float two = 2.0f;
-        c0 = 1.0f / sqrtf(two);
-    }
 };
 
+IdctBasis MakeIdctBasis() {
+    IdctBasis b{};
+    for (int x = 0; x < 8; x++) {
+        for (int u = 0; u < 8; u++) {
+            volatile int vx = x, vu = u;
+            const int xx = vx, uu = vu;
+            b.cos[x][u] = cosf((2.0f * xx + 1.0f) * uu * kPi / 16.0f);
+        }
+    }
+    volatile float two = 2.0f;
+    b.c0 = 1.0f / sqrtf(two);
+    return b;
+}
+
 const IdctBasis& Basis() {
-    static const IdctBasis basis;
+    static const IdctBasis basis = MakeIdctBasis();
     return basis;
 }
 

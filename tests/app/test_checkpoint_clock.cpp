@@ -115,14 +115,18 @@ int main() {
     ps2r::app::CheckpointCapture::Write(directory, 0, UINT64_MAX, ram, restorer, quiescence);
     CHECK(!std::filesystem::exists(path) && drains == 1);
     CHECK(std::filesystem::exists(std::string(directory) + "/memory_b0.bin"));
-    std::ifstream refusal(std::string(directory) + "/state_b0.refused");
     std::string detail;
-    std::getline(refusal, detail);
+    {
+        // Closed before the cleanup below: Windows cannot remove a file that is still open.
+        std::ifstream refusal(std::string(directory) + "/state_b0.refused");
+        std::getline(refusal, detail);
+    }
     CHECK(detail.find("exceeds the reproduction format") != std::string::npos);
     meta.vsync_frame = 71;
     CHECK(!SessionClock::SetFrame(meta, UINT64_MAX, error) && meta.vsync_frame == 71);
     CHECK(SessionClock::SetFrame(meta, UINT32_MAX, error) && meta.vsync_frame == UINT32_MAX);
-    std::filesystem::remove_all(directory);
+    std::error_code cleanup;
+    std::filesystem::remove_all(directory, cleanup);   // a temp folder: a cleanup failure is not the test's verdict
     std::printf("CheckpointClock: %u checks, %u failures\n", checks, failures);
     return failures ? 1 : 0;
 }

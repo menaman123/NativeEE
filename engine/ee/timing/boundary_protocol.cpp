@@ -172,11 +172,14 @@ bool BoundaryProtocol::ParkForPacerTick(const std::function<void()>& on_wake) {
             });
             ticked = tick_generation_ != seen || ticks_.Pending() != 0;
             if (ticked || !woke) break;
-            // E433: a foreign wake, no tick -- serve it on this thread and park on.
+            // E433: a foreign wake, no tick -- serve it on this thread and park on. The park stays bounded:
+            // a wake that is still due after its service would make every wait_until return at once (the
+            // predicate holds), so the deadline is checked here too.
             ++pace_wakes_;
             lk.unlock();
             on_wake();
             lk.lock();
+            if (std::chrono::steady_clock::now() >= deadline) break;
         }
     }
     const auto t1 = std::chrono::steady_clock::now();

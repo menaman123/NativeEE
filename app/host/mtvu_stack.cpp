@@ -57,6 +57,11 @@ MtvuStack::MtvuStack(MtvuVifFeed& vif, ChainWalker& walker, GifArbiter& arbiter,
 
 void MtvuStack::BoundaryPresented::OnBoundary(uint32_t /*seq*/, uint64_t /*enqueue_ns*/) { stack_.NotePresented(); }
 
+void MtvuStack::SetVif1PollSite(PollSiteFn fn, void* user) {
+    vif1_poll_site_fn_ = fn;
+    vif1_poll_site_user_ = user;
+}
+
 MtvuStack::~MtvuStack() {
     Stop();
     MtvuSync::UninstallFrom(inline_dispatch_);

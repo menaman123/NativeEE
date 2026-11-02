@@ -57,6 +57,17 @@ void VertexKick::QueueEraseAt(int at) {
     if (at < queue_n_) --queue_n_;
 }
 
+// Defined ahead of its callers in this file: the per-vertex push stays inlinable.
+inline void VertexKick::QueuePush(const VertexRec& v) {
+    if (queue_n_ == kQueueSlots) QueueEraseFront();   // never reached: the trim keeps <= 3 between kicks
+    queue_[queue_n_++] = v;
+}
+
+const std::vector<VertexRec>& VertexKick::Queue() const {
+    queue_view_.assign(queue_, queue_ + queue_n_);
+    return queue_view_;
+}
+
 void VertexKick::Kick(float x, float y, float z, uint8_t f, bool draw) {
     GsRegisters& r = *regs_;
     if (r.dirty_regs && !draw_buffer_.empty() && r.TestDrawChanged() && flush_) flush_();

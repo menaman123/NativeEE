@@ -47,7 +47,7 @@ link engine libraries of its own (it would carry a second, unbound `g_bound_memo
    with different effects left = ambiguous, nothing applied); `original` = the generated body on the image; `auto` =
    recorded when unambiguous, else original. Installed as stubs through `update_function_impl` on every callee address
    the records name. Before the run the recorded callees' OWN read sets (same frame) are seeded too, so a callee body
-   that runs for real sees the game's bytes (`--no-seed-callee-reads` turns it off). `PS2R_REPLAY_DEBUG=1` prints
+   that runs for real sees the game's bytes (`--no-seed-callee-reads` turns it off). `--debug` prints
    every routing decision on stderr. Known limit: a callee called several times in one frame with different results
    (scePadGetState under pad_update) stays ambiguous -- the corpus has no call ordinal to link the callee's record
    to the exact caller invocation.

@@ -130,7 +130,7 @@ public:
     // guest function the first busy-view VIF1_STAT poll came from; 0 = unknown).
     // The engine keeps no recompiled-runtime symbol here.
     using PollSiteFn = uint32_t (*)(void* user);
-    void SetVif1PollSite(PollSiteFn fn, void* user) { vif1_poll_site_fn_ = fn; vif1_poll_site_user_ = user; }
+    void SetVif1PollSite(PollSiteFn fn, void* user);
     // E425 early FINISH (off until enabled; the composition root's knob). The
     // EE raises the GS FINISH when it has STAGED the packet carrying the write:
     // every span staged to the worker is scanned for PATH2 DIRECT A+D FINISH

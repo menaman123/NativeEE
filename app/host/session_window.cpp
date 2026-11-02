@@ -45,6 +45,12 @@ bool SessionWindow::Open(std::string& error) {
     // points-sized backing store. The menu's ImGui layout stays in points (DisplayFramebufferScale).
     const Uint32 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_SHOWN | (hidpi_ ? SDL_WINDOW_ALLOW_HIGHDPI : 0u);
     window_ = SDL_CreateWindow("the title", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 960, 672, flags);
+    if (!window_) {
+        // The requested 32-bit depth has no GLX visual on Mesa / Xvfb (24 + 8 is the deepest); this window's own
+        // depth buffer is unused (it shows finished pictures), so retry at 24 -- platform/sdl/window.cpp's rule.
+        SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+        window_ = SDL_CreateWindow("the title", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 960, 672, flags);
+    }
     if (!window_) { error = SDL_GetError(); return false; }
     context_ = SDL_GL_CreateContext(window_);
     if (!context_) { error = SDL_GetError(); return false; }

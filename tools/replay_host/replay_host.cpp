@@ -4,7 +4,7 @@
 // on a scratch memory image, and reports per call whether the candidate's effects equal the recording's.
 //
 //   ps2r_replay_host --corpus FILE --fn ADDR [--candidate LIB [--symbol NAME]] [--callees auto|recorded|original]
-//                    [--max-records N] [--frame BYTES] [--lenient-callees] [--ignore-v1] [--verbose N] [--report FILE]
+//                    [--max-records N] [--frame BYTES] [--lenient-callees] [--debug] [--ignore-v1] [--verbose N] [--report FILE]
 //
 // Per record:  the scratch RAM/scratchpad/I-O table is seeded with the record's READ set (the bytes as the game first
 // saw them) and the stack arguments; the registers get a0..a3, t0..t3, sp, ra; the candidate runs through the
@@ -201,6 +201,7 @@ struct Options {
     bool seed_v0 = false;
     bool seed_callee_reads = true;   // seed the recorded callees' own read sets (same frame) before the run
     size_t verbose = 0;           // per-record lines to include (failures first)
+    bool debug = false;           // --debug: every callee routing decision on stderr
     std::string report;
     uint64_t max_trips = 200000;
 };
@@ -292,11 +293,10 @@ struct Driver {
     // Serve one call of callee `cfn` from inside the candidate: the recorded form when it is unambiguous.
     // Returns true when served from the recording (the body must not run).
     uint32_t current_frame = 0;   // the frame of the record under replay (a tie-breaker for callee records)
-    bool debug = std::getenv("PS2R_REPLAY_DEBUG") != nullptr;   // callee routing decisions on stderr
 
     bool ServeRecorded(uint32_t cfn, CpuContext& ctx) {
         auto it = callees.by_fn.find(cfn);
-        if (it == callees.by_fn.end()) { ++callee_unmatched; S().callees_unmatched.push_back(cfn); if (debug) std::fprintf(stderr, "[callee %s] no records with caller %s\n", Hex8(cfn).c_str(), Hex8(opt.fn).c_str()); return false; }
+        if (it == callees.by_fn.end()) { ++callee_unmatched; S().callees_unmatched.push_back(cfn); if (opt.debug) std::fprintf(stderr, "[callee %s] no records with caller %s\n", Hex8(cfn).c_str(), Hex8(opt.fn).c_str()); return false; }
         const uint64_t a0 = ctx.cpuRegs.GPR.r[4].UD[0], a1 = ctx.cpuRegs.GPR.r[5].UD[0];
         const uint64_t a2 = ctx.cpuRegs.GPR.r[6].UD[0], a3 = ctx.cpuRegs.GPR.r[7].UD[0];
         const uint32_t sp = ctx.cpuRegs.GPR.r[29].UL[0], ra = ctx.cpuRegs.GPR.r[31].UL[0];
@@ -317,7 +317,7 @@ struct Driver {
             if (!m.empty()) break;
         }
         if (level < 4 && !m.empty()) ++callee_loose;
-        if (m.empty()) { ++callee_unmatched; S().callees_unmatched.push_back(cfn); if (debug) std::fprintf(stderr, "[callee %s] frame %u a0..a3 %llx %llx %llx %llx: no record with these args (%zu records)\n", Hex8(cfn).c_str(), current_frame, (unsigned long long)a0, (unsigned long long)a1, (unsigned long long)a2, (unsigned long long)a3, it->second.size()); return false; }
+        if (m.empty()) { ++callee_unmatched; S().callees_unmatched.push_back(cfn); if (opt.debug) std::fprintf(stderr, "[callee %s] frame %u a0..a3 %llx %llx %llx %llx: no record with these args (%zu records)\n", Hex8(cfn).c_str(), current_frame, (unsigned long long)a0, (unsigned long long)a1, (unsigned long long)a2, (unsigned long long)a3, it->second.size()); return false; }
         // Collapse records with identical effects (the same ret and write set), then break ties on sp, then ra.
         auto same_effect = [](const racorp::Record* x, const racorp::Record* y) {
             if (x->v0 != y->v0 || x->v1 != y->v1 || x->writes.size() != y->writes.size()) return false;
@@ -346,7 +346,7 @@ struct Driver {
         narrow([&](const racorp::Record* r) { return r->frame == current_frame; });
         narrow([&](const racorp::Record* r) { return r->sp == sp; });
         narrow([&](const racorp::Record* r) { return r->ra == ra; });
-        if (debug) std::fprintf(stderr, "[callee %s] frame %u a0..a3 %llx %llx %llx %llx sp %x ra %x: %zu records (matched on %d args), %zu distinct effects\n",
+        if (opt.debug) std::fprintf(stderr, "[callee %s] frame %u a0..a3 %llx %llx %llx %llx sp %x ra %x: %zu records (matched on %d args), %zu distinct effects\n",
                                 Hex8(cfn).c_str(), current_frame, (unsigned long long)a0, (unsigned long long)a1,
                                 (unsigned long long)a2, (unsigned long long)a3, sp, ra, m.size(), level, d.size());
         if (d.size() != 1) { ++callee_ambiguous; return false; }
@@ -575,7 +575,7 @@ int Usage(const char* why) {
     std::fprintf(stderr,
                  "usage: ps2r_replay_host --corpus FILE --fn ADDR [--candidate LIB [--symbol NAME]]\n"
                  "                        [--callees auto|recorded|original] [--max-records N] [--frame BYTES]\n"
-                 "                        [--lenient-callees] [--ignore-v1] [--v1-entry seed|zero] [--v0-entry zero|seed]\n"
+                 "                        [--lenient-callees] [--debug] [--ignore-v1] [--v1-entry seed|zero] [--v0-entry zero|seed]\n"
                  "                        [--verbose N] [--report FILE] [--max-trips N]\n");
     return 2;
 }
@@ -612,6 +612,7 @@ int main(int argc, char** argv) {
         } else if (a == "--max-records") opt.max_records = std::strtoull(next("--max-records"), nullptr, 0);
         else if (a == "--frame") { if (!ParseU32(next("--frame"), &opt.frame)) return Usage("--frame: bad size"); }
         else if (a == "--lenient-callees") opt.lenient_callees = true;
+        else if (a == "--debug") opt.debug = true;
         else if (a == "--ignore-v1") opt.ignore_v1 = true;
         else if (a == "--no-seed-callee-reads") opt.seed_callee_reads = false;
         else if (a == "--v1-entry") { std::string m = next("--v1-entry"); if (m == "seed") opt.seed_v1 = true; else if (m == "zero") opt.seed_v1 = false; else return Usage("--v1-entry: seed | zero"); }

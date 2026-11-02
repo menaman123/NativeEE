@@ -33,10 +33,7 @@ public:
     static bool IsThin(uint8_t prim_type) { return (prim_type & 7u) <= 2u; }
     // The vertex count below which a draw of this PRIM type draws nothing: 1 for
     // points, 2 for lines, 3 for every triangle / sprite type (sprites arrive as 6).
-    static size_t MinVerts(uint8_t prim_type) {
-        const uint8_t t = prim_type & 7u;
-        return t == 0 ? 1u : (t <= 2u ? 2u : 3u);
-    }
+    static size_t MinVerts(uint8_t prim_type) { return (prim_type & 7u) == 0 ? 1u : ((prim_type & 7u) <= 2u ? 2u : 3u); }
     // Appends the triangle list for `n` kick-output vertices of a thin primitive to
     // `out` (cleared first): 6 vertices per point, 6 per complete line pair; a
     // trailing unpaired line vertex is dropped. Returns out.size(). Non-thin

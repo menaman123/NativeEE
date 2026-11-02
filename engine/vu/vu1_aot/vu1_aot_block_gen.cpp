@@ -80,8 +80,10 @@ struct GenUpper {
     enum Arith : uint8_t { kAdd, kSub, kMul, kMadd, kMsub };
     Shape shape = kNone;
     Arith arith = kAdd;
-    bool mac() const { return shape != kNone && shape != kAbs && shape != kMaxI; }  // delivers a MAC result
 };
+
+// The generic upper delivers a MAC result.
+bool GenUpperMac(const GenUpper& g) { return g.shape != GenUpper::kNone && g.shape != GenUpper::kAbs && g.shape != GenUpper::kMaxI; }
 
 GenUpper ClassifyGenericUpper(uint32_t u) {
     GenUpper g;
@@ -931,7 +933,7 @@ void Vu1AotBlockGen::EmitOp(int bi, int i, uint32_t pc) {
                                                    s.lower_kind == VUK_L_FSOR || s.lower_kind == VUK_L_FMEQ ||
                                                    s.lower_kind == VUK_L_FMAND || s.lower_kind == VUK_L_FMOR));
     if (observes) Deliver(i);
-    if (op.upper != nullptr && (IsFmac(s.upper_kind) || IsAcc(s.upper_kind) || gu.mac())) Line("VR_reg m" + Dec(i) + ";");
+    if (op.upper != nullptr && (IsFmac(s.upper_kind) || IsAcc(s.upper_kind) || GenUpperMac(gu))) Line("VR_reg m" + Dec(i) + ";");
 
     // The two words (one scope per op: `pre`, `r`, `a` are per-op names). The
     // lower of a hide-upper bundle reads the pre-upper value of the VF the

@@ -16,6 +16,9 @@ under the scanned roots and fails on:
      and session-prefixed namespaces/identifiers (r120gl::, s8_, w13r7_);
   5. file name must be the snake_case of its single primary type (psm_layout.h holds
      PsmLayout). Files with zero primary types (free-function groups, PODs) are fine.
+     A test TU's fixtures -- the types inside an anonymous namespace of a file under tests/ (fake
+     sinks, rigs, clocks: file-local, never in a header, never reused) -- are not primary types;
+     the rules are about the engine's .h/.cpp pairs.
 
 Exemptions (ARCH section 13, explicit list -- never implicit):
   generated trees (games/<title>/{recomp,gen,iop/stream_irx}/*recompiled*, build_id),
@@ -49,6 +52,8 @@ EXEMPT_PATH_PATTERNS = [
                                  # ONE exemption class for adapters, retired with the in-tree recompiler
     r"/iop/stream_irx/abi/host_app/",   # the IOP generated-code ABI: the same forwarder class under the
                                         # OLD header names the frozen IOP recompiler emits (PHASE4_PLAN 2.10)
+    r"/iop/abi/host_app/",       # the IOP recompiler's generated-code ABI (iop_seam.h: the per-function seam every
+                                 # generated IOP function entry inlines -- header-only on purpose, the hot path)
     r"/ee/cpu/seams\.cpp$",      # the seam providers: free-function bodies of the generated code's
                                  # roster (PHASE3_PLAN 3.4), not a class
     r"/tests/oracle/og_",        # og_*: drivers that #include OLD headers read-only (the OLD code is not
@@ -141,6 +146,11 @@ def top_level_records(code):
     return out
 
 
+def anonymous_namespace_spans(code):
+    """(open, close) index spans of every `namespace {` body (an anonymous namespace)."""
+    return [(m.end() - 1, brace_span(code, m.end() - 1)) for m in re.finditer(r"\bnamespace\s*\{", code)]
+
+
 def has_member_function(body):
     # remove nested record bodies so their methods do not count for the parent
     flat = []
@@ -210,7 +220,16 @@ def lint_file(path, rel, args):
         findings.append((rel, code_with_strings.count("\n", 0, m.start()) + 1,
                          "textual .inc include of hand-written code is banned (ARCH 13)"))
 
-    primaries = [(n, k, l) for (n, k, body, l) in top_level_records(code) if has_member_function(body)]
+    records = top_level_records(code)
+    if "/tests/" in "/" + rel:
+        # a test TU's fixtures (rule 5): the records inside an anonymous namespace are file-local
+        anon = anonymous_namespace_spans(code)
+        line_starts = [0] + [i + 1 for i, ch in enumerate(code) if ch == "\n"]
+        def in_anon(line):
+            pos = line_starts[line - 1]
+            return any(s <= pos < e for s, e in anon)
+        records = [r for r in records if not in_anon(r[3])]
+    primaries = [(n, k, l) for (n, k, body, l) in records if has_member_function(body)]
     if len(primaries) > 1:
         findings.append((rel, primaries[1][2],
                          "more than one primary type in this file: " +
@@ -295,6 +314,17 @@ def selftest():
     cases = [("psm_layout.h", good, 0), ("two.h", bad2, 1), ("inc.cpp", badinc, 1),
              ("tag.h", badtag, 1), ("big.h", baddef, 1), ("wrong_name.h", good, 1),
              ("ns.cpp", badns, 1)]
+    # a test TU's anonymous-namespace fixtures are not primary types; the same text in engine/ is
+    fixtures = "namespace {\nstruct FakeSink { void f(); };\nstruct Rig { void g(); };\n}  // namespace\n"
+    os.makedirs(os.path.join(d, "tests", "x"))
+    for rel_dir, expect in (("tests/x", 0), ("engine/x", 1)):
+        p = os.path.join(d, *rel_dir.split("/"), "test_fixtures.cpp")
+        with open(p, "w") as f:
+            f.write(fixtures)
+        got = len(lint_file(p, rel_dir + "/test_fixtures.cpp", None if False else type("A", (), {"tags": True, "filename_rule": True, "strict_headers": False, "max_inline_lines": 3})()))
+        res = (got > 0) == (expect > 0)
+        ok &= res
+        print("  selftest %-14s expect %s got %d %s" % (rel_dir + " fixtures", "clean" if expect == 0 else "finding", got, "OK" if res else "MISMATCH"))
     class A: pass
     a = A(); a.tags = True; a.filename_rule = True; a.strict_headers = False; a.max_inline_lines = 3
     for name, text, expect in cases:

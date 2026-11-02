@@ -279,8 +279,19 @@ int main() {
     // producer at its next drain(); the thread keeps running and delivers after.
     {
         rig.Clear();
-        rig.arbiter.submitOrdered([] { throw std::runtime_error("drain fault"); });   // the submit kicks the pass
+        // The fault and the packet behind it must share one pass: a gate job holds the drain thread while both
+        // are submitted (without it a drain thread that wakes at once -- Windows -- runs the fault alone and
+        // the packet lands in the next pass instead of being dropped behind it).
+        std::atomic<bool> gate_open{false}, gate_in{false};
+        rig.arbiter.submitOrdered([&] {
+            gate_in.store(true, std::memory_order_release);
+            while (!gate_open.load(std::memory_order_acquire)) std::this_thread::yield();
+        });
+        rig.arbiter.drain();
+        while (!gate_in.load(std::memory_order_acquire)) std::this_thread::yield();
+        rig.arbiter.submitOrdered([] { throw std::runtime_error("drain fault"); });
         rig.Submit(98);                                                                 // behind the fault: dropped
+        gate_open.store(true, std::memory_order_release);
         for (int i = 0; i < 2000 && !rig.thread.Faulted(); ++i) std::this_thread::sleep_for(std::chrono::microseconds(100));
         CHECK(rig.thread.Faulted(), "(f) the fault is pending on the thread");
         CHECK(rig.arbiter.PendingBytes() == 0 && rig.arbiter.PendingSlots() == 0, "(f) the pass's ledger settled behind the fault");

@@ -79,8 +79,13 @@ bool Launcher::OpenWindow(std::string& error) {
     }
     platform::GlContext::RequestAttributes();
     const std::string window_title = "NativeEE -- " + TitleName() + " -- Setup";
-    window_ = SDL_CreateWindow(window_title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, kWidth, kHeight,
-                               SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+    const Uint32 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
+    window_ = SDL_CreateWindow(window_title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, kWidth, kHeight, flags);
+    if (!window_) {
+        // No 32-bit depth GLX visual on Mesa / Xvfb: retry at 24 (this window's depth buffer is unused).
+        SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+        window_ = SDL_CreateWindow(window_title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, kWidth, kHeight, flags);
+    }
     if (!window_) { error = SDL_GetError(); return false; }
     gl_context_ = SDL_GL_CreateContext(window_);
     if (!gl_context_) { error = SDL_GetError(); return false; }

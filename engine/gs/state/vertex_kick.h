@@ -66,10 +66,7 @@ public:
     bool HasPending() const { return !draw_buffer_.empty(); }
     std::vector<VertexRec>& DrawBuffer() { return draw_buffer_; }
     // The vertex queue's contents, oldest first (a copy: the queue is a fixed window).
-    const std::vector<VertexRec>& Queue() const {
-        queue_view_.assign(queue_, queue_ + queue_n_);
-        return queue_view_;
-    }
+    const std::vector<VertexRec>& Queue() const;
     bool BatchTextureEnable() const { return batch_texture_enable_; }
     int StripCount() const { return strip_count_; }
 
@@ -84,10 +81,7 @@ private:
     void PushTriangle(const VertexRec& a, const VertexRec& b, const VertexRec& c);
     static int Needed(uint8_t prim);
     // The 3-slot window (one more slot for the kick before the trim).
-    void QueuePush(const VertexRec& v) {
-        if (queue_n_ == kQueueSlots) QueueEraseFront();   // never reached: the trim keeps <= 3 between kicks
-        queue_[queue_n_++] = v;
-    }
+    void QueuePush(const VertexRec& v);
     void QueueEraseFront();
     void QueueEraseAt(int i);
     void QueueClear() { queue_n_ = 0; }
