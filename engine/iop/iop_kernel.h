@@ -25,7 +25,7 @@
 //     RETURNS the park (Park{Sema, sid} ...) instead of switching stacks; the
 //     kernel applies it and calls the body again when the thread is next
 //     scheduled, handing it the wait's result. No coroutine, no stack switch:
-//     the form a fully native module's threads take (STAGE NATIVE-3, iopsys).
+//     the form a fully native module's threads take (title.native.iopsys).
 //     A park satisfied at once (a sema with count > 0, a banked wakeup, a flag
 //     already set) re-enters the body in the same RunThread, as the coroutine
 //     form continues without a reschedule. A step body must never call a

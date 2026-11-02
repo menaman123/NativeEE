@@ -257,7 +257,7 @@ static void TestVblankWakeNoIdleGap() {
 // holds on the holder with no wait for tid 3's host thread -- so the holder's
 // next PreemptPoint / syscall entry sees it deterministically. With it off the
 // sleeper readied itself when its host thread woke: the same probe is a race
-// (the determinism track's run-to-run drift, 2026-10-30).
+// (the run-to-run drift fixed on 2026-10-30).
 static void TestFieldReadiesVblankSleeperSynchronously() {
     std::printf("[4] a holder's field readies the vblank sleeper synchronously (wake_sync)\n");
     for (int arm = 0; arm < 2; ++arm) {

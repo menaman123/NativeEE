@@ -1,7 +1,7 @@
 // render/backends/metal/metal_microbench.mm -- the GPU ROOFLINE microbenchmark (Metal, Apple GPUs).
 //
 // Measures on THIS device the peaks the GS -> Metal renderer's per-pass rates are judged against
-// (PERF1 roofline): colour fill rate into Rgba8 at the scale-4 surface (2048 x 1792 = 512 x 448
+// (roofline): colour fill rate into Rgba8 at the scale-4 surface (2048 x 1792 = 512 x 448
 // x 4^2), depth fill into Depth32f, alpha-blended fill, texture sample rate (nearest and
 // linear, a 1024^2 Rgba8 source), fragment ALU rate (64 FMAs per pixel), framebuffer-fetch
 // read-modify-write rate (the register program's blend path), host -> GPU upload bandwidth

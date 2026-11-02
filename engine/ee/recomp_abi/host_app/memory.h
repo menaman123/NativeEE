@@ -7,8 +7,8 @@
 //                                                (one global pointer load) then FastMem's
 //                                                inline fast path (its cached bases). Used
 //                                                by hand-written HLE bodies and tools.
-//   memory::read<T>(const Window&, addr) ...  -- the generated bodies' form (STAGE PERF-1,
-//                                                track ee): the two inline bases are read
+//   memory::read<T>(const Window&, addr) ...  -- the generated bodies' form (--mem-window):
+//                                                the two inline bases are read
 //                                                ONCE per body into a local `Window` the
 //                                                recompiler emits in the prologue
 //                                                (`memory::window()`), so a guest store --

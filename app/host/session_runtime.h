@@ -165,7 +165,7 @@ public:
     void ConfigureMotionBlur(bool seed);
     // Game owner, at its frame boundary: the motion blur in force.
     bool MotionBlurSetting() const { return motion_blur_.load(); }
-    // Mods (mods.enabled, STAGE FIX-2). Main thread before Run: offer the 'Mods (for testing)' section
+    // Mods (mods.enabled). Main thread before Run: offer the 'Mods (for testing)' section
     // (the capability); the level list and the live rows arrive from the game owner as the title builds
     // its table (any thread: SetModsLevels / SetModsState). The menu's Go and Skip requests are taken by
     // the game owner at its frame boundary (TakeModsWarpRequest: the level id, -1 = none pending;

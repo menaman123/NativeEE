@@ -1,6 +1,6 @@
 // tools/gs_replay/stream_census.h -- StreamCensus: the per-frame DRAW CENSUS of a .gsstream capture, no GPU.
 //
-// The static-closure side of the renderer's roofline (PERF1): for every frame of the capture, what the
+// The static-closure side of the renderer's roofline: for every frame of the capture, what the
 // GS consumer was asked to do -- draws, vertices, triangles, the blended / textured / depth-tested
 // shares, the FULL-SCREEN draws (a draw whose vertex extent covers >= `full_frac` of the frame buffer
 // the draw targets: the heat-haze / bloom / blur / shadow passes that scale with scale^2), the

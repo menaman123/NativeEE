@@ -49,7 +49,7 @@ void VuUnit::WriteDataMem(uint32_t addr, const uint8_t* src, size_t size) {
 }
 
 void VuUnit::WriteMicroMem(uint32_t addr, const uint8_t* src, size_t size) {
-    // STAGE PERF-1: an upload that changes no byte leaves the generation alone -- the generation is a
+    // An upload that changes no byte leaves the generation alone -- the generation is a
     // cache key over the CONTENT (the block / cached tiers re-hash the 16 KB image at the next kick
     // when it moved; the HLE memo re-looks the program up): identical bytes, identical image, nothing
     // to invalidate. Sly 2 re-uploads its microprogram chunks every frame (60 MPG a Paris frame).

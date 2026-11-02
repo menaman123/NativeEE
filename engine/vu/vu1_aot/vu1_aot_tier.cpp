@@ -162,7 +162,7 @@ void Vu1AotTier::Execute(VuUnit& unit, uint32_t start_pc) {
             }
         }
         // The run's wall time is the block tier's own ledger (VuBlockTier::Run's FastNowNs pair around the
-        // loop): no second clock pair per kick here (STAGE PERF-1: the steady_clock pair was ~3 % of a kick).
+        // loop): no second clock pair per kick here (the steady_clock pair was ~3 % of a kick).
         const uint64_t before = block_.bundles();
         const uint64_t ns_before = block_.stats().run_ns;
         block_.ExecuteAcquired(unit, pc, *prog);

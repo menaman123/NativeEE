@@ -24,7 +24,7 @@
 - **The SPU2 runs per field, not per EE frame (BUG-079, DP-29).** The title programs core-0 BVOLL/BVOLR = 0x7FFF at movie start (its EE code: `sceSdRemote(1, 0x8010, 0xF80/0x1080, 0x7FFF)`, measured on the console) and back to 0 at movie end; both reach `SpuCore::SetParam`. A mixer pumped only at EE frame boundaries mixes the movie's queued PCM AFTER that zero (no boundary passes during a movie), so the composition root pumps once per display field in play mode (device only; the hash lane keeps 800 frames per boundary). The census `BvolSets()/BvolSetsNonZero()/BvolPeak()` and `FmvFramesMixedAudible()` (frames mixed while a BVOL gain was non-zero) name the set-then-clear a final-shadow read hides.
 - **`SdBlockTrans`/`SdBlockTransStatus` (libsd ordinals 10/12) answer 0** as OLD did ("phase 2"): no IOP-side autodma model; STREAM.IRX polls them (2 each in the coldboot leg) and proceeds.
 
-## The pump's two forms (PERF-1, io track)
+## The pump's two forms
 
 `SpuCore::MixInto` mixes a 128-frame chunk VOICE-MAJOR by default (`SpuCore::SetFastMix`, the title's `NATIVEEE_MIXER_FAST`
 knob): every keyed voice runs the whole chunk (`Voice::StepRun`, the per-sample body force-inlined so the voice's state stays in

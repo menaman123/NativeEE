@@ -26414,7 +26414,7 @@ int Recompiler::rewrite_manual_dispatch_file(const std::string& path) {
 }
 
 // ============================================================================
-// --mem-window shard post-pass (STAGE PERF-1, track ee). Every generated body
+// --mem-window shard post-pass. Every generated body
 // opens with `const memory::Window _mw = memory::window();`; this pass routes
 // every access site in the shard through the Window overload of the same
 // accessor:  memory::read<T>(A)        -> memory::read<T>(_mw, A)
@@ -26501,7 +26501,7 @@ int Recompiler::rewrite_memory_window_file(const std::string& path) {
 }
 
 // ============================================================================
-// --zero-fold shard post-pass (STAGE PERF-1, track ee). A read of $zero --
+// --zero-fold shard post-pass. A read of $zero --
 // `ctx.cpuRegs.GPR.r[0].<view>[k]` as an rvalue -- becomes a typed literal 0:
 //   .SD/.SL/.SS/.SC -> static_cast<int64_t/int32_t/int16_t/int8_t>(0)
 //   .UD/.UL/.US/.UC -> static_cast<uint64_t/uint32_t/uint16_t/uint8_t>(0)

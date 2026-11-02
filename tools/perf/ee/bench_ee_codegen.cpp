@@ -1,4 +1,4 @@
-// bench_ee_codegen: the EE-thread codegen roofline (STAGE PERF-1, track ee).
+// bench_ee_codegen: the EE-thread codegen roofline.
 //
 // The recompiled EE code is memory-to-memory: every guest register is a field of
 // CpuContext reached through a reference, every guest load/store goes through

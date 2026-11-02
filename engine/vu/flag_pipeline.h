@@ -100,7 +100,7 @@ public:
     // order), the last-retired word is the newest. Batch resets the
     // accumulator.
     // The caller-owned (register-resident) fold of a block's MAC results
-    // (Vu1AotRegionPolicy::mac_acc). STAGE PERF-1 representation: the Z / S /
+    // (Vu1AotRegionPolicy::mac_acc). The representation: the Z / S /
     // U / O lane judgements are NOT formed per result; the accumulators are
     // the OR of the raw bits (S = the sign of the OR), the unsigned MAX of
     // |bits| (O = max >= 0x7F800000: an exponent of all ones), the unsigned
@@ -193,7 +193,7 @@ private:
     bool lazy_;
     alignas(128) PendingMac mac_pending_[kRingDepth] = {};
     alignas(128) PendingClip clip_pending_[kRingDepth] = {};
-    // The SIMD fold's accumulators, LazyAcc's representation (STAGE PERF-1): [0] the OR of the raw bits,
+    // The SIMD fold's accumulators, LazyAcc's representation: [0] the OR of the raw bits,
     // [1] the unsigned MAX of |bits|, [2] the unsigned MIN of |bits|, [3] the unsigned MIN of |bits|-1,
     // per lane; an unselected lane contributes 0 / 0 / ~0 / ~0. ResetLazyAcc sets the neutral values.
     alignas(16) uint32_t lazy_acc_[4][4] = {{0, 0, 0, 0}, {0, 0, 0, 0}, {~0u, ~0u, ~0u, ~0u}, {~0u, ~0u, ~0u, ~0u}};
