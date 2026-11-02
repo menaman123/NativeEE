@@ -1,4 +1,4 @@
-# tools/perf -- the host ROOFLINE microbenchmarks (PERF1): the peaks every engine unit's
+# tools/perf -- the host ROOFLINE microbenchmarks: the peaks every engine unit's
 # achieved rate is judged against. perf_roofline = the CPU side (portable: C++17 threads;
 # NEON under PS2R_SIMD as the engine's kernels are, scalar twins elsewhere). The GPU side is
 # the Metal arm's metal_microbench (engine/render/backends/metal, Apple only). Both read no

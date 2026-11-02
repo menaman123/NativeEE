@@ -393,7 +393,7 @@ bool ExcludedFromFingerprint(const std::string& key) {
     // _region_blocks / _region_ops / _region_taken / _chain / _mac_acc its region shape;
     // the code is verified the identity before it runs: nothing the title
     // executes changes with them.
-    // mods.* (STAGE FIX-2): the testing aids' availability (the menu section, the
+    // mods.*: the testing aids' availability (the menu section, the
     // skip key). Nothing the title executes changes until a warp / skip is
     // REQUESTED (a play-mode act, or NATIVEEE_MODS on a lane that says so in its
     // run.meta mods= row); a leg with the knob on but unused is the baseline.

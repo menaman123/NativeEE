@@ -88,7 +88,7 @@ public:
         uint32_t trace_draw_frame = 0;
         bool force_shader_blend = false;   // --force-shader-blend: GL's exact shader blend on every blended draw
         int unified_blend = -1;            // --unified-blend 1 / --no-unified-blend 0: GlDevice::SetUnifiedBlend (-1 = the default)
-        // The STRESS lane (PERF1): every draw record delivered `draw_mult` times (the worst frame's
+        // The STRESS lane: every draw record delivered `draw_mult` times (the worst frame's
         // multiplicity over the captured one; the output is then NOT the capture's -- a timing run) and
         // the capture replayed `loop` times (the reader re-opened: the VramInit record restores the
         // image each pass; the frame rows run on).

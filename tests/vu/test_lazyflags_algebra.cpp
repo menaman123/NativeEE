@@ -310,7 +310,7 @@ static void RunPart2(int programs) {
     if (!g_fail) std::printf("  part 2: %d programs, %d bundles, eager == lazy through the interpreter\n", programs, total_bundles);
 }
 
-// Part 3 (STAGE PERF-1): the register-resident LazyAcc (the generated blocks'
+// Part 3: the register-resident LazyAcc (the generated blocks'
 // mac_acc fold: OR / unsigned MAX / unsigned MIN accumulators, the lane sets
 // formed once at FoldLazyBatch) against the per-result FoldLazyRetired on the
 // same lazy pipeline: random results drawn from every float class (zero, -0,

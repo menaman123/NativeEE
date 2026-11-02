@@ -1,7 +1,7 @@
 // tools/perf/perf_roofline.cpp -- the HOST ROOFLINE microbenchmark (CPU side).
 //
 // Measures, on THIS machine, the peaks every engine unit's achieved rate is judged against
-// (PERF1 roofline method): per-core scalar and SIMD FLOP/s (FMA chains with enough
+// (roofline method): per-core scalar and SIMD FLOP/s (FMA chains with enough
 // independent accumulators to fill the pipeline), L1 / L2 / DRAM read bandwidth (a strided
 // sum over a working set of the given size, single thread and all threads), memcpy
 // bandwidth, the clock read cost, the scheduler yield cost, a mutex lock/unlock pair, a

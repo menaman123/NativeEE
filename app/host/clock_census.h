@@ -100,8 +100,8 @@ public:
     std::string FootprintKbSeries() const;
     // The game thread's CPU time over every boundary noted so far (ms).
     uint64_t EeCpuTotalMs() const;
-    // The per-frame distribution of the game thread's CPU time (STAGE PERF-1,
-    // track ee: the EE unit's budget row). NoteFrameCpu runs at EVERY boundary
+    // The per-frame distribution of the game thread's CPU time (the EE unit's
+    // budget row). NoteFrameCpu runs at EVERY boundary
     // (wall-locked or not: the headless lanes too); the composition passes the
     // EE unit's CPU clock -- every guest thread's CPU summed
     // (EeRunToken::TotalCpuNs), the calling thread's own by default -- and the

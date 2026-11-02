@@ -285,7 +285,7 @@ static void TestPeakDefaults() {
     CHECK(c.ui.perf_overlay == false);   // the Display page's first option (MenuExtension), off by default
     CHECK(c.ui.menu_pages == true);      // the extension itself (play mode only)
     CHECK(c.meta.profile == "default");
-    // mods.enabled (STAGE FIX-2): off by default; on, the knob stays OUT of the fingerprint (nothing the
+    // mods.enabled: off by default; on, the knob stays OUT of the fingerprint (nothing the
     // title executes changes until a warp / skip is requested), so a leg with it on keeps the baseline's env_hash.
     CHECK(c.mods.enabled == false && Config::FingerprintExcludes("mods.enabled"));
     {

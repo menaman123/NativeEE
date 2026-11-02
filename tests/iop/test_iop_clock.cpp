@@ -63,7 +63,7 @@ int main() {
         CHECK(c.NowUs() == 40000, "forced advance moves time forward");
         c.AdvanceToUs(35000);
         CHECK(c.NowUs() == 40000, "forced advance never moves time backwards");
-        // FIX-2 (music): an overshoot the next boundary absorbs is not a skip (unchanged rule) ...
+        // An overshoot the next boundary absorbs is not a skip (unchanged rule) ...
         c.AdvanceToUs(60000);   // beyond the ceiling 50001, within the next boundary's 66668
         CHECK(c.NowUs() == 60000 && c.Frames() == 2 && c.Skips() == 0, "an overshoot within the next frame leaves the base (no skip)");
         c.OnFrameBoundary();    // base -> 50001 < 60000: time stays put; this pump's ceiling 66668 covers the rest of the frame

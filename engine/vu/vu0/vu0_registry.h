@@ -71,7 +71,7 @@ private:
     // (micro memory is at most 16 KB; the pcs beyond it, which no unit can
     // address, share one overflow row) with the descriptor lookup
     // cached per row -- no hashing, no allocation after the first call
-    // (STAGE PERF-1, track ee: the unordered_map emplace + the linear Lookup
+    // (before: the unordered_map emplace + the linear Lookup
     // were a third of the VU0 dispatch's EE-thread cost).
     struct Row {
         uint64_t count = 0;

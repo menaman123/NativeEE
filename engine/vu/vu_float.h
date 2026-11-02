@@ -14,7 +14,7 @@
 //    PCSX2 share), a denormal to +/-0. Sly 2's shadow-volume VU1 programs tag
 //    vertices by MFIR-ing an integer into the w field and carrying it through
 //    MUL / MADD by 1.0 and 0.0; hardware keeps the pattern bit for bit, and
-//    clamping it to MAX_FLOAT dropped every clipped shadow face (fix-lighting).
+//    clamping it to MAX_FLOAT dropped every clipped shadow face.
 //    Q, P and the I register still clamp an IEEE NaN/Inf to +/-MAX_FLOAT
 //    (ClampFloat): their producers are IEEE scalar paths.
 //  * MAC flags (Z/S/U/O per lane) are judged on the RAW result bits before the

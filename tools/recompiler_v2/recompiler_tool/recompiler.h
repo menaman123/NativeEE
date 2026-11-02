@@ -91,7 +91,7 @@ public:
     // emission change.
     void set_vu0_native(bool enabled) { m_vu0_native = enabled; }
 
-    // --mem-window (STAGE PERF-1, track ee): every generated body takes its
+    // --mem-window: every generated body takes its
     // context as `CpuContext& PS2R_RECOMP_RESTRICT ctx` (guest RAM never
     // overlaps the register file, so a guest store cannot change a register)
     // and opens with `const memory::Window _mw = memory::window();` -- the two
@@ -102,7 +102,7 @@ public:
     // classic form's. Default OFF: no emission change.
     void set_mem_window(bool enabled) { m_mem_window = enabled; }
 
-    // --zero-fold (STAGE PERF-1, track ee): every READ of $zero in a generated
+    // --zero-fold: every READ of $zero in a generated
     // body (`ctx.cpuRegs.GPR.r[0].SD[0]` and the other element views, as an
     // rvalue) is emitted as a typed literal 0 by the shard post-pass
     // (rewrite_zero_fold_file). $zero is never written by the emission except
@@ -111,7 +111,7 @@ public:
     // compiler delete the load and the `+ 0` / `| 0` it fed. Default OFF.
     void set_zero_fold(bool enabled) { m_zero_fold = enabled; }
 
-    // --inline-leaves (STAGE PERF-1, track ee): a JAL whose constant target is a
+    // --inline-leaves: a JAL whose constant target is a
     // TRIVIAL LEAF -- one block, at most kInlineLeafMaxInstrs instructions, every
     // one of them from the straight-line whitelist (ALU, loads/stores off a
     // non-stack base, FPU moves/arithmetic; no branch, no call, no syscall, no

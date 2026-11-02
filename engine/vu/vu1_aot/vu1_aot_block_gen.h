@@ -87,11 +87,11 @@ struct Vu1AotRegionPolicy {
     // edge for its own FoldLazyRetired (a load / OR / store round trip per
     // result and the spills of keeping them). The lazy ring only; the eager
     // one keeps the per-result form. Same sticky bits, same last-retired word.
-    // Default ON since STAGE PERF-1 (LazyAcc's OR / MAX / MIN form: six NEON
+    // Default ON (LazyAcc's OR / MAX / MIN form: six NEON
     // ops per result, no per-result load / OR / store round trip).
     bool mac_acc = true;
-    // STAGE PERF-1 (the register-resident shape; both default on, the A/B
-    // knobs of the title's generator):
+    // The register-resident shape (both default on, the A/B knobs of the
+    // title's generator):
     // store_back_inline: the store-back of the written registers is emitted
     // IN PLACE at every exit / chain instead of through a `[&]` lambda. The
     // lambda captured every local by reference, so the compiler materialised
@@ -119,7 +119,7 @@ struct Vu1AotRegionPolicy {
     // Paris corpus bench: 4.62 vs 4.46 ns/bundle); it pays with regions of
     // several blocks (the loop's invariants clamped once per entry).
     bool entry_clamp = false;
-    // cluster_ops > 0 (STAGE PERF-1): ONE function per CFG CLUSTER instead of
+    // cluster_ops > 0: ONE function per CFG CLUSTER instead of
     // one region function per block. The TU's blocks are partitioned (BFS over
     // fall-through and static branch targets, at most cluster_ops ops per
     // cluster), every block is emitted ONCE as a label of its cluster's

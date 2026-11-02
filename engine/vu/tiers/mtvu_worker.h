@@ -120,7 +120,7 @@ public:
         uint64_t seal_wakes_skipped = 0;   // seals that woke no parked producer (the drain thread was kicked instead)
     };
     Ledger ledger() const;
-    // STAGE PERF-1: the worker's PER-FRAME ledger (census only; written by the worker at every FrameMark
+    // The worker's PER-FRAME ledger (census only; written by the worker at every FrameMark
     // it passes, read after Stop or relaxed): between two marks, the VU1 bundles its unit ran, the kicks
     // (block-tier runs), the wall ns it spent processing Data / Batch segments; the max and the sum over the
     // frames, and a histogram of the busy ms per frame (kHistBucketNs buckets) for the p99. The "worst

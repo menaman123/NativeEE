@@ -1,4 +1,4 @@
-# `tools/perf/io/` -- the io track's roofline microbenchmarks (PERF-1)
+# `tools/perf/io/` -- the I/O roofline microbenchmarks
 
 Portable (no game data, no platform calls beyond the engine's `platform::host`).
 

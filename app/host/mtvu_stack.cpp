@@ -88,7 +88,7 @@ void MtvuStack::FrameSync(uint32_t seq, uint64_t now_ns) {
     // note; a boundary without one counts an order violation).
     arbiter_.noteFeedForBoundary();
     if (worker_.IsRunning()) {
-        // The frame's mark behind its last span (STAGE PERF-1: in EVERY mode --
+        // The frame's mark behind its last span (in EVERY mode --
         // the worker's per-frame ledger reads the frame edges from it; a mark
         // is a count-only segment, no VIF bytes, no marker). The lag it reads
         // decides the next frame in drop mode (dropped when the worker is >
@@ -369,7 +369,7 @@ std::string MtvuStack::Census() const {
     s += ",worker_ns=" + std::to_string(l.busy_ns) + "/" + std::to_string(l.wait_ns) + "/" + std::to_string(l.spin_ns) +
          ",worker_segs=" + std::to_string(l.segments) + "/" + std::to_string(l.records) + ",worker_pops=" + std::to_string(l.pops) +
          "/" + std::to_string(l.depth_max) + ",seal_wakes_skipped=" + std::to_string(l.seal_wakes_skipped);
-    // STAGE PERF-1: the per-frame ledger -- the WORST frame's VU1 load and the worker's busy ms per frame
+    // The per-frame ledger -- the WORST frame's VU1 load and the worker's busy ms per frame
     // (mean / p99 / max), bundles and kicks per frame (mean / max), PATH1 bytes per frame (mean / max).
     const MtvuWorker::FrameLedger& fl = worker_.frame_ledger();
     if (fl.frames > 0) {

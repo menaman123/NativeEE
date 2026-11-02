@@ -50,5 +50,5 @@
 #define VU1_AOT_COMPILER "unknown"
 #endif
 
-// STAGE PERF-1: the cold calls of a block function (preserve_all wrappers; rules there).
+// The cold calls of a block function (preserve_all wrappers; rules there).
 #include "engine/vu/vu1_aot/vu1_aot_cold.inl"

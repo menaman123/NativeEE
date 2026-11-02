@@ -188,7 +188,7 @@ public:
 
     uint64_t cycle_cap() const { return cycle_cap_; }
     void set_cycle_cap(uint64_t cap) { cycle_cap_ = cap; }
-    // STAGE PERF-1: a per-block-run observer (the generator's profile pass: block run counts and
+    // A per-block-run observer (the generator's profile pass: block run counts and
     // edges from a corpus replay with no native code installed, so every block passes the loop).
     // One predictable null test per block run when unset; never set in play.
     using BlockObserver = void (*)(void* user, uint32_t pc);

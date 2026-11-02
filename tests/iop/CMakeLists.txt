@@ -11,7 +11,7 @@ function(ps2r_iop_test name ctest_name)
 endfunction()
 
 ps2r_iop_test(test_iop_kernel IopKernelUnits)
-# STAGE NATIVE-3 (iopsys): step bodies (StartStepThread, no coroutine) make the same scheduler decisions as
+# Step bodies (StartStepThread, no coroutine) make the same scheduler decisions as
 # coroutine bodies on one workload; the ping-pong cost of each form is printed.
 ps2r_iop_test(test_iop_step_threads IopStepThreads)
 ps2r_iop_test(test_iop_shortcuts IopShortcutSemantics)

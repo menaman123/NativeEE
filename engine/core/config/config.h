@@ -156,7 +156,7 @@ struct VideoConfig {
     bool         present_relax = true;
     // The Metal arm's depth: off (default) = the fragment writes the window depth itself (the GL arm's
     // gl_FragDepth form: the oracle); on = the rasterizer's depth (clip z = PS2 z / 2^32, w = 1) so the
-    // TBDR's hidden-surface removal / early depth rejection runs. Measured (PERF-1 gpu track, spawn
+    // TBDR's hidden-surface removal / early depth rejection runs. Measured (spawn
     // capture at scale 4, quiet host): NO GPU gain (gpu_span p50 15.8 -> 15.75 ms) and +1.6 ms/frame of
     // consumer CPU; the two interpolations differ by ULP ties (Paris hub 600 frames at scale 4: 55 frames
     // differ in ONE pixel, max channel delta 12). Kept as the A/B knob; fingerprinted (it can change a
@@ -571,7 +571,7 @@ struct FixesConfig {
     bool skid_mark_init = false;
 };
 
-// Mods (STAGE FIX-2, mods track): the testing aids a player may switch on --
+// Mods: the testing aids a player may switch on --
 // the in-game 'Mods (for testing)' menu section with the level select (a warp
 // to any of the title's levels through the title's own loader request) and
 // the skip-cutscene key (a movie ends through the player's own end test; an
@@ -613,7 +613,7 @@ struct TriageConfig {
     int  ring_period_s = 10;    // 0 = ring off (TRIAGE_CAPTURE section 3)
 };
 
-// title.native.* (STAGE NATIVE, 2026-10-30): a generic namespace the CONFIGURED TITLE
+// title.native.* (2026-10-30): a generic namespace the CONFIGURED TITLE
 // interprets -- one bool per PS2 unit whose per-frame MODEL the title may replace by
 // native host code for ITS specific use of that unit (the title tree's native/ module,
 // selected through the engine's seams: the VU1 AOT registry, DrawIrSink, the VIF unpack
@@ -622,10 +622,10 @@ struct TriageConfig {
 // oracle. Guest-observable in principle (a native path that diverges changes RAM), so the
 // keys are in the fingerprint: a NON-DEFAULT value shows in env_ps2 / env_hash while the
 // default leaves both unchanged vs builds that predate the keys. The deterministic profile
-// does NOT pin them (the lane is the oracle for either value). STAGE NATIVE-2 (2026-10-31):
+// does NOT pin them (the lane is the oracle for either value). 2026-10-31:
 // vu1 / gif / vif / dmac / vu0 default ON -- each proved on the lane and the Paris play lane
 // with zero fallbacks (`--set title.native.<unit>=off` = the modelled path, the oracle);
-// iop / spu / gs stay off (the sound driver is a separate track; gs has no native path).
+// iop / spu / gs stay off (the sound driver has its own native path; gs has none).
 struct TitleNativeConfig {
     bool vu1 = true;     // the VU1 microprograms (kick handlers keyed by image hash + entry)
     bool gif = true;     // the GIF packet -> DrawIR parse

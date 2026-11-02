@@ -44,7 +44,7 @@ public:
     // one after runs a full quantum -- no boundary pump is ever a no-op. An
     // overshoot within the next frame is left to that boundary (its shortened
     // quantum keeps IOP time continuous), as before. Without following (the
-    // pre-FIX-2 clock) the base stays behind and every boundary pump is a no-op
+    // old clock) the base stays behind and every boundary pump is a no-op
     // until the boundary count catches up: a 1 s skip = 65 dark boundaries while
     // the SPU plays on (the 989snd bank load that killed the hub music).
     void AdvanceToUs(uint64_t t);
