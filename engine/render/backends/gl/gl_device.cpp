@@ -624,6 +624,51 @@ void GlDevice::WriteAlphaLane(SurfaceId dst, const Rect& dst_rect, SurfaceId lan
     state_.Disable(GL_SCISSOR_TEST);
 }
 
+// The indexed read of a scaled attachment at its logical resolution, on the GPU (the Metal arm's pass): one
+// triangle over the logical-size destination, the source attachment on unit 0 and the palette on unit 1;
+// every texel of the destination is written. Without it the resolver deposits the drawn rows -- a
+// SYNCHRONOUS readback that waits for every draw of the frame so far -- and decodes them on the CPU.
+bool GlDevice::DecodeIndexedAlpha(SurfaceId src_id, const Rect& rect, int step, SurfaceId clut_id, SurfaceId dst_id) {
+    const GlSurface* src = Surface(src_id);
+    const GlSurface* clut = Surface(clut_id);
+    const GlSurface* dst = Surface(dst_id);
+    if (!src || !src->tex || !clut || !clut->tex || !dst || !dst->fbo || !shaders_.IndexedAlphaProgram()) return false;
+    if (step < 2 || rect.w <= 0 || rect.h <= 0 || rect.w % step || rect.h % step) return false;
+    if (rect.x < 0 || rect.y < 0 || uint32_t(rect.x) >= src->desc.width || uint32_t(rect.y) >= src->desc.height) return false;
+    if (src->desc.format != SurfaceFormat::Rgba8 || dst->desc.format != SurfaceFormat::Rgba8) return false;
+    const int w = rect.w / step, h = rect.h / step;
+    if (dst->desc.width != uint32_t(w) || dst->desc.height != uint32_t(h)) return false;
+    EndDrawRun();
+    const GlStencilLocations& L = shaders_.StencilLocations();
+    state_.BindFb(GL_FRAMEBUFFER, dst->fbo);
+    state_.Viewport(0, 0, w, h);
+    state_.Disable(GL_SCISSOR_TEST);
+    state_.Disable(GL_BLEND);
+    state_.Disable(GL_DEPTH_TEST);
+    state_.Disable(GL_STENCIL_TEST);
+    state_.DepthMask(false);
+    state_.ColorMask(true, true, true, true);
+    state_.ActiveTexture(GL_TEXTURE1);
+    state_.BindTex2D(clut->tex);
+    state_.ActiveTexture(GL_TEXTURE0);
+    state_.BindTex2D(src->tex);
+    state_.UseProgram(shaders_.IndexedAlphaProgram());
+    if (L.idx_origin >= 0) glUniform2i(L.idx_origin, rect.x, rect.y);
+    if (L.idx_step >= 0) glUniform1i(L.idx_step, step);
+    state_.BindVertexArray(const_vao_);
+    census_.draw_calls++;
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    state_.BindVertexArray(0);
+    state_.UseProgram(0);
+    state_.BindTex2D(0);
+    state_.ActiveTexture(GL_TEXTURE1);
+    state_.BindTex2D(0);
+    state_.ActiveTexture(GL_TEXTURE0);
+    state_.DepthMask(true);
+    state_.Enable(GL_DEPTH_TEST);
+    return true;
+}
+
 // Rows bottom-up (attachment order); colour RGBA8, depth float.
 void GlDevice::Readback(SurfaceId id, const Rect& rect, void* out, size_t stride) {
     const GlSurface* s = Surface(id);

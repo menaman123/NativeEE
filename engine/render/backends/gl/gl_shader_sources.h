@@ -26,6 +26,10 @@ public:
     // fragment's logical position inside u_origin / u_scale; fragments inside u_exclude
     // (physical, half-open) are discarded. Colour mask A only at the call site.
     static const char* AlphaLaneFragment();
+    // The indexed read of a scaled attachment at its logical resolution (Backend::DecodeIndexedAlpha): the
+    // fragment at logical (x, y) takes row 0 of u_clut at the alpha byte of u_src's physical texel
+    // u_origin + (x, y) * u_step (clamped to the attachment).
+    static const char* IndexedAlphaFragment();
 };
 
 }  // namespace render

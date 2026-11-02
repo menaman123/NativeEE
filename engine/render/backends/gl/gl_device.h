@@ -81,6 +81,7 @@ public:
     void CopyRect(SurfaceId src, const Rect& src_rect, SurfaceId dst, const Rect& dst_rect,
                   uint32_t transform) override;
     void WriteAlphaLane(SurfaceId dst, const Rect& dst_rect, SurfaceId lane, const Rect& exclude) override;
+    bool DecodeIndexedAlpha(SurfaceId src, const Rect& rect, int step, SurfaceId clut, SurfaceId dst) override;
     void Readback(SurfaceId id, const Rect& rect, void* out, size_t stride) override;
     // Asynchronous: the rows go into a pixel-pack buffer behind a fence (no GPU
     // drain at Begin); Poll waits on the fence only if the GPU has not finished.

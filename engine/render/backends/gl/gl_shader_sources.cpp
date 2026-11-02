@@ -1305,6 +1305,24 @@ void main() {
     frag_color = vec4(0.0, 0.0, 0.0, a);
 }
 )";
+// The indexed read of a scaled attachment (Backend::DecodeIndexedAlpha; the Metal indexed_alpha_fragment).
+const char* const kIndexedAlphaFragSrc = R"(
+#version 410 core
+
+uniform sampler2D u_src;
+uniform sampler2D u_clut;
+uniform ivec2 u_origin;
+uniform int u_step;
+out vec4 frag_color;
+
+void main() {
+    ivec2 p = ivec2(gl_FragCoord.xy);
+    ivec2 sp = clamp(u_origin + p * u_step, ivec2(0), textureSize(u_src, 0) - 1);
+    vec4 src = texelFetch(u_src, sp, 0);
+    int idx = int(floor(src.a * 255.0 + 0.5));
+    frag_color = texelFetch(u_clut, ivec2(idx, 0), 0);
+}
+)";
 // Constant-colour NDC triangle for the stencil-masked quads.
 const char* const kConstVertSrc = R"(
 #version 410 core
@@ -1332,6 +1350,7 @@ const char* GlShaderSources::ConstFragment() { return kConstFragSrc; }
 const char* GlShaderSources::HalfwordShuffleFragment() { return kHalfwordShuffleFragSrc; }
 const char* GlShaderSources::Pack5551Fragment() { return kPack5551FragSrc; }
 const char* GlShaderSources::AlphaLaneFragment() { return kAlphaLaneFragSrc; }
+const char* GlShaderSources::IndexedAlphaFragment() { return kIndexedAlphaFragSrc; }
 
 }  // namespace render
 }  // namespace ps2r
