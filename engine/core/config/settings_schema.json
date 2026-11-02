@@ -1480,6 +1480,17 @@
       "user_facing": false
     },
     {
+      "key": "video.fps_overlay",
+      "section": "video",
+      "name": "fps_overlay",
+      "type": "bool",
+      "default": "on",
+      "kind": "switch",
+      "user_facing": true,
+      "label": "FPS counter",
+      "help": "Shows the pictures per second, the frame time and a short history of recent frames in the top-right corner of the game window."
+    },
+    {
       "key": "video.frame_cap",
       "section": "video",
       "name": "frame_cap",

@@ -69,6 +69,7 @@ UI = {
                             choices={"off": "Off", "30": "30", "60": "60"}),
     "video.frame_limit": dict(label="Frame rate", kind="choice", help="How many frames a second the game runs at. 60 is the original; above it every frame is a real game frame, and the game keeps its normal speed.",
                               choices={"60": "60 (original)", "120": "120", "180": "180", "240": "240", "360": "360", "0": "Unlimited"}),
+    "video.fps_overlay": dict(label="FPS counter", help="Shows the pictures per second, the frame time and a short history of recent frames in the top-right corner of the game window."),
     "video.motion_blur": dict(label="Motion blur", help="The game's own blur of fast movement. Off draws every picture sharp."),
     "video.render_rate": dict(label="Render rate", help="60 shows one picture per game step; Display draws at the display's own rate.",
                               choices={"60": "60", "display": "Display"}, hidden=True),

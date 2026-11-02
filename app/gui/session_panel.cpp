@@ -80,7 +80,7 @@ void SessionPanel::DrawSettings(SessionControls&, const SessionControls::Snapsho
 void SessionPanel::DrawPerfOverlay(const SessionControls::Snapshot& snapshot) {
     if (!snapshot.runtime.perf_overlay) return;
     const ImVec2 display = ImGui::GetIO().DisplaySize;
-    ImGui::SetNextWindowPos(ImVec2(display.x - 12.0f, 12.0f), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+    ImGui::SetNextWindowPos(ImVec2(display.x - 12.0f, overlay_top_), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
     ImGui::SetNextWindowBgAlpha(0.85f);
     constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
         ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoSavedSettings |

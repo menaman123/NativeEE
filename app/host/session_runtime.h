@@ -200,6 +200,14 @@ public:
     // Main thread before Run: the video backend in force, shown on the F1 panel's Session
     // state ("metal (auto): Apple M4"); "" = not shown.
     void SetRenderer(std::string renderer);
+    // Main thread before Run: the FPS counter (video.fps_overlay) over the presented frame --
+    // `on` is the seed (the Display page's row and the settings file follow it; a leg with a
+    // harness armed seeds off), `theme` its colours (the title's palette; FpsOverlayTheme{} is
+    // the neutral default). Enables the Display page's row (Capabilities::fps_overlay).
+    void ConfigureFpsOverlay(bool on, const FpsOverlayTheme& theme);
+    bool FpsOverlayState() const { return fps_overlay_.load(); }
+    // The counter's own draw cost (SessionGui::FpsOverlayCensus): "draws:N:avg_us:X:max_us:Y:shown:S".
+    std::string FpsOverlayCensus() const { return window_.Gui().FpsOverlayCensus(); }
     // Runs bootstrap/relaunch/join on a large-stack host thread while main
     // pumps. Shutdown's deadline stays on main, never inside JoinAll.
     int Run(std::function<int()> game, unsigned shutdown_seconds);
@@ -318,6 +326,7 @@ private:
     SessionControls::Capabilities capabilities_;
     SessionControls::RuntimeState status_;
     std::atomic<int> volume_{100};
+    std::atomic<bool> fps_overlay_{false};
     std::atomic<bool> perf_overlay_{false}, fullscreen_state_{false}, keyboard_state_{true}, vsync_state_{false},
         motion_blur_{true};
     // Mods: the level list (under mods_mutex_: written by the game owner, copied at Publish), the live rows.

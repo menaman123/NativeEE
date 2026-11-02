@@ -179,7 +179,7 @@ bool SessionGui::BuildFrame() {
     was_open_ = snapshot.menu_open;
     const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
     const bool panel = panel_.WantsFrame(snapshot, now);
-    if (!panel && !picture_) return false;
+    if (!panel && !picture_ && !fps_overlay_) return false;
     ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
     if (picture_ && picture_width_ > 0 && picture_height_ > 0) {
@@ -188,6 +188,23 @@ bool SessionGui::BuildFrame() {
         PictureRect(display.x, display.y, picture_width_, picture_height_, picture_aspect_, x, y, w, h);
         ImGui::GetBackgroundDrawList()->AddImage(static_cast<ImTextureID>(picture_), ImVec2(x, y),
             ImVec2(x + w, y + h), ImVec2(0, 1), ImVec2(1, 0));
+    }
+    if (fps_overlay_) {
+        // The FPS counter (video.fps_overlay): on the present quad only -- the ImGui draw list
+        // of the window's back buffer; the GS frame the harness hashes is never touched.
+        const auto t0 = std::chrono::steady_clock::now();
+        const ImVec2 display = ImGui::GetIO().DisplaySize;
+        const float cell_h = std::clamp(display.y * 0.04f, 16.0f, 56.0f);
+        const uint64_t now_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(t0.time_since_epoch()).count());
+        const float panel_h = DrawFpsOverlay(ImGui::GetForegroundDrawList(), display.x - 10.0f, 10.0f, cell_h,
+                                             fps_history_.Compute(now_ns), fps_theme_);
+        panel_.SetOverlayTop(10.0f + panel_h + 8.0f);
+        const uint64_t ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count());
+        ++fps_draws_;
+        fps_draw_ns_ += ns;
+        fps_draw_max_ns_ = std::max(fps_draw_max_ns_, ns);
+    } else {
+        panel_.SetOverlayTop(12.0f);
     }
     if (panel) panel_.Draw(controls_, snapshot);
     ImGui::Render();
@@ -223,6 +240,27 @@ void SessionGui::SetPicture(uint32_t texture, int width, int height) {
     picture_ = texture;
     picture_width_ = width;
     picture_height_ = height;
+    fps_history_.NoteShown(static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()));
+}
+
+void SessionGui::SetFpsOverlay(bool on) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!OnMainThread()) return;
+    fps_overlay_ = on;
+}
+
+void SessionGui::SetFpsOverlayTheme(const FpsOverlayTheme& theme) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!OnMainThread()) return;
+    fps_theme_ = theme;
+}
+
+std::string SessionGui::FpsOverlayCensus() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const uint64_t avg_us = fps_draws_ ? fps_draw_ns_ / fps_draws_ / 1000 : 0;
+    return "draws:" + std::to_string(fps_draws_) + ":avg_us:" + std::to_string(avg_us) + ":max_us:" +
+           std::to_string(fps_draw_max_ns_ / 1000) + ":shown:" + std::to_string(fps_history_.Shown());
 }
 
 bool SessionGui::Render() {

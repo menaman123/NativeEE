@@ -32,6 +32,7 @@ bool SessionControls::Supported(Action action) const {
         case Action::SetKeyboardInput: return capabilities_.keyboard_input;
         case Action::SetRecording: return capabilities_.recording;
         case Action::SetPerfOverlay: return capabilities_.perf_overlay;
+        case Action::SetFpsOverlay: return capabilities_.fps_overlay;
         case Action::SetDisplayMode: return capabilities_.fullscreen;
         case Action::SetScale: case Action::SetVSync: case Action::SetAspect: case Action::SetRenderRate:
         case Action::SetFrameCap:
@@ -97,7 +98,7 @@ uint64_t SessionControls::SubmitLocked(Action action, int value, std::string pat
     if (action == Action::SetVolume && (value < 0 || value > 100))
         return refuse("Volume must be between 0 and 100.");
     if ((action == Action::SetFullscreen || action == Action::SetKeyboardInput ||
-         action == Action::SetRecording || action == Action::SetPerfOverlay || action == Action::SetVSync ||
+         action == Action::SetRecording || action == Action::SetPerfOverlay || action == Action::SetFpsOverlay || action == Action::SetVSync ||
          action == Action::SetRenderRate || action == Action::SetInvertCameraX || action == Action::SetInvertCameraY ||
          action == Action::SetMotionBlur) &&
         value != 0 && value != 1)
@@ -302,6 +303,7 @@ const char* SessionControls::ActionLabel(Action action) {
         case Action::SetKeyboardInput: return "Keyboard input";
         case Action::SetRecording: return "Input recording";
         case Action::SetPerfOverlay: return "Performance overlay";
+        case Action::SetFpsOverlay: return "FPS counter";
         case Action::SetDisplayMode: return "Display mode";
         case Action::SetScale: return "Internal resolution";
         case Action::SetVSync: return "VSync";

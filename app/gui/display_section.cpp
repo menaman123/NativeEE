@@ -33,7 +33,7 @@ void DisplaySection::Draw(SessionControls& controls, const SessionControls::Snap
     const auto& caps = snapshot.capabilities;
     const auto& r = snapshot.runtime;
     if (!caps.display_rows && !caps.fullscreen && !caps.texture_filter && !caps.perf_overlay && !caps.frame_limit &&
-        !caps.motion_blur) {
+        !caps.motion_blur && !caps.fps_overlay) {
         ImGui::TextDisabled("No display settings are available in this session.");
         return;
     }
@@ -71,6 +71,13 @@ void DisplaySection::Draw(SessionControls& controls, const SessionControls::Snap
     if (caps.texture_filter) {
         Combo(controls, snapshot, Action::SetTextureFilter, "Texture filter", kFilters, 4, r.texture_filter);
         Combo(controls, snapshot, Action::SetAnisotropy, "Anisotropic filtering", kAniso, 5, r.anisotropy, kAnisoValues);
+    }
+    if (caps.fps_overlay) {
+        bool counter = r.fps_overlay;
+        ImGui::BeginDisabled(Busy(snapshot, Action::SetFpsOverlay) || snapshot.closing);
+        if (ImGui::Checkbox("FPS counter (pictures per second, frame time, recent history)", &counter))
+            controls.Submit(Action::SetFpsOverlay, counter ? 1 : 0);
+        ImGui::EndDisabled();
     }
     if (caps.perf_overlay) {
         bool overlay = r.perf_overlay;

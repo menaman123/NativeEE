@@ -71,6 +71,8 @@ std::vector<SettingsResync::Request> SettingsResync::Plan(const std::vector<Entr
             if (Int(v, 1, 16, &n) && n != r.anisotropy) out.emplace_back(Action::SetAnisotropy, n);
         } else if (k == "ui.perf_overlay" && caps.perf_overlay) {
             if ((n = OnOff(v)) >= 0 && (n != 0) != r.perf_overlay) out.emplace_back(Action::SetPerfOverlay, n);
+        } else if (k == "video.fps_overlay" && caps.fps_overlay) {
+            if ((n = OnOff(v)) >= 0 && (n != 0) != r.fps_overlay) out.emplace_back(Action::SetFpsOverlay, n);
         } else if (k == "input.kbm_pad" && caps.keyboard_input) {
             if ((n = OnOff(v)) >= 0 && (n != 0) != r.keyboard_input) out.emplace_back(Action::SetKeyboardInput, n);
         } else if (k == "audio.volume" && caps.volume) {

@@ -4,6 +4,7 @@
 #include <string>
 #include <thread>
 
+#include "app/gui/fps_overlay.h"
 #include "app/gui/session_panel.h"
 
 struct ImGuiContext;
@@ -48,7 +49,16 @@ public:
     bool BuildFrame();
     // Main-owned presentation texture; rows are bottom-up. Its owner keeps it
     // alive through Render. The game renderer never shares this GL context.
+    // Every call is a NEW picture on the screen (SessionWindow::Show / Upload): the
+    // FPS counter counts it.
     void SetPicture(uint32_t texture, int width, int height);
+    // Main thread: the FPS counter (video.fps_overlay) over the presented frame, top-right,
+    // drawn each presented frame from the pictures SetPicture noted (FpsHistory); the theme's
+    // colours come from the title (FpsOverlayTheme; a neutral default otherwise).
+    void SetFpsOverlay(bool on);
+    void SetFpsOverlayTheme(const FpsOverlayTheme& theme);
+    // The counter's own cost: "draws:N:avg_us:X:max_us:Y" (the DrawFpsOverlay call per built frame).
+    std::string FpsOverlayCensus() const;
     // The display shape the picture is fit at (video.aspect): the frame is
     // anamorphic (512x448 for any TV), so the rect's shape is the ratio's, not
     // the pixels'. <= 0 keeps the pixel shape (the pre-A1 presentation).
@@ -83,6 +93,10 @@ private:
     uint32_t picture_ = 0;
     int picture_width_ = 0, picture_height_ = 0;
     double picture_aspect_ = 0.0;
+    bool fps_overlay_ = false;
+    FpsOverlayTheme fps_theme_;
+    FpsHistory fps_history_;
+    uint64_t fps_draws_ = 0, fps_draw_ns_ = 0, fps_draw_max_ns_ = 0;
 };
 
 }  // namespace ps2r::app

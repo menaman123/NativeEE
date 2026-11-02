@@ -124,6 +124,13 @@ struct VideoConfig {
     // 0.7-2.1 % -> 3.4-4.1 %, the pacing judge's RED). Read at window creation; host presentation
     // only, not part of the deterministic fingerprint.
     bool         hidpi = false;
+    // video.fps_overlay: the FPS counter over the presented frame (top-right): the pictures
+    // shown per second over a 0.5 s window, the frame time and a ~2.5 s history of the gaps
+    // (app/gui/fps_overlay). Default on in play; a leg with a harness armed never draws it
+    // (the title's play composition seeds it off there), and it is drawn on the window's
+    // present quad only -- never into the frame the harness hashes. Applied live from the
+    // Display page; persisted. Host presentation only, not part of the deterministic fingerprint.
+    bool         fps_overlay = true;
     FullscreenMode fullscreen = FullscreenMode::Windowed;
     RenderRate   render_rate = RenderRate::Tick60;
     FrameCap     frame_cap = FrameCap::Hz60;
