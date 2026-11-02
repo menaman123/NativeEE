@@ -76,6 +76,9 @@ if(APPLE)
     # video.backend=metal; PS2R_HAS_METAL=1 travels with the target.
     target_link_libraries(ps2r_app_host PUBLIC ps2r_render_metal)
 endif()
+if(WIN32)
+    target_link_libraries(ps2r_app_host PUBLIC ws2_32)   # the agent channel's sockets (Winsock)
+endif()
 if(PS2R_DIAGNOSTICS)
     target_compile_definitions(ps2r_app_host PRIVATE PS2R_DIAGNOSTICS=1)
     target_link_libraries(ps2r_app_host PUBLIC ps2r_diag)
@@ -99,6 +102,16 @@ endif()
 # engine.vu1_aot_compiler=none; see engine/platform/windows/README.md.
 if(WIN32)
     target_link_options(nativeee PRIVATE /STACK:16777216)
+endif()
+# Windows: the C++ heap is mimalloc (operator new / delete, main.cpp). The frame's threads hand
+# allocations across (the GIF drain records a frame's vertex vectors, the GS consumer frees them;
+# PATH1 packets, VRAM op logs): the default process heap serialises that traffic behind its lock
+# and returns big blocks to the OS, so every thread stalls in new / delete once the VU1 worker
+# runs ahead. mimalloc's per-thread heaps and deferred cross-thread frees take no global lock.
+if(WIN32)
+    find_package(mimalloc CONFIG REQUIRED)
+    target_link_libraries(nativeee PRIVATE mimalloc)
+    target_compile_definitions(nativeee PRIVATE PS2R_MIMALLOC_NEW_DELETE=1)
 endif()
 target_include_directories(nativeee PRIVATE ${CMAKE_SOURCE_DIR})
 target_compile_options(nativeee PRIVATE -Wall -Wextra -Werror)

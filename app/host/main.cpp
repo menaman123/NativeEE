@@ -13,6 +13,11 @@
 #include <iostream>
 
 #include "app/host/build_id.h"
+
+#if defined(PS2R_MIMALLOC_NEW_DELETE)
+// The program's operator new / delete go to mimalloc (app/host/CMakeLists.txt says why); one TU only.
+#include <mimalloc-new-delete.h>
+#endif
 #ifdef PS2R_TITLE_HAS_PLAY
 #include "engine/title/title_play.h"
 #endif

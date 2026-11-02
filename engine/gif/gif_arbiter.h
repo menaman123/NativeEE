@@ -63,8 +63,11 @@ public:
     static constexpr size_t kPoolMaxCapacity = 0x10000;
     // The PATH1 packet pool: right-sized XGKICK packet buffers (capacity <= one
     // VU1 data memory) that travel worker -> inbox -> drain and come back here
-    // instead of being freed; bounded so a lagging drain cannot grow it.
-    static constexpr size_t kPath1PoolMax = 2048;
+    // instead of being freed; bounded so a lagging drain cannot grow it. The bound covers a frame of packets
+    // in flight (Sly 2's hubs kick ~6500 per frame, ~0.9 KB each): when the worker runs a frame ahead of the
+    // drain, a smaller pool dropped the excess at every pass and the worker allocated it back at the next
+    // frame -- thousands of cross-thread malloc/free pairs a frame, page faults on every thread.
+    static constexpr size_t kPath1PoolMax = 16384;
     static constexpr size_t kPath1PoolMaxCapacity = 0x4000;
     // A marker's packet vector is reserved at open for the packets one Batch
     // segment of the first title produces (~60), so the worker's fills grow it

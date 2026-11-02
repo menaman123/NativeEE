@@ -217,7 +217,7 @@ $licSrc = Join-Path $Root "tools\dist\licenses"
 foreach ($f in @("SDL2-LICENSE.txt", "FFmpeg-LICENSE.md", "FFmpeg-COPYING.LGPLv2.1.txt", "imgui-LICENSE.txt", "imgl3w-UNLICENSE.txt")) {
     if (Test-Path (Join-Path $licSrc $f)) { Copy-Item (Join-Path $licSrc $f) (Join-Path $Dist "licenses\$f") }
 }
-foreach ($port in @("sdl2", "ffmpeg", "opengl-registry")) {
+foreach ($port in @("sdl2", "ffmpeg", "opengl-registry", "mimalloc")) {
     $cr = Join-Path $BuildDir "vcpkg_installed\x64-windows\share\$port\copyright"
     if (Test-Path $cr) { Copy-Item $cr (Join-Path $Dist "licenses\vcpkg-$port-copyright.txt") }
 }
@@ -254,7 +254,8 @@ if ($conf.Count -eq 0 -and -not $avcodec -and -not $ffmpegImported) {
     "| SDL2 (vcpkg) | dynamic, SDL2.dll | zlib | licenses/SDL2-LICENSE.txt, licenses/vcpkg-sdl2-copyright.txt |",
     "| FFmpeg (libavcodec, libavutil, libswscale; vcpkg, features avcodec + swscale) | dynamic DLLs | LGPL v2.1+ (no GPL / non-free component) | licenses/FFmpeg-LICENSE.md, licenses/FFmpeg-COPYING.LGPLv2.1.txt, licenses/FFmpeg-BUILD-CONFIGURATION.txt |",
     "| Dear ImGui + imgl3w (the in-window menu) | static | MIT / Unlicense | licenses/imgui-LICENSE.txt, licenses/imgl3w-UNLICENSE.txt |",
-    "| Khronos OpenGL registry headers (vcpkg opengl-registry) | compile time only (GL/glcorearb.h) | Apache 2.0 / MIT | licenses/vcpkg-opengl-registry-copyright.txt |"
+    "| Khronos OpenGL registry headers (vcpkg opengl-registry) | compile time only (GL/glcorearb.h) | Apache 2.0 / MIT | licenses/vcpkg-opengl-registry-copyright.txt |",
+    "| mimalloc (vcpkg; the C++ heap on Windows) | dynamic, mimalloc.dll + mimalloc-redirect.dll | MIT | licenses/vcpkg-mimalloc-copyright.txt |"
 ) | Set-Content -Encoding UTF8 (Join-Path $Dist "THIRD_PARTY_NOTICES.md")
 
 Step "asset scan over the staged folder (zero findings)"

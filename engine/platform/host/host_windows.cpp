@@ -12,6 +12,7 @@
 #endif
 
 #include <algorithm>
+#include <memory>
 #include <random>
 #include <string>
 #include <vector>
@@ -407,7 +408,46 @@ void SetCurrentThreadName(const char* name) {
     wide[63] = 0;
     fn(GetCurrentThread(), wide);
 }
+namespace {
+// Windows 11's power throttling (EcoQoS) may run a process whose window is not in the foreground -- and any
+// thread it classifies as background work -- on the efficiency cores of a hybrid CPU at a lowered clock, and
+// ignores its timer resolution. A game's frame threads (game, VU1 worker, GIF drain, GS consumer) must keep full
+// speed whatever window has the focus, so the process opts out (once) and each pinned thread too (execution
+// speed + the timer resolution's foreground-only rule). Both calls are looked up at run time (Windows 8 /
+// 10 1709+); absent, nothing changes.
+struct PowerThrottlingState {
+    ULONG Version;
+    ULONG ControlMask;
+    ULONG StateMask;
+};
+constexpr ULONG kThrottlingVersion = 1;
+constexpr ULONG kExecutionSpeed = 0x1;           // PROCESS_/THREAD_POWER_THROTTLING_EXECUTION_SPEED
+constexpr ULONG kIgnoreTimerResolution = 0x4;    // PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION
+constexpr int kProcessPowerThrottling = 4;       // PROCESS_INFORMATION_CLASS ProcessPowerThrottling
+constexpr int kThreadPowerThrottling = 3;        // THREAD_INFORMATION_CLASS ThreadPowerThrottling
+std::once_flag g_power_once;
+
+void OptOutOfPowerThrottling() {
+    HMODULE k32 = GetModuleHandleW(L"kernel32.dll");
+    std::call_once(g_power_once, [k32] {
+        using ProcFn = BOOL(WINAPI*)(HANDLE, int, LPVOID, DWORD);
+        const auto set_process =
+            reinterpret_cast<ProcFn>(reinterpret_cast<void*>(GetProcAddress(k32, "SetProcessInformation")));
+        if (!set_process) return;
+        PowerThrottlingState s{kThrottlingVersion, kExecutionSpeed | kIgnoreTimerResolution, 0};
+        set_process(GetCurrentProcess(), kProcessPowerThrottling, &s, sizeof(s));
+    });
+    using ThreadFn = BOOL(WINAPI*)(HANDLE, int, LPVOID, DWORD);
+    static const auto set_thread =
+        reinterpret_cast<ThreadFn>(reinterpret_cast<void*>(GetProcAddress(k32, "SetThreadInformation")));
+    if (!set_thread) return;
+    PowerThrottlingState s{kThrottlingVersion, kExecutionSpeed, 0};
+    set_thread(GetCurrentThread(), kThreadPowerThrottling, &s, sizeof(s));
+}
+}  // namespace
+
 void PinCurrentThreadInteractive(ThreadRole role) {
+    OptOutOfPowerThrottling();
     // The ranks (platform.h ThreadRole): the pacer never computes and must wake on its
     // edge (TIME_CRITICAL); the game thread owns the frame (HIGHEST); the GS consumer,
     // MTVU and the main pump share ABOVE_NORMAL -- above the desktop's background work,
@@ -440,35 +480,30 @@ namespace {
 // (Windows 10 1803+) wakes within ~0.5 ms of the due time without touching the global timer
 // resolution; where the kernel refuses the flag (an older build) the classic timer is used and
 // the multimedia timer period is set to 1 ms once for the process (the Win7..1709 way to get a
-// 1 ms quantum; undone at exit by the OS). The handle lives as long as the thread.
-struct PreciseTimer {
-    HANDLE handle = nullptr;
-    bool high_resolution = false;
-    PreciseTimer() {
+// 1 ms quantum; undone at exit by the OS). The handle lives as long as the thread (CloseHandle is
+// its unique_ptr's deleter).
 #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
 #define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
 #endif
-        handle = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
-        high_resolution = handle != nullptr;
-        if (!handle) {
-            static std::once_flag period_once;
-            std::call_once(period_once, [] { timeBeginPeriod(1); });
-            handle = CreateWaitableTimerExW(nullptr, nullptr, 0, TIMER_ALL_ACCESS);
-        }
+HANDLE OpenPreciseTimer() {
+    HANDLE handle = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    if (!handle) {
+        static std::once_flag period_once;
+        std::call_once(period_once, [] { timeBeginPeriod(1); });
+        handle = CreateWaitableTimerExW(nullptr, nullptr, 0, TIMER_ALL_ACCESS);
     }
-    ~PreciseTimer() {
-        if (handle) CloseHandle(handle);
-    }
-};
+    return handle;
+}
+using TimerHandle = std::unique_ptr<void, BOOL(WINAPI*)(HANDLE)>;
 }  // namespace
 
 void PreciseSleepUntilNs(uint64_t deadline_ns) {
-    thread_local PreciseTimer timer;
+    thread_local const TimerHandle timer(OpenPreciseTimer(), &CloseHandle);
     for (;;) {
         const uint64_t now = MonotonicNowNs();
         if (now >= deadline_ns) return;
         const uint64_t remaining = deadline_ns - now;
-        if (!timer.handle) {
+        if (!timer) {
             // No timer at all (handle exhaustion): the coarse sleep, then the re-check above.
             Sleep(static_cast<DWORD>(remaining / 1000000ull));
             continue;
@@ -477,11 +512,11 @@ void PreciseSleepUntilNs(uint64_t deadline_ns) {
         LARGE_INTEGER due;
         due.QuadPart = -static_cast<LONGLONG>((remaining + 99) / 100);
         if (due.QuadPart == 0) due.QuadPart = -1;
-        if (!SetWaitableTimer(timer.handle, &due, 0, nullptr, nullptr, FALSE)) {
+        if (!SetWaitableTimer(timer.get(), &due, 0, nullptr, nullptr, FALSE)) {
             Sleep(static_cast<DWORD>(remaining / 1000000ull));
             continue;
         }
-        WaitForSingleObject(timer.handle, INFINITE);
+        WaitForSingleObject(timer.get(), INFINITE);
     }
 }
 

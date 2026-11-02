@@ -278,6 +278,8 @@ $buildId = Get-Content (Join-Path $DistDir "BUILD-ID") -Raw
     "  the DLL's configure line is in licenses\FFmpeg-BUILD-CONFIGURATION.txt and build.ps1 refuses",
     "  a GPL build). Dynamically linked and replaceable: swap the DLLs for another LGPL build of the",
     "  same major versions.",
+    "- **mimalloc** -- MIT licence (licenses\mimalloc-copyright.txt); vcpkg's build, dynamically",
+    "  linked (mimalloc.dll, mimalloc-redirect.dll): the program's C++ heap on Windows.",
     "- Other DLLs are those libraries' own dependencies, each under its own licence as distributed",
     "  by vcpkg (licenses\<port>-copyright.txt).",
     "",
