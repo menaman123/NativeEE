@@ -71,7 +71,9 @@ if(TARGET ps2r_title_recomp)
     # through the swap = identical per-call memory hashes; a dlopened candidate that writes one byte
     # differently = the first differing "frame" reported. The candidate is a MODULE library whose
     # generated-ABI symbols resolve against the test executable at load (-undefined dynamic_lookup on
-    # macOS, the executable's exports on Linux via -rdynamic), the same shape the live fn.swap loads.
+    # macOS, the executable's exports on Linux via -rdynamic), the same shape the live fn.swap loads. Not on
+    # Windows: a DLL cannot leave its imports for the loading executable to resolve.
+    if(NOT WIN32)
     add_library(fn_swap_candidate MODULE fn_swap_candidate.cpp)
     # Headers only, NO library: linking ps2r_ee into the module would give it its own (null) copy of the ABI's
     # bound-memory pointer; every symbol must resolve against the executable that loads it.
@@ -90,6 +92,7 @@ if(TARGET ps2r_title_recomp)
     add_dependencies(test_fn_swap fn_swap_candidate)
     add_test(NAME FnSwapHotSwap COMMAND test_fn_swap $<TARGET_FILE:fn_swap_candidate>)
     set_tests_properties(FnSwapHotSwap PROPERTIES TIMEOUT 120)
+    endif()
     # The symbol census walks the whole recompiled TU (~100 s idle; measured 158-276 s and once
     # past 300 s under the full suite's -j8 load beside the 1500-frame root legs): the own
     # TIMEOUT bounds it at 600 s -- a real wait on the host's CPU, not a guest wait.

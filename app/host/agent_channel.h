@@ -54,11 +54,11 @@ public:
 private:
     struct Connection {
         uint64_t id = 0;
-        int fd = -1;
+        intptr_t fd = -1;   // a socket (a Windows SOCKET fits; INVALID_SOCKET reads as -1)
         std::thread reader;
         std::mutex write_mutex;
     };
-    void Accept(int listen_fd);
+    void Accept(intptr_t listen_fd);
     void Read(std::shared_ptr<Connection> c);
     void Enqueue(uint64_t connection, std::string line);
     void Drop(uint64_t id);
@@ -66,7 +66,7 @@ private:
     std::atomic<bool> open_{false};
     std::atomic<bool> stopping_{false};
     std::string path_;
-    int unix_fd_ = -1, tcp_fd_ = -1;
+    intptr_t unix_fd_ = -1, tcp_fd_ = -1;
     std::thread unix_acceptor_, tcp_acceptor_;
     mutable std::mutex connections_mutex_;
     std::vector<std::shared_ptr<Connection>> connections_;

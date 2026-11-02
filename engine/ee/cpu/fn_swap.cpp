@@ -3,7 +3,6 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
-#include <dlfcn.h>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -11,6 +10,7 @@
 
 #include "engine/ee/cpu/dispatch_table.h"
 #include "engine/ee/cpu/shadow_call_stack.h"
+#include "engine/platform/host/platform.h"
 
 // The generated surface (recompiled.h declares these; the common TU defines them).
 extern const uint32_t g_recomp_fn_count;
@@ -29,16 +29,7 @@ struct Swap {
 
 std::mutex g_mu;
 std::map<uint32_t, Swap> g_swaps;                 // by address
-std::map<std::string, void*> g_libraries;         // dlopen handles, never closed
-
-// The init wrapper's duties around the candidate: ra before the body, a shadow frame for the call.
-struct SwapFrame {
-    bool pushed;
-    SwapFrame(uint32_t fn, uint32_t ra) : pushed(ShadowCallStack::Push(fn, ra)) {
-        if (!pushed) ShadowCallStack::RejectedPush();
-    }
-    ~SwapFrame() { if (pushed) ShadowCallStack::Pop(); }
-};
+std::map<std::string, ps2r::host::DynamicLibrary> g_libraries;   // opened libraries, never closed
 
 }  // namespace
 
@@ -75,36 +66,33 @@ std::vector<FnSwap::Info> FnSwap::List() {
 bool FnSwap::Install(uint32_t addr, const std::string& library, const std::string& symbol, bool inherit_proof,
                      std::string* previous, std::string* err) {
     if (library.empty()) { if (err) *err = "library_path is empty"; return false; }
-    void* handle = nullptr;
+    // dlopen / LoadLibrary through the platform layer (ps2r::host::DynamicLibrary)
+    ps2r::host::DynamicLibrary handle;
     {
         std::lock_guard<std::mutex> lock(g_mu);
         auto it = g_libraries.find(library);
         if (it != g_libraries.end()) handle = it->second;
     }
-    if (!handle) {
-        handle = dlopen(library.c_str(), RTLD_NOW | RTLD_LOCAL);
-        if (!handle) {
-            const char* why = dlerror();
-            if (err) *err = "dlopen(" + library + ") failed: " + (why ? why : "unknown error");
+    if (!handle.handle) {
+        std::string why;
+        if (!ps2r::host::DynamicLibraryOpen(&handle, library.c_str(), &why)) {
+            if (err) *err = "opening " + library + " failed: " + why;
             return false;
         }
         std::lock_guard<std::mutex> lock(g_mu);
         g_libraries.emplace(library, handle);
     }
     const std::string sym = symbol.empty() ? kDefaultSymbol : symbol;
-    dlerror();
-    void* p = dlsym(handle, sym.c_str());
+    void* p = ps2r::host::DynamicLibrarySymbol(handle, sym.c_str());
     if (!p) {
-        const char* why = dlerror();
-        if (err) *err = "dlsym(" + sym + ") failed in " + library + ": " + (why ? why : "no such symbol");
+        if (err) *err = "symbol " + sym + " not found in " + library;
         return false;
     }
     Body body = reinterpret_cast<Body>(p);
     // The one candidate format (recomp-agent docs/VERIFY.md): a library built for ONE function also
     // exports `const uint32_t recomp_candidate_addr`, the entry it was verified for. A swap of it under
     // another address is refused; a library without the symbol (a hand-made module) is taken as is.
-    dlerror();
-    if (const void* ap = dlsym(handle, kAddrSymbol)) {
+    if (const void* ap = ps2r::host::DynamicLibrarySymbol(handle, kAddrSymbol)) {
         uint32_t built_for = 0;
         std::memcpy(&built_for, ap, sizeof(built_for));
         if (built_for != addr) {
@@ -139,8 +127,17 @@ bool FnSwap::InstallBody(uint32_t addr, Body body, bool inherit_proof, std::stri
     DispatchTable::Body wrapper = [body, addr, calls](CpuContext& ctx, uint32_t call_addr) {
         const uint32_t entry_ra = ctx.cpuRegs.GPR.r[31].UL[0];
         calls->fetch_add(1, std::memory_order_relaxed);
-        SwapFrame frame(addr, entry_ra);
-        body(ctx, call_addr);
+        // The init wrapper's duties around the candidate: ra read before the body, a shadow frame for the
+        // call, popped however the body leaves.
+        const bool pushed = ShadowCallStack::Push(addr, entry_ra);
+        if (!pushed) ShadowCallStack::RejectedPush();
+        try {
+            body(ctx, call_addr);
+        } catch (...) {
+            if (pushed) ShadowCallStack::Pop();
+            throw;
+        }
+        if (pushed) ShadowCallStack::Pop();
     };
     // The proof travels with the callable: TraceBody keeps the previous body's continuation entries and
     // restartable-wait declaration (a candidate in the generated shape); without it the body is opaque.

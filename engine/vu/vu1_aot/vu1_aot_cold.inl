@@ -7,9 +7,11 @@
 // register it touches (the SIMD file included), so the caller keeps its values
 // in registers across the call and the saving cost moves to the cold path.
 // Elsewhere a plain call (the code is identical in effect; only the register
-// traffic differs). The clock goes by VALUE and comes back in the result, so the
+// traffic differs). Not on Windows: clang targeting x86-64 Windows has no
+// preserve_all lowering (clang 18 crashes generating code for such a callee, with
+// no diagnostic). The clock goes by VALUE and comes back in the result, so the
 // caller's local never escapes.
-#if defined(__clang__)
+#if defined(__clang__) && !defined(_WIN32)
 #if __has_attribute(preserve_all)
 #define VU1_AOT_COLD __attribute__((preserve_all, noinline))
 #endif
