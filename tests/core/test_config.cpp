@@ -470,6 +470,21 @@ static void TestValidator() {
     CHECK(ConfigValidator::Validate(c, true, &err));            // or --harness-window
     c.harness.headless = true;
     CHECK(ConfigValidator::Validate(c, false, &err));
+    // harness.load_state alone does NOT arm the harness: the launcher's Save States
+    // "Resume" (title.json resume_args = --load-state <slot>) and the F8 relaunch
+    // restore a state in a plain window (2026-11-01 play log: `harness.* requires
+    // --headless` refused the Resume). With --headless / --harness-out it still arms.
+    c = Config();
+    c.harness.load_state = "slot0.ps2st";
+    CHECK(ConfigValidator::Validate(c, false, &err));           // a window, no harness flag: play cold-restore
+    c.harness.out_dir = "/tmp/x";
+    CHECK(!ConfigValidator::Validate(c, false, &err));          // --harness-out still needs --headless
+    c.harness.headless = true;
+    CHECK(ConfigValidator::Validate(c, false, &err));
+    c = Config();
+    c.harness.load_state = "slot0.ps2st";
+    c.harness.inputs = "in.padlog";
+    CHECK(!ConfigValidator::Validate(c, false, &err));          // a replay still arms
     // freerun defaults instant unless explicit.
     c = Config();
     c.engine.pacing = Pacing::Freerun;
@@ -752,6 +767,13 @@ static void TestLoaderPrecedence() {
             CHECK(named);
         }
     }
+
+    // The launcher's Resume: the play composition's own arguments plus --load-state, in a window.
+    r = Load(c, {"--iso", "g.iso", "--set", "paths.save_dir=" + P("saves"), "--load-state", P("saves/savestates/slot0.ps2st")});
+    CHECK(r.ok && !c.harness.headless && c.harness.load_state == P("saves/savestates/slot0.ps2st") && c.harness.out_dir.empty());
+    CHECK(r.harness_cli);   // the launcher screen is skipped (Launcher::Wanted), the game restores
+    r = Load(c, {"--load-state", "s.ps2st", "--frames", "10"});
+    CHECK(!r.ok && r.error.find("--headless") != std::string::npos);   // a frame budget still arms
 
     // Errors.
     r = Load(c, {"--headless", "--record-input"});
