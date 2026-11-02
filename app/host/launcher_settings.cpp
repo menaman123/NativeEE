@@ -79,6 +79,7 @@ std::vector<std::string> LauncherSettings::TexturePacks() const {
 void LauncherSettings::DrawDisplayPage() {
     ImGui::TextDisabled("The same rows as the in-game Options > Display page; applied when the game starts, saved to your settings file.");
     ImGui::Spacing();
+    if (ImGui::Checkbox("FPS counter (video.fps_overlay)", &cfg_.video.fps_overlay)) PersistBool("video.fps_overlay", cfg_.video.fps_overlay);
     if (ImGui::Checkbox("FPS / game Hz overlay (ui.perf_overlay)", &cfg_.ui.perf_overlay)) PersistBool("ui.perf_overlay", cfg_.ui.perf_overlay);
     if (ImGui::Checkbox("VSync (video.vsync)", &cfg_.video.vsync)) PersistBool("video.vsync", cfg_.video.vsync);
     int aspect = static_cast<int>(cfg_.video.aspect);

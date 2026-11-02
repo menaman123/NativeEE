@@ -312,8 +312,13 @@ bool ConfigValidator::Validate(const Config& c, bool harness_window_requested, s
     // TRIAGE_CAPTURE section 3: fps_target 0 = auto, ring_period_s 0 = ring off.
     if (c.triage.fps_target < 0 || c.triage.disk_budget_mb < 0 || c.triage.ring_period_s < 0)
         return Refuse(err, "triage.fps_target/ring_period_s/disk_budget_mb must be >= 0");
+    // harness.load_state alone does NOT arm the harness: a play composition restores a
+    // state from the launcher's Save States "Resume" (title.json resume_args =
+    // `--load-state <slot>`) and from the F8 relaunch with a plain window -- the
+    // composition's own cold-restore path (the title's boot leg). The headless legs
+    // still pass it WITH --headless / --harness-out, which arm as before.
     const bool harness_armed = !c.harness.out_dir.empty() || c.harness.frames > 0 ||
-                               !c.harness.load_state.empty() || !c.harness.inputs.empty() ||
+                               !c.harness.inputs.empty() ||
                                c.harness.record_input || c.harness.state_every > 0 || !c.harness.inject_key.empty() ||
                                !c.harness.display_sequence.empty() || c.harness.close_at_frame > 0 ||
                                !c.harness.virtual_pad.empty();

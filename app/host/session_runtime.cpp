@@ -164,6 +164,15 @@ void SessionRuntime::SetRenderer(std::string renderer) {
     renderer_ = std::move(renderer);
 }
 
+void SessionRuntime::ConfigureFpsOverlay(bool on, const FpsOverlayTheme& theme) {
+    if (std::this_thread::get_id() != main_thread_) return;
+    fps_overlay_.store(on);
+    window_.Gui().SetFpsOverlayTheme(theme);
+    window_.Gui().SetFpsOverlay(on);
+    capabilities_.fps_overlay = true;
+    Publish();
+}
+
 void SessionRuntime::ConfigureWindowDump(std::string dir) {
     if (std::this_thread::get_id() != main_thread_) return;
     window_dump_dir_ = std::move(dir);
@@ -202,6 +211,7 @@ void SessionRuntime::Publish() {
     display_mode_.store(window_.DisplayMode());
     status_.display_mode = display_mode_.load();
     status_.perf_overlay = perf_overlay_.load();
+    status_.fps_overlay = fps_overlay_.load();
     status_.texture_filter = TextureFilterState();
     status_.anisotropy = AnisotropyState();
     status_.vsync = window_.VSync();
@@ -417,6 +427,12 @@ void SessionRuntime::ProcessCommands() {
                 perf_overlay_.store(request.value != 0);
                 detail = request.value != 0 ? "Performance overlay shown." : "Performance overlay hidden.";
                 if (persist_) persist_("ui.perf_overlay", request.value != 0 ? "on" : "off");
+                break;
+            case Action::SetFpsOverlay:
+                fps_overlay_.store(request.value != 0);
+                window_.Gui().SetFpsOverlay(request.value != 0);
+                detail = request.value != 0 ? "FPS counter shown." : "FPS counter hidden.";
+                if (persist_) persist_("video.fps_overlay", request.value != 0 ? "on" : "off");
                 break;
             case Action::SetDisplayMode: {
                 static const char* const kModes[] = {"windowed", "fullscreen", "borderless"};

@@ -20,6 +20,9 @@ public:
         // The in-game 'Display' page's perf overlay toggle (ui.perf_overlay):
         // applied by the presenter, persisted in the settings file.
         SetPerfOverlay,
+        // The Display page's FPS counter (video.fps_overlay: the pictures shown per second, the
+        // frame time and a short history, top-right): applied by the presenter, persisted.
+        SetFpsOverlay,
         // The Display page's rows (Charter 2 A2/A3), each applied live by the
         // presenter / the video stack and persisted in the settings file:
         // video.fullscreen (0 windowed, 1 fullscreen, 2 borderless), video.scale
@@ -61,6 +64,7 @@ public:
         bool keyboard_input = false;
         bool recording = false;
         bool perf_overlay = false;
+        bool fps_overlay = false;    // video.fps_overlay: the FPS counter (a session window)
         bool display_rows = false;   // the A2/A3 rows (a live video stack)
         bool texture_filter = false;
         bool frame_limit = false;    // the title supports an uncapped frame rate
@@ -98,6 +102,8 @@ public:
         bool recording = false;
         // ui.perf_overlay: the game Hz / render fps overlay over the presented frame.
         bool perf_overlay = false;
+        // video.fps_overlay: the FPS counter over the presented frame.
+        bool fps_overlay = false;
         // The Display page's live values (A2/A3): video.fullscreen's mode, video.scale
         // (0 = native window), video.aspect's selection and video.render_rate.
         int display_mode = 0;

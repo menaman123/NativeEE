@@ -22,6 +22,9 @@ public:
     ControlsSection& Controls() { return controls_page_; }
     // The pause menu's Resume: close the menu and release the pause it holds.
     static void Resume(SessionControls& controls, const SessionControls::Snapshot& snapshot);
+    // Where the top-right overlays start (the ui.perf_overlay readout stacks under the FPS
+    // counter when both are on; 12 px from the top otherwise).
+    void SetOverlayTop(float y) { overlay_top_ = y; }
 
 private:
     void DrawSession(SessionControls& controls, const SessionControls::Snapshot& snapshot);
@@ -43,6 +46,7 @@ private:
     uint64_t notice_id_ = 0;
     SessionControls::Phase notice_phase_ = SessionControls::Phase::Queued;
     double notice_until_ = 0.0;
+    float overlay_top_ = 12.0f;
 };
 
 }  // namespace ps2r::app
