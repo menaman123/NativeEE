@@ -64,7 +64,7 @@ UI = {
                          choices={"auto": "Auto", "4:3": "4:3", "16:9": "16:9", "16:10": "16:10", "21:9": "21:9", "32:9": "32:9"}),
     "video.scale": dict(label="Picture scale", kind="choice", help="How many times the original resolution the game is drawn at. Window follows the window size.",
                         choices={"0": "Window", "1": "1x", "2": "2x", "3": "3x", "4": "4x"}),
-    "video.vsync": dict(label="Wait for the display", help="Shows each picture in step with the display. Removes tearing; may add a little delay."),
+    "video.vsync": dict(label="Wait for the display", help="Shows each picture in step with the display. Removes tearing, but your button presses reach the screen later (about two extra frames) and the picture can feel sluggish. Leave it off unless the picture tears."),
     "video.frame_cap": dict(label="Picture rate", help="How often a new picture is shown. 60 shows every one; 30 shows every other one at a steady pace; Off shows them as they come.",
                             choices={"off": "Off", "30": "30", "60": "60"}),
     "video.frame_limit": dict(label="Frame rate", kind="choice", help="How many frames a second the game runs at. 60 is the original; above it every frame is a real game frame, and the game keeps its normal speed.",

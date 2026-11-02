@@ -1748,7 +1748,7 @@
       "kind": "switch",
       "user_facing": true,
       "label": "Wait for the display",
-      "help": "Shows each picture in step with the display. Removes tearing; may add a little delay."
+      "help": "Shows each picture in step with the display. Removes tearing, but your button presses reach the screen later (about two extra frames) and the picture can feel sluggish. Leave it off unless the picture tears."
     }
   ]
 }
