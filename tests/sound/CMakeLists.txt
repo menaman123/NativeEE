@@ -67,6 +67,15 @@ target_compile_options(test_time_stretch PRIVATE -Wall -Wextra -Werror)
 add_test(NAME TimeStretch COMMAND test_time_stretch)
 set_tests_properties(TimeStretch PROPERTIES TIMEOUT 60)
 
+# StretchRate: the device-ring rate controller (the ratio TimeStretch gets per quantum) under a model of
+# the pull ring: a 60 Hz cadence with jitter is exactly 1, isolated two-field boundaries never pad, a
+# sustained slow cadence converges to its rate without a repeat, a stall resets and recovers.
+add_executable(test_stretch_rate test_stretch_rate.cpp)
+target_link_libraries(test_stretch_rate PRIVATE ps2r_sound)
+target_compile_options(test_stretch_rate PRIVATE -Wall -Wextra -Werror)
+add_test(NAME StretchRate COMMAND test_stretch_rate)
+set_tests_properties(StretchRate PROPERTIES TIMEOUT 60)
+
 # The SPU2 register semantics of the voice model (the envelope rate engine, signed
 # volume registers, MVOL << 1, the core 0 -> AVOL1 -> core 1 routing, switch readback
 # and the VMIX dry gates, the VoiceTrace record), vectors from the hardware's rules

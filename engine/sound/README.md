@@ -36,6 +36,21 @@ for the chunk. The sample-major loop stays as the ORACLE: `SetFastMix(false)`, o
 attached (the trace's event order is the sample-major one). `tools/perf/io/bench_spu_mixer` runs both over a 48-voice churn
 scenario and compares the output hash (exit 1 on a difference); the harness audio lane (`audio.ahash`) is the in-game gate.
 
+## The device rate match (FIX-3, the FMV audio stutter)
+
+`TimeStretch` (WSOLA, 960-frame Hann window, hop 480, seek +-240) lengthens or shortens each mixer quantum on its way to
+the host's pull ring with pitch kept; at ratio EXACTLY 1 it is a pass-through (the continuation is the best match, score 1).
+At any other ratio it splices (a +-5 ms jump to the best-correlating offset) whenever the nominal position has drifted out of
+the seek range: every ~25 hops at 1.02, every hop at 1.3. `StretchRate` is the ratio it is fed per quantum: the game's
+boundary RATE over a two-second window (feed-forward), a one-second fill mean with a 2% gain (the device clock's drift), a
+four-push fill mean with a 15%-of-lead dead band and a 30% gain (a rate step bridged before the ring's lead is gone, as a
+ramp over 100-200 ms), a snap to exactly 1 within 0.2%, and a one-push guard below 600 frames of fill (the next late field
+would otherwise pad = repeat). A late field followed by a catch-up (a two-field movie picture) is jitter the lead absorbs:
+the ratio stays 1. The previous controller (the smoothed interval to the previous push x 60, times a 0.5 gain on the
+instantaneous fill) moved the ratio by tens of percent at every late field and by +-5% at every push from the fill's pull /
+hop quantisation -- audible as warble and "stutter" on FMV speech. `tests/sound/test_stretch_rate` pins the four cadences
+(steady with jitter, two-field pictures, sustained 54 Hz, a stall) under a model of the ring.
+
 ## Rules
 
 - One class per `.h`/`.cpp` pair (`tests/lint/lint_one_class.py`); headers declarations-only; no `.inc` includes.

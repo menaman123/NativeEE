@@ -2,7 +2,7 @@
 # block decoder (VagDecoder); 4E'': Voice, SpuCore, CommandRing, Mixer (the
 # tick-clocked pump); Phase 7 integration: FmvPcmInput (the mixer's FMV PCM
 # source, the sound module's FmvPcmSink); TimeStretch (the play host's rate
-# match to the audio device). The libsd bodies live in engine/iop/hle/libsd
+# match to the audio device) and StretchRate (the ratio it is fed per quantum). The libsd bodies live in engine/iop/hle/libsd
 # over SpuCore.
 add_library(ps2r_sound STATIC
     vag_decoder.cpp
@@ -14,6 +14,7 @@ add_library(ps2r_sound STATIC
     fmv_pcm_input.cpp
     voice_trace.cpp
     time_stretch.cpp
+    stretch_rate.cpp
 )
 # The libsdr surface (4E''): the SDRDRV face and the EE rows over SpuCore. Links
 # the manifest (ps2r_ee) and the RPC router (ps2r_sif); ps2r_sound itself stays

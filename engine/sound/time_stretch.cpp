@@ -13,8 +13,8 @@ constexpr double kPi = 3.14159265358979323846;
 constexpr double kOffsetBias = 1e-6;
 }  // namespace
 
-TimeStretch::TimeStretch()
-    : ola_(static_cast<size_t>(kWindow) * kChannels, 0.0f), window_(static_cast<size_t>(kWindow)) {
+TimeStretch::TimeStretch(int seek)
+    : ola_(static_cast<size_t>(kWindow) * kChannels, 0.0f), window_(static_cast<size_t>(kWindow)), seek_(std::max(seek, kCoarseStep)) {
     for (int i = 0; i < kWindow; ++i)
         window_[static_cast<size_t>(i)] = static_cast<float>(0.5 - 0.5 * std::cos(2.0 * kPi * i / kWindow));
 }
@@ -44,9 +44,17 @@ double TimeStretch::Match(int64_t start, int step) const {
     return xy / std::sqrt(xx * yy);
 }
 
-int64_t TimeStretch::PickStart(int64_t nominal) const {
+int64_t TimeStretch::PickStart(int64_t nominal, double* score_out) const {
+    *score_out = 1.0;
     if (prev_ < 0) return nominal;
-    const int64_t lo = std::max(base_, nominal - kSeek), hi = nominal + kSeek;
+    {
+        // A silent continuation template matches nothing and everything: take the nominal position, seamless.
+        const size_t y0 = static_cast<size_t>(prev_ + kHop - base_) * kChannels;
+        double yy = 0.0;
+        for (size_t j = 0; j < static_cast<size_t>(kHop) * kChannels; ++j) yy += in_[y0 + j] * in_[y0 + j];
+        if (yy <= 0.0) return nominal;
+    }
+    const int64_t lo = std::max(base_, nominal - seek_), hi = nominal + seek_;
     int64_t best = nominal;
     double best_score = -2.0;
     for (int64_t s = lo; s <= hi; s += kCoarseStep) {
@@ -65,6 +73,7 @@ int64_t TimeStretch::PickStart(int64_t nominal) const {
             best = s;
         }
     }
+    *score_out = best_score;
     return best;
 }
 
@@ -77,9 +86,18 @@ void TimeStretch::Process(const float* interleaved, int frames, double ratio, st
     for (;;) {
         const int64_t nominal = static_cast<int64_t>(std::llround(pos_));
         int64_t need = nominal + kWindow;
-        if (prev_ >= 0) need = std::max(nominal + kSeek + kWindow, prev_ + 2 * kHop);
+        if (prev_ >= 0) need = std::max(nominal + seek_ + kWindow, prev_ + 2 * kHop);
         if (BufferedEnd() < need) break;
-        const int64_t start = PickStart(nominal);
+        double score = 1.0;
+        const int64_t start = PickStart(nominal, &score);
+        if (prev_ >= 0 && start != prev_ + kHop) {
+            const uint64_t offset = static_cast<uint64_t>(std::llabs(start - (prev_ + kHop)));
+            ++splices_;
+            splice_score_sum_ += score;
+            splice_offset_sum_ += offset;
+            splice_offset_max_ = std::max(splice_offset_max_, offset);
+            if (offset >= static_cast<uint64_t>(kLargeSplice)) ++large_splices_;
+        }
         const size_t from = static_cast<size_t>(start - base_) * kChannels;
         for (int i = 0; i < kWindow; ++i) {
             const float w = window_[static_cast<size_t>(i)];
@@ -93,7 +111,7 @@ void TimeStretch::Process(const float* interleaved, int frames, double ratio, st
         prev_ = start;
         pos_ += kHop / ratio;
         // Keep what the next search window and the next continuation template can still reach.
-        const int64_t keep = std::min(prev_ + kHop, static_cast<int64_t>(std::llround(pos_)) - kSeek);
+        const int64_t keep = std::min(prev_ + kHop, static_cast<int64_t>(std::llround(pos_)) - seek_);
         if (keep > base_) {
             in_.erase(in_.begin(), in_.begin() + static_cast<std::ptrdiff_t>((keep - base_) * kChannels));
             base_ = keep;
