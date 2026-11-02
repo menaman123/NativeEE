@@ -36,7 +36,7 @@ for the chunk. The sample-major loop stays as the ORACLE: `SetFastMix(false)`, o
 attached (the trace's event order is the sample-major one). `tools/perf/io/bench_spu_mixer` runs both over a 48-voice churn
 scenario and compares the output hash (exit 1 on a difference); the harness audio lane (`audio.ahash`) is the in-game gate.
 
-## The device rate match (FIX-3, the FMV audio stutter)
+## The device rate match (the FMV audio stutter)
 
 `TimeStretch` (WSOLA, 960-frame Hann window, hop 480, seek +-240) lengthens or shortens each mixer quantum on its way to
 the host's pull ring with pitch kept; at ratio EXACTLY 1 it is a pass-through (the continuation is the best match, score 1).
