@@ -195,6 +195,7 @@ DrawResult MetalDrawExecutor::DrawHalfwordShuffle(const gs::DrawIr& ir, const gs
     MetalVertUniforms vu;
     vu.screen_size_x = static_cast<float>(p.target_w);
     vu.screen_size_y = static_cast<float>(p.target_h);
+    vu.px_scale = static_cast<float>(sc);
     [e setVertexBuffer:(id<MTLBuffer>)dev_.VertexRing() offset:0 atIndex:0];
     [e setVertexBytes:&vu length:sizeof(vu) atIndex:1];
     MetalHalfwordUniforms hu;
@@ -577,6 +578,7 @@ void MetalDrawExecutor::Emit(const gs::DrawIr& ir, Step& s) {
     MetalVertUniforms vu;
     vu.screen_size_x = static_cast<float>(s.render_w);
     vu.screen_size_y = static_cast<float>(s.render_h);
+    vu.px_scale = static_cast<float>(std::max(1, s.scale));
     [e setVertexBytes:&vu length:sizeof(vu) atIndex:1];
     [e setFragmentBytes:&u_ length:sizeof(u_) atIndex:0];
     void* texes[6] = {s.tex0, s.tex1, s.tex2, s.tex3, s.tex4, s.tex5};

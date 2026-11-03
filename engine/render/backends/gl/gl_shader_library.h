@@ -21,7 +21,7 @@ class GlUniformCache;
 // Uniform locations of the PS2 draw program (-1 when the driver optimised the
 // uniform away; glUniform* on -1 is a no-op).
 struct GlUniformLocations {
-    int screen_size = -1, use_texture = -1, tex_sampler = -1;
+    int screen_size = -1, px_scale = -1, use_texture = -1, tex_sampler = -1;
     int blend_a = -1, blend_b = -1, blend_c = -1, blend_d = -1, fix_alpha = -1, blend_enabled = -1;
     int ff_unified = -1;
     int tfx = -1, tcc = -1, fba = -1, colclamp = -1, scanmsk = -1;
@@ -44,9 +44,9 @@ struct GlUniformLocations {
 // link: u_rt_texture 1, u_zsrc_tex 4 -- the PS2 program's units).
 struct GlStencilLocations {
     int strip_screen = -1, strip_zsrc_en = -1, strip_datm = -1, strip_zsrc_num = -1, strip_zsrc_den = -1;
-    int invert_screen = -1, invert_fix = -1;
+    int invert_screen = -1, invert_fix = -1, invert_px_scale = -1;
     int const_color = -1;
-    int hw_screen = -1, hw_dest_hi = -1, hw_mask16 = -1, hw_ta0 = -1, hw_ta1 = -1, hw_aem = -1;
+    int hw_screen = -1, hw_px_scale = -1, hw_dest_hi = -1, hw_mask16 = -1, hw_ta0 = -1, hw_ta1 = -1, hw_aem = -1;
     int lane_origin = -1, lane_scale = -1, lane_exclude = -1;   // the alpha-lane pass
     int idx_origin = -1, idx_step = -1;                        // the indexed-alpha pass
     int nr_origin = -1, nr_step = -1, nr_sub = -1;             // the nearest (logical) read pass

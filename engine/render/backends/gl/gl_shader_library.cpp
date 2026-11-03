@@ -112,12 +112,14 @@ bool GlShaderLibrary::BuildStencilPrograms() {
     if (rt_s >= 0) glUniform1i(rt_s, 1);
     if (zs_s >= 0) glUniform1i(zs_s, 4);
     sloc_.invert_screen = glGetUniformLocation(invert_program_, "u_screen_size");
+    sloc_.invert_px_scale = glGetUniformLocation(invert_program_, "u_px_scale");
     sloc_.invert_fix = glGetUniformLocation(invert_program_, "u_fix_alpha");
     glUseProgram(invert_program_);
     const GLint rt_i = glGetUniformLocation(invert_program_, "u_rt_texture");
     if (rt_i >= 0) glUniform1i(rt_i, 1);
     sloc_.const_color = glGetUniformLocation(const_program_, "u_color");
     sloc_.hw_screen = glGetUniformLocation(halfword_program_, "u_screen_size");
+    sloc_.hw_px_scale = glGetUniformLocation(halfword_program_, "u_px_scale");
     sloc_.hw_dest_hi = glGetUniformLocation(halfword_program_, "u_dest_hi");
     sloc_.hw_mask16 = glGetUniformLocation(halfword_program_, "u_mask16");
     sloc_.hw_ta0 = glGetUniformLocation(halfword_program_, "u_ta0");
@@ -174,6 +176,7 @@ void GlShaderLibrary::LookupLocations() {
     const GLuint p = ps2_program_;
     auto L = [p](const char* name) { return glGetUniformLocation(p, name); };
     loc_.screen_size = L("u_screen_size");
+    loc_.px_scale = L("u_px_scale");
     loc_.use_texture = L("u_use_texture");
     loc_.tex_sampler = L("u_texture");
     loc_.blend_a = L("u_blend_a");

@@ -23,6 +23,12 @@ layout(location = 2) in vec4 a_color;
 layout(location = 3) in float a_fog;
 
 uniform vec2 u_screen_size;
+// The attachment's scale (physical pixels per PS2 pixel; the viewport is physical). The sample-grid
+// translation below is half a PHYSICAL pixel: at scale s the GS sample point x.0 of PS2 pixel x is the
+// centre of physical pixel s * x, as at scale 1 -- half a PS2 pixel would leave physical columns / rows
+// 0 .. s/2 - 1 of every target unpainted (the left-edge line) and shift every draw 3/8 px at scale 4.
+// 1.0 = the program's default (the scale-1 passes never set it): x / 1.0 is x exactly.
+uniform float u_px_scale = 1.0;
 
 // [R169-GLRUN] P2.1 (PS2_GL_VSUV): raw-attribute UV mode. The CPU texcoord
 // scaling (one fp32 multiply per component, or an exact power-of-two divide)
@@ -64,7 +70,7 @@ void main() {
     // is the GS's inclusive-low / exclusive-high). The interpolants are then read
     // at (i + 1/256, j + 1/256): a texel coordinate exactly on a boundary falls
     // INSIDE the GS texel, never before it. PCSX2 GSRendererHW ox2 / tfx_vgs -0.05.
-    vec2 gs_px = a_position.xy + vec2(0.49609375);
+    vec2 gs_px = a_position.xy + vec2(0.49609375) / u_px_scale;
     vec2 ndc = (gs_px / u_screen_size) * 2.0 - 1.0;
     // [R112-Z-PRECISION] Z mapping: z_ndc = z/2^31 - 1  =>  window
     // d = 0.5*z_ndc + 0.5 = z/2^32 (Sterbenz-exact viewport transform,

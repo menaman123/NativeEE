@@ -160,6 +160,7 @@ DrawResult GlDrawExecutor::Draw(const gs::DrawIr& ir, const gs::TextureSource& t
     const GlUniformLocations& L = dev_.Shaders().Locations();
     st.UseProgram(dev_.Shaders().Ps2Program());
     u.Set2f(L.screen_size, static_cast<float>(s.render_w), static_cast<float>(s.render_h));
+    u.Set1f(L.px_scale, static_cast<float>(s.scale));
     TextureUniforms(ir, tex, p, s);
     RegisterUniforms(ir, p);
     ClassifyRoutes(ir, tex, p, s);
@@ -276,6 +277,7 @@ DrawResult GlDrawExecutor::DrawInvert(const gs::DrawIr& ir, const gs::TextureSou
     st.UseProgram(dev_.Shaders().StencilInvertProgram());
     const GlStencilLocations& SL = dev_.Shaders().StencilLocations();
     glUniform2f(SL.invert_screen, static_cast<float>(s.render_w), static_cast<float>(s.render_h));
+    if (SL.invert_px_scale >= 0) glUniform1f(SL.invert_px_scale, static_cast<float>(std::max(1, s.scale)));
     glUniform1f(SL.invert_fix, ir.raster.alpha.fix / 128.0f);
     if (!ConvertVertices(ir, tex, s)) return none;
     s.idx_self_serve = true;
@@ -344,6 +346,7 @@ DrawResult GlDrawExecutor::DrawHalfwordShuffle(const gs::DrawIr& ir, const gs::T
     st.UseProgram(dev_.Shaders().HalfwordShuffleProgram());
     const GlStencilLocations& SL = dev_.Shaders().StencilLocations();
     glUniform2f(SL.hw_screen, static_cast<float>(p.target_w), static_cast<float>(p.target_h));
+    if (SL.hw_px_scale >= 0) glUniform1f(SL.hw_px_scale, static_cast<float>(sc));
     glUniform1i(SL.hw_dest_hi, op.dest_hi ? 1 : 0);
     glUniform1i(SL.hw_mask16, static_cast<int>(op.mask16));
     glUniform1i(SL.hw_ta0, op.ta0);

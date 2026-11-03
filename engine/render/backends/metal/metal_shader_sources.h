@@ -51,6 +51,7 @@ struct MetalFragUniforms {
 
 struct MetalVertUniforms {
     float screen_size_x = 1.f, screen_size_y = 1.f;
+    float px_scale = 1.f;   // the attachment's scale: the sample-grid shift is half a PHYSICAL pixel
 };
 
 // The scanout quad's uniforms: the source rectangle in normalised texels and the

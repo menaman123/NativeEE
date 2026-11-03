@@ -33,6 +33,7 @@ struct GpuVertexIn {
 
 struct VertUniforms {
     float screen_size_x, screen_size_y;
+    float px_scale;
 };
 
 struct RasterData {
@@ -49,8 +50,9 @@ vertex RasterData ps2_vertex(uint vid [[vertex_id]],
     const GpuVertexIn v = verts[vid];
     RasterData o;
     // The GS coverage rule (integer sample point, x0 <= i < x1) against Metal's pixel
-    // centres: translate by +0.5 px minus 1/256 px (the GL arm's constant).
-    float2 gs_px = float2(v.x, v.y) + float2(0.49609375);
+    // centres: translate by +0.5 px minus 1/256 px (the GL arm's constant) -- of a PHYSICAL pixel, so at
+    // scale s the GS sample point x.0 is the centre of physical pixel s * x, as at scale 1.
+    float2 gs_px = float2(v.x, v.y) + float2(0.49609375) / U.px_scale;
     float2 ndc = (gs_px / float2(U.screen_size_x, U.screen_size_y)) * 2.0 - 1.0;
     // PS2 row 0 at the TOP of the attachment (texture row 0): the same memory order as the
     // GL arm's bottom-origin attachments, so every readback / upload / position agrees.

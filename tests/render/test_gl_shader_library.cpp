@@ -29,8 +29,10 @@ static int g_checks = 0, g_fail = 0;
 // then (0xa12a8c2a25c17ff7) the GS coverage rule: the primitive translated by
 // +0.5 - 1/256 px so the GS integer sample point (i, j) meets the GL sample point
 // (i + 0.5, j + 0.5) with the inclusive-low / exclusive-high edge rule (a sprite
-// -0.5..223.5 covers rows 0..223; pinned by test_gl_raster_rule).
-static const uint64_t kVertHash = 0x36951d472cb1a88cull;
+// -0.5..223.5 covers rows 0..223; pinned by test_gl_raster_rule); then
+// (0x36951d472cb1a88c) that translation as half a PHYSICAL pixel (u_px_scale): at scale s the
+// GS sample point is the centre of physical pixel s * i, as at scale 1 (scale 1 unchanged).
+static const uint64_t kVertHash = 0xf714d3df53cc8451ull;
 // The fragment text is the OLD baseline arm (0x3ffd78421c147ece) plus TWO
 // additive branches: the u_idx_fmt == 7 serve (the depth-byte palette lookup the
 // owned colour filter asks for: clut[(Z >> u_idx_self) & 0xFF] of the bound
