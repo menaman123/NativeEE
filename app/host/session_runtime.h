@@ -328,7 +328,7 @@ private:
     std::atomic<int> volume_{100};
     std::atomic<bool> fps_overlay_{false};
     std::atomic<bool> perf_overlay_{false}, fullscreen_state_{false}, keyboard_state_{true}, vsync_state_{false},
-        motion_blur_{true};
+        motion_blur_{false};
     // Mods: the level list (under mods_mutex_: written by the game owner, copied at Publish), the live rows.
     std::mutex mods_mutex_;
     std::vector<SessionControls::ModsLevel> mods_levels_;

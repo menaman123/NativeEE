@@ -118,7 +118,7 @@ public:
         int frame_limit = 60;   // video.frame_limit (0 = unlimited)
         bool invert_camera_x = false;
         bool invert_camera_y = false;
-        bool motion_blur = true;   // video.motion_blur
+        bool motion_blur = false;   // video.motion_blur
         // The Mods section's live rows: the level the title is in (-1 = unknown / not yet
         // published), the level list (empty until the title has built its table), and whether a
         // movie or an in-engine cutscene is playing now (the Skip button's state).

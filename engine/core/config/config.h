@@ -114,8 +114,10 @@ struct VideoConfig {
     int          frame_limit = 60;
     // video.motion_blur: the title's own full-screen motion blur (a blend of the previous
     // picture), for a title whose play composition can switch it; off draws each picture
-    // sharp. Applied live from the Display page; persisted.
-    bool         motion_blur = true;
+    // sharp. Applied live from the Display page; persisted. Off by default: the blend is
+    // the console's interlace anti-flicker -- on a progressive display every moving
+    // character trails a translucent copy of the previous field (Sly 2: 37.5 % of it).
+    bool         motion_blur = false;
     bool         vsync = false;
     // video.hidpi: the session window's drawable at the display's own pixels on a scaled (Retina)
     // display (SDL_WINDOW_ALLOW_HIGHDPI), so the host picture and a `window` internal scale resolve

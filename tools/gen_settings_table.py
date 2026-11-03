@@ -248,7 +248,7 @@ ROWS = [
     ("video.hidpi", "bool", "off", "=", "-"),
     ("video.interp", "bool", "on", "off", "PS2_GS_INTERP"),
     ("video.metal_hw_depth", "bool", "off", "=", "-"),
-    ("video.motion_blur", "bool", "on", "=", "-"),
+    ("video.motion_blur", "bool", "off", "=", "-"),
     ("video.present_relax", "bool", "on", "off", "-"),
     ("video.render_rate", "enum(60|display)", "60", "=", "-"),
     ("video.scale", "int", "1", "=", "PS2_GS_SCALE"),
