@@ -157,6 +157,8 @@ void GlDevice::Shutdown() {
     executor_.reset();
     for (auto& kv : surfaces_) ReleaseSurface(kv.second);
     surfaces_.clear();
+    nearest_scratch_ = SurfaceId{};
+    nearest_w_ = nearest_h_ = 0;
     pool_.DropAll(state_);
     ReleaseReadbacks();
     if (dummy_tex_) { state_.DeleteTextures(1, &dummy_tex_); dummy_tex_ = 0; }
@@ -667,6 +669,75 @@ bool GlDevice::DecodeIndexedAlpha(SurfaceId src_id, const Rect& rect, int step, 
     state_.DepthMask(true);
     state_.Enable(GL_DEPTH_TEST);
     return true;
+}
+
+// The point-sampled read of a scaled attachment at its logical resolution (the Metal arm's nearest pass): one
+// triangle into the logical scratch, then the plain read of it -- 1 / step^2 of the bytes. Without it every
+// deposit of a scaled target read the PHYSICAL rows (16x the bytes at scale 4: the buffer zero-filled, the
+// copy, the fold on the CPU) and every alpha-merge import the same.
+bool GlDevice::NearestPass(SurfaceId src_id, const Rect& rect, int step, int sub_x, int sub_y, Rect* out_rect) {
+    const GlSurface* src = Surface(src_id);
+    if (!src || !src->tex || !shaders_.NearestProgram() || src->desc.format != SurfaceFormat::Rgba8) return false;
+    if (step < 2 || rect.w <= 0 || rect.h <= 0 || rect.w % step || rect.h % step) return false;
+    if (sub_x < 0 || sub_y < 0 || sub_x >= step || sub_y >= step || rect.x < 0 || rect.y < 0 ||
+        uint32_t(rect.x + rect.w) > src->desc.width || uint32_t(rect.y + rect.h) > src->desc.height)
+        return false;
+    const uint32_t w = uint32_t(rect.w / step), h = uint32_t(rect.h / step);
+    if (!nearest_scratch_.id || w > nearest_w_ || h > nearest_h_) {
+        if (nearest_scratch_.id) DestroySurface(nearest_scratch_);
+        SurfaceDesc d;
+        d.width = std::max(w, nearest_w_);
+        d.height = std::max(h, nearest_h_);
+        d.format = SurfaceFormat::Rgba8;
+        d.renderable = true;
+        d.scale = 1;
+        nearest_scratch_ = CreateSurface(d);
+        if (!nearest_scratch_.id) { nearest_w_ = nearest_h_ = 0; return false; }
+        nearest_w_ = d.width;
+        nearest_h_ = d.height;
+    }
+    const GlSurface* dst = Surface(nearest_scratch_);
+    if (!dst || !dst->fbo) return false;
+    EndDrawRun();
+    state_.BindFb(GL_FRAMEBUFFER, dst->fbo);
+    state_.Viewport(0, 0, int(w), int(h));
+    state_.Disable(GL_SCISSOR_TEST);
+    state_.Disable(GL_BLEND);
+    state_.Disable(GL_DEPTH_TEST);
+    state_.Disable(GL_STENCIL_TEST);
+    state_.DepthMask(false);
+    state_.ColorMask(true, true, true, true);
+    state_.ActiveTexture(GL_TEXTURE0);
+    state_.BindTex2D(src->tex);
+    state_.UseProgram(shaders_.NearestProgram());
+    const GlStencilLocations& L = shaders_.StencilLocations();
+    if (L.nr_origin >= 0) glUniform2i(L.nr_origin, rect.x, rect.y);
+    if (L.nr_step >= 0) glUniform1i(L.nr_step, step);
+    if (L.nr_sub >= 0) glUniform2i(L.nr_sub, sub_x, sub_y);
+    state_.BindVertexArray(const_vao_);
+    census_.draw_calls++;
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    state_.BindVertexArray(0);
+    state_.UseProgram(0);
+    state_.BindTex2D(0);
+    state_.DepthMask(true);
+    state_.Enable(GL_DEPTH_TEST);
+    *out_rect = Rect{0, 0, int(w), int(h)};
+    return true;
+}
+
+bool GlDevice::ReadbackNearest(SurfaceId src, const Rect& rect, int step, void* out, size_t stride, int sub_x,
+                               int sub_y) {
+    Rect lr;
+    if (!out || !NearestPass(src, rect, step, sub_x, sub_y, &lr)) return false;
+    Readback(nearest_scratch_, lr, out, stride);
+    return true;
+}
+
+FenceId GlDevice::BeginReadbackNearest(SurfaceId src, const Rect& rect, int step, int sub_x, int sub_y) {
+    Rect lr;
+    if (!NearestPass(src, rect, step, sub_x, sub_y, &lr)) return FenceId{};
+    return BeginReadback(nearest_scratch_, lr);
 }
 
 // Rows bottom-up (attachment order); colour RGBA8, depth float.

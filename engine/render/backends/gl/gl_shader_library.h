@@ -49,6 +49,7 @@ struct GlStencilLocations {
     int hw_screen = -1, hw_dest_hi = -1, hw_mask16 = -1, hw_ta0 = -1, hw_ta1 = -1, hw_aem = -1;
     int lane_origin = -1, lane_scale = -1, lane_exclude = -1;   // the alpha-lane pass
     int idx_origin = -1, idx_step = -1;                        // the indexed-alpha pass
+    int nr_origin = -1, nr_step = -1, nr_sub = -1;             // the nearest (logical) read pass
 };
 
 class GlShaderLibrary {
@@ -69,6 +70,7 @@ public:
     uint32_t Pack5551Program() const { return pack5551_program_; }
     uint32_t AlphaLaneProgram() const { return alpha_lane_program_; }
     uint32_t IndexedAlphaProgram() const { return indexed_alpha_program_; }
+    uint32_t NearestProgram() const { return nearest_program_; }
     const GlStencilLocations& StencilLocations() const { return sloc_; }
 
     static const char* VertexSource();
@@ -93,6 +95,7 @@ private:
     uint32_t pack5551_program_ = 0;
     uint32_t alpha_lane_program_ = 0;
     uint32_t indexed_alpha_program_ = 0;
+    uint32_t nearest_program_ = 0;
     GlStencilLocations sloc_;
     int scanout_tex_loc_ = -1;
     GlUniformLocations loc_;

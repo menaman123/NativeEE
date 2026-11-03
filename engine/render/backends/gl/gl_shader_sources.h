@@ -30,6 +30,9 @@ public:
     // fragment at logical (x, y) takes row 0 of u_clut at the alpha byte of u_src's physical texel
     // u_origin + (x, y) * u_step (clamped to the attachment).
     static const char* IndexedAlphaFragment();
+    // The point-sampled read of a scaled attachment at its logical resolution (Backend::ReadbackNearest):
+    // the fragment at logical (x, y) is u_src's physical texel u_origin + (x, y) * u_step + u_sub.
+    static const char* NearestFragment();
 };
 
 }  // namespace render

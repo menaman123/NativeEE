@@ -81,7 +81,7 @@ bool GlShaderLibrary::Build(GlUniformCache& uniforms) {
 // PS2 vertex program (their sampler units bound once), the constant quad pair.
 bool GlShaderLibrary::BuildStencilPrograms() {
     struct Prog { const char* vs; const char* fs; uint32_t* out; };
-    const Prog progs[7] = {
+    const Prog progs[8] = {
         {VertexSource(), GlShaderSources::StencilStripFragment(), &strip_program_},
         {VertexSource(), GlShaderSources::StencilInvertFragment(), &invert_program_},
         {GlShaderSources::ConstVertex(), GlShaderSources::ConstFragment(), &const_program_},
@@ -89,6 +89,7 @@ bool GlShaderLibrary::BuildStencilPrograms() {
         {GlShaderSources::ConstVertex(), GlShaderSources::Pack5551Fragment(), &pack5551_program_},
         {GlShaderSources::ConstVertex(), GlShaderSources::AlphaLaneFragment(), &alpha_lane_program_},
         {GlShaderSources::ConstVertex(), GlShaderSources::IndexedAlphaFragment(), &indexed_alpha_program_},
+        {GlShaderSources::ConstVertex(), GlShaderSources::NearestFragment(), &nearest_program_},
     };
     for (const Prog& p : progs) {
         GLuint vs = CompileShader(GL_VERTEX_SHADER, p.vs);
@@ -143,6 +144,12 @@ bool GlShaderLibrary::BuildStencilPrograms() {
     const GLint idx_clut = glGetUniformLocation(indexed_alpha_program_, "u_clut");
     if (idx_src >= 0) glUniform1i(idx_src, 0);
     if (idx_clut >= 0) glUniform1i(idx_clut, 1);
+    sloc_.nr_origin = glGetUniformLocation(nearest_program_, "u_origin");
+    sloc_.nr_step = glGetUniformLocation(nearest_program_, "u_step");
+    sloc_.nr_sub = glGetUniformLocation(nearest_program_, "u_sub");
+    glUseProgram(nearest_program_);
+    const GLint nr_src = glGetUniformLocation(nearest_program_, "u_src");
+    if (nr_src >= 0) glUniform1i(nr_src, 0);
     glUseProgram(0);
     return true;
 }
@@ -157,6 +164,7 @@ void GlShaderLibrary::Destroy() {
     if (pack5551_program_) { glDeleteProgram(pack5551_program_); pack5551_program_ = 0; }
     if (alpha_lane_program_) { glDeleteProgram(alpha_lane_program_); alpha_lane_program_ = 0; }
     if (indexed_alpha_program_) { glDeleteProgram(indexed_alpha_program_); indexed_alpha_program_ = 0; }
+    if (nearest_program_) { glDeleteProgram(nearest_program_); nearest_program_ = 0; }
     sloc_ = GlStencilLocations{};
     loc_ = GlUniformLocations{};
     scanout_tex_loc_ = -1;

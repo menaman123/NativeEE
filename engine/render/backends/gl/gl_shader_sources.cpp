@@ -1323,6 +1323,21 @@ void main() {
     frag_color = texelFetch(u_clut, ivec2(idx, 0), 0);
 }
 )";
+// The point-sampled logical read of a scaled attachment (Backend::ReadbackNearest; the Metal nearest pass).
+const char* const kNearestFragSrc = R"(
+#version 410 core
+
+uniform sampler2D u_src;
+uniform ivec2 u_origin;
+uniform int u_step;
+uniform ivec2 u_sub;
+out vec4 frag_color;
+
+void main() {
+    ivec2 p = ivec2(gl_FragCoord.xy);
+    frag_color = texelFetch(u_src, u_origin + p * u_step + u_sub, 0);
+}
+)";
 // Constant-colour NDC triangle for the stencil-masked quads.
 const char* const kConstVertSrc = R"(
 #version 410 core
@@ -1351,6 +1366,7 @@ const char* GlShaderSources::HalfwordShuffleFragment() { return kHalfwordShuffle
 const char* GlShaderSources::Pack5551Fragment() { return kPack5551FragSrc; }
 const char* GlShaderSources::AlphaLaneFragment() { return kAlphaLaneFragSrc; }
 const char* GlShaderSources::IndexedAlphaFragment() { return kIndexedAlphaFragSrc; }
+const char* GlShaderSources::NearestFragment() { return kNearestFragSrc; }
 
 }  // namespace render
 }  // namespace ps2r

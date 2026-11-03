@@ -82,6 +82,9 @@ public:
                   uint32_t transform) override;
     void WriteAlphaLane(SurfaceId dst, const Rect& dst_rect, SurfaceId lane, const Rect& exclude) override;
     bool DecodeIndexedAlpha(SurfaceId src, const Rect& rect, int step, SurfaceId clut, SurfaceId dst) override;
+    bool ReadbackNearest(SurfaceId src, const Rect& rect, int step, void* out, size_t stride, int sub_x = 0,
+                         int sub_y = 0) override;
+    FenceId BeginReadbackNearest(SurfaceId src, const Rect& rect, int step, int sub_x = 0, int sub_y = 0) override;
     void Readback(SurfaceId id, const Rect& rect, void* out, size_t stride) override;
     // Asynchronous: the rows go into a pixel-pack buffer behind a fence (no GPU
     // drain at Begin); Poll waits on the fence only if the GPU has not finished.
@@ -263,6 +266,10 @@ private:
     uint64_t readback_waits_ = 0;
     void ReleaseReadbacks();
     static bool ReadbackReadySync(void* sync);
+    // The nearest pass into the grow-only logical scratch: its rect (0, 0, rect.w / step, rect.h / step).
+    bool NearestPass(SurfaceId src, const Rect& rect, int step, int sub_x, int sub_y, Rect* out_rect);
+    SurfaceId nearest_scratch_;
+    uint32_t nearest_w_ = 0, nearest_h_ = 0;
     int max_texture_size_ = 0;
     int max_anisotropy_ = 1;
     std::shared_ptr<const TextureFilterSelection> texture_filter_;
