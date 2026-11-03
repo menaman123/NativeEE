@@ -219,6 +219,7 @@ private:
     uint32_t sten_fbo_rbo_ = 0;    // attachments the two framebuffers currently hold
     uint32_t res_fbo_rbo_ = 0;
     uint32_t res_fbo_tex_ = 0;
+    SurfaceId stencil_clear_{};    // Apple's software GL needs colour beside stencil
     int window_w_ = 0;
     int window_h_ = 0;
     bool present_capture_ = false;      // ArmPresentCapture: Present reads its window image back

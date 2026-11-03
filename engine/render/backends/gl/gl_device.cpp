@@ -161,6 +161,7 @@ void GlDevice::Shutdown() {
     nearest_w_ = nearest_h_ = 0;
     pool_.DropAll(state_);
     ReleaseReadbacks();
+    stencil_clear_ = SurfaceId{};
     if (dummy_tex_) { state_.DeleteTextures(1, &dummy_tex_); dummy_tex_ = 0; }
     vertices_.Shutdown(state_);
     if (scanout_vbo_) { state_.DeleteBuffers(1, &scanout_vbo_); scanout_vbo_ = 0; }
@@ -496,15 +497,29 @@ void GlDevice::ResetStencil() {
 }
 
 void GlDevice::ClearStencil(SurfaceId stencil, uint8_t value) {
-    if (!BindStencilTarget(SurfaceId{}, stencil)) return;
+    const GlSurface* target = Surface(stencil);
+    const GlSurface* scratch = Surface(stencil_clear_);
+    if (!target || !scratch || scratch->desc.width != target->desc.width ||
+        scratch->desc.height != target->desc.height) {
+        if (stencil_clear_.id) DestroySurface(stencil_clear_);
+        SurfaceDesc desc;
+        desc.width = target ? target->desc.width : 0;
+        desc.height = target ? target->desc.height : 0;
+        desc.format = SurfaceFormat::Rgba8;
+        desc.renderable = true;
+        desc.scale = 1;
+        stencil_clear_ = CreateSurface(desc);
+        if (!stencil_clear_.id) return;
+    }
+    if (!BindStencilTarget(stencil_clear_, stencil)) return;
     state_.Disable(GL_SCISSOR_TEST);
     glStencilMask(0xFF);
 #ifdef __APPLE__
-    // Apple's software GL drops glClear(GL_STENCIL_BUFFER_BIT) on a stencil-only
-    // framebuffer; a masked ALWAYS/REPLACE triangle writes the same state reliably.
+    // Apple's software GL drops stencil work on a framebuffer without colour; the
+    // scratch attachment above lets a masked ALWAYS/REPLACE triangle write it.
     EndDrawRun();
-    state_.Viewport(0, 0, static_cast<int>(Surface(stencil)->desc.width),
-                    static_cast<int>(Surface(stencil)->desc.height));
+    const GlSurface* surface = Surface(stencil);
+    state_.Viewport(0, 0, static_cast<int>(surface->desc.width), static_cast<int>(surface->desc.height));
     state_.Disable(GL_BLEND);
     state_.Enable(GL_DEPTH_TEST);
     state_.DepthFunc(GL_ALWAYS);
