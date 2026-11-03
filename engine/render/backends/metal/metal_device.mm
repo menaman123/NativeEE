@@ -1134,7 +1134,7 @@ bool MetalDevice::DecodeIndexedAlpha(SurfaceId src_id, const Rect& rect, int ste
     MetalSurface* clut = SurfaceMut(clut_id);
     MetalSurface* dst = SurfaceMut(dst_id);
     if (!src || !src->tex || !clut || !clut->tex || !dst || !dst->tex || !dst->desc.renderable) return false;
-    if (step < 2 || rect.w <= 0 || rect.h <= 0 || rect.w % step || rect.h % step) return false;
+    if (step < 1 || rect.w <= 0 || rect.h <= 0 || rect.w % step || rect.h % step) return false;
     if (rect.x < 0 || rect.y < 0 || uint32_t(rect.x) >= src->desc.width || uint32_t(rect.y) >= src->desc.height) return false;
     if (src->desc.format != SurfaceFormat::Rgba8 || dst->desc.format != SurfaceFormat::Rgba8) return false;
     const uint32_t w = static_cast<uint32_t>(rect.w / step), h = static_cast<uint32_t>(rect.h / step);

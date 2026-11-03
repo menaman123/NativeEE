@@ -208,6 +208,7 @@ void TargetRefresher::EvictUnderDraw(const DrawIr& ir, const render::DrawResult&
 
 void TargetRefresher::MarkPagesCpuDirty(uint32_t addr, uint32_t size) {
     targets_.AliasPages().MarkCpuDirty(addr, size);
+    targets_.AliasPages().DropOwners(addr, size);   // the EE's bytes are no view's own
 }
 
 bool TargetRefresher::ArePagesCpuDirty(uint32_t addr, uint32_t size) const {
@@ -277,7 +278,11 @@ bool TargetRefresher::AliasPreDraw(RenderTarget& t, const DrawIr& ir, int render
         ay1 = std::max(0, std::min(ay1, t.identity.height));
         if (ax1 > ax0 && ay1 > ay0) { y0 = ay0; y1 = ay1; }
     }
-    RefreshFromVram(t, y0, y1, job_epoch);
+    // Pages the frame's own CT32 view deposited hold the alpha its attachment holds.
+    const bool own_mirror = t.identity.render_psm == 0x00 && fbp == t.identity.fbp &&
+                            !alias.AnyAliasedExcept(fbp, region,
+                                                    AliasPageSet::ViewKey(fbp, ir.raster.frame.psm, ir.raster.frame.fbw));
+    RefreshFromVram(t, y0, y1, job_epoch, own_mirror);
     return true;
 }
 
@@ -427,7 +432,7 @@ void TargetRefresher::RefreshCt16(RenderTarget& t, int y0, int y1, uint32_t bw, 
     UploadRows(t, y0, y1, pixels_.data());
 }
 
-void TargetRefresher::RefreshFromVram(RenderTarget& t, int y0, int y1, uint64_t job_epoch) {
+void TargetRefresher::RefreshFromVram(RenderTarget& t, int y0, int y1, uint64_t job_epoch, bool own_mirror) {
     const int w = t.identity.width, th = t.identity.height;
     if (w <= 0 || th <= 0) return;
     const uint32_t psm = t.identity.render_psm;
@@ -447,7 +452,7 @@ void TargetRefresher::RefreshFromVram(RenderTarget& t, int y0, int y1, uint64_t 
     }
     targets_.FlushPending(PendingRtSyncLedger::Reason::Refresh, t.identity.fbp, region);
     bool absorbed16 = false;
-    if (psm != 0x0A) {
+    if (psm != 0x0A && !(own_mirror && psm == 0x00)) {
         // The band read and its de-swizzle walk share one page-row stride
         // (WalkBufferWidth): the mirror window is exactly the pages the walk
         // addresses, whatever the render FBW / width relation.

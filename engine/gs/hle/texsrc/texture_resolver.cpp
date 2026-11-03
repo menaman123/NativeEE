@@ -113,6 +113,16 @@ bool TextureResolver::ClutServable(const TexReadView& v) const {
     return ok;
 }
 
+bool TextureResolver::ClutOutsideReadTarget(const TexReadView& v, const RenderTarget& t) {
+    if (v.cpsm != 0x00 || v.csa != 0) return false;
+    const uint32_t c0 = v.cbp, c1 = v.cbp + ClutSource::kClutBytes;
+    if (c1 <= c0) return false;
+    const uint32_t bpp = Is16BitClass(t.identity.render_psm) ? 2u : 4u;
+    const uint32_t w = std::max<uint32_t>(uint32_t(t.identity.width), t.identity.render_fbw);
+    const uint32_t f0 = t.identity.fbp, f1 = f0 + w * uint32_t(t.identity.height) * bpp;
+    return !(c0 < f1 && f0 < c1);
+}
+
 // The indexed-serve voucher: the target's texels are the VRAM content when no EE
 // upload over its footprint is newer than the epoch at which it was last made
 // coherent in the wanted class (class 1 = 32-bit, 2 = 16-bit); with no voucher
@@ -461,8 +471,14 @@ bool TextureResolver::MatchIndexed(const DrawIr& ir, const Context& ctx, RenderT
     const uint32_t rpsm = t.identity.render_psm;
     uint8_t fmt = 0;
     render::SurfaceId surface, partner_tex;
+    // A self-read whose CLUT another target's footprint covers (Prison, Paris: a palette the EE uploads into
+    // rows a 128 x 447 target never draws) declines to the deposit + CPU decode -- a synchronous readback of
+    // the frame every frame. That route decodes with local memory's CLUT whenever the CLUT lies outside the
+    // read target (the one target it deposits): the GPU decode below is then its texture, without the drain.
+    const bool clut_vram = ClutServable(v);
+    const bool clut_decline = !clut_vram && selfrd && !Is16BitClass(rpsm) && ClutOutsideReadTarget(v, t);
     // The pair chain: recent, reader TBW == FBW, servable CLUT, full-width target.
-    if (recent && v.tbw != 0 && v.tbw == t.identity.render_fbw && ClutServable(v) &&
+    if (recent && v.tbw != 0 && v.tbw == t.identity.render_fbw && (clut_vram || clut_decline) &&
         t.views.HasColor() && t.identity.width == static_cast<int32_t>(t.identity.render_fbw)) {
         if (!Is16BitClass(rpsm)) {
             // 32-bit class: the self serve samples the pre-draw destination copy
@@ -507,7 +523,7 @@ bool TextureResolver::MatchIndexed(const DrawIr& ir, const Context& ctx, RenderT
     // GPU decode below IS that route's texture (CLUT[alpha] at the deposit's texels, logical size), sampled
     // like the uploaded one -- without the synchronous readback + CPU decode + upload that drained the GPU
     // once per frame at every scale > 1. A backend without the pass takes the deposit + decode.
-    if (fmt == 4 && selfrd && t.identity.scale > 1) return ServeIndexedGpu(ir, ctx, t, clut, out);
+    if (fmt == 4 && selfrd && (t.identity.scale > 1 || clut_decline)) return ServeIndexedGpu(ir, ctx, t, clut, out);
     out->owner.kind = TextureSource::OwnerKind::Surface;
     out->owner.surface = surface.id ? surface : t.views.color;
     out->owner.fmt_case = fmt;
@@ -524,7 +540,8 @@ bool TextureResolver::MatchIndexed(const DrawIr& ir, const Context& ctx, RenderT
     return true;
 }
 
-// The indexed self-read of a scaled 32-bit target, decoded on the GPU. The region is derived exactly as the
+// The indexed self-read of a scaled 32-bit target (or of any 32-bit target whose CLUT only the decline route
+// can read: MatchIndexed), decoded on the GPU. The region is derived exactly as the
 // decode fallback derives it (the same UV sub-rect and the same transform fields), the destination is the
 // resolver's one logical-size scratch texture (re-rendered at every such read: its content is this frame's),
 // and the source texels are the deposit's (physical (x * s, y * s) for logical (x, y)). CT32 targets only: a

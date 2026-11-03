@@ -170,6 +170,9 @@ public:
     static bool IsIndexedPsm(uint32_t psm);
     static bool IsZPsm(uint32_t psm);
     bool ClutServable(const TexReadView& v) const;
+    // The decline path's CLUT is local memory's: true when the read's plain CT32 CLUT lies outside the
+    // footprint of `t`, the one target that path deposits before its decode reads the palette.
+    static bool ClutOutsideReadTarget(const TexReadView& v, const RenderTarget& t);
     static bool RtKeepServe(bool valid, bool bpp_compatible, uint64_t footprint_upload_epoch,
                             uint64_t last_draw_epoch);
     // Max upload epoch over the pages of [addr, addr+size).
@@ -194,7 +197,7 @@ private:
     bool MatchTarget(const DrawIr& ir, const Context& ctx, RenderTarget& t, TextureSource* out);
     bool MatchColor(const DrawIr& ir, const Context& ctx, RenderTarget& t, TextureSource* out);
     bool MatchIndexed(const DrawIr& ir, const Context& ctx, RenderTarget& t, TextureSource* out);
-    // The indexed self-read of a scaled 32-bit-class target served as a GPU decode into the logical-size
+    // The indexed self-read of a scaled (or declined-CLUT) 32-bit-class target served as a GPU decode into the logical-size
     // scratch texture (the bytes the deposit-then-decode route would upload): true = `out` filled.
     bool ServeIndexedGpu(const DrawIr& ir, const Context& ctx, RenderTarget& t, render::SurfaceId clut,
                          TextureSource* out);

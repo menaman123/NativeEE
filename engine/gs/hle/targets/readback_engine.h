@@ -86,6 +86,7 @@ public:
         uint16_t keep16 = 0;
         uint32_t width = 0, height = 0;   // the target's logical size (the protected-range footprint)
         uint32_t target_fbp = 0;
+        uint32_t render_psm = 0;          // the target's render format (the own-view alias mark)
         uint32_t span_lo = 0, span_hi = 0;   // the owed byte span (gate): the page rows + the linear span
         // The uploaded-texture protection as of Begin (it reads upload epochs over the
         // whole footprint, which the owed span does not cover).
@@ -133,6 +134,7 @@ private:
         uint16_t keep16 = 0;
         uint32_t width = 0, height = 0;
         uint32_t fbp = 0;
+        uint32_t render_psm = 0;
         RenderTarget* reset_drawn = nullptr;   // main_drawn_since_deposit.Reset() when the deposit is the target's own
         bool mark_only = false;                // Begin-time half: authorship + alias marks, no bytes
         const std::vector<std::pair<uint32_t, uint32_t>>* protected_ranges = nullptr;   // precomputed (deferred)
@@ -147,6 +149,10 @@ private:
     // The rows of a drawn-rows colour writeback of `t` (clamped drawn_since_sync);
     // false when nothing encodes.
     static bool DrawnRows(const RenderTarget& t, uint32_t enc_psm, LogicalRect* rows);
+    // The alias marks of a colour deposit over the linear span [span_lo, span_hi) (see AliasPageSet).
+    void MarkDepositAliased(const EncodeTarget& t, const VramImage& vram, uint64_t batch_epoch, uint32_t span_lo,
+                            uint32_t span_hi, uint32_t fbw, uint32_t enc_psm, uint32_t fbp, bool rescue,
+                            bool protected_any);
     uint32_t EncodeZRows(RenderTarget& t, VramImage& vram, uint64_t batch_epoch,
                          const LogicalRect& rows, uint32_t zpsm_field);
     // Stage [lo, hi) of the scratch image: pages inside the linear span

@@ -1200,6 +1200,12 @@ void AliasPreDraw() {
     ir.verts[0].x = 0; ir.verts[0].y = 8; ir.verts[1].x = 64; ir.verts[1].y = 8; ir.verts[2].x = 64; ir.verts[2].y = 24;
     CHECK(TargetRefresher::AliasRegionBytes(ir, 64) == 64 * 64 * 4);
     const int up0 = w.be.uploads;
+    // The page holds the target's own deposit in its own view: the import's bookkeeping
+    // runs, but the alpha merge is an identity -- no mirror read, no upload.
+    CHECK(rf.AliasPreDraw(t, ir, 64, 0x70000, 0));
+    CHECK(w.be.uploads == up0);
+    // Another writer's mark over the page makes it foreign: a real band import.
+    w.cache.AliasPages().MarkAliased(0x100000 + 8192, 8192);
     CHECK(rf.AliasPreDraw(t, ir, 64, 0x70000, 0));
     CHECK(w.be.uploads == up0 + 1);                            // one band import
     // A scoped band clears only the pages it fully covers: rows 8..24 cover none,
@@ -1385,6 +1391,29 @@ void PendingLedger() {
     ws.ClearCpuDirty(0, 512 * VramImage::kPageBytes);
     ws.MarkCpuDirty(511 * VramImage::kPageBytes, 3 * VramImage::kPageBytes);        // the last page, clamped
     CHECK(span_ok(511, 511));
+    // Own-view marks: a page a view deposited itself is aliased for every other view
+    // but not for that one; another view's mark over it, an EE write, or a plain mark
+    // makes it foreign for everyone; a clear forgets the owner.
+    AliasPageSet ov;
+    const uint64_t va = AliasPageSet::ViewKey(0x70000, 0x00, 512), vb = AliasPageSet::ViewKey(0x0, 0x00, 512);
+    const uint32_t pg = VramImage::kPageBytes;
+    ov.MarkAliasedBy(56 * pg, 2 * pg, va);                                          // pages 56, 57 by view A
+    CHECK(ov.AnyAliased(56 * pg, 2 * pg) && !ov.AnyAliasedExcept(56 * pg, 2 * pg, va));
+    CHECK(ov.AnyAliasedExcept(56 * pg, 2 * pg, vb));
+    ov.MarkAliasedBy(57 * pg, pg, va);                                              // A again: still A's
+    CHECK(!ov.AnyAliasedExcept(56 * pg, 2 * pg, va));
+    ov.MarkAliasedBy(57 * pg, pg, vb);                                              // B over A's unimported page
+    CHECK(ov.AnyAliasedExcept(57 * pg, pg, va) && ov.AnyAliasedExcept(57 * pg, pg, vb));
+    CHECK(!ov.AnyAliasedExcept(56 * pg, pg, va));                                   // page 56 untouched
+    ov.DropOwners(56 * pg, pg);                                                     // an EE write
+    CHECK(ov.AnyAliasedExcept(56 * pg, pg, va));
+    ov.ClearAliased(56 * pg, 2 * pg);
+    CHECK(!ov.AnyAliased(56 * pg, 2 * pg));
+    ov.MarkAliasedBy(56 * pg, pg, va);                                              // a clear forgot B: A's again
+    CHECK(!ov.AnyAliasedExcept(56 * pg, pg, va));
+    ov.MarkAliased(56 * pg, pg);
+    CHECK(ov.AnyAliasedExcept(56 * pg, pg, va));
+    CHECK(AliasPageSet::ViewKey(0, 0, 0) != 0 && va != vb && va != AliasPageSet::ViewKey(0x70000, 0x02, 512));
 }
 
 // The per-draw render size rule (TargetDims): FBW in (0, 1024] else the window

@@ -164,6 +164,7 @@ bool ReadbackEngine::BeginDeferredColorSync(render::Backend& be, RenderTarget& t
     d.width = uint32_t(t.identity.width);
     d.height = uint32_t(t.identity.height);
     d.target_fbp = t.identity.fbp;
+    d.render_psm = t.identity.render_psm;
     // The owed span: the page rows the encode touches, the linear span it stages and
     // the footprint whose upload epochs the protection test reads.
     const uint32_t bpp = Swizzle::LinearBitsPerPixel(psm) / 8;
@@ -178,6 +179,7 @@ bool ReadbackEngine::BeginDeferredColorSync(render::Backend& be, RenderTarget& t
     // rect reset (a draw after this point is newer than the deposit).
     EncodeTarget et = EncodeTargetOf(t);
     et.mark_only = true;
+    et.protected_ranges = &d.protected_ranges;
     EncodeColorRows(et, vram, batch_epoch, rows, d.fbw, false, enc_psm, d.dest_fbp);
     t.coherence.ClearDrawnSinceSync();
     vram.NoteDeferred(VramImage::Span{d.span_lo, d.span_hi - d.span_lo});
@@ -196,6 +198,7 @@ uint32_t ReadbackEngine::CompleteDeferred(render::Backend& be, VramImage& vram, 
     et.width = d.width;
     et.height = d.height;
     et.fbp = d.target_fbp;
+    et.render_psm = d.render_psm;
     et.reset_drawn = nullptr;   // reset at Begin
     et.protected_ranges = &d.protected_ranges;
     const uint32_t n = EncodeColorRows(et, vram, d.batch_epoch, d.rows, d.fbw, false, d.enc_psm, d.dest_fbp);
@@ -280,8 +283,30 @@ ReadbackEngine::EncodeTarget ReadbackEngine::EncodeTargetOf(RenderTarget& t) {
     et.width = uint32_t(t.identity.width);
     et.height = uint32_t(t.identity.height);
     et.fbp = t.identity.fbp;
+    et.render_psm = t.identity.render_psm;
     et.reset_drawn = &t;
     return et;
+}
+
+// A deposit of a CT32 target's own rows at its own base, in its own view, put the bytes its attachment holds
+// into local memory: its own later frames need not import them back. A page an EE upload newer than the batch
+// keeps (the per-page veto), a protected texture range, a rescue, and every other view's deposit are foreign.
+void ReadbackEngine::MarkDepositAliased(const EncodeTarget& t, const VramImage& vram, uint64_t batch_epoch,
+                                        uint32_t span_lo, uint32_t span_hi, uint32_t fbw, uint32_t enc_psm,
+                                        uint32_t fbp, bool rescue, bool protected_any) {
+    if (!alias_ || span_hi <= span_lo) return;
+    alias_->MarkCpuDirty(span_lo, span_hi - span_lo);
+    const bool own = !rescue && !protected_any && fbp == t.fbp && enc_psm == 0x00 && t.render_psm == 0x00;
+    if (!own) {
+        alias_->MarkAliased(span_lo, span_hi - span_lo);
+        return;
+    }
+    const uint64_t view = AliasPageSet::ViewKey(fbp, enc_psm, fbw);
+    const uint32_t p0 = span_lo / kPageBytes, p1 = (span_hi - 1) / kPageBytes;
+    for (uint32_t pg = p0; pg <= p1 && pg < VramImage::kPageCount; ++pg) {
+        if (vram.Page(pg).upload_epoch > batch_epoch) alias_->MarkAliased(pg * kPageBytes, kPageBytes);
+        else alias_->MarkAliasedBy(pg * kPageBytes, kPageBytes, view);
+    }
 }
 
 uint32_t ReadbackEngine::EncodeColorRows(RenderTarget& t, VramImage& vram, uint64_t batch_epoch,
@@ -308,10 +333,8 @@ uint32_t ReadbackEngine::EncodeColorRows(const EncodeTarget& t, VramImage& vram,
         MarkAuthorTiles(vram, fbp, fbp, fbw, psm, rows);
         uint32_t span_lo, span_hi;
         LinearSpan(fbp, fbw, bpp, rows.y0, rows.y1, &span_lo, &span_hi);
-        if (alias_ && span_hi > span_lo) {
-            alias_->MarkCpuDirty(span_lo, span_hi - span_lo);
-            alias_->MarkAliased(span_lo, span_hi - span_lo);
-        }
+        MarkDepositAliased(t, vram, batch_epoch, span_lo, span_hi, fbw, enc_psm, fbp, rescue,
+                           t.protected_ranges && !t.protected_ranges->empty());
         if (t.reset_drawn && fbp == t.fbp) t.reset_drawn->coherence.main_drawn_since_deposit.Reset();
         return 0;
     }
@@ -397,11 +420,9 @@ uint32_t ReadbackEngine::EncodeColorRows(const EncodeTarget& t, VramImage& vram,
     LinearSpan(fbp, fbw, bpp, rows.y0, rows.y1, &span_lo, &span_hi);
     StageTouched(vram, lo, hi, span_lo, span_hi, batch_epoch);
     // The encoded rows now differ from a 16-bit view of the attachment and any
-    // later frame over these pages must import them: CPU-dirty + aliased.
-    if (alias_ && span_hi > span_lo) {
-        alias_->MarkCpuDirty(span_lo, span_hi - span_lo);
-        alias_->MarkAliased(span_lo, span_hi - span_lo);
-    }
+    // later frame over these pages must import them: CPU-dirty + aliased (the
+    // target's own view excepted: MarkDepositAliased).
+    MarkDepositAliased(t, vram, batch_epoch, span_lo, span_hi, fbw, enc_psm, fbp, rescue, !protected_ranges.empty());
     // The target's own bytes reached the mirror: the main image is no newer than
     // local memory until it draws again.
     if (t.reset_drawn && fbp == t.fbp) t.reset_drawn->coherence.main_drawn_since_deposit.Reset();

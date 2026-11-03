@@ -96,7 +96,10 @@ public:
 
     // Rows [y0, y1) of the target imported from the committed mirror; `job_epoch`
     // is the current gfx processing epoch (the CT16 keep-run reference).
-    void RefreshFromVram(RenderTarget& t, int y0, int y1, uint64_t job_epoch);
+    // `own_mirror`: every aliased page of the band holds the CT32 target's own deposit (AliasPageSet), so the
+    // alpha merge is an identity -- the import's bookkeeping runs without reading the mirror (whose gate would
+    // complete the target's own deferred deposit synchronously, a GPU drain per draw).
+    void RefreshFromVram(RenderTarget& t, int y0, int y1, uint64_t job_epoch, bool own_mirror = false);
     // The pre-draw alias demand for `ir` into `t`; `render_h` is the draw's
     // logical render height, `scanout_fbp` the DISPFB base. The deferred
     // writebacks under the frame land first (`hold_fbp` keeps that buffer's own

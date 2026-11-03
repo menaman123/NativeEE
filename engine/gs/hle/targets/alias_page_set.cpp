@@ -6,7 +6,7 @@
 namespace ps2r {
 namespace gs {
 
-AliasPageSet::AliasPageSet() : cpu_dirty_(8, 0), aliased_(8, 0) {}
+AliasPageSet::AliasPageSet() : cpu_dirty_(8, 0), aliased_(8, 0), owner_(VramImage::kPageCount, 0) {}
 
 // The page walk of [addr, addr+size) CLAMPED to the 512 pages: a span starting
 // past the end marks / tests nothing, a span running past the end stops at page
@@ -56,13 +56,48 @@ bool AliasPageSet::Any(const std::vector<uint64_t>& set, uint32_t addr, uint32_t
 void AliasPageSet::MarkCpuDirty(uint32_t addr, uint32_t size) { Mark(cpu_dirty_, addr, size, true); }
 void AliasPageSet::ClearCpuDirty(uint32_t addr, uint32_t size) { Mark(cpu_dirty_, addr, size, false); }
 bool AliasPageSet::AnyCpuDirty(uint32_t addr, uint32_t size) const { return Any(cpu_dirty_, addr, size); }
-void AliasPageSet::MarkAliased(uint32_t addr, uint32_t size) { Mark(aliased_, addr, size, true); }
-void AliasPageSet::ClearAliased(uint32_t addr, uint32_t size) { Mark(aliased_, addr, size, false); }
+void AliasPageSet::SetOwners(uint32_t addr, uint32_t size, uint64_t view) {
+    uint32_t first, last;
+    if (!PageWalk(addr, size, &first, &last)) return;
+    for (uint32_t p = first; p <= last; ++p) owner_[p] = view;
+}
+
+void AliasPageSet::MarkAliased(uint32_t addr, uint32_t size) {
+    Mark(aliased_, addr, size, true);
+    SetOwners(addr, size, 0);
+}
+
+void AliasPageSet::MarkAliasedBy(uint32_t addr, uint32_t size, uint64_t view) {
+    uint32_t first, last;
+    if (!PageWalk(addr, size, &first, &last)) return;
+    for (uint32_t p = first; p <= last; ++p) {
+        if (IsAliased(p) && owner_[p] != view) owner_[p] = 0;   // another view's bytes are still owed
+        else owner_[p] = view;
+    }
+    Mark(aliased_, addr, size, true);
+}
+
+void AliasPageSet::DropOwners(uint32_t addr, uint32_t size) { SetOwners(addr, size, 0); }
+
+void AliasPageSet::ClearAliased(uint32_t addr, uint32_t size) {
+    Mark(aliased_, addr, size, false);
+    SetOwners(addr, size, 0);
+}
+
 bool AliasPageSet::AnyAliased(uint32_t addr, uint32_t size) const { return Any(aliased_, addr, size); }
+
+bool AliasPageSet::AnyAliasedExcept(uint32_t addr, uint32_t size, uint64_t view) const {
+    uint32_t first, last;
+    if (!PageWalk(addr, size, &first, &last)) return false;
+    for (uint32_t p = first; p <= last; ++p)
+        if (IsAliased(p) && owner_[p] != view) return true;
+    return false;
+}
 
 void AliasPageSet::ClearAliasedPage(uint32_t page) {
     const uint32_t p = page % VramImage::kPageCount;
     aliased_[p / 64] &= ~(uint64_t(1) << (p % 64));
+    owner_[p] = 0;
 }
 
 bool AliasPageSet::IsAliased(uint32_t page) const {

@@ -285,8 +285,8 @@ public:
     // fence: the caller takes the physical read.
     virtual bool ReadbackNearest(SurfaceId, const Rect&, int, void*, size_t, int /*sub_x*/ = 0, int /*sub_y*/ = 0) { return false; }
     virtual FenceId BeginReadbackNearest(SurfaceId, const Rect&, int, int /*sub_x*/ = 0, int /*sub_y*/ = 0) { return FenceId{}; }
-    // The GPU form of an indexed (PSMT8H) read of a scaled 32-bit-class attachment at its logical
-    // resolution: texel (x, y) of `dst` (an Rgba8 attachment of rect.w / step x rect.h / step) = row 0 of
+    // The GPU form of an indexed (PSMT8H) read of a 32-bit-class attachment at its logical resolution
+    // (step = the attachment's scale, 1 included): texel (x, y) of `dst` (an Rgba8 attachment of rect.w / step x rect.h / step) = row 0 of
     // `clut` (the 256 x N Rgba8 palette texture) at the stored alpha byte of physical texel
     // (rect.x + x * step, rect.y + y * step) of `src` -- the bytes the deposit-then-decode route produces
     // (ReadbackNearest at sub (0, 0), then CLUT[alpha]), without the CPU round trip. A backend without the
