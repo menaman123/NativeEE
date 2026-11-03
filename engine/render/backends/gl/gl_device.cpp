@@ -453,7 +453,7 @@ uint32_t GlDevice::BindStencilTarget(SurfaceId color, SurfaceId stencil) {
         if (!sten_fbo_) glGenFramebuffers(1, &sten_fbo_);
         state_.BindFb(GL_FRAMEBUFFER, sten_fbo_);
         if (sten_fbo_rbo_ != st->rbo) {
-            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, st->rbo);
+            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, st->rbo);
             glDrawBuffer(GL_NONE);
             glReadBuffer(GL_NONE);
             if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) return 0;
@@ -465,7 +465,7 @@ uint32_t GlDevice::BindStencilTarget(SurfaceId color, SurfaceId stencil) {
     state_.BindFb(GL_FRAMEBUFFER, res_fbo_);
     if (res_fbo_tex_ != c->tex || res_fbo_rbo_ != st->rbo) {
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, c->tex, 0);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, st->rbo);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, st->rbo);
         const GLenum bufs[1] = {GL_COLOR_ATTACHMENT0};
         glDrawBuffers(1, bufs);
         if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) return 0;
