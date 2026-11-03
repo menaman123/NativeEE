@@ -453,7 +453,7 @@ uint32_t GlDevice::BindStencilTarget(SurfaceId color, SurfaceId stencil) {
         if (!sten_fbo_) glGenFramebuffers(1, &sten_fbo_);
         state_.BindFb(GL_FRAMEBUFFER, sten_fbo_);
         if (sten_fbo_rbo_ != st->rbo) {
-            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, st->rbo);
+            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, st->rbo);
             glDrawBuffer(GL_NONE);
             glReadBuffer(GL_NONE);
             if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) return 0;
@@ -465,7 +465,7 @@ uint32_t GlDevice::BindStencilTarget(SurfaceId color, SurfaceId stencil) {
     state_.BindFb(GL_FRAMEBUFFER, res_fbo_);
     if (res_fbo_tex_ != c->tex || res_fbo_rbo_ != st->rbo) {
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, c->tex, 0);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, st->rbo);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, st->rbo);
         const GLenum bufs[1] = {GL_COLOR_ATTACHMENT0};
         glDrawBuffers(1, bufs);
         if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) return 0;
@@ -499,9 +499,35 @@ void GlDevice::ClearStencil(SurfaceId stencil, uint8_t value) {
     if (!BindStencilTarget(SurfaceId{}, stencil)) return;
     state_.Disable(GL_SCISSOR_TEST);
     glStencilMask(0xFF);
+#ifdef __APPLE__
+    // Apple's software GL drops glClear(GL_STENCIL_BUFFER_BIT) on a stencil-only
+    // framebuffer; a masked ALWAYS/REPLACE triangle writes the same state reliably.
+    EndDrawRun();
+    state_.Viewport(0, 0, static_cast<int>(Surface(stencil)->desc.width),
+                    static_cast<int>(Surface(stencil)->desc.height));
+    state_.Disable(GL_BLEND);
+    state_.Enable(GL_DEPTH_TEST);
+    state_.DepthFunc(GL_ALWAYS);
+    state_.DepthMask(false);
+    state_.ColorMask(false, false, false, false);
+    state_.UseProgram(shaders_.ConstProgram());
+    state_.BindVertexArray(const_vao_);
+    glEnable(GL_STENCIL_TEST);
+    glStencilFunc(GL_ALWAYS, value, 0xFF);
+    glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+    census_.draw_calls++;
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    ResetStencil();
+    state_.BindVertexArray(0);
+    state_.UseProgram(0);
+    state_.ColorMask(true, true, true, true);
+    state_.DepthMask(true);
+    state_.Disable(GL_DEPTH_TEST);
+#else
     glClearStencil(value);
     census_.clears++;
     glClear(GL_STENCIL_BUFFER_BIT);
+#endif
 }
 
 // Constant colour over `scissor` under the stencil test: viewport = the stencil
