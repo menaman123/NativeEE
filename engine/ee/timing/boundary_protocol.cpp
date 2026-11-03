@@ -166,19 +166,21 @@ bool BoundaryProtocol::ParkForPacerTick(const std::function<void()>& on_wake) {
         EeEventQueue::ParkReg reg(&mu_, &cv_);
         std::unique_lock<std::mutex> lk(mu_);
         const uint64_t seen = tick_generation_;
+        bool serve_wakes = static_cast<bool>(on_wake);
         for (;;) {
             const bool woke = cv_.wait_until(lk, deadline, [&] {
-                return tick_generation_ != seen || ticks_.Pending() != 0 || (on_wake && queue.ParkWakeDue());
+                return tick_generation_ != seen || ticks_.Pending() != 0 || (serve_wakes && queue.ParkWakeDue());
             });
             ticked = tick_generation_ != seen || ticks_.Pending() != 0;
             if (ticked || !woke) break;
-            // E433: a foreign wake, no tick -- serve it on this thread and park on. The park stays bounded:
-            // a wake that is still due after its service would make every wait_until return at once (the
-            // predicate holds), so the deadline is checked here too.
+            // E433: a foreign wake, no tick -- serve it on this thread and park on. A wake that is still due
+            // after its service (nothing this thread can drain) would make every wait_until return at once:
+            // the park would spin on mu_ and starve the pacer's NotifyTick, so it parks for the tick alone.
             ++pace_wakes_;
             lk.unlock();
             on_wake();
             lk.lock();
+            if (queue.ParkWakeDue()) serve_wakes = false;
             if (std::chrono::steady_clock::now() >= deadline) break;
         }
     }

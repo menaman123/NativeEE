@@ -181,8 +181,8 @@ void Clocks() {
     PinCurrentThreadInteractive(ThreadRole::Pacer);
     PinCurrentThreadInteractive(ThreadRole::Game);
     // PreciseSleepUntilNs: never early; a passed deadline returns at once; a 2 ms deadline
-    // lands within the host's timer slop (the pin is loose -- 3 ms -- so a loaded CI box
-    // passes; the precision claim is measured by the pacing judge, not here). Twenty
+    // lands within the host's timer slop (the pin is loose -- 20 ms: a shared macOS CI VM
+    // overshot 3 ms; the precision claim is measured by the pacing judge, not here). Twenty
     // 500 us sleeps in a row keep the deadline chain: >= 10 ms total, no sleep early.
     {
         const uint64_t t0 = MonotonicNowNs();
@@ -192,7 +192,7 @@ void Clocks() {
         PreciseSleepUntilNs(deadline);
         const uint64_t woke = MonotonicNowNs();
         CHECK(woke >= deadline);
-        CHECK(woke - deadline < 3000ull * 1000);
+        CHECK(woke - deadline < 20000ull * 1000);
         uint64_t chain = MonotonicNowNs();
         const uint64_t chain0 = chain;
         for (int i = 0; i < 20; ++i) {

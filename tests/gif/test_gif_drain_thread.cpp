@@ -254,7 +254,6 @@ int main() {
         std::atomic<bool> release{false};
         std::atomic<bool> inside{false};
         const uint64_t passes0 = rig.thread.Passes();
-        const uint64_t gen0 = rig.arbiter.DrainPassGeneration();
         rig.arbiter.submitOrdered([&] {
             inside.store(true, std::memory_order_release);
             while (!release.load(std::memory_order_acquire)) std::this_thread::yield();
@@ -262,6 +261,9 @@ int main() {
         rig.Submit(4242);
         rig.arbiter.drain();
         while (!inside.load(std::memory_order_acquire)) std::this_thread::yield();
+        // Sampled with the held pass running: a pass the previous case kicked may complete between the
+        // submit and here, but from now on only the held pass can move the generation.
+        const uint64_t gen0 = rig.arbiter.DrainPassGeneration();
         CHECK(rig.arbiter.DrainInFlight(), "(e) in flight while the pass runs");
         CHECK(rig.thread.DrainIdleGeneration() == 0, "(e) not idle mid-pass");
         rig.arbiter.WaitDrainPassAfter(gen0, 200'000);   // times out: the pass is held
