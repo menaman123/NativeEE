@@ -524,7 +524,7 @@ void GlDevice::ClearStencil(SurfaceId stencil, uint8_t value) {
     state_.Enable(GL_DEPTH_TEST);
     state_.DepthFunc(GL_ALWAYS);
     state_.DepthMask(false);
-    state_.ColorMask(false, false, false, false);
+    state_.ColorMask(true, true, true, true);
     state_.UseProgram(shaders_.ConstProgram());
     state_.BindVertexArray(const_vao_);
     glEnable(GL_STENCIL_TEST);
