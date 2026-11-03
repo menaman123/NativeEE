@@ -1619,7 +1619,7 @@
       "section": "video",
       "name": "motion_blur",
       "type": "bool",
-      "default": "on",
+      "default": "off",
       "kind": "switch",
       "user_facing": true,
       "label": "Motion blur",

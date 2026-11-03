@@ -153,7 +153,8 @@ void pre_raise_then_quiesce() {
     CHECK(r.stack.Quiesce(&why));
     // The non-staged path (SubmitVif1) is scanned too.
     r.stack.worker().SubmitVif1(span.data(), span.size(), false);
-    CHECK(r.raises == 2 && r.arbiter.PreRaisedFinish() == 1);
+    // The total, not the pending count: the drain thread may already have consumed this pre-raise.
+    CHECK(r.raises == 2 && r.arbiter.PreRaisedFinishTotal() == 2);
     r.WaitFinishes(3);
     CHECK(r.stack.Quiesce(&why));
     CHECK(r.sink.consumed.load() == 2 && r.arbiter.PreRaisedFinish() == 0);
